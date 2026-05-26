@@ -31,6 +31,12 @@ patient's record.
 4. Approved coverage **settles through escrow**, bounded by public price
    benchmarks.
 
+> **MVP0 scope (SPEC-0001):** the contract + state machine, the simulated↔real
+> wallet path, the three-view web app, and a native-agent dispute ruling are
+> built and tested. v0 settlement is an **event marker** (no token transfer);
+> real escrow, PHI redaction, and identity verification are out of scope. See
+> [`docs/specs/0001-mvp0-coverage-negotiation.md`](./docs/specs/0001-mvp0-coverage-negotiation.md).
+
 ## Why an agent, why a blockchain, why Somnia
 
 - **Why an agent** — adjudicating a coverage exception means weighing a free-text
@@ -66,24 +72,68 @@ typed source of truth for the app.
 
 ## Quick start
 
+The MVP0 (SPEC-0001) runs end-to-end with **no wallet and no chain** — the
+default `simulated` mode mirrors the contract in memory and mocks the agent
+ruling, so you can drive the whole flow locally:
+
 ```bash
 npm install
-cp .env.example .env   # set SOMNIA_NETWORK; add PRIVATE_KEY for write access
-npm run dev            # runs src/index.ts under tsx, connects to Somnia
+npm run build          # compile the TS library to dist/ (the web app imports it)
+npm run web:dev        # serve the web app (Overview / Create / Maintain) in simulated mode
 ```
 
-`npm run dev` connects to the configured network and prints a connection
-summary — the smoke test that chain plumbing works before protocol logic is
-layered on.
+Open the app, click **Load sample case**, create a contract, submit both
+positions, raise a dispute, and watch the (mocked) agent rule and settle. The
+copy-pasteable case + public-formulary fixtures live in [`demo-data/`](./demo-data/).
+
+The legacy chain smoke test still exists: `cp .env.example .env` then
+`npm run dev` connects to the configured network and prints a summary.
+
+## Smart contract, deployment & wallet modes
+
+The system of record is [`contracts/contracts/CoverageNegotiation.sol`](./contracts/contracts/CoverageNegotiation.sol)
+(Hardhat, Solidity 0.8.24, OpenZeppelin `Ownable` + `ReentrancyGuard`). It
+implements the full SPEC-0001 §3 state machine and fires a **native Somnia
+agent** on dispute via `createRequest`; the platform calls `handleResponse` back
+into the same contract with the verdict + receipt (the
+[`ISomniaAgent.sol`](./contracts/contracts/ISomniaAgent.sol) interface is
+verified field-for-field against the Somnia docs).
+
+```bash
+npm --prefix contracts run compile      # build artifacts + typechain
+npm --prefix contracts run test         # Hardhat suite (T1–T7), 7 passing
+npm --prefix contracts run deploy:somnia  # deploy to Somnia testnet (chain 50312)
+```
+
+**Wallet modes (R11), one code path:**
+
+- **Simulated** (default) — `SOMNIA_WALLET_MODE=simulated`. No funds; the agent
+  ruling is mocked. Used by the web app, the library, and CI.
+- **Real** — `SOMNIA_WALLET_MODE=real` + a funded `PRIVATE_KEY`. The library's
+  `RealBackend` talks to the deployed contract over ethers and a **real** native
+  agent produces the ruling (the per-request fee is charged on execution — R9).
+
+**Deploying + wiring the real path** (all via [`.env`](./.env.example)):
+
+1. Set `PRIVATE_KEY`, `AGENT_PLATFORM_ADDRESS`, and `AGENT_ID`, then
+   `npm --prefix contracts run deploy:somnia`.
+2. Record the printed address in `COVERAGE_CONTRACT_ADDRESS` (and below) — this
+   is what `RealBackend` reads.
+3. Run with `SOMNIA_WALLET_MODE=real`.
+
+**Deployed testnet address:** _not yet deployed — requires a funded testnet
+wallet. Record the Shannon address here and in `.env` once deployed._
 
 ## Scripts
 
 | Script | Purpose |
 |---|---|
-| `npm run dev` | Run `src/index.ts` with hot reload (`tsx watch`). |
-| `npm run build` | Type-check and emit JS to `dist/`. |
-| `npm start` | Run the built output from `dist/`. |
+| `npm run build` | Type-check the library and emit JS to `dist/` (the web app imports it). |
 | `npm run typecheck` | Type-check without emitting. |
+| `npm run web:dev` / `web:build` / `web:preview` | Run / build / preview the web app. |
+| `npm run test:e2e` | agent-browser end-to-end suite over the web app (see [`web/tests/agent-browser/`](./web/tests/agent-browser/)). |
+| `npm run dev` / `start` | Legacy chain smoke test (`src/index.ts`). |
+| `npm --prefix contracts run compile` / `test` / `deploy:somnia` | Hardhat compile / test / deploy. |
 
 ## Project layout
 
@@ -93,15 +143,24 @@ layered on.
 ├── LICENSE                # proprietary; all rights reserved
 ├── .mcp.json              # Context7 MCP server (live Somnia docs)
 ├── .env.example
-├── src/
-│   ├── index.ts           # entry point: connect to Somnia, print summary
-│   ├── config/
-│   │   ├── networks.ts    # Somnia network params (typed source of truth)
-│   │   └── env.ts         # environment loading + validation
-│   └── somnia/
-│       └── kit.ts         # SomniaAgentKit factory — the chain connection core
+├── contracts/             # Hardhat workspace
+│   ├── contracts/         # CoverageNegotiation.sol, ISomniaAgent.sol, mocks/
+│   ├── test/              # CoverageNegotiation.test.ts (T1–T7)
+│   └── scripts/deploy.ts  # deploy to Somnia testnet (chain 50312)
+├── src/                   # framework-agnostic TS library (the app surface)
+│   ├── index.ts           # createClient(config): wallet + profiles + content + negotiation
+│   ├── wallet/            # pluggable signer: simulated ↔ real (R11)
+│   ├── profiles/          # app-level identities + switching (R12/R13)
+│   ├── content/           # off-chain content store + keccak256 commitment (R3/R4)
+│   ├── contract/          # CoverageNegotiationClient: SimulatedBackend + RealBackend + ABI
+│   ├── config/            # networks.ts (typed source of truth) + env.ts
+│   └── somnia/kit.ts      # SomniaAgentKit factory
+├── web/                   # Vite + React SPA (Overview / Create / Maintain)
+│   └── tests/agent-browser/  # end-to-end browser suite (npm run test:e2e)
+├── demo-data/             # synthetic sample case + Part D formulary fixtures (no PHI)
 ├── docs/
 │   ├── specs/             # fleshed-out build specs (requirements, tests, acceptance)
+│   ├── progress/          # implementation progress log
 │   ├── research/          # research notes (pre-decision)
 │   └── documentation/     # hard Somnia API/code docs, copied down
 ├── package.json

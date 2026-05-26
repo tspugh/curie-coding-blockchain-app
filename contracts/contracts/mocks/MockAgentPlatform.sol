@@ -10,6 +10,11 @@ import {
     ConsensusType
 } from "../ISomniaAgent.sol";
 
+/// @dev Minimal view used to probe the requesting contract's state mid-`createRequest`.
+interface IStateProbe {
+    function stateOf(uint256 reqId) external view returns (uint8);
+}
+
 /// @title MockAgentPlatform
 /// @notice Test double for the Somnia agent platform. Records the last
 ///         createRequest args and can call back into a target contract as if it
@@ -26,6 +31,11 @@ contract MockAgentPlatform is IAgentRequester {
     uint256 public lastValue;
     uint256 public lastRequestId;
     uint256 public createRequestCalls;
+
+    /// @notice The requesting contract's state observed DURING createRequest. Lets a
+    ///         test prove checks-effects-interactions: the negotiation is already in
+    ///         UnderReview (2) before the external agent call returns.
+    uint8 public observedStateDuringCreate;
 
     /// @inheritdoc IAgentRequester
     function getRequestDeposit() external view returns (uint256) {
@@ -54,6 +64,14 @@ contract MockAgentPlatform is IAgentRequester {
         lastValue = msg.value;
         lastRequestId = requestId;
         createRequestCalls += 1;
+
+        // Probe the requester's state mid-call (reqId is the first word of payload).
+        // A view call — no state change — so it is safe for every test.
+        uint256 reqIdFromPayload;
+        assembly {
+            reqIdFromPayload := calldataload(payload.offset)
+        }
+        observedStateDuringCreate = IStateProbe(callbackAddress).stateOf(reqIdFromPayload);
     }
 
     /// @notice Drive a successful ruling back into the target as the platform would.

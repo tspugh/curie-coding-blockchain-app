@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {
     IAgentRequester,
     IAgentRequesterHandler,
@@ -20,7 +21,17 @@ import {
 /// @dev HARD INVARIANT (R4): no PHI / no raw content is ever stored. Only keccak256
 ///      hashes, opaque refs (bytes32), amounts, state, ids, and timestamps live
 ///      on-chain. Settlement (R8) is an event marker only — no token transfer.
-contract CoverageNegotiation is Ownable, IAgentRequesterHandler {
+/// @dev TRUST MODEL (v0): identities are app-level profile/agent ids (`uint256`),
+///      NOT `msg.sender`. Under the single-shared-wallet model (R12/R13) both parties
+///      may transact from one address, so the contract intentionally does not bind
+///      `msg.sender` to a party — lifecycle authorization is delegated to the app
+///      layer. On-chain caller binding / KYC is out of v0 scope (SPEC-0001 §7). The
+///      ONE call that is strictly gated is the platform callback `handleResponse`,
+///      which only the agent-platform address may invoke. The agent-firing entry
+///      points are `nonReentrant` and follow checks-effects-interactions so the
+///      single external call (`platform.createRequest`) cannot re-enter the state
+///      machine.
+contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler {
     // ---------------------------------------------------------------------
     // State machine (SPEC-0001 §3 "State machine" table — implemented exactly)
     // ---------------------------------------------------------------------
@@ -109,6 +120,7 @@ contract CoverageNegotiation is Ownable, IAgentRequesterHandler {
     event Appealed(uint256 indexed reqId, bytes32 evidenceUri);
     event Settled(uint256 indexed reqId, uint256 agreedAmount);
     event Withdrawn(uint256 indexed reqId);
+    event FundsWithdrawn(address indexed to, uint256 amount);
 
     // ---------------------------------------------------------------------
     // Constructor / admin
@@ -139,6 +151,18 @@ contract CoverageNegotiation is Ownable, IAgentRequesterHandler {
     /// @notice Owner-settable ruling timeout window in seconds.
     function setRulingTimeout(uint256 seconds_) external onlyOwner {
         rulingTimeout = seconds_;
+    }
+
+    /// @notice Reclaim contract ETH — e.g. per-request fees refunded by the platform
+    ///         on a timed-out ruling (R9), or any surplus sent to fund agent fees.
+    /// @dev Owner only. The contract holds no user deposits (settlement is an event
+    ///      marker, R8), so its balance is purely the agent-fee float.
+    function withdrawFunds(address payable to, uint256 amount) external onlyOwner nonReentrant {
+        require(to != address(0), "funds: zero addr");
+        require(amount <= address(this).balance, "funds: insufficient");
+        (bool ok, ) = to.call{value: amount}("");
+        require(ok, "funds: transfer failed");
+        emit FundsWithdrawn(to, amount);
     }
 
     // ---------------------------------------------------------------------
@@ -229,7 +253,7 @@ contract CoverageNegotiation is Ownable, IAgentRequesterHandler {
     /// @notice Raise a dispute. Only valid in `Ready` (both positions in) (R5/R6).
     /// @dev Fires the native Somnia agent and moves to UnderReview. Forwards the
     ///      per-request fee (R9). Payable so callers fund the request.
-    function submitDispute(uint256 reqId, uint256 byPartyId) external payable {
+    function submitDispute(uint256 reqId, uint256 byPartyId) external payable nonReentrant {
         Negotiation storage n = _get(reqId);
         require(n.state == State.Ready, "dispute: not Ready");
         require(byPartyId == n.initiatorId || byPartyId == n.destinationId, "unknown party");
@@ -240,7 +264,7 @@ contract CoverageNegotiation is Ownable, IAgentRequesterHandler {
 
     /// @notice Submit additional evidence while in `EvidenceRequested`; re-fires the agent.
     /// @dev Records only the opaque evidence ref (R3/R4) and returns to UnderReview.
-    function submitEvidence(uint256 reqId, bytes32 evidenceUri) external payable {
+    function submitEvidence(uint256 reqId, bytes32 evidenceUri) external payable nonReentrant {
         Negotiation storage n = _get(reqId);
         require(n.state == State.EvidenceRequested, "evidence: wrong state");
         n.evidenceUri = evidenceUri;
@@ -250,7 +274,7 @@ contract CoverageNegotiation is Ownable, IAgentRequesterHandler {
 
     /// @notice Appeal a denial; re-fires the agent. Valid only from `Denied`.
     /// @dev Marks the negotiation Appealed transiently then UnderReview via _fireAgent.
-    function appeal(uint256 reqId, bytes32 evidenceUri) external payable {
+    function appeal(uint256 reqId, bytes32 evidenceUri) external payable nonReentrant {
         Negotiation storage n = _get(reqId);
         require(n.state == State.Denied, "appeal: not Denied");
         n.evidenceUri = evidenceUri;
@@ -279,9 +303,14 @@ contract CoverageNegotiation is Ownable, IAgentRequesterHandler {
     }
 
     /// @notice Withdraw a contract from any pre-`Settled` state.
+    /// @dev Clears any in-flight agent request mapping so a late platform callback can
+    ///      never mutate a withdrawn negotiation (its `requestId` no longer resolves —
+    ///      the callback reverts at the unknown-request guard) and stale `requestId`
+    ///      bookkeeping cannot collide with a future request.
     function withdraw(uint256 reqId) external {
         Negotiation storage n = _get(reqId);
         require(n.state != State.Settled && n.state != State.Withdrawn, "withdraw: terminal");
+        _clearRequest(n);
         n.state = State.Withdrawn;
         emit Withdrawn(reqId);
     }
@@ -402,6 +431,13 @@ contract CoverageNegotiation is Ownable, IAgentRequesterHandler {
 
         uint256 fee = platform.getRequestDeposit() + agentReward;
 
+        // Effects before interaction (CEI): mark UnderReview + set the deadline first,
+        // so any reentrant lifecycle call sees a non-firing state and reverts. The
+        // public entry points are also `nonReentrant` for defense in depth.
+        n.rulingDeadline = block.timestamp + rulingTimeout;
+        n.state = State.UnderReview;
+
+        // Interaction: fire the native Somnia agent, forwarding the per-request fee (R9).
         uint256 requestId = platform.createRequest{value: fee}(
             agentId,
             address(this),
@@ -409,9 +445,8 @@ contract CoverageNegotiation is Ownable, IAgentRequesterHandler {
             payload
         );
 
+        // Post-interaction bookkeeping that needs the returned id.
         n.pendingRequestId = requestId;
-        n.rulingDeadline = block.timestamp + rulingTimeout;
-        n.state = State.UnderReview;
         _requestToNegotiation[requestId] = reqId;
 
         emit RulingRequested(reqId, requestId, fee);

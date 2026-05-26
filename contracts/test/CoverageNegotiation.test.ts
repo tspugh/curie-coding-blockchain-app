@@ -228,4 +228,47 @@ describe("CoverageNegotiation", () => {
     await expect(contract.getNegotiation(999n)).to.be.revertedWith("unknown contract");
     expect(await platform.createRequestCalls()).to.equal(0n);
   });
+
+  it("T7: security hardening — CEI (state set before external call), withdraw clears in-flight request, withdrawFunds owner-gated", async () => {
+    const { platform, contract } = await deploy();
+    const target = await contract.getAddress();
+    const [owner, attacker] = await ethers.getSigners();
+
+    // --- CEI: the negotiation is already UnderReview WHILE createRequest runs ---
+    let reqId = await createDefault(contract);
+    await makeReady(contract, reqId);
+    await contract.submitDispute(reqId, INITIATOR, { value: FEE });
+    // The mock read stateOf(reqId) during createRequest; effects precede interaction.
+    expect(await platform.observedStateDuringCreate()).to.equal(Number(State.UnderReview));
+
+    // --- withdraw during UnderReview clears the pending request; a late ruling
+    //     callback can no longer mutate the (now Withdrawn) negotiation ---
+    const staleRid = await platform.lastRequestId();
+    await expect(contract.withdraw(reqId)).to.emit(contract, "Withdrawn").withArgs(reqId);
+    expect(await contract.stateOf(reqId)).to.equal(State.Withdrawn);
+    // The cleared mapping makes the requestId unknown -> callback reverts, no mutation.
+    await expect(platform.triggerRuling(target, staleRid, "approve", 1n)).to.be.revertedWith(
+      "callback: unknown request"
+    );
+    expect(await contract.stateOf(reqId)).to.equal(State.Withdrawn);
+
+    // --- withdrawFunds: owner-only, bounded by balance, transfers out ---
+    // The contract already holds the dispute fee SURPLUS (submitDispute forwarded only
+    // the deposit and kept the rest) — exactly the float withdrawFunds reclaims (R9).
+    await owner.sendTransaction({ to: target, value: ethers.parseEther("1") });
+    const bal = await ethers.provider.getBalance(target);
+    expect(bal).to.be.greaterThan(ethers.parseEther("1"));
+
+    await expect(
+      contract.connect(attacker).withdrawFunds(attacker.address, 1n)
+    ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
+    await expect(
+      contract.withdrawFunds(owner.address, bal + 1n)
+    ).to.be.revertedWith("funds: insufficient");
+
+    await expect(contract.withdrawFunds(owner.address, bal))
+      .to.emit(contract, "FundsWithdrawn")
+      .withArgs(owner.address, bal);
+    expect(await ethers.provider.getBalance(target)).to.equal(0n);
+  });
 });
