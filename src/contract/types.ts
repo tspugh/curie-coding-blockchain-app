@@ -9,6 +9,7 @@
  * the backend contract is self-contained.
  */
 import type {
+  CoverageEvent,
   CoverageEventListener,
   Negotiation,
   NegotiationView,
@@ -39,6 +40,16 @@ export interface SubmitPositionParams {
   /** Optional new note hash to commit alongside the position (or ZERO_HASH). */
   readonly contentHash: string;
   readonly uri: string;
+}
+
+/** Filter for {@link CoverageNegotiationClient.getEvents} (historical reconstruction). */
+export interface EventFilter {
+  /** Restrict to a single contract (the indexed `reqId` topic). */
+  readonly reqId?: bigint;
+  /** First block to scan (real backend). Defaults to 0 / genesis. */
+  readonly fromBlock?: number;
+  /** Last block to scan (real backend). Defaults to "latest". */
+  readonly toBlock?: number;
 }
 
 /**
@@ -94,6 +105,14 @@ export interface CoverageNegotiationClient {
   count(): Promise<bigint>;
 
   // --- Events (R16) ---
+
+  /**
+   * Reconstruct the historical event timeline (R16/T10). The real backend reads
+   * it from `eth_getLogs` (`queryFilter`); the simulated backend returns its
+   * recorded in-memory log. Events are returned in chronological order and may
+   * be narrowed by {@link EventFilter} (e.g. a single `reqId`).
+   */
+  getEvents(filter?: EventFilter): Promise<CoverageEvent[]>;
 
   /**
    * Subscribe to negotiation events. Returns an unsubscribe handle. The

@@ -31,6 +31,7 @@ import {
 import type {
   CoverageNegotiationClient,
   CreateContractParams,
+  EventFilter,
   SubmitPositionParams,
 } from "./types.js";
 
@@ -81,6 +82,8 @@ export class SimulatedBackend implements CoverageNegotiationClient {
   private readonly negotiations = new Map<bigint, SimNegotiation>();
   private readonly requestToReq = new Map<bigint, bigint>();
   private readonly listeners = new Set<CoverageEventListener>();
+  /** Recorded event log, in emission order — the simulated `eth_getLogs` (R16/T10). */
+  private readonly history: CoverageEvent[] = [];
   private nextId = 1n;
   private nextRequestId = 1n;
   private readonly agent: Required<SimulatedAgentOptions>;
@@ -264,6 +267,14 @@ export class SimulatedBackend implements CoverageNegotiationClient {
   // Events
   // ---------------------------------------------------------------------
 
+  async getEvents(filter: EventFilter = {}): Promise<CoverageEvent[]> {
+    // The recorded log IS the simulated chain history (no blocks to scan).
+    const all = filter.reqId === undefined
+      ? this.history
+      : this.history.filter((e) => e.reqId === filter.reqId);
+    return all.map((e) => ({ ...e }));
+  }
+
   subscribe(listener: CoverageEventListener): Unsubscribe {
     this.listeners.add(listener);
     return () => {
@@ -390,6 +401,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
   }
 
   private emit(event: CoverageEvent): void {
+    this.history.push(event);
     for (const l of this.listeners) l(event);
   }
 }

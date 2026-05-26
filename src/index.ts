@@ -37,6 +37,7 @@ export {
   type CoverageNegotiationClient,
   type CreateContractParams,
   type SubmitPositionParams,
+  type EventFilter,
   type CoverageClientOptions,
   type SimulatedAgentOptions,
   type RealBackendOptions,

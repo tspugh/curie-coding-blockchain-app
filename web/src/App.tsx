@@ -27,12 +27,31 @@ export function App() {
     client.profiles.getActiveProfile().id,
   );
 
-  // Subscribe once for the lifetime of the app (R16). Every backend event
-  // appends to the log, which is what drives live status everywhere.
+  // Seed the timeline from history (eth_getLogs — R16/T10), then keep it live via
+  // subscription. Historical events are deduped by tx hash so a real-backend event
+  // that appears in both the backfill and the live stream isn't double-counted;
+  // simulated events (no tx hash) only ever arrive live, so they pass through.
   useEffect(() => {
-    const unsubscribe = client.negotiation.subscribe((e) => {
-      setEvents((prev) => [...prev, e]);
-    });
+    const seen = new Set<string>();
+    const keyOf = (e: CoverageEvent): string | null =>
+      e.txHash ? `${e.txHash}:${e.name}:${e.reqId.toString()}` : null;
+    const add = (incoming: readonly CoverageEvent[], front: boolean): void => {
+      setEvents((prev) => {
+        const fresh = incoming.filter((e) => {
+          const k = keyOf(e);
+          if (k === null) return true;
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+        if (fresh.length === 0) return prev;
+        return front ? [...fresh, ...prev] : [...prev, ...fresh];
+      });
+    };
+
+    const unsubscribe = client.negotiation.subscribe((e) => add([e], false));
+    // Backfill the historical timeline (prepended, chronological).
+    void client.negotiation.getEvents().then((history) => add(history, true));
     return unsubscribe;
   }, []);
 

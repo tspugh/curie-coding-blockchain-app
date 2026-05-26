@@ -16,6 +16,7 @@ import { ethers } from "ethers";
 import {
   type CoverageEvent,
   type CoverageEventListener,
+  type CoverageEventName,
   type Negotiation,
   type NegotiationView,
   type Position,
@@ -28,6 +29,7 @@ import { COVERAGE_NEGOTIATION_ABI } from "./abi.js";
 import type {
   CoverageNegotiationClient,
   CreateContractParams,
+  EventFilter,
   SubmitPositionParams,
 } from "./types.js";
 
@@ -215,108 +217,105 @@ export class RealBackend implements CoverageNegotiationClient {
   // Events (provider log subscriptions — R16)
   // ---------------------------------------------------------------------
 
+  /** Every event name the contract emits — the set scanned by getEvents/subscribe. */
+  private static readonly EVENT_NAMES = [
+    "ContractCreated", "ContentCommitted", "PositionSubmitted", "ContractReady",
+    "DisputeSubmitted", "RulingRequested", "Ruled", "RulingTimedOut",
+    "FeedbackPosted", "EvidenceSubmitted", "Appealed", "Settled", "Withdrawn",
+  ] as const;
+
+  async getEvents(filter: EventFilter = {}): Promise<CoverageEvent[]> {
+    const from = filter.fromBlock ?? 0;
+    const to = filter.toBlock ?? "latest";
+    const collected: Array<{ ev: CoverageEvent; block: number; index: number }> = [];
+
+    for (const name of RealBackend.EVENT_NAMES) {
+      // reqId is the first (indexed) topic of every event, so the named filter
+      // narrows the `eth_getLogs` query to a single contract when requested.
+      const make = this.contract.filters[name] as unknown as (
+        reqId?: bigint,
+      ) => ethers.DeferredTopicFilter;
+      const topic = filter.reqId === undefined ? make() : make(filter.reqId);
+      const logs = await this.contract.queryFilter(topic, from, to);
+      for (const log of logs) {
+        const el = log as ethers.EventLog;
+        collected.push({
+          ev: this.buildEvent(name, [...el.args], {
+            txHash: el.transactionHash,
+            blockNumber: el.blockNumber,
+          }),
+          block: el.blockNumber,
+          index: el.index,
+        });
+      }
+    }
+    // Chronological order: block, then log index within a block.
+    collected.sort((a, b) => a.block - b.block || a.index - b.index);
+    return collected.map((c) => c.ev);
+  }
+
   subscribe(listener: CoverageEventListener): Unsubscribe {
     const handlers: Array<{ event: string; fn: (...args: unknown[]) => void }> = [];
 
-    const on = (event: string, build: (args: unknown[], log: ethers.EventLog) => CoverageEvent): void => {
+    for (const name of RealBackend.EVENT_NAMES) {
       const fn = (...args: unknown[]): void => {
-        // ethers passes the EventLog as the final argument.
-        const log = args[args.length - 1] as ethers.EventLog;
-        listener(build(args, log));
+        // ethers passes a ContractEventPayload (with `.log`) as the final arg;
+        // older shapes pass the EventLog directly. Handle both.
+        const last = args[args.length - 1] as { log?: ethers.EventLog } & ethers.EventLog;
+        const log = (last?.log ?? last) as ethers.EventLog;
+        listener(this.buildEvent(name, args.slice(0, -1), {
+          txHash: log.transactionHash,
+          blockNumber: log.blockNumber,
+        }));
       };
-      void this.contract.on(event, fn);
-      handlers.push({ event, fn });
-    };
-
-    const meta = (log: ethers.EventLog): { txHash: string; blockNumber: number } => ({
-      txHash: log.transactionHash,
-      blockNumber: log.blockNumber,
-    });
-
-    on("ContractCreated", (a, log) => ({
-      name: "ContractCreated",
-      reqId: a[0] as bigint,
-      initiatorId: a[1] as bigint,
-      destinationId: a[2] as bigint,
-      drugRef: a[3] as string,
-      priceFloor: a[4] as bigint,
-      priceCeil: a[5] as bigint,
-      ...meta(log),
-    }));
-    on("ContentCommitted", (a, log) => ({
-      name: "ContentCommitted",
-      reqId: a[0] as bigint,
-      contentHash: a[1] as string,
-      uri: a[2] as string,
-      ...meta(log),
-    }));
-    on("PositionSubmitted", (a, log) => ({
-      name: "PositionSubmitted",
-      reqId: a[0] as bigint,
-      partyId: a[1] as bigint,
-      proposedAmount: a[2] as bigint,
-      ...meta(log),
-    }));
-    on("ContractReady", (a, log) => ({ name: "ContractReady", reqId: a[0] as bigint, ...meta(log) }));
-    on("DisputeSubmitted", (a, log) => ({
-      name: "DisputeSubmitted",
-      reqId: a[0] as bigint,
-      byPartyId: a[1] as bigint,
-      ...meta(log),
-    }));
-    on("RulingRequested", (a, log) => ({
-      name: "RulingRequested",
-      reqId: a[0] as bigint,
-      requestId: a[1] as bigint,
-      fee: a[2] as bigint,
-      ...meta(log),
-    }));
-    on("Ruled", (a, log) => ({
-      name: "Ruled",
-      reqId: a[0] as bigint,
-      requestId: a[1] as bigint,
-      verdict: a[2] as string,
-      receiptId: a[3] as bigint,
-      ...meta(log),
-    }));
-    on("RulingTimedOut", (a, log) => ({
-      name: "RulingTimedOut",
-      reqId: a[0] as bigint,
-      requestId: a[1] as bigint,
-      ...meta(log),
-    }));
-    on("FeedbackPosted", (a, log) => ({
-      name: "FeedbackPosted",
-      reqId: a[0] as bigint,
-      msgHash: a[1] as string,
-      uri: a[2] as string,
-      ...meta(log),
-    }));
-    on("EvidenceSubmitted", (a, log) => ({
-      name: "EvidenceSubmitted",
-      reqId: a[0] as bigint,
-      evidenceUri: a[1] as string,
-      ...meta(log),
-    }));
-    on("Appealed", (a, log) => ({
-      name: "Appealed",
-      reqId: a[0] as bigint,
-      evidenceUri: a[1] as string,
-      ...meta(log),
-    }));
-    on("Settled", (a, log) => ({
-      name: "Settled",
-      reqId: a[0] as bigint,
-      agreedAmount: a[1] as bigint,
-      ...meta(log),
-    }));
-    on("Withdrawn", (a, log) => ({ name: "Withdrawn", reqId: a[0] as bigint, ...meta(log) }));
+      void this.contract.on(name, fn);
+      handlers.push({ event: name, fn });
+    }
 
     this.attached.set(listener, handlers);
     return () => {
       for (const h of handlers) void this.contract.off(h.event, h.fn);
       this.attached.delete(listener);
     };
+  }
+
+  /** Decode a contract event's positional args into a typed {@link CoverageEvent}. */
+  private buildEvent(
+    name: CoverageEventName,
+    a: readonly unknown[],
+    meta: { txHash: string; blockNumber: number },
+  ): CoverageEvent {
+    const reqId = a[0] as bigint;
+    switch (name) {
+      case "ContractCreated":
+        return { name, reqId, initiatorId: a[1] as bigint, destinationId: a[2] as bigint, drugRef: a[3] as string, priceFloor: a[4] as bigint, priceCeil: a[5] as bigint, ...meta };
+      case "ContentCommitted":
+        return { name, reqId, contentHash: a[1] as string, uri: a[2] as string, ...meta };
+      case "PositionSubmitted":
+        return { name, reqId, partyId: a[1] as bigint, proposedAmount: a[2] as bigint, ...meta };
+      case "ContractReady":
+        return { name, reqId, ...meta };
+      case "DisputeSubmitted":
+        return { name, reqId, byPartyId: a[1] as bigint, ...meta };
+      case "RulingRequested":
+        return { name, reqId, requestId: a[1] as bigint, fee: a[2] as bigint, ...meta };
+      case "Ruled":
+        return { name, reqId, requestId: a[1] as bigint, verdict: a[2] as string, receiptId: a[3] as bigint, ...meta };
+      case "RulingTimedOut":
+        return { name, reqId, requestId: a[1] as bigint, ...meta };
+      case "FeedbackPosted":
+        return { name, reqId, msgHash: a[1] as string, uri: a[2] as string, ...meta };
+      case "EvidenceSubmitted":
+        return { name, reqId, evidenceUri: a[1] as string, ...meta };
+      case "Appealed":
+        return { name, reqId, evidenceUri: a[1] as string, ...meta };
+      case "Settled":
+        return { name, reqId, agreedAmount: a[1] as bigint, ...meta };
+      case "Withdrawn":
+        return { name, reqId, ...meta };
+      default:
+        throw new Error(`unknown event ${name}`);
+    }
   }
 
   async close(): Promise<void> {

@@ -144,6 +144,26 @@ async function main() {
   const ruled = events.find((e) => e.name === "Ruled");
   check("Ruled event carries the agent verdict + receipt", ruled?.verdict === "approve" && ruled?.receiptId === 123n);
 
+  // --- T10/R16: reconstruct the timeline from eth_getLogs, independently ---
+  // A FRESH backend with no live subscription rebuilds the full history from logs.
+  const fresh = new RealBackend(wallet, { contractAddress: contractAddr });
+  const history = await fresh.getEvents({ reqId });
+  const histNames = history.map((e) => e.name);
+  check(
+    `getEvents reconstructs the timeline from eth_getLogs (R16/T10): [${histNames.join(", ")}]`,
+    ["ContractCreated", "PositionSubmitted", "PositionSubmitted", "ContractReady", "DisputeSubmitted", "RulingRequested", "Ruled", "Settled"].every(
+      (n, i, arr) => histNames.filter((x) => x === n).length >= arr.filter((y) => y === n).length,
+    ),
+  );
+  check(
+    "reconstructed events are chronological with block metadata",
+    history.length >= 8 && history.every((e) => typeof e.blockNumber === "number") &&
+      history.every((e, i) => i === 0 || e.blockNumber >= history[i - 1].blockNumber),
+  );
+  const ruledFromLogs = history.find((e) => e.name === "Ruled");
+  check("reconstructed Ruled carries verdict + receipt", ruledFromLogs?.verdict === "approve" && ruledFromLogs?.receiptId === 123n);
+  await fresh.close();
+
   unsub();
   await real.close();
 
@@ -165,6 +185,13 @@ async function main() {
   simStates.push(await sim.stateOf(sreqId));
   await sim.settle(sreqId, 1500n);
   simStates.push(await sim.stateOf(sreqId));
+
+  // The simulated backend exposes the same getEvents() reconstruction (R16/T10).
+  const simHistory = await sim.getEvents({ reqId: sreqId });
+  check(
+    `simulated getEvents returns the recorded timeline: [${simHistory.map((e) => e.name).join(", ")}]`,
+    simHistory.length >= 6 && simHistory[0]?.name === "ContractCreated" && simHistory.at(-1)?.name === "Settled",
+  );
   await sim.close();
 
   check(
