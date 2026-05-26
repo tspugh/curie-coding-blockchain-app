@@ -17,7 +17,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "web:dev": "vite",
     "web:build": "vite build",
-    "web:preview": "vite preview --port 4173"
+    "web:preview": "vite preview --port 4173",
+    "test:e2e": "bash web/tests/agent-browser/run.sh"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

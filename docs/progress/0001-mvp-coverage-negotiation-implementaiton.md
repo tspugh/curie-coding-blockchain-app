@@ -58,6 +58,14 @@ behavior via Context7 (`/websites/somnia_network`); keep all doc writing inside 
   - **Wiring:** root `vite.config.ts` (`root: 'web'`, `@lib` alias → built `dist/index.js`, `define: { 'process.env': '{}' }`); own `web/tsconfig.json`. Added react/react-dom + vite devtooling; scripts `web:dev` / `web:build` / `web:preview`. The lib consumes `dist/`, so **`npm run build` must run before the web app** (documented).
   - **Verified:** `npm run build` (lib tsc) ✓, `cd web && npx tsc --noEmit` ✓, `npm run web:build` ✓ (one >500kB chunk = bundled ethers; acceptable for v0), `web:preview` serves over HTTP ✓.
 
-### Next iterations
-- **agent-browser coarse AAA tests** (focus #3, https://github.com/vercel-labs/agent-browser) driving the running SPA: create → both positions → dispute → ruling → settle, plus profile-switch + no-PHI-in-DOM checks. Build the lib + web bundle, serve `web:preview`, point agent-browser at it.
-- Blocked on real wallet: testnet deploy + a real native-agent ruling (R9).
+- **DONE — agent-browser E2E tests (focus #3).** `web/tests/agent-browser/run.sh` + README, wired as `npm run test:e2e`. Drives the **real** UI in a real browser via [agent-browser](https://github.com/vercel-labs/agent-browser) and asserts on both the rendered DOM and the authoritative on-chain mirror (`window.__curie`). **4 coarse AAA scenarios, 16 assertions, all green:**
+  - **A — happy path (R14/R15/R5/R6/R8/R16, T8/T5):** create (note→hash only) → provider position → switch profile → payer position → `Ready` (UI badge tracks on-chain) → select verdict → dispute fires agent → auto-resolve → `Approved` → settle 3000 within band → `Settled`.
+  - **B — no PHI on-chain (R3/R4 hard invariant, T1):** committed `noteHash` verifies against the off-chain note; a unique sentinel in the note is absent from the serialized on-chain record **and** from the DOM.
+  - **C — dispute gating (R5/T3):** `submitDispute` before `Ready` reverts.
+  - **D — profiles/wallet (R12/R13/T9):** profile switch changes active party id (2↔1); one shared wallet address across switches; simulated mode shown.
+  - The runner self-serves (builds lib+web, `web:preview`, waits, tears down via trap) or tests an already-served `URL` (`SKIP_SERVE=1`); exits non-zero on failure (CI-ready).
+  - **Environment notes (captured for reproduction):** agent-browser installed to a user npm prefix (`/usr` is read-only here); Linux **ARM64** has no Chrome-for-Testing build, so Chromium comes from `npx playwright install chromium` and is passed via `CHROME_PATH`; `--no-sandbox` is added automatically for the container.
+
+### Status vs SPEC-0001 pass/fail (§6)
+- ✅ Contract compiles + passes Hardhat tests (T1–T6). ✅ Library one-interface/two-mode (R11). ✅ Web app: all required views/actions (R14/R15) + profile switch + wallet/mode display (R12/R13). ✅ no-PHI invariant enforced + asserted (R4). ✅ positions-before-dispute (R5) + dispute fires agent (R6) + settle-within-band (R8). ✅ E2E suite (T8/T9 + T1/T3/T5 at the UI boundary).
+- ⛔ **Remaining, blocked on a funded wallet only:** deploy `CoverageNegotiation.sol` to Somnia testnet (chain 50312); the real-wallet half of T7 (R11) and one **real** native-agent ruling with a viewable receipt + per-request fee on execution (R9); T10 (`eth_getLogs` timeline reconstruction over real RPC). These are the "stop only when you can go no further without a real wallet" boundary.
