@@ -12,7 +12,7 @@ folder layout, architectural constraints, and the cross-repo policy.
 ├── LICENSE        # proprietary; all rights reserved
 ├── README.md
 ├── .mcp.json      # Context7 MCP server (anonymous; live Somnia docs via /websites/somnia_network)
-├── .claude/       # tooling: context7-mcp skill (how/when to use the Context7 MCP)
+├── .claude/       # tooling: context7-mcp (Context7 docs) + spec-author (docs/specs/ standard)
 ├── src/           # TypeScript source. Entry: src/index.ts; Somnia core in src/somnia/.
 └── docs/
     ├── specs/          # what to build (see below)
@@ -46,16 +46,12 @@ These three folders are deliberately distinct. Put content in the right one.
 
 ### `docs/specs/` — build specs (the source of truth for what to build)
 
-Fleshed-out specifications for what an agent needs to build. Each spec should
-cover:
-
-- **Requirements** — the general and functional requirements for the feature.
-- **Test cases** — what needs to be tested (the cases to cover, not the
-  implementation of the tests).
-- **Acceptance criteria** — the conditions that mark the work complete.
-
-Specs follow a **standard structure that will be enforced by a skill**
-(forthcoming — to be defined). Until that skill lands, keep the sections above.
+Fleshed-out specifications for what an agent needs to build, one per file
+(`NNNN-kebab-title.md`). Every spec follows the standard structure enforced by the
+**`spec-author` skill** (`.claude/skills/spec-author/`): summary & user story,
+requirements, technical documentation, deliverables, test cases, pass/fail criteria,
+out of scope, and open questions. Invoke that skill whenever writing or reviewing a
+spec. First spec: [`specs/0001-mvp0-coverage-negotiation.md`](specs/0001-mvp0-coverage-negotiation.md).
 
 ### `docs/research/` — research (what we haven't decided yet)
 

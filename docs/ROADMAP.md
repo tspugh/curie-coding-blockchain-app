@@ -47,11 +47,11 @@ in public data and kept distinct from the coverage ruling.
 
 - **Agent layer:** `LLM Parse Website` `ExtractString(... options=["approve","deny","need_more_evidence"] ...)` over a public formulary/evidence URL; `inferToolsChat` for multi-step reasoning. Each call yields a public receipt.
 - **State + settlement:** the coverage-exception contract on Somnia testnet (chain `50312`, `https://api.infra.testnet.somnia.network/`); identity via `somnia-agent-kit` `AgentRegistry`.
-- **Monitoring / contract browser:** JSON-RPC for watching the contract and its engagements with external parties — `eth_call`, `eth_getLogs`, `eth_subscribe` (`logs` / `newHeads`, plus Somnia's `somnia_finishedTransactions` / `somnia_watch`), `eth_getTransactionReceipt`, `realtime_sendRawTransaction`. Full list in [`mvp0-plan.md`](./mvp0-plan.md).
+- **Monitoring / contract browser:** JSON-RPC for watching the contract and its engagements with external parties — `eth_call`, `eth_getLogs`, `eth_subscribe` (`logs` / `newHeads`, plus Somnia's `somnia_finishedTransactions` / `somnia_watch`), `eth_getTransactionReceipt`, `realtime_sendRawTransaction`. Full list in [`specs/0001-mvp0-coverage-negotiation.md`](./specs/0001-mvp0-coverage-negotiation.md).
 
 ## Path to v0
 
-The detailed v0 spec is in [`mvp0-plan.md`](./mvp0-plan.md). v0 is a **deterministic
+The detailed v0 spec is in [`specs/0001-mvp0-coverage-negotiation.md`](./specs/0001-mvp0-coverage-negotiation.md). v0 is a **deterministic
 skeleton + one real on-chain agent call**: the contract lifecycle, escrow, the
 de-identified-note commitment, and a synthetic exchange run reliably, with a single
 genuine native-agent ruling (Parse Website over a public formulary fixture) as the
