@@ -58,6 +58,22 @@ export {
   addressUrl,
 } from "./config/networks.js";
 
+// --- Re-exports: off-chain party actors + orchestrator (§4) ---
+export {
+  PartyAgent,
+  type PartyAgentDeps,
+  type OpenContractInput,
+  type AgentClient,
+  createProviderAgent,
+  createPayerAgent,
+} from "./agents/index.js";
+
+export {
+  runNegotiation,
+  type NegotiationScript,
+  type NegotiationTranscript,
+} from "./orchestrator.js";
+
 import {
   createCoverageClient,
   type CoverageClientOptions,

@@ -19,7 +19,8 @@
     "web:build": "vite build",
     "web:preview": "vite preview --port 4173",
     "test:e2e": "bash web/tests/agent-browser/run.sh",
-    "test:real-local": "bash scripts/real-backend-localnode.sh"
+    "test:real-local": "bash scripts/real-backend-localnode.sh",
+    "demo:orchestrator": "node scripts/orchestrator-demo.mjs"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
