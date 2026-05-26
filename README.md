@@ -13,7 +13,7 @@ responsibility) off-chain; the patient approves; and a smart contract escrows an
 
 > This is the **application repository**. The research, specs, and strategy that
 > inform it live in the surrounding **spec repository** one level up
-> (`curie-coding-blockchain`). See [AGENTS.md](./AGENTS.md) for the boundary
+> (`curie-coding-blockchain`). See [CLAUDE.md](./CLAUDE.md) for the boundary
 > between the two and the rules for working across it.
 
 ## Why this needs both an agent and a blockchain
@@ -76,8 +76,7 @@ layered on.
 
 ```
 .
-├── AGENTS.md              # tech constraints + cross-repo policy — read first
-├── CLAUDE.md              # working philosophy + folder layout
+├── CLAUDE.md              # working philosophy, layout, constraints, cross-repo policy — read first
 ├── LICENSE                # proprietary; all rights reserved
 ├── .mcp.json              # Context7 MCP server (live Somnia docs)
 ├── .env.example

@@ -1,17 +1,14 @@
 # CLAUDE.md
 
 Guidance for Claude Code sessions in the Curie Claims Protocol **application
-repo**. This file covers working philosophy and the folder layout. **Tech stack,
-architectural constraints, and the cross-repo policy live in
-[`AGENTS.md`](AGENTS.md) — read it first;** if anything here contradicts it,
-`AGENTS.md` wins.
+repo**. It covers the working philosophy, folder layout, architectural
+constraints, and the cross-repo policy.
 
 ## Layout
 
 ```
 .
-├── AGENTS.md      # tech stack, architectural constraints, cross-repo policy (authoritative)
-├── CLAUDE.md      # this file — working philosophy + folder layout
+├── CLAUDE.md      # this file — working philosophy, layout, constraints, cross-repo policy
 ├── LICENSE        # proprietary; all rights reserved
 ├── README.md
 ├── .mcp.json      # Context7 MCP server (anonymous; live Somnia docs via /websites/somnia_network)
@@ -22,6 +19,26 @@ architectural constraints, and the cross-repo policy live in
     ├── research/       # what we're still researching (see below)
     └── documentation/  # copied-down hard API/code docs (see below)
 ```
+
+## Architectural constraints
+
+- **TypeScript only.** No polyglot backend.
+- **No REST.** Reach the chain via RPC, signed transactions, view calls, and
+  event subscriptions through `somnia-agent-kit`. Propose any non-chain interface
+  (gRPC, WebSocket, tRPC, queue) before building.
+- **Chain-native first.** Reads come from contract calls or event streams; writes
+  from signed transactions. Off-chain glue orchestrates; it is not the system of
+  record.
+- **No clinical data on-chain.** Only opaque IDs, hashes, amounts, and settlement.
+- Prefer `somnia-agent-kit` abstractions over hand-rolling ethers/viem.
+
+## Cross-repo policy
+
+This app repo is nested inside an external spec/research repo
+(`curie-coding-blockchain`). **Do not copy proprietary content from that repo
+into this one without a human in the loop** — except documentation a human
+explicitly asks to be authored here. Enforced by the `external-repo-policy`
+skill, which lives in the spec repo.
 
 ## The `docs/` tree — what each folder holds
 
@@ -46,8 +63,8 @@ Information researched regarding what we're going to build, before it has been
 decided. Open-ended notes, options, comparisons, and findings.
 
 This folder **may include small sub-portions copied from the original/external
-research** — but only with a **human in the loop**, per the cross-repo policy in
-[`AGENTS.md`](AGENTS.md). Nothing has been copied in yet.
+research** — but only with a **human in the loop**, per the
+[Cross-repo policy](#cross-repo-policy) above. Nothing has been copied in yet.
 
 ### `docs/documentation/` — hard reference docs (copied down)
 
