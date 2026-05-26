@@ -1,10 +1,13 @@
-# Curie Claims Protocol
+# Curie
 
-**Agentic medical-claims negotiation and settlement on [Somnia](https://somnia.network).**
+**Patient-facing medical bill split & instant settlement on [Somnia](https://somnia.network).**
 
-Provider and payer agents negotiate ICD-10 claim support, anchor audit
-commitments on Somnia, and settle approved claims — **without putting PHI
-on-chain**. Built for the [Somnia Agentathon](https://www.encodeclub.com/programmes/agentathon)
+A patient ↔ provider ↔ insurer network. A provider posts a bill; an insurer
+agent computes the coverage split (patient responsibility vs. plan
+responsibility) off-chain; the patient approves; and a smart contract escrows and
+**atomically splits the payment to the provider in one instant transaction** —
+**without putting any clinical data on-chain**. Built for the
+[Somnia Agentathon](https://www.encodeclub.com/programmes/agentathon)
 (Encode Club × Somnia) in TypeScript on top of
 [`somnia-agent-kit`](https://github.com/xuanbach0212/somnia-agent-kit).
 
@@ -15,21 +18,24 @@ on-chain**. Built for the [Somnia Agentathon](https://www.encodeclub.com/program
 
 ## Why this needs both an agent and a blockchain
 
-- **Why agents** — provider/payer claim adjudication is becoming machine-to-machine;
-  the negotiation loop (propose → review → request evidence → counter → agree) is
-  exactly what autonomous agents are good at.
+- **Why agents** — payer↔provider settlement is becoming machine-to-machine. An
+  insurer agent computes the coverage split, a provider agent reconciles it, and
+  a patient agent can auto-approve under a spend cap — coordination that
+  autonomous agents handle well.
 - **Why blockchain** — not for storing records, but for neutral shared state,
-  agent identity, tamper-evident audit, settlement, and resilience against a
-  single clearinghouse outage.
-- **Why Somnia** — the demo is rapid agent-to-agent negotiation with state
+  instant programmable settlement, tamper-evident audit, and resilience against a
+  single clearinghouse being the whole country's payment rail.
+- **Why Somnia** — the demo is an instant three-way payment split with state
   updates fast enough to feel interactive. Somnia's high throughput and
   sub-second finality are used as a real ingredient, not just a deployment target.
 
 ## Privacy boundary (hard rule)
 
-PHI never goes on-chain. Only **hashes, lifecycle state, agent addresses,
-timestamps, settlement amounts, and signatures/attestations** are anchored.
-Clinical bundles, rationale, and policy text stay off-chain.
+No clinical data ever goes on-chain. On-chain you see only **opaque bill IDs
+(hashes), amounts, the computed split, pseudonymous participant addresses, and
+approval/settlement events**. The bill's clinical context and the benefit-rule
+reasoning behind a split stay **off-chain**. The chain moves money and records
+state; it never sees what the care was for.
 
 ## Somnia networks
 
@@ -54,8 +60,8 @@ npm run dev            # runs src/index.ts under tsx, connects to Somnia
 ```
 
 `npm run dev` connects to the configured network and prints a connection
-summary plus the count of registered agents — the smoke test that chain
-plumbing works before protocol logic is layered on.
+summary — the smoke test that chain plumbing works before settlement logic is
+layered on.
 
 ## Scripts
 
@@ -73,6 +79,7 @@ plumbing works before protocol logic is layered on.
 ├── AGENTS.md              # tech constraints + cross-repo policy — read first
 ├── CLAUDE.md              # working philosophy + folder layout
 ├── LICENSE                # proprietary; all rights reserved
+├── .mcp.json              # Context7 MCP server (live Somnia docs)
 ├── .env.example
 ├── src/
 │   ├── index.ts           # entry point: connect to Somnia, print summary
@@ -96,7 +103,7 @@ plumbing works before protocol logic is layered on.
   and event subscriptions through `somnia-agent-kit`.
 - **Chain-native state.** Contracts are the system of record; off-chain code
   orchestrates, it does not replace.
-- **No PHI on-chain.** Pointers, hashes, permissions, and settlement only.
+- **No clinical data on-chain.** Opaque IDs, hashes, amounts, and settlement only.
 
 ## License
 
