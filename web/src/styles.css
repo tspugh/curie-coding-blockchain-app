@@ -1,0 +1,323 @@
+/* Minimal single stylesheet for the Curie MVP0 UI. Framework-light by design. */
+
+:root {
+  --bg: #0f1115;
+  --panel: #1a1d24;
+  --panel-2: #232732;
+  --border: #2c313d;
+  --text: #e6e8ee;
+  --muted: #9aa3b2;
+  --accent: #4f8cff;
+  --danger: #e2574c;
+  --ok: #3fbf7f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  background: var(--panel-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.app {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 16px 48px;
+}
+
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 10;
+}
+.brand {
+  font-weight: 700;
+}
+.nav {
+  display: flex;
+  gap: 8px;
+}
+.wallet {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: right;
+}
+.wallet-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.wallet .label {
+  color: var(--muted);
+  font-size: 12px;
+}
+.active-party {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* Buttons + inputs */
+button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 12px;
+  cursor: pointer;
+  font-size: 14px;
+}
+button:hover {
+  border-color: var(--accent);
+}
+button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+input,
+textarea,
+select {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-size: 14px;
+  font-family: inherit;
+}
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Views */
+.main {
+  padding-top: 20px;
+}
+.view-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.view-head h1 {
+  font-size: 20px;
+  margin: 0;
+}
+.empty {
+  color: var(--muted);
+}
+
+/* Table */
+table.contracts {
+  width: 100%;
+  border-collapse: collapse;
+}
+table.contracts th,
+table.contracts td {
+  text-align: left;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+}
+table.contracts th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+tr.row-link {
+  cursor: pointer;
+}
+tr.row-link:hover {
+  background: var(--panel);
+}
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.badge.mode {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.badge.state {
+  font-weight: 600;
+}
+.badge.state.s-4 { /* Approved */
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.badge.state.s-5 { /* Denied */
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.badge.state.s-7 { /* Settled */
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Forms */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 560px;
+}
+.form label,
+.action label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.form .row {
+  display: flex;
+  gap: 14px;
+}
+.form .row label {
+  flex: 1;
+}
+.parties {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.error {
+  color: var(--danger);
+}
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+.committed {
+  margin-top: 18px;
+  padding: 12px;
+  border: 1px solid var(--ok);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+/* Detail */
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 760px) {
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+}
+.card h2 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.facts dl {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 6px 10px;
+  margin: 0;
+}
+.facts dt {
+  color: var(--muted);
+}
+.facts dd {
+  margin: 0;
+}
+.actions .action {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.actions .action:last-child {
+  border-bottom: none;
+}
+.timeline {
+  margin-top: 16px;
+}
+.timeline ol {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.timeline li {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ev-name {
+  font-weight: 600;
+  color: var(--accent);
+  min-width: 150px;
+}
+.ev-desc {
+  color: var(--muted);
+}
+
+/* Footer */
+.footer {
+  margin-top: 32px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+}
