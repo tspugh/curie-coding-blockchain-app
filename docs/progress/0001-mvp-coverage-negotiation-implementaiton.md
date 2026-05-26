@@ -38,5 +38,15 @@ behavior via Context7 (`/websites/somnia_network`); keep all doc writing inside 
   - **Fix this iteration:** `MockAgentPlatform.sol` had been placed under `test/mocks/` (outside Hardhat's `contracts/` sources dir) so its artifact wasn't generated → moved to `contracts/contracts/mocks/` and fixed its import. Compile + all tests now green.
   - **Blocked on real wallet:** deploying to Somnia testnet and exercising a *real* native-agent ruling (R9 fee-on-execution) needs a funded key — deferred per loop instructions.
 
+- **DONE — TypeScript library layer (focus toward #2).** Framework-agnostic `src/` the UI consumes, built by a developer subagent against the finalized contract ABI:
+  - `src/types/coverage.types.ts` (State enum mirror, Negotiation/Position, Verdict union, event/view types).
+  - `src/wallet/` — `Wallet` interface + `SimulatedWallet` (no funds) and `RealWallet` (ethers signer); `createWallet` factory selects mode from `SOMNIA_WALLET_MODE` (default simulated).
+  - `src/profiles/` — single wallet, multiple profiles, switching, self-contract (R12/R13).
+  - `src/content/` — off-chain content store + keccak256 hashing + both-party verification (PHI stays off-chain — R3/R4).
+  - `src/contract/` — one `CoverageNegotiationClient` interface with two backends: `SimulatedBackend` (in-memory state machine mirroring the contract exactly + mocked agent ruling, so the whole app runs with no chain/wallet) and `RealBackend` (ethers v6 vs the deployed contract + event subscription). `createClient(config)` wires it all by mode.
+  - Added `ethers ^6.16.0`; **`npm run typecheck` passes clean** (strict/NodeNext). Same code path runs in both modes (R11) — this is what lets us go end-to-end without a funded wallet.
+  - Note: `src/index.ts` smoke-test replaced by the library public API; `src/somnia/kit.ts` left intact but unused.
+
 ### Next iterations
-- Wallet abstraction (`src/wallet/`, simulated ↔ real), off-chain content store + types, then the web app (Overview/Create/Maintain), then agent-browser tests — parallelized via subagents.
+- Web app (Overview / Create / Maintain views, profile switcher, wallet/identity/mode) consuming `createClient`. Then agent-browser coarse AAA tests. Parallelize via subagents.
+- Blocked on real wallet: testnet deploy + a real native-agent ruling (R9).
