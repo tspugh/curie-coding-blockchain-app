@@ -263,6 +263,41 @@ scenario_sample_case() {
     "$(ev "(async()=>String((await window.__curie.negotiation.getNegotiation(1n)).priceCeil))()")"
 }
 
+# ===========================================================================
+# Scenario F — both-party note verification on the website (R3, §4 deliverable)
+# ===========================================================================
+scenario_note_verify() {
+  echo "Scenario F: verify an off-chain note copy against the on-chain hash (R3)"
+
+  # Arrange: create a contract with a known note, landing on Detail.
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "VERIFY_ME canonical note body" >/dev/null
+  ab find testid create-drug fill "Adalimumab" >/dev/null
+  ab find testid create-floor fill "1000" >/dev/null
+  ab find testid create-ceil fill "5000" >/dev/null
+  ab find testid create-submit click >/dev/null
+  ab wait 300 >/dev/null
+
+  # Act + Assert: the exact copy matches the committed hash…
+  ab find testid verify-note-input fill "VERIFY_ME canonical note body" >/dev/null
+  ab find testid verify-note-submit click >/dev/null
+  ab wait 150 >/dev/null
+  case "$(ab find testid verify-note-result text | tail -1)" in
+    *matches*) echo "  ✓ matching note verifies against the on-chain hash"; PASS=$((PASS + 1));;
+    *) echo "  ✗ matching note failed to verify"; FAIL=$((FAIL + 1));;
+  esac
+
+  # …and a tampered copy does not.
+  ab find testid verify-note-input fill "tampered note body" >/dev/null
+  ab find testid verify-note-submit click >/dev/null
+  ab wait 150 >/dev/null
+  case "$(ab find testid verify-note-result text | tail -1)" in
+    *"does not match"*) echo "  ✓ tampered note is rejected"; PASS=$((PASS + 1));;
+    *) echo "  ✗ tampered note was not rejected"; FAIL=$((FAIL + 1));;
+  esac
+}
+
 # --- main -------------------------------------------------------------------
 
 start_server
@@ -274,6 +309,7 @@ scenario_no_phi;        echo
 scenario_dispute_gating; echo
 scenario_profiles;      echo
 scenario_sample_case;   echo
+scenario_note_verify;   echo
 
 echo "──────────────────────────────────────────"
 echo "agent-browser E2E: $PASS passed, $FAIL failed"

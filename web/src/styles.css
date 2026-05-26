@@ -242,6 +242,22 @@ tr.row-link:hover {
   border-radius: 8px;
   background: var(--panel);
 }
+.verify {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #2a2a2a);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.verify .ok {
+  color: var(--ok);
+  font-size: 13px;
+}
+.verify .bad {
+  color: var(--danger);
+  font-size: 13px;
+}
 
 /* Detail */
 .detail-grid {

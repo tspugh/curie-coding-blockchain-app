@@ -15,6 +15,7 @@ import {
   State,
   ZERO_HASH,
   hashContent,
+  verifyContent,
   type CoverageEvent,
   type NegotiationView,
   type Profile,
@@ -37,6 +38,10 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   const [feedback, setFeedback] = useState("");
   const [settleAmount, setSettleAmount] = useState("");
   const [verdict, setVerdict] = useState<Verdict>(getNextVerdict());
+  // R3: a party pastes their off-chain note copy to confirm it hashes to the
+  // on-chain commitment — verification happens locally; the note never leaves.
+  const [verifyText, setVerifyText] = useState("");
+  const [verifyResult, setVerifyResult] = useState<"match" | "mismatch" | null>(null);
 
   // Re-fetch the view whenever an event lands (the App's subscription drives
   // this). Filter to this contract's events for the timeline below.
@@ -169,6 +174,41 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
               contract. Switch profiles to act as the initiator or destination.
             </p>
           )}
+
+          <div className="verify">
+            <label>
+              Verify your note copy (R3)
+              <textarea
+                data-testid="verify-note-input"
+                rows={2}
+                value={verifyText}
+                onChange={(e) => {
+                  setVerifyText(e.target.value);
+                  setVerifyResult(null);
+                }}
+                placeholder="Paste your off-chain note to confirm it matches the on-chain hash."
+              />
+            </label>
+            <button
+              type="button"
+              data-testid="verify-note-submit"
+              onClick={() =>
+                setVerifyResult(verifyContent(verifyText, n.noteHash) ? "match" : "mismatch")
+              }
+            >
+              Verify
+            </button>
+            {verifyResult && (
+              <span
+                data-testid="verify-note-result"
+                className={verifyResult === "match" ? "ok" : "bad"}
+              >
+                {verifyResult === "match"
+                  ? "✓ matches the committed note hash"
+                  : "✗ does not match"}
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="card actions">
