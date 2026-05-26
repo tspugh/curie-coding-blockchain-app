@@ -236,6 +236,33 @@ scenario_profiles() {
   assert_eq "single shared wallet across profiles (R13)" "$addr1" "$addr2"
 }
 
+# ===========================================================================
+# Scenario E — the demo sample case drives the flow (SPEC-0001 §4 / §6)
+# ===========================================================================
+scenario_sample_case() {
+  echo "Scenario E: 'Load sample case' prefills and drives Create (demo-data)"
+
+  # Arrange: fresh app, open Create, load the synthetic sample case.
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid load-sample click >/dev/null
+  ab wait 200 >/dev/null
+
+  # Assert: the fixture's drug + benchmark band were prefilled.
+  assert_eq "sample drug prefilled" "Adalimumab" "$(ab get value "[data-testid=create-drug]" | tail -1)"
+  assert_eq "sample band floor prefilled" "2800" "$(ab get value "[data-testid=create-floor]" | tail -1)"
+  assert_eq "sample band ceil prefilled" "5200" "$(ab get value "[data-testid=create-ceil]" | tail -1)"
+
+  # Act + Assert: creating from the sample case opens a contract with that band.
+  ab find testid create-submit click >/dev/null
+  ab wait 300 >/dev/null
+  assert_eq "sample contract created (Open)" "0" "$(state_of 1)"
+  assert_eq "band lower bound on-chain" "2800" \
+    "$(ev "(async()=>String((await window.__curie.negotiation.getNegotiation(1n)).priceFloor))()")"
+  assert_eq "band upper bound on-chain" "5200" \
+    "$(ev "(async()=>String((await window.__curie.negotiation.getNegotiation(1n)).priceCeil))()")"
+}
+
 # --- main -------------------------------------------------------------------
 
 start_server
@@ -246,6 +273,7 @@ scenario_happy_path;    echo
 scenario_no_phi;        echo
 scenario_dispute_gating; echo
 scenario_profiles;      echo
+scenario_sample_case;   echo
 
 echo "──────────────────────────────────────────"
 echo "agent-browser E2E: $PASS passed, $FAIL failed"

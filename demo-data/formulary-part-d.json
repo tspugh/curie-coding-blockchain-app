@@ -1,0 +1,34 @@
+{
+  "_comment": "SYNTHETIC, public-formulary-shaped fixture for SPEC-0001 (R10). Stands in for a published Medicare Part D formulary + coverage criteria. No PHI. Shapes the JSON API Request agent path; the HTML twin (formulary-part-d.html) shapes the LLM Parse Website path. Prices are illustrative benchmark figures, not a real price for any product.",
+  "source": "Synthetic Part D formulary (demo fixture)",
+  "asOf": "2026-05-01",
+  "benchmarkBasis": "neutral public reference band (NADAC / Cost Plus style)",
+  "drugs": [
+    {
+      "name": "Adalimumab",
+      "rxcui": "000000",
+      "tier": 5,
+      "tierLabel": "Specialty",
+      "coverage": "covered-with-restrictions",
+      "restrictions": ["prior_authorization", "step_therapy", "quantity_limit"],
+      "stepTherapy": {
+        "preferredFirst": ["methotrexate", "high-potency topical corticosteroid"],
+        "exceptionWhen": [
+          "documented inadequate response to a preferred conventional systemic agent",
+          "documented intolerance/contraindication to a preferred agent"
+        ]
+      },
+      "priorAuthCriteria": {
+        "indication": "moderate-to-severe chronic plaque psoriasis",
+        "requires": [
+          "BSA >= 10% OR PASI >= 12 OR involvement of a sensitive area",
+          "trial-and-failure or intolerance of at least one preferred conventional systemic therapy",
+          "no active serious infection; latent TB screening performed"
+        ]
+      },
+      "benchmarkBand": { "floor": 2800, "ceil": 5200, "currency": "unitless-marker" },
+      "verdictVocabulary": ["approve", "deny", "need_more_evidence"],
+      "rulingGuidance": "approve when the prior-auth criteria and a valid step-therapy exception are documented; need_more_evidence when documentation is incomplete; deny when a preferred agent has not been tried and no exception applies."
+    }
+  ]
+}

@@ -12,6 +12,7 @@ import { useMemo, useState } from "react";
 import { ZERO_HASH, hashContent, type Profile } from "@lib";
 import { client } from "../client.js";
 import { parseAmount } from "../shared.js";
+import { SAMPLE_CASE } from "../sampleCase.js";
 
 interface CreateProps {
   readonly activeProfile: Profile;
@@ -78,9 +79,25 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
     <section className="view create">
       <div className="view-head">
         <h1>Create contract</h1>
-        <button type="button" onClick={onCancel}>
-          Cancel
-        </button>
+        <div>
+          <button
+            type="button"
+            data-testid="load-sample"
+            onClick={() => {
+              // Prefill from the synthetic demo case (demo-data/sample-case.md).
+              setNote(SAMPLE_CASE.note);
+              setDrug(SAMPLE_CASE.drug);
+              setFloor(SAMPLE_CASE.priceFloor);
+              setCeil(SAMPLE_CASE.priceCeil);
+              setError(null);
+            }}
+          >
+            Load sample case
+          </button>
+          <button type="button" onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
       </div>
 
       <form className="form" onSubmit={onSubmit}>
