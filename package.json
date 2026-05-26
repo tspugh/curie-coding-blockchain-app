@@ -18,7 +18,8 @@
     "web:dev": "vite",
     "web:build": "vite build",
     "web:preview": "vite preview --port 4173",
-    "test:e2e": "bash web/tests/agent-browser/run.sh"
+    "test:e2e": "bash web/tests/agent-browser/run.sh",
+    "test:real-local": "bash scripts/real-backend-localnode.sh"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
