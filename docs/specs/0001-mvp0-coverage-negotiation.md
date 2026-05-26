@@ -5,166 +5,178 @@ Status: Draft · Owner: tspugh · Date: 2026-05-26
 ## 1. Summary & user story
 
 The minimum end-to-end product for Curie Negotiation Protocol: a basic website where a
-user logs in as a profile, uploads a patient note, creates an on-chain **contract**
-(coverage negotiation) addressed to another party, and the two sides argue it — with an
-**on-chain agent dispute-resolution mechanism** producing the approval status — all
-mediated by a single Solidity contract on Somnia. v0 is a **deterministic skeleton +
-one real on-chain agent call**.
+user logs in as a profile, uploads a patient note, and creates an on-chain **contract**
+(coverage negotiation) addressed to another party. **Both parties submit the price they
+believe is appropriate** to initialize the contract; once both are in, either party can
+**raise a dispute**, which **fires a native Somnia agent from the contract** to rule the
+outcome against a **published Medicare Part D formulary**. Settlement in v0 is an
+**event marker** only. The wallet layer works with both a **simulated wallet** (dev) and
+a **real wallet** (MVP v0).
 
-> As a **user (provider or payer)**, I want to upload a patient note and open a contract
-> with another party, so that we can argue coverage on neutral rails and an impartial
-> on-chain agent resolves disputes.
+> As a **user (provider or payer)**, I want to upload a note, state the price I think is
+> right, and—when we disagree—have an impartial on-chain agent rule it, so coverage is
+> decided on neutral rails.
 >
-> As a **user**, I want one place to see the contracts I've created, monitor their
-> status, open any one, submit a dispute or feedback, and see the agent's final approval
-> — while seeing my wallet and who I'm logged in as.
+> As a **user**, I want one place to see my contracts, monitor status, open one, submit a
+> dispute or feedback, and see the agent's final approval — with my wallet and profile shown.
 
 ## 2. Requirements
 
 **Contract & chain**
-- **R1 (MUST)** A single Solidity contract, built and deployed with **Hardhat** to Somnia testnet, is the system of record and mediates the entire flow (create, content commitment, dispute, agent ruling, status, settlement).
-- **R2 (MUST)** A *contract* (negotiation instance) is created between an **initiator** and an **intended destination party** ("destination person"). Both sides may attach note/evidence content.
-- **R3 (MUST)** Note/evidence content is stored **off-chain**; only its `keccak256` hash (+ refs) is committed on-chain. Both parties can verify their copy matches the on-chain hash.
-- **R4 (MUST — hard invariant)** **No PHI (or any content beyond hashes, refs, amounts, state) is ever stored on-chain.**
-- **R5 (MUST)** From a contract, a party can **submit a dispute**, which is **mediated through the chain** via the agent dispute-resolution mechanism; the agent produces a ruling/approval status.
-- **R6 (MUST)** Parties can post **feedback / conversation** messages on a contract; the contract tracks the **final agent approval status** and the timeline.
-- **R7 (MUST)** On approval, **settlement** occurs (escrow release / payment). With a single wallet, a user creates a contract **with themselves** and **pays themselves** (the single-wallet fallback).
-- **R8 (MUST)** The **contract itself executes the native dispute handling** — it is not delegated to an off-chain service. `submitDispute` fires a **native Somnia agent request from the contract** (a real LLM Parse Website call over a public formulary fixture); the platform **calls back into the same contract** (`handleRuling`) with the verdict. The request, callback, and timeout are separate **sub-processes / states of the one contract**. A `Failed`/`TimedOut` callback (or a deadline keeper) routes to a retriable state so the loop never blocks.
+- **R1 (MUST)** A single **Solidity** contract, built/deployed and **tested with Hardhat**, is the system of record and mediates the whole flow.
+- **R2 (MUST)** A *contract* is created between an **initiator** and an **intended destination party**; both may attach note/evidence content.
+- **R3 (MUST)** Note/evidence content is stored **off-chain**; only its `keccak256` hash (+ refs) is on-chain; both parties can verify their copy matches.
+- **R4 (MUST — hard invariant)** **No PHI (or any content beyond hashes, refs, amounts, state) is ever on-chain.**
+- **R5 (MUST)** **Both parties must submit their proposed pricing/position to initialize** the contract; it only becomes disputable once **both** have submitted.
+- **R6 (MUST)** After both positions are in, a party can **raise a dispute**; **each dispute fires the native agent** (contract-native, §3). The agent rules `approve | deny | need_more_evidence`.
+- **R7 (MUST)** Parties can post **feedback / conversation**; the contract tracks the **final agent approval status** and timeline.
+- **R8 (MUST)** Settlement in v0 is an **event marker only** (no token transfer), recording the agreed amount within the benchmark band; single-wallet self-pay is a marker.
+- **R9 (MUST — contract-native agent)** The contract fires a native Somnia agent request and the platform **calls back into the same contract** (`handleRuling`). The **per-request fee is charged when the agent executes** (validators paid on execution; refunded on timeout) — so a **funded wallet is required in real-wallet mode**. `Failed`/`TimedOut` (or a deadline keeper) routes to a retriable state.
+- **R10 (MUST — agent type by source)** Pick the native agent by source type: an **HTML page → `LLM Parse Website`**; a **JSON/REST endpoint → `JSON API Request`**. The v0 public reference is a **published Medicare Part D formulary** (DailyMed/FDA labels are optional, not required for v0).
+
+**Wallet & profiles**
+- **R11 (MUST)** The wallet layer is **pluggable and works with both**: a **simulated/mock wallet** (dev loop, no funds, agent execution mocked) **and a real wallet** (MVP v0, real funds + real agent execution). The same code path runs in either mode.
+- **R12 (MUST)** Users can **supply their own wallet** or use a **base-level** one. **Single wallet, multiple users**: app-level profiles share a wallet; **profile switching** sets the active identity; the UI always shows the **active wallet** + **logged-in profile**.
+- **R13 (MUST)** Two users (distinct profiles, sharing the single wallet, or distinct wallets when supplied) can each interact with a contract; **self-contract / pay-yourself** is supported.
 
 **Website**
-- **R9 (MUST)** A basic web app lets a user: submit a note, create a contract, view the contracts they've created, monitor status, and open a contract to interact with it.
-- **R10 (MUST)** **Profile switching** — a user can switch to act as another user; the UI always shows the **active wallet** and **who you're logged in as**.
-- **R11 (MUST)** **Two live users** (distinct profiles/wallets, when available) can create a contract together and each interact with it; otherwise the single-wallet self-contract (R7) exercises both sides.
-- **R12 (MUST)** The app exposes three views (see §3): a **Create view**, a **Maintain / contract-detail view**, and an **Overview** that links to Create or to a particular contract's detail (status shown in a table).
-- **R13 (SHOULD)** Contracts and their engagements are observable over JSON-RPC (events + live subscription) so the overview/status reflect on-chain truth.
+- **R14 (MUST)** A basic web app lets a user submit a note, create a contract, submit a position, view/monitor their contracts, and open one to interact (dispute, feedback, settle).
+- **R15 (MUST)** Three views (§3): a **Create view**, a **Maintain / contract-detail view**, and an **Overview** linking to Create or to a contract's detail (status in a table).
+- **R16 (SHOULD)** Contracts/engagements are observable over JSON-RPC (events + live subscription) so status reflects on-chain truth.
 
 ## 3. Technical documentation
 
-**On-chain/off-chain boundary.** Off-chain: submitted note/evidence content, the public
-formulary fixture, cited public evidence (URLs), conversation/feedback text, the sample
-case. On-chain: content hashes, drug/destination refs, rulings + receipt refs, price
-band, escrow + settlement, state, profile/agent IDs, timestamps, events.
+**On-chain/off-chain boundary.** Off-chain: submitted note/evidence content, the
+published formulary reference, cited public evidence, conversation text, the sample
+case. On-chain: content hashes, drug/destination refs, **party positions (amounts)**,
+rulings + receipt refs, benchmark band, settlement marker, state, profile/agent IDs,
+timestamps, events.
 
-**PHI handling in v0 (important).** Content is submitted through the UI and stored
-**off-chain**; only its hash is committed on-chain (R3/R4). v0 does **not** redact or
-de-identify (out of scope, §7) — the demo uses a copy-pasteable **sample case**, not
-real PHI. The agent dispute-resolution mechanism operates on the **dispute submission +
-a public formulary fixture**, not raw content. A production deployment handling real PHI
-would require redaction before any exposure to the public on-chain agent; that is out of
-v0 scope and must not be assumed present.
+**PHI handling in v0.** Content is submitted via the UI and stored **off-chain**; only
+its hash is committed on-chain (R3/R4). v0 does **not** redact (out of scope, §7) — it
+runs on a copy-pasteable **sample case**, not real PHI. The agent operates on the
+dispute + the published formulary, not raw content. Real PHI in production would require
+redaction before any public-agent exposure (out of v0 scope).
 
 **Contract — `CoverageNegotiation.sol` (Hardhat).**
-- States: `Requested`, `UnderReview`, `EvidenceRequested`, `Approved`, `Denied`, `Appealed`, `Settled`, `Withdrawn`.
-- Functions: `createContract(initiatorId, destinationId, drugRef, noteHash, requestedAmount, priceFloor, priceCeil, evidenceUri)`; `attachContent(reqId, contentHash, uri)` (either party); `submitDispute(reqId)` → fires a native Somnia agent request from the contract (state `UnderReview`; emits `DisputeSubmitted` + `RulingRequested`); `handleRuling(reqId, verdict, rationaleHash, receiptId)` *(platform callback only)* → `Approved`/`Denied`/`EvidenceRequested`; `onRulingTimeout(reqId)` (after the deadline) → `EvidenceRequested`; `postFeedback(reqId, msgHash, uri)`; `submitEvidence(reqId, evidenceUri)` (re-fires the agent); `appeal(reqId, evidenceUri)` (re-fires the agent); `settle(reqId)`; `withdraw(reqId)`.
-- Events: `ContractCreated`, `ContentCommitted`, `DisputeSubmitted`, `RulingRequested`, `Ruled`, `RulingTimedOut`, `FeedbackPosted`, `EvidenceSubmitted`, `Appealed`, `Settled`, `Withdrawn`.
-- Guards: strict per-state `require`s; `handleRuling` gated to the Somnia agent-platform address (the callback caller); settlement amount within `[priceFloor, priceCeil]`; `initiatorId == destinationId` is permitted (self-contract). The contract funds each agent request (per-agent pricing) at `submitDispute` / re-fire.
-- Deployed to Somnia testnet (chain `50312`, RPC `https://api.infra.testnet.somnia.network/`; see [`../../src/config/networks.ts`](../../src/config/networks.ts)) via Hardhat; identity via `somnia-agent-kit` `AgentRegistry`.
-
-**Agent dispute-resolution mechanism (contract-native).** The contract itself executes
-the native dispute handling — there is no off-chain mediator service. `submitDispute`
-fires a **native Somnia agent request from the contract** via `createRequest` to the
-platform's LLM Parse Website agent (payload = public formulary fixture URL + dispute
-context + `ExtractString` `options=["approve","deny","need_more_evidence"]`, with
-`handleRuling` as the callback selector) and moves to `UnderReview`. The Somnia platform
-runs the agent and **calls `handleRuling` back into the same contract** with the verdict
-+ receipt reference, routing to `Approved` / `Denied` / `EvidenceRequested`. The request,
-the callback, and the timeout are **separate sub-processes (states) of the one
-contract**, not separate services. If the callback returns `Failed`/`TimedOut` (or
-`onRulingTimeout` fires after a deadline), the contract routes to a retriable state
-rather than blocking. The contract forwards the agent's per-request fee at fire time.
+- States: `Open`, `Ready`, `UnderReview`, `EvidenceRequested`, `Approved`, `Denied`, `Appealed`, `Settled`, `Withdrawn`.
+- Functions: `createContract(initiatorId, destinationId, drugRef, noteHash, priceFloor, priceCeil, evidenceUri)` → `Open`; `attachContent(reqId, contentHash, uri)`; `submitPosition(reqId, proposedAmount, contentHash, uri)` (each party once; when **both** in → `Ready`); `submitDispute(reqId)` *(only in `Ready`)* → fires the native agent (emits `DisputeSubmitted` + `RulingRequested`) → `UnderReview`; `handleRuling(reqId, verdict, rationaleHash, receiptId)` *(platform callback only)*; `onRulingTimeout(reqId)` → `EvidenceRequested`; `postFeedback(reqId, msgHash, uri)`; `submitEvidence(reqId, evidenceUri)` (re-fires agent); `appeal(reqId, evidenceUri)` (re-fires agent); `settle(reqId)` (event marker, amount within band); `withdraw(reqId)`.
+- Events: `ContractCreated`, `ContentCommitted`, `PositionSubmitted`, `ContractReady`, `DisputeSubmitted`, `RulingRequested`, `Ruled`, `RulingTimedOut`, `FeedbackPosted`, `EvidenceSubmitted`, `Appealed`, `Settled`, `Withdrawn`.
+- Guards: strict per-state `require`s; **dispute only in `Ready`** (both positions submitted); `handleRuling` gated to the Somnia agent-platform address; settlement amount within `[priceFloor, priceCeil]`; `initiatorId == destinationId` permitted (self-contract). The contract funds each agent request at fire time (R9).
+- Deployed to Somnia testnet (chain `50312`, RPC `https://api.infra.testnet.somnia.network/`; see [`../../src/config/networks.ts`](../../src/config/networks.ts)); identity via `somnia-agent-kit` `AgentRegistry`.
 
 ### State machine
 
 | From | Trigger | To |
 |---|---|---|
-| — | `createContract` | `Requested` |
-| `Requested` | `submitDispute` (fires native agent request) | `UnderReview` |
+| — | `createContract` | `Open` |
+| `Open` | `submitPosition` (each party; **both** required) | `Open` → (both in) `Ready` |
+| `Ready` | `submitDispute` (fires native agent) | `UnderReview` |
 | `UnderReview` | `handleRuling`: `approve` *(platform callback)* | `Approved` |
 | `UnderReview` | `handleRuling`: `deny` | `Denied` |
 | `UnderReview` | `handleRuling`: `need_more_evidence` | `EvidenceRequested` |
-| `UnderReview` | `handleRuling`: `Failed`/`TimedOut`, or `onRulingTimeout` after deadline | `EvidenceRequested` (retriable) |
-| `EvidenceRequested` | `submitEvidence` (re-fires the agent) | `UnderReview` |
-| `Denied` | `appeal` with new public evidence (re-fires the agent) | `UnderReview` |
-| `Approved` | `settle` (amount within `[priceFloor, priceCeil]`) | `Settled` |
+| `UnderReview` | `handleRuling`: `Failed`/`TimedOut`, or `onRulingTimeout` | `EvidenceRequested` (retriable) |
+| `EvidenceRequested` | `submitEvidence` (re-fires agent) | `UnderReview` |
+| `Denied` | `appeal` (re-fires agent) | `UnderReview` |
+| `Approved` | `settle` (event marker, within band) | `Settled` |
 | any pre-`Settled` | `withdraw` | `Withdrawn` |
 
-`postFeedback` may be called in any active state and does not change state.
+`postFeedback` may be called in any active state without changing state. **The agent
+fires on each dispute** (`submitDispute`, and again on `submitEvidence`/`appeal`), and
+the per-request fee is charged on each execution (R9).
+
+**Agent dispute-resolution mechanism (contract-native).** The contract executes the
+native dispute handling — no off-chain mediator service. On `submitDispute` it fires a
+native Somnia agent request via `createRequest`, **selecting the agent by source type**
+(R10): the published **Medicare Part D formulary** as an **HTML page → `LLM Parse
+Website`** (`ExtractString` `options=["approve","deny","need_more_evidence"]`), or a
+**JSON/REST formulary/benchmark endpoint → `JSON API Request`**. It moves to
+`UnderReview`; the platform runs the agent and **calls `handleRuling` back into the same
+contract** with the verdict + receipt, routing to `Approved`/`Denied`/`EvidenceRequested`.
+The per-request fee is paid **when the agent executes** (refunded on timeout). Request,
+callback, and timeout are sub-processes (states) of the one contract.
+
+**Wallet abstraction (simulated ↔ real).** A pluggable signer/provider layer exposes one
+interface with two implementations: a **simulated wallet** (mock signer; no funds; agent
+execution + fee mocked; for the dev loop and CI) and a **real wallet** (private key /
+supplied key; real funds; real agent execution + fee on testnet, MVP v0). The app and
+contract-interaction code are identical across modes; only the signer differs. Profiles
+are app-level identities; in single-wallet mode they share the active wallet (self/two-
+party via profile switching), and a user may supply their own wallet.
 
 **Web app — views & sessions.**
-- **Overview view** — a table of the contracts the active profile has created, each row showing status (from on-chain state/events, R13) and linking to its detail; a link/button to the **Create view**.
-- **Create view** — submit a note (content stored off-chain, hash committed), choose the **destination party**, set the price band, and create the contract.
-- **Maintain / contract-detail view** — opened by clicking a contract: shows the timeline and **final agent approval status**, lets a party **submit a dispute** (→ on-chain agent mediation), **post feedback** on the conversation, submit evidence/appeal, and settle. Always shows the **active wallet** and **logged-in profile**.
-- **Profiles & wallets** — profiles are app-level identities mapped to wallet keys. With multiple keys, two live users transact (R11); with a single wallet (v0 default), the user self-deals via a self-contract (R7). A profile switcher sets the active identity.
+- **Overview** — table of the active profile's contracts with live status (from on-chain state/events), linking to Create and to each contract's detail.
+- **Create** — submit a note (off-chain; hash committed), choose the destination party, set the benchmark band, create the contract; then **submit your position** (proposed amount).
+- **Maintain / contract-detail** — shows the timeline + final agent approval status; lets a party submit a position (if pending), raise a dispute (→ contract-native agent), post feedback, submit evidence/appeal, and settle (marker). Shows active wallet + logged-in profile + wallet mode (simulated/real).
 
 ```
-Create view ──tx──▶ CoverageNegotiation.sol
-                          │  submitDispute → createRequest (fires the native agent)
+Create view ──tx──▶ CoverageNegotiation.sol  (both submitPosition → Ready)
+                          │  submitDispute → createRequest (fires native agent;
+                          │                 Parse Website for HTML / JSON API for JSON)
                           ▼
-                     Somnia platform runs LLM Parse Website over the public formulary fixture
+                     Somnia platform runs the agent over the published Part D formulary
                           │  handleRuling (verdict + receipt) — callback into the SAME contract
                           ▼
                      CoverageNegotiation.sol → Approved / Denied / EvidenceRequested
                                                (Failed/TimedOut → retriable)
 
-Overview (table) / Maintain detail view  ◀── JSON-RPC (eth_getLogs · eth_subscribe · somnia_watch)
-  (list · status · dispute · feedback · approval status · wallet + logged-in profile · settle)
+Overview / Maintain detail  ◀── JSON-RPC (eth_getLogs · eth_subscribe · somnia_watch)
 ```
 
-**Monitoring (contract browser).** `eth_call` (state), `eth_getLogs` (history, ≤1000-block
-ranges), `eth_subscribe` → `logs`/`newHeads` + Somnia `somnia_finishedTransactions`/`somnia_watch`
-(live), `eth_getTransactionReceipt` (outcomes), `eth_sendRawTransaction` / Somnia
-`realtime_sendRawTransaction` (submit).
+**Monitoring (contract browser).** `eth_call` (state), `eth_getLogs` (history, ≤1000
+blocks), `eth_subscribe` → `logs`/`newHeads` + Somnia `somnia_finishedTransactions`/`somnia_watch`,
+`eth_getTransactionReceipt`, `eth_sendRawTransaction` / Somnia `realtime_sendRawTransaction`.
 
 ## 4. Deliverables
 
 - `contracts/CoverageNegotiation.sol` (Hardhat) + `contracts/test/CoverageNegotiation.test.ts` + `contracts/scripts/deploy.ts` + `hardhat.config.ts` (chain 50312).
-- `src/agents/{provider-agent,payer-agent}.ts`, `src/orchestrator.ts`, `src/types/coverage.types.ts`, `src/index.ts` (these submit txs and watch events; the AI ruling is **contract-native**, not an off-chain service).
-- **Web app** with the **Overview**, **Create**, and **Maintain/contract-detail** views; a **profile switcher** + wallet/identity display; renders timeline, agent approval status, and the agent receipt from on-chain events.
-- Off-chain content store (simple, in-app) + hash commitment + a both-party note-verification check.
-- **Sample case** in a markdown file (`demo-data/sample-case.md`) — easy to copy/paste into the Create view. (No synthetic-data generator — see §7.)
-- Public **formulary fixture** + **price-band** fixtures.
+- `src/wallet/` — pluggable signer with **simulated** and **real** implementations (R11).
+- `src/agents/{provider-agent,payer-agent}.ts`, `src/orchestrator.ts`, `src/types/coverage.types.ts`, `src/index.ts` (submit txs, watch events; AI ruling is **contract-native**).
+- **Web app**: Overview / Create / Maintain views; profile switcher + wallet/identity + wallet-mode display; timeline, approval status, agent receipt from events.
+- Off-chain content store (in-app) + hash commitment + both-party note-verification.
+- **Sample case** `demo-data/sample-case.md` (copy/paste into Create). **Published Medicare Part D formulary** fixture (HTML or JSON) + benchmark price-band fixtures.
 - Deployed testnet address recorded in `.env.example` / README.
 
 ## 5. Test cases
 
-- **T1 (R3,R4):** content stored off-chain; `keccak256(content)` equals the on-chain hash; no PHI/content (beyond hashes/refs) appears on-chain or in the agent payload.
-- **T2 (R1,R2):** `createContract` deploys/uses the Hardhat contract; emits `ContractCreated` + `ContentCommitted`; self-contract (`initiator == destination`) is accepted.
-- **T3 (R5,R8):** `submitDispute` fires the native agent request and moves to `UnderReview`; the platform's `handleRuling` callback records a **real** verdict + `receiptId` and routes correctly; a `Failed`/`TimedOut` callback (or `onRulingTimeout` after the deadline) routes to `EvidenceRequested` (retriable).
-- **T4 (R6):** `postFeedback` is recorded; `need_more_evidence` → evidence → re-rule; `deny` → appeal → re-rule; the contract exposes the final approval status.
-- **T5 (R7):** on `approve`, `settle` succeeds within the band and (single-wallet) pays the initiator's own wallet; reverts for an out-of-band amount.
+- **T1 (R3,R4):** content off-chain; `keccak256(content)` == on-chain hash; no PHI/content beyond hashes/refs on-chain or in the agent payload.
+- **T2 (R1,R2):** `createContract` uses the Hardhat contract; emits `ContractCreated`; self-contract accepted.
+- **T3 (R5):** `submitPosition` from one party leaves state `Open`; from both → `Ready` (emits `ContractReady`); `submitDispute` reverts before `Ready`.
+- **T4 (R6,R9):** in `Ready`, `submitDispute` fires the native agent → `UnderReview`; `handleRuling` records a real verdict + `receiptId` and routes; `Failed`/`TimedOut`/`onRulingTimeout` → `EvidenceRequested`; `submitEvidence`/`appeal` re-fire the agent.
+- **T5 (R8):** on `approve`, `settle` emits `Settled` with an amount within `[priceFloor, priceCeil]` (event marker, no transfer); out-of-band reverts.
 - **T6 (guards):** invalid transitions revert; `handleRuling` reverts for a non-platform caller.
-- **T7 (R9,R12):** Overview lists the active profile's contracts with live status and links to Create and to a contract's detail; Create opens a contract end-to-end; the detail view drives dispute/feedback/settle.
-- **T8 (R10,R11):** profile switching changes the active identity and displayed wallet; two profiles (or a self-contract) can each interact with the same contract.
-- **T9 (R13):** a client reconstructs the timeline from `eth_getLogs` and receives live updates via subscription.
+- **T7 (R11):** the full loop runs in **simulated-wallet** mode (no funds, mocked agent) **and** in **real-wallet** mode (real testnet agent execution) with the same code path.
+- **T8 (R14,R15):** Overview lists contracts with live status + links; Create opens a contract and captures a position; the detail view drives dispute/feedback/settle.
+- **T9 (R12,R13):** profile switching changes active identity + shown wallet/mode; two profiles (or a self-contract) each interact with the same contract.
+- **T10 (R16):** a client reconstructs the timeline from `eth_getLogs` and gets live updates via subscription.
 
 ## 6. Pass / fail criteria
 
 **PASS — all must hold:**
-- [ ] `CoverageNegotiation.sol` compiles and deploys to Somnia testnet (chain 50312) via Hardhat.
-- [ ] T1–T6 pass in the contract/test suite; T7–T9 pass end-to-end via the web app.
-- [ ] The website supports: submit note, create contract, overview table with live status, open a contract, submit a dispute mediated on-chain, post feedback, see final agent approval status, switch profiles, and shows the active wallet + logged-in profile.
-- [ ] A two-user contract (or single-wallet self-contract, paying yourself) runs end-to-end.
-- [ ] At least one **real** native-agent ruling is produced on testnet with a viewable receipt.
-- [ ] A copy-pasteable `demo-data/sample-case.md` exists and drives the Create view.
+- [ ] `CoverageNegotiation.sol` compiles, **passes its Hardhat tests**, and deploys to Somnia testnet (chain 50312).
+- [ ] T1–T6 pass in the contract/test suite; T7–T10 pass end-to-end.
+- [ ] Both parties must submit positions before a dispute is possible (R5); each dispute fires the agent (R6).
+- [ ] The loop runs in **both** simulated-wallet and real-wallet modes; in real-wallet mode at least one **real** native-agent ruling is produced with a viewable receipt and the per-request fee is charged on execution.
+- [ ] Website supports: submit note, create contract, submit position, overview with live status, open a contract, dispute (mediated on-chain), feedback, final approval status, profile switch, and shows active wallet + profile + mode.
+- [ ] A copy-pasteable `demo-data/sample-case.md` and a published Part D formulary fixture exist and drive the flow.
 
 **FAIL — any triggers rejection:**
 - Any PHI/content (beyond hashes/refs/amounts/state) appears on-chain or in an agent payload.
-- A dispute is not actually mediated through the chain/agent (no real agent-call path exists).
-- An invalid state transition does not revert, or `handleRuling` accepts a non-platform caller.
-- Escrow settles outside `[priceFloor, priceCeil]`.
-- Profiles cannot be switched, or the overview doesn't reflect on-chain status.
+- A dispute can be raised before both positions are submitted, or a dispute isn't mediated through the contract-native agent.
+- An invalid transition doesn't revert, or `handleRuling` accepts a non-platform caller.
+- Settlement records an amount outside `[priceFloor, priceCeil]`.
+- The code only works in one wallet mode (must support both simulated and real).
 
 ## 7. Out of scope
 
-- **Identity verification to join** — no KYC / identity proofing; any profile can participate.
-- **PHI redaction / de-identification** — content is taken as submitted (off-chain); v0 uses a sample case, not real PHI.
-- **Synthetic / fake test-case generation** — provide one copy-pasteable `sample-case.md` instead; no generator.
-- **Testing or evaluation of the agent** — no agent accuracy benchmarks or eval harness.
-- Also deferred: real formulary/payer integrations; full named appeal ladder; live benchmark price fetch; mock-stablecoin beyond self-pay; multi-tenant; subgraph indexing; ZK proofs; mobile UI.
+- **Identity verification to join** — no KYC / identity proofing.
+- **PHI redaction / de-identification** — content taken as submitted; sample case, not real PHI.
+- **Synthetic / fake test-case generation** — one copy-pasteable `sample-case.md` instead.
+- **Testing or evaluation of the agent** — no accuracy benchmarks / eval harness.
+- **Real token settlement** — v0 settlement is an event marker only.
+- Also deferred: DailyMed/FDA-label integration (optional, not v0); real formulary/payer integrations; full named appeal ladder; live benchmark price fetch; multi-tenant; subgraph; ZK; mobile UI.
 
 ## 8. Open questions
 
-1. Formulary fixture source — a published Medicare Part D formulary vs. a synthetic published-formulary fixture? — priority: high
-2. Settlement asset for self-pay — native STT transfer vs. event-only marker in v0? — priority: medium
-3. Profile/wallet model — multiple local keys in `.env` for true two-user, or a single wallet with app-level profiles + self-contract only? — priority: medium
-4. Native-agent request funding + ruling timeout — the per-request fee the contract forwards at `submitDispute`, and the deadline before `onRulingTimeout` fires (given Somnia callback latency)? — priority: medium
+1. Benchmark band source for v0 — fixture values vs. a JSON benchmark endpoint (NADAC/Cost Plus) queried via `JSON API Request`? — priority: medium
+2. Ruling timeout window — what deadline before `onRulingTimeout` fires, given Somnia callback latency? — priority: medium
