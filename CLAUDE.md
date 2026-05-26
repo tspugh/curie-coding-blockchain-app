@@ -2,7 +2,17 @@
 
 Guidance for Claude Code sessions in the Curie **application repo** (agent-mediated
 drug coverage-exception arbitration on Somnia). It covers the working philosophy,
-folder layout, architectural constraints, and the cross-repo policy.
+folder layout, architectural constraints, the spec-driven workflow, and the
+cross-repo policy.
+
+## Spec-driven development
+
+This project is **spec-driven**: work starts as a spec in [`docs/specs/`](docs/specs/),
+authored to the standard in the **`spec-author` skill**. A spec's requirements,
+technical documentation, and pass/fail criteria are the source of truth for a unit of
+work — implementation is built to satisfy them, and the spec is updated before or
+alongside the code, never left to drift. The current build target is
+[`docs/specs/0001-mvp0-coverage-negotiation.md`](docs/specs/0001-mvp0-coverage-negotiation.md).
 
 ## Layout
 

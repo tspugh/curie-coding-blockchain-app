@@ -29,7 +29,7 @@ one real on-chain agent call**.
 - **R5 (MUST)** From a contract, a party can **submit a dispute**, which is **mediated through the chain** via the agent dispute-resolution mechanism; the agent produces a ruling/approval status.
 - **R6 (MUST)** Parties can post **feedback / conversation** messages on a contract; the contract tracks the **final agent approval status** and the timeline.
 - **R7 (MUST)** On approval, **settlement** occurs (escrow release / payment). With a single wallet, a user creates a contract **with themselves** and **pays themselves** (the single-wallet fallback).
-- **R8 (MUST)** The agent dispute-resolution mechanism produces the ruling via **one real native Somnia agent call** (LLM Parse Website over a public formulary fixture), with a deterministic fallback so the loop never blocks.
+- **R8 (MUST)** `submitDispute` fires the dispute **from the contract** (the contract is the trigger, record, and callback target); a **separate process** (the mediator service) constructs the prompt and makes the AI call (a real native Somnia agent call — LLM Parse Website over a public formulary fixture) and relays the verdict back on-chain via `handleRuling`. A deterministic fallback mirrors the verdict shape so the loop never blocks.
 
 **Website**
 - **R9 (MUST)** A basic web app lets a user: submit a note, create a contract, view the contracts they've created, monitor status, and open a contract to interact with it.
@@ -55,17 +55,21 @@ v0 scope and must not be assumed present.
 
 **Contract — `CoverageNegotiation.sol` (Hardhat).**
 - States: `Requested`, `UnderReview`, `EvidenceRequested`, `Approved`, `Denied`, `Appealed`, `Settled`, `Withdrawn`.
-- Functions: `createContract(initiatorId, destinationId, drugRef, noteHash, requestedAmount, priceFloor, priceCeil, evidenceUri)`; `attachContent(reqId, contentHash, uri)` (either party); `submitDispute(reqId)` → fires the agent → `UnderReview`; `handleRuling(reqId, verdict, rationaleHash, receiptId)` *(platform-only)* → `Approved`/`Denied`/`EvidenceRequested`; `postFeedback(reqId, msgHash, uri)`; `submitEvidence(reqId, evidenceUri)`; `appeal(reqId, evidenceUri)`; `settle(reqId)`; `withdraw(reqId)`.
+- Functions: `createContract(initiatorId, destinationId, drugRef, noteHash, requestedAmount, priceFloor, priceCeil, evidenceUri)`; `attachContent(reqId, contentHash, uri)` (either party); `submitDispute(reqId)` → fires the dispute (state `UnderReview`, emits `DisputeSubmitted`); `handleRuling(reqId, verdict, rationaleHash, receiptId)` *(mediator-only)* → `Approved`/`Denied`/`EvidenceRequested`; `postFeedback(reqId, msgHash, uri)`; `submitEvidence(reqId, evidenceUri)`; `appeal(reqId, evidenceUri)`; `settle(reqId)`; `withdraw(reqId)`.
 - Events: `ContractCreated`, `ContentCommitted`, `DisputeSubmitted`, `Ruled`, `FeedbackPosted`, `EvidenceSubmitted`, `Appealed`, `Settled`, `Withdrawn`.
-- Guards: strict per-state `require`s; `handleRuling` gated to the platform address; settlement amount within `[priceFloor, priceCeil]`; `initiatorId == destinationId` is permitted (self-contract).
+- Guards: strict per-state `require`s; `handleRuling` gated to the authorized mediator address (the separate mediator process's signer); settlement amount within `[priceFloor, priceCeil]`; `initiatorId == destinationId` is permitted (self-contract).
 - Deployed to Somnia testnet (chain `50312`, RPC `https://api.infra.testnet.somnia.network/`; see [`../../src/config/networks.ts`](../../src/config/networks.ts)) via Hardhat; identity via `somnia-agent-kit` `AgentRegistry`.
 
-**Agent dispute-resolution mechanism.** On `submitDispute`, the contract (or an
-off-chain orchestrator relaying for it) invokes the Somnia LLM Parse Website base agent
-with the public formulary fixture URL + dispute context + `ExtractString`
-`options=["approve","deny","need_more_evidence"]`; the platform calls `handleRuling`
-with the verdict + `receiptId` (public receipt). Deterministic fallback mirrors the
-verdict shape (R8).
+**Agent dispute-resolution mechanism.** `submitDispute` fires the dispute on the
+contract (→ `UnderReview`, emits `DisputeSubmitted`) — the contract is the single source
+of truth and the callback target. A **separate process** (the mediator service) listens
+for the event, **constructs the prompt**, and makes the **AI call** — a real native
+Somnia agent call (LLM Parse Website over the public formulary fixture, `ExtractString`
+`options=["approve","deny","need_more_evidence"]`) — then submits the verdict back via
+`handleRuling(reqId, verdict, rationaleHash, receiptId)`, carrying the public receipt
+reference. Keeping the prompt + AI call in our own process (rather than inline in the
+transaction) gives us prompt control and a clean deterministic fallback when the agent
+is slow or unavailable.
 
 **Web app — views & sessions.**
 - **Overview view** — a table of the contracts the active profile has created, each row showing status (from on-chain state/events, R13) and linking to its detail; a link/button to the **Create view**.
@@ -74,11 +78,15 @@ verdict shape (R8).
 - **Profiles & wallets** — profiles are app-level identities mapped to wallet keys. With multiple keys, two live users transact (R11); with a single wallet (v0 default), the user self-deals via a self-contract (R7). A profile switcher sets the active identity.
 
 ```
-Overview (table) ──▶ Create view ──tx──▶ CoverageNegotiation.sol ──submitDispute──▶ LLM Parse Website
-       │  click a contract                    ▲   └── handleRuling (verdict+receipt) ──┘  (public formulary)
-       ▼                                       │
-Maintain / detail view  ◀── JSON-RPC (eth_getLogs / eth_subscribe / somnia_watch) ──┘
-  (dispute · feedback · approval status · wallet + logged-in profile · settle)
+Create view ──tx──▶ CoverageNegotiation.sol ──submitDispute (emits DisputeSubmitted)──┐
+                          ▲                                                            ▼
+   handleRuling          │                                       Mediator process (separate):
+   (verdict + receipt) ──┘                                       builds the prompt + makes the AI call
+                                                                 (Somnia LLM Parse Website over a public
+                                                                  formulary fixture; deterministic fallback)
+
+Overview (table) / Maintain detail view  ◀── JSON-RPC (eth_getLogs · eth_subscribe · somnia_watch)
+  (list · status · dispute · feedback · approval status · wallet + logged-in profile · settle)
 ```
 
 **Monitoring (contract browser).** `eth_call` (state), `eth_getLogs` (history, ≤1000-block
@@ -135,7 +143,6 @@ ranges), `eth_subscribe` → `logs`/`newHeads` + Somnia `somnia_finishedTransact
 
 ## 8. Open questions
 
-1. Does `submitDispute` fire the agent **directly from the contract**, or via an **off-chain orchestrator** that submits the agent request and relays `handleRuling`? — priority: high
-2. Formulary fixture source — a published Medicare Part D formulary vs. a synthetic published-formulary fixture? — priority: high
-3. Settlement asset for self-pay — native STT transfer vs. event-only marker in v0? — priority: medium
-4. Profile/wallet model — multiple local keys in `.env` for true two-user, or a single wallet with app-level profiles + self-contract only? — priority: medium
+1. Formulary fixture source — a published Medicare Part D formulary vs. a synthetic published-formulary fixture? — priority: high
+2. Settlement asset for self-pay — native STT transfer vs. event-only marker in v0? — priority: medium
+3. Profile/wallet model — multiple local keys in `.env` for true two-user, or a single wallet with app-level profiles + self-contract only? — priority: medium
