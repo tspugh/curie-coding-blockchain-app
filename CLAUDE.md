@@ -1,8 +1,8 @@
 # CLAUDE.md
 
-Guidance for Claude Code sessions in the Curie Claims Protocol **application
-repo**. It covers the working philosophy, folder layout, architectural
-constraints, and the cross-repo policy.
+Guidance for Claude Code sessions in the Curie **application repo** (agent-mediated
+drug coverage-exception arbitration on Somnia). It covers the working philosophy,
+folder layout, architectural constraints, and the cross-repo policy.
 
 ## Layout
 

@@ -1,41 +1,54 @@
 # Curie
 
-**Patient-facing medical bill split & instant settlement on [Somnia](https://somnia.network).**
+**Agent-mediated drug coverage decisions, settled on [Somnia](https://somnia.network).**
 
-A patient ↔ provider ↔ insurer network. A provider posts a bill; an insurer
-agent computes the coverage split (patient responsibility vs. plan
-responsibility) off-chain; the patient approves; and a smart contract escrows and
-**atomically splits the payment to the provider in one instant transaction** —
-**without putting any clinical data on-chain**. Built for the
-[Somnia Agentathon](https://www.encodeclub.com/programmes/agentathon)
-(Encode Club × Somnia) in TypeScript on top of
-[`somnia-agent-kit`](https://github.com/xuanbach0212/somnia-agent-kit).
+Curie resolves drug coverage and exception requests between payers and providers.
+A provider requests coverage — or a tier/formulary exception — for a drug; an AI
+mediator adjudicates the request against the payer's published formulary, public
+clinical evidence, and public price benchmarks over a transparent, auditable
+exchange; and the outcome (approval, denial with reasons, or a request for more
+evidence) is recorded on-chain, with approved coverage settling through escrow.
 
-> This is the **application repository**. The research, specs, and strategy that
-> inform it live in the surrounding **spec repository** one level up
+**No protected health information enters the protocol.** Requests are argued at
+the level of the drug, the formulary, and public clinical evidence — never a
+patient's record.
+
+> This is the application repository. The research, specs, and strategy that
+> inform it live in the surrounding spec repository one level up
 > (`curie-coding-blockchain`). See [CLAUDE.md](./CLAUDE.md) for the boundary
 > between the two and the rules for working across it.
 
-## Why this needs both an agent and a blockchain
+## How it works
 
-- **Why agents** — payer↔provider settlement is becoming machine-to-machine. An
-  insurer agent computes the coverage split, a provider agent reconciles it, and
-  a patient agent can auto-approve under a spend cap — coordination that
-  autonomous agents handle well.
-- **Why blockchain** — not for storing records, but for neutral shared state,
-  instant programmable settlement, tamper-evident audit, and resilience against a
-  single clearinghouse being the whole country's payment rail.
-- **Why Somnia** — the demo is an instant three-way payment split with state
-  updates fast enough to feel interactive. Somnia's high throughput and
-  sub-second finality are used as a real ingredient, not just a deployment target.
+1. A provider submits a coverage/exception request for a drug (identified by
+   RxNorm/NDC), citing public evidence — a clinical guideline, an FDA label,
+   comparative-effectiveness data — by reference.
+2. An **AI mediator** reads the payer's published formulary criteria and the
+   cited public evidence and rules: **approve**, **deny** (with reasons), or
+   **request more evidence**.
+3. The exchange runs as a state machine — request, evidence submission, rebuttal,
+   appeal — each round adjudicated by the mediator and recorded on-chain.
+4. Approved coverage **settles through escrow**, bounded by public price
+   benchmarks.
+
+## Why an agent, why a blockchain, why Somnia
+
+- **Why an agent** — adjudicating a coverage exception means weighing a free-text
+  clinical-evidence argument against free-text formulary criteria. That is
+  judgment, not a lookup.
+- **Why a blockchain** — a neutral, tamper-evident record of who argued what, how
+  the mediator ruled and why, and how it settled — auditable by both parties,
+  owned by neither.
+- **Why Somnia** — the mediator's reasoning runs as consensus-verified, on-chain
+  inference that reads public sources directly, and settlement is instant.
 
 ## Privacy boundary (hard rule)
 
-No clinical data ever goes on-chain. On-chain you see only **opaque bill IDs
-(hashes), amounts, the computed split, pseudonymous participant addresses, and
-approval/settlement events**. The bill's clinical context and the benefit-rule
-reasoning behind a split stay **off-chain**. The chain moves money and records
-state; it never sees what the care was for.
+No clinical records on-chain, ever. On-chain: a **non-identifying drug request
+descriptor**, **public-evidence references**, the **mediator's rulings and
+rationale**, the **exchange transcript**, and **settlement**. Cited evidence
+stays at its public source and is read on demand; the chain holds references,
+rulings, and receipts.
 
 ## Somnia networks
 
@@ -60,7 +73,7 @@ npm run dev            # runs src/index.ts under tsx, connects to Somnia
 ```
 
 `npm run dev` connects to the configured network and prints a connection
-summary — the smoke test that chain plumbing works before settlement logic is
+summary — the smoke test that chain plumbing works before protocol logic is
 layered on.
 
 ## Scripts
@@ -102,7 +115,8 @@ layered on.
   and event subscriptions through `somnia-agent-kit`.
 - **Chain-native state.** Contracts are the system of record; off-chain code
   orchestrates, it does not replace.
-- **No clinical data on-chain.** Opaque IDs, hashes, amounts, and settlement only.
+- **No clinical data on-chain.** Non-identifying descriptors, public-evidence
+  references, rulings, and settlement only.
 
 ## License
 
