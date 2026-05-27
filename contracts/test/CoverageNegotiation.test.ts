@@ -357,6 +357,28 @@ describe("CoverageNegotiation", () => {
     }
   });
 
+  it("Finding-4 (cap domain): an extreme costPlusUnitPrice saturates the cap instead of bricking the callback", async () => {
+    const { platform, contract } = await deploy();
+    const [provider, insurer] = await ethers.getSigners();
+    const target = await contract.getAddress();
+
+    // costPlusUnitPrice near uint256 max with quantity > 1 would overflow a checked
+    // multiply and REVERT the whole callback (leaving the request stuck UnderReview).
+    // The saturating cap must instead bind `requestedAmount`.
+    const HUGE = (1n << 255n); // × quantity(10) overflows uint256
+    const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
+    await expect(platform.triggerRuling(target, requestId, ruling(Decision.Approve, HUGE)))
+      .to.emit(contract, "Ruled")
+      .withArgs(reqId, requestId, Decision.Approve, 2000n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID);
+    expect(await contract.stateOf(reqId)).to.equal(State.Approved);
+    expect(await contract.coveredAmountOf(reqId)).to.equal(2000n); // requested binds (cap saturated)
+
+    // priceBasisOf must not revert either: costPlusTotal saturates at uint256 max.
+    const basis = await contract.priceBasisOf(reqId);
+    expect(basis.costPlusTotal).to.equal(ethers.MaxUint256);
+    expect(basis.coveredAmount).to.equal(2000n);
+  });
+
   it("T5 (R6b): policy_invalid → PolicyFlagged + Ruled + terminal PolicyInvalidated", async () => {
     const { platform, contract } = await deploy();
     const [provider, insurer] = await ethers.getSigners();
@@ -564,6 +586,84 @@ describe("CoverageNegotiation", () => {
     await contract.connect(solo).accept(soloId, INSURER_ID);
     await expect(contract.connect(solo).settle(soloId)).to.emit(contract, "Settled");
     expect(await contract.stateOf(soloId)).to.equal(State.Settled);
+  });
+
+  it("R9 (fee model): underfunded reverts; exact fee forwarded; overpayment refunded; no trapped caller ETH", async () => {
+    const { platform, contract } = await deploy();
+    const [provider, insurer] = await ethers.getSigners();
+    const target = await contract.getAddress();
+    const deposit = await platform.deposit(); // 0.001 ether; fee == deposit (agentReward 0)
+
+    const reqId = await createAs(contract, provider, insurer.address);
+    await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+    // --- Underfunded: msg.value < fee reverts; no agent fires. ---
+    await expect(
+      contract.connect(provider).requestAdjudication(reqId, { value: deposit - 1n })
+    ).to.be.revertedWith("fee: underfunded");
+    expect(await platform.createRequestCalls()).to.equal(0n);
+    expect(await contract.stateOf(reqId)).to.equal(State.Ready); // unchanged
+
+    // --- Exact fee: forwards exactly `fee`, traps nothing, contract balance stays 0. ---
+    await expect(contract.connect(provider).requestAdjudication(reqId, { value: deposit }))
+      .to.emit(contract, "RulingRequested");
+    expect(await platform.lastValue()).to.equal(deposit); // mock received exactly the fee
+    expect(await ethers.provider.getBalance(target)).to.equal(0n); // nothing trapped
+
+    // --- Overpayment: excess (msg.value - fee) refunded to the caller; contract keeps 0. ---
+    const reqId2 = await createAs(contract, provider, insurer.address);
+    await contract.connect(insurer).insurerEngage(reqId2, POLICY_HASH, POLICY_URI);
+    const overpay = ethers.parseEther("0.05");
+    const balBefore = await ethers.provider.getBalance(provider.address);
+    const tx = await contract.connect(provider).requestAdjudication(reqId2, { value: overpay });
+    const rc = await tx.wait();
+    const gas = rc!.gasUsed * rc!.gasPrice;
+    const balAfter = await ethers.provider.getBalance(provider.address);
+    // Net cost to caller is exactly the fee + gas (excess fully refunded).
+    expect(balBefore - balAfter).to.equal(deposit + gas);
+    expect(await platform.lastValue()).to.equal(deposit); // still exactly the fee forwarded
+    expect(await ethers.provider.getBalance(target)).to.equal(0n); // no trapped caller ETH
+
+    // --- submitEvidence / appeal honour the same fee model (overpayment refunded). ---
+    const { reqId: r3, requestId: rq3 } = await createEngageAdjudicate(contract, platform, provider, insurer);
+    await platform.triggerRuling(target, rq3, ruling(Decision.NeedMoreEvidence, 0n));
+    await expect(
+      contract.connect(provider).submitEvidence(r3, EVIDENCE_URI_2, { value: deposit - 1n })
+    ).to.be.revertedWith("fee: underfunded");
+    await contract.connect(provider).submitEvidence(r3, EVIDENCE_URI_2, { value: FEE });
+    expect(await ethers.provider.getBalance(target)).to.equal(0n);
+
+    const { reqId: r4, requestId: rq4 } = await createEngageAdjudicate(contract, platform, provider, insurer);
+    await platform.triggerRuling(target, rq4, ruling(Decision.Deny, 0n));
+    await expect(
+      contract.connect(provider).appeal(r4, PROVIDER_ID, EVIDENCE_URI_2, REASON_HASH, { value: deposit - 1n })
+    ).to.be.revertedWith("fee: underfunded");
+    await contract.connect(provider).appeal(r4, PROVIDER_ID, EVIDENCE_URI_2, REASON_HASH, { value: FEE });
+    expect(await ethers.provider.getBalance(target)).to.equal(0n);
+  });
+
+  it("R9 (deadlock appeal): an appeal at the round cap refunds the full msg.value (no agent fires)", async () => {
+    const { platform, contract } = await deploy();
+    const [provider, insurer] = await ethers.getSigners();
+    const target = await contract.getAddress();
+    await contract.setMaxRounds(1n); // first ruling already at the cap
+
+    const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+    await platform.triggerRuling(target, requestId, ruling(Decision.Deny, 0n));
+    expect(await contract.roundOf(reqId)).to.equal(1n); // round == maxRounds
+
+    const value = ethers.parseEther("0.02");
+    const balBefore = await ethers.provider.getBalance(insurer.address);
+    const tx = await contract
+      .connect(insurer)
+      .appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value });
+    const rc = await tx.wait();
+    const gas = rc!.gasUsed * rc!.gasPrice;
+    const balAfter = await ethers.provider.getBalance(insurer.address);
+    // Deadlocked: no fee charged, full value refunded → net cost is just gas.
+    expect(balBefore - balAfter).to.equal(gas);
+    expect(await contract.stateOf(reqId)).to.equal(State.Deadlocked);
+    expect(await ethers.provider.getBalance(target)).to.equal(0n);
   });
 
   it("T10 (guards): invalid transitions revert; handleResponse rejects non-platform caller; unknown id reverts", async () => {

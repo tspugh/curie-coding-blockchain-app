@@ -94,7 +94,14 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         bytes32 standardRef; // public standard cited for a policy flag (R6b)
         Decision lastDecision; // latest agent decision (meaningful once ruled)
         bool hasRuling; // whether an agent decision has landed
-        uint256 round; // adjudication round count (bounded to maxRounds — R6c)
+        // ROUND SEMANTICS (R6c): `round` counts TOTAL adjudication cycles, NOT appeals.
+        // It is SET to 1 at the first `requestAdjudication` and INCREMENTED by 1 on each
+        // subsequent agent fire (`submitEvidence` and `appeal`). So after the first
+        // ruling `round == 1`; the first successful appeal makes it 2, etc. The appeal
+        // cap is reached when `round >= maxRounds` (an appeal at that point Deadlocks
+        // instead of firing a new cycle). Read it as "how many times the agent has been
+        // asked to rule", never as "number of appeals so far" (off-by-one trap).
+        uint256 round; // total adjudication cycles (bounded to maxRounds — R6c)
         bool providerAccepted; // provider accepted the current ruling
         bool insurerAccepted; // insurer accepted the current ruling
         uint256 totalFees; // accumulated agent fees (50/50 split marker — R8)
@@ -208,9 +215,12 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     }
 
     /// @notice Reclaim contract ETH — e.g. per-request fees refunded by the platform
-    ///         on a timed-out ruling (R9), or surplus sent to fund agent fees.
-    /// @dev Owner only. Settlement is an event marker (R8), so the balance is purely
-    ///      the agent-fee float.
+    ///         on a timed-out ruling (R9), or surplus deliberately sent (via `receive`)
+    ///         to pre-fund agent fees.
+    /// @dev Owner only. Settlement is an event marker (R8), so any balance is purely the
+    ///      agent-fee float. NOTE (Finding-1): the agent-firing entry points forward
+    ///      EXACTLY the per-request fee and refund overpayment to the caller, so misrouted
+    ///      caller ETH is NOT trapped here — `withdrawFunds` is not a sink for it.
     function withdrawFunds(address payable to, uint256 amount) external onlyOwner nonReentrant {
         require(to != address(0), "funds: zero addr");
         require(amount <= address(this).balance, "funds: insufficient");
@@ -297,7 +307,7 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
         n.round = 1; // first adjudication round
         emit AdjudicationRequested(reqId);
-        _fireAgent(reqId, n);
+        _fireAgent(reqId, n, msg.sender);
     }
 
     /// @notice Provider submits more public evidence of necessity from
@@ -312,7 +322,7 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         n.evidenceUri = evidenceUri;
         n.round += 1;
         emit EvidenceSubmitted(reqId, evidenceUri);
-        _fireAgent(reqId, n);
+        _fireAgent(reqId, n, msg.sender);
     }
 
     /// @notice Appeal a ruling with NEW public evidence of necessity (R6c). From
@@ -335,10 +345,17 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         require(evidenceUri != bytes32(0), "appeal: needs evidence");
 
         // Bounded to N rounds: at the cap, an appeal deadlocks instead of re-firing.
+        // No agent fires, so no fee is charged — refund the caller's full `msg.value`
+        // rather than trapping it (R9: never silently retain caller ETH). Guarded by
+        // the function's `nonReentrant` modifier; the terminal state is set first (CEI).
         if (n.round >= maxRounds) {
             _clearRequest(n);
             n.state = State.Deadlocked;
             emit Deadlocked(reqId, n.round);
+            if (msg.value > 0) {
+                (bool ok, ) = payable(msg.sender).call{value: msg.value}("");
+                require(ok, "fee: refund failed");
+            }
             return;
         }
 
@@ -346,7 +363,7 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         n.rationaleHash = reasonHash; // carry the appellant's stated reason ref
         n.round += 1;
         emit Appealed(reqId, partyId, evidenceUri, n.round);
-        _fireAgent(reqId, n);
+        _fireAgent(reqId, n, msg.sender);
     }
 
     /// @notice Accept the current ruling (R6c). From `Approved`/`Denied`. When BOTH
@@ -466,7 +483,13 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
         _clearRequest(n);
 
-        // Failed / TimedOut / empty consensus -> retriable EvidenceRequested.
+        // MULTI-RESPONSE POLICY (R6/R9): the platform delivers the CONSENSUS-encoded
+        // result. We read exactly `responses[0]` as that consensus output and ignore
+        // any further validator entries (`responses[1..]`); the platform is trusted to
+        // have reconciled validators into `responses[0]` before this callback. The
+        // empty / failed / timed-out case (`responses.length == 0` or a non-Success
+        // status) carries no usable ruling, so it routes to the retriable
+        // `EvidenceRequested` state rather than reverting or guessing a decision.
         if (status != ResponseStatus.Success || responses.length == 0) {
             n.state = State.EvidenceRequested;
             emit RulingTimedOut(reqId, requestId);
@@ -513,7 +536,12 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
         if (decision == Decision.Approve) {
             // R6a: deterministic cap = Cost Plus per-unit × quantity; covered = min(requested, cap).
-            uint256 benchmarkCap = costPlusUnitPrice * n.quantity;
+            // Finding-4 hardening: a malformed/extreme `costPlusUnitPrice` must not be able
+            // to revert (and thereby brick) this callback. `_benchmarkCap` performs an
+            // overflow-SAFE multiply that SATURATES at type(uint256).max instead of
+            // reverting. When the cap saturates, `requestedAmount` always binds — exactly
+            // the behaviour we want for an absurd price (cover only what was requested).
+            uint256 benchmarkCap = _benchmarkCap(costPlusUnitPrice, n.quantity);
             uint256 covered = n.requestedAmount < benchmarkCap ? n.requestedAmount : benchmarkCap;
             n.coveredAmount = covered;
             n.state = State.Approved;
@@ -571,8 +599,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         return (
             n.requestedAmount,
             n.quantity,
-            n.costPlusUnitPrice * n.quantity,
-            n.nadacUnitPrice * n.quantity,
+            _benchmarkCap(n.costPlusUnitPrice, n.quantity),
+            _benchmarkCap(n.nadacUnitPrice, n.quantity),
             n.coveredAmount
         );
     }
@@ -596,10 +624,22 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     // Internals
     // ---------------------------------------------------------------------
 
-    /// @dev Fire a native agent request, forwarding the per-request fee (R9), record
-    ///      the pending requestId, set the ruling deadline, and move to UnderReview.
-    ///      CEI: state is set to UnderReview BEFORE the external call.
-    function _fireAgent(uint256 reqId, Negotiation storage n) internal {
+    /// @dev Fire a native agent request, forwarding EXACTLY the per-request fee (R9),
+    ///      record the pending requestId, set the ruling deadline, and move to
+    ///      UnderReview. CEI: state is set to UnderReview BEFORE the external call.
+    ///
+    ///      FEE MODEL (R9, hardened 2026-05-27): the caller funds the per-request fee
+    ///      on the agent-firing entry point (`requestAdjudication` / `submitEvidence` /
+    ///      `appeal`, all `payable` + `nonReentrant`). The fee is computed first, the
+    ///      caller MUST cover it (`require(msg.value >= fee)`), exactly `fee` is
+    ///      forwarded to the platform, and ANY excess is refunded to the caller. Caller
+    ///      ETH is never silently trapped as owner-withdrawable balance. The refund is a
+    ///      single low-level send AFTER the platform interaction; the surrounding entry
+    ///      points are `nonReentrant`, so the refund cannot be used to re-enter, and the
+    ///      negotiation's effects (UnderReview, deadline, fee accounting) are all
+    ///      committed before either external call (CEI).
+    /// @param payer The caller funding this fire (refund recipient for any overpayment).
+    function _fireAgent(uint256 reqId, Negotiation storage n, address payer) internal {
         // Payload carries ONLY the de-identified extract: drug ref, requested amount,
         // quantity (cap driver) + daysSupply (necessity context), the public policy
         // ref, and the public-evidence ref — never raw content (R4).
@@ -615,13 +655,18 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         );
 
         uint256 fee = platform.getRequestDeposit() + agentReward;
+        // R9: the caller must fund at least the per-request fee. We forward EXACTLY the
+        // fee and refund the rest; we never retain caller ETH as a hidden owner sink.
+        require(msg.value >= fee, "fee: underfunded");
+        uint256 refund = msg.value - fee;
+
         n.totalFees += fee; // accumulate for the 50/50 settlement marker (R8)
 
         // Effects before interaction (CEI).
         n.rulingDeadline = block.timestamp + rulingTimeout;
         n.state = State.UnderReview;
 
-        // Interaction: fire the native Somnia agent, forwarding the per-request fee.
+        // Interaction: fire the native Somnia agent, forwarding EXACTLY the per-request fee.
         uint256 requestId = platform.createRequest{value: fee}(
             agentId,
             address(this),
@@ -633,6 +678,27 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         _requestToNegotiation[requestId] = reqId;
 
         emit RulingRequested(reqId, requestId, fee);
+
+        // Refund any overpayment to the caller. Guarded by the caller's `nonReentrant`
+        // entry point; all state effects above are already committed (CEI-safe).
+        if (refund > 0) {
+            (bool ok, ) = payable(payer).call{value: refund}("");
+            require(ok, "fee: refund failed");
+        }
+    }
+
+    /// @dev Overflow-SAFE benchmark cap = `unitPrice * quantity`, SATURATING at
+    ///      `type(uint256).max` instead of reverting (Finding-4 domain hardening). A
+    ///      malformed/extreme per-unit price can therefore never revert the callback
+    ///      path; when the product saturates, the requested amount binds in the `min`.
+    function _benchmarkCap(uint256 unitPrice, uint256 quantity) internal pure returns (uint256) {
+        if (unitPrice == 0 || quantity == 0) return 0;
+        unchecked {
+            uint256 product = unitPrice * quantity;
+            // Detect overflow: if dividing back doesn't recover the price, it wrapped.
+            if (product / quantity != unitPrice) return type(uint256).max;
+            return product;
+        }
     }
 
     function _clearRequest(Negotiation storage n) internal {
