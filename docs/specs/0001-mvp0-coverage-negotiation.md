@@ -50,13 +50,13 @@ agent and are **bounded to N rounds** → `Deadlocked` if unresolved. Both accep
 - **R4 (MUST — hard invariant)** **No PHI / no content beyond hashes, refs, amounts, state is ever on-chain — nor in the agent payload.** v0 uses a **de-identified synthetic** case; the agent receives only a de-identified extract + public URLs (§3 "PHI handling").
 - **R5 (MUST — insurer attaches policy)** The **insurer engages** a filed request by **attaching its governing policy criteria** as a **hashed, public** contract input (hash on-chain, body off-chain/at a public URL) **before** adjudication. Adjudication cannot run until a policy is attached.
 - **R6 (MUST — necessity arbiter)** Adjudication fires the **native agent**, which **weighs the provider's cited public evidence against the insurer's attached policy criteria** and rules **`approve | deny | need_more_evidence`**, recording a **rationale hash** + the **specific policy clause ref** relied on + receipt. (This text-vs-text judgment is the irreplaceable, AI-worthy step — A-0003.)
-- **R6a (MUST — deterministic amount)** The covered amount is **not AI-chosen**: on `approve` it is `coveredAmount = min(requestedAmount, benchmarkCap)` where `benchmarkCap` derives from the **public price sources** (R10); on `deny` it is `0`.
+- **R6a (MUST — deterministic amount)** The covered amount is **not AI-chosen**: on `approve` it is `coveredAmount = min(requestedAmount, benchmarkCap)` where **`benchmarkCap` = the Mark Cuban Cost Plus retail price × quantity/days-supply** — the fair, transparent v0 benchmark (resolved 2026-05-27). **NADAC** is recorded alongside as the acquisition-cost **floor reference** (a `requested < NADAC` is flagged as suspicious). On `deny` the amount is `0`. (A NADAC+dispensing-fee "payer-reimbursement mode" is a v1 alternative — §7.)
 - **R6b (MUST — policy compliance / void)** If a policy clause the agent **relies on contradicts a cited public standard** (FDA-approved indication / guideline), the agent emits **`PolicyFlagged(clauseRef, standardRef)`** and routes the contract to terminal **`PolicyInvalidated`** — the whole request is **voided** (incentivising compliant policy). No silent override.
 - **R6c (MUST — necessity appeals, bounded)** From a ruling, **either party may `accept` or `appeal`**. An **appeal submits new public evidence of necessity** (`{evidenceUri, reasonHash}`) — never price haggling — and **re-fires the agent**, `round++`. Bounded to **N rounds** (config; default 3). **Both accepting** the current ruling makes it settleable; **N rounds without mutual acceptance → terminal `Deadlocked`**.
 - **R7 (MUST — provider refusal)** After the insurer has attached terms, the **provider may `refuse`** → terminal **`ProviderRefused`** (an attributable rejection of the insurer's stated terms, distinct from neutral `Withdrawn` and from `Deadlocked`), recording an optional reason hash.
 - **R8 (MUST — settlement marker)** Settlement in v0 is an **event marker only** (no token transfer): records the **agreed covered amount** and the **per-party fee split** (50/50) deducted from it. Self-claim is a marker.
 - **R9 (MUST — contract-native agent + fees)** The contract fires the native agent via `createRequest`; the platform **calls back** into the same contract. The **per-request fee is charged on execution** (refunded on timeout) — **funded wallet required in real mode**; fees are **split 50/50** and reconciled against the covered amount at settlement (marker in v0; real transfer v1). `Failed`/`TimedOut` (or a keeper) routes to a retriable state.
-- **R10 (MUST — public sources)** Drug identity via **RxNorm/NDC**; necessity evidence via **openFDA / DailyMed labels + clinical guidelines** (and the public standard for R6b); price cap via **NADAC + Mark Cuban Cost Plus**; coverage rubric is the **insurer's attached policy** (with a **published Medicare Part D** exception-criteria fixture for v0). Agent selects by source type: HTML → `LLM Parse Website`; JSON/REST → `JSON API Request`.
+- **R10 (MUST — public sources)** Drug identity via **RxNorm/NDC**; necessity evidence via **openFDA / DailyMed labels + clinical guidelines** (and the public standard for R6b); price cap via **Mark Cuban Cost Plus** (primary, fair retail) with **NADAC** as the acquisition-cost floor reference; coverage rubric is the **insurer's attached policy** (with a **published Medicare Part D** exception-criteria fixture for v0). Agent selects by source type: HTML → `LLM Parse Website`; JSON/REST → `JSON API Request`.
 
 **Identity & authorization**
 - **R11 (MUST — wallet auth)** Each request registers a **provider address** and an **insurer address**. Every party action is gated `msg.sender ∈ {providerAddr, insurerAddr}` (with `insurerEngage` insurer-only, `refuse` provider-only). A **third, unrelated wallet reverts**; reads stay **public**.
@@ -70,6 +70,14 @@ agent and are **bounded to N rounds** → `Deadlocked` if unresolved. Both accep
 - **R17 (SHOULD)** Observable over JSON-RPC (events + live subscription).
 
 ## 3. Technical documentation
+
+**Actors.** **Provider** (prescriber / dispensing pharmacy, *initiator* — files the
+coverage-exception and seeks reimbursement, acting **on the patient's behalf**) ↔
+**Insurer / plan** (*destination* — attaches the governing policy, pays) ↔ **AI arbiter**
+(the native Somnia agent — rules necessity and applies the deterministic cap). The
+**patient is the beneficiary, NOT a v0 transacting party** — there is no patient wallet;
+the provider represents the patient. Patient-as-a-party (visibility/approval, cost-sharing
+flows) is v1 (§7).
 
 **On-chain / off-chain boundary.** *Off-chain / at public URLs:* the de-identified
 justification, cited public evidence, the insurer's policy body, the agent's rationale,
@@ -198,11 +206,13 @@ exposes **attach-policy / engage**.
 - **Private / tiered on-chain agent reasoning** — not possible on the public native agent today; a **future Somnia ask** (§8).
 - **Autonomous policy-driven party agents** — each party loads a *policy* and auto-accepts/appeals as claims change — **MVP v1**.
 - **Real token settlement / escrow transfer** — v0 settlement + fee split is an event marker; real transfer is v1.
+- **Cost-sharing / copay / tiering, and patient-as-a-party** — v0's covered amount is the *full* reimbursement decided provider↔insurer on the patient's behalf; patient copay, plan cost-sharing %, tier logic, and the patient as an on-chain participant are **MVP v1**.
+- **NADAC+dispensing-fee "payer-reimbursement mode"** — v0 caps at Cost Plus (neutral/fair); an insurer-realistic NADAC-based reimbursement basis is a **v1** configurable alternative.
 - **Insurer non-engagement handling** beyond a basic keeper timeout (see §8); **app-level PHI gating of public feedback**; identity/KYC; agent accuracy eval; multi-tenant; subgraph; ZK; mobile UI.
 
 ## 8. Open questions
 
-1. **Benchmark cap rule** — `coveredAmount = min(requested, cap)`: when NADAC vs. Cost Plus disagree, what's `cap` (lower? NADAC-preferred? a documented precedence)? — priority: high
+1. **RESOLVED (2026-05-27): Benchmark cap = Mark Cuban Cost Plus retail price × quantity** (neutral/fair); NADAC is the floor reference; NADAC+dispensing-fee is a v1 payer-mode. *Remaining sub-item:* the request needs a **quantity / days-supply** field so the cap is `unitPrice × quantity`. — priority: resolved (sub-item: medium)
 2. **De-identified extract schema** — exact safe fields, and the re-identification guarantee for the combination. — priority: high
 3. **Insurer non-engagement** — if the insurer never attaches a policy, does a keeper expire `Open` → `Withdrawn` after a deadline? — priority: medium
 4. **N (round cap)** value and whether `Deadlocked` allows an off-chain human-escalation hook. — priority: medium
