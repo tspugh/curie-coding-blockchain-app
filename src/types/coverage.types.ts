@@ -1,22 +1,22 @@
 /**
- * TypeScript mirror of `contracts/contracts/CoverageNegotiation.sol` (SPEC-0001 §3).
+ * TypeScript mirror of `contracts/contracts/CoverageNegotiation.sol` (SPEC-0001,
+ * revised 2026-05-27 — AI necessity-arbiter model).
  *
  * These types are the single shared vocabulary for the whole library: the
  * simulated backend, the real (ethers) backend, the client interface, and the
  * UI all speak in terms of the shapes declared here. They mirror the contract's
- * state enum, the `Negotiation` / `Position` structs, its verdict vocabulary,
- * and its events EXACTLY so that switching backends never changes the data the
- * caller sees.
+ * `State` / `Decision` enums, the `Negotiation` struct, and its events EXACTLY,
+ * so switching backends never changes the data the caller sees.
  *
  * HARD INVARIANT (R4): nothing here carries PHI or raw content. Only hashes
- * (`bytes32` as 0x-hex strings), opaque refs, amounts (`bigint`), state, ids,
- * and timestamps cross this boundary — identical to the on-chain record.
+ * (`bytes32` as 0x-hex strings), opaque refs, amounts (`bigint`), decision
+ * codes, state, ids, addresses, and timestamps cross this boundary — identical
+ * to the on-chain record.
  */
 
 /**
- * Negotiation lifecycle state. Numeric values match the Solidity `enum State`
- * declaration order EXACTLY (Open = 0 … Withdrawn = 8) so the same integer the
- * contract returns maps to the same member here.
+ * Request lifecycle state. Numeric values match the Solidity `enum State`
+ * declaration order EXACTLY (Open = 0 … Withdrawn = 10).
  */
 export enum State {
   Open = 0,
@@ -25,9 +25,11 @@ export enum State {
   EvidenceRequested = 3,
   Approved = 4,
   Denied = 5,
-  Appealed = 6,
-  Settled = 7,
-  Withdrawn = 8,
+  Settled = 6,
+  Deadlocked = 7,
+  PolicyInvalidated = 8,
+  ProviderRefused = 9,
+  Withdrawn = 10,
 }
 
 /** Human-readable name for a {@link State} value (for the UI / logs). */
@@ -38,56 +40,92 @@ export const STATE_NAMES: Readonly<Record<State, string>> = {
   [State.EvidenceRequested]: "EvidenceRequested",
   [State.Approved]: "Approved",
   [State.Denied]: "Denied",
-  [State.Appealed]: "Appealed",
   [State.Settled]: "Settled",
+  [State.Deadlocked]: "Deadlocked",
+  [State.PolicyInvalidated]: "PolicyInvalidated",
+  [State.ProviderRefused]: "ProviderRefused",
   [State.Withdrawn]: "Withdrawn",
 };
 
-/**
- * The agent's verdict vocabulary (R6). These are the only three strings the
- * contract's `handleResponse` decodes into routed states; any other value is
- * treated as `need_more_evidence` (retriable).
- */
-export type Verdict = "approve" | "deny" | "need_more_evidence";
+/** Terminal states (no further transitions) — mirror of the contract's `_terminal`. */
+export const TERMINAL_STATES: ReadonlySet<State> = new Set([
+  State.Settled,
+  State.Deadlocked,
+  State.PolicyInvalidated,
+  State.ProviderRefused,
+  State.Withdrawn,
+]);
 
-/** A single party's negotiating position — mirrors `struct Position`. */
-export interface Position {
-  /** Proposed amount; meaningful only when `submitted` is true. */
-  readonly proposedAmount: bigint;
-  /** Whether this party has submitted their position. */
-  readonly submitted: boolean;
+/**
+ * The agent's necessity ruling (R6) plus the policy-void outcome (R6b). Numeric
+ * values match the Solidity `enum Decision` declaration order EXACTLY.
+ */
+export enum Decision {
+  Approve = 0,
+  Deny = 1,
+  NeedMoreEvidence = 2,
+  PolicyInvalid = 3,
 }
 
+/** Human-readable name for a {@link Decision} (the `approve|deny|…` vocabulary). */
+export const DECISION_NAMES: Readonly<Record<Decision, string>> = {
+  [Decision.Approve]: "approve",
+  [Decision.Deny]: "deny",
+  [Decision.NeedMoreEvidence]: "need_more_evidence",
+  [Decision.PolicyInvalid]: "policy_invalid",
+};
+
 /**
- * Full per-contract record — mirrors `struct Negotiation` field-for-field.
- * `bytes32` values are represented as 0x-prefixed 32-byte hex strings.
+ * Full per-request record — mirrors `struct Negotiation` field-for-field, in
+ * declaration order (so the ethers tuple decode lines up). `bytes32` values are
+ * 0x-prefixed 32-byte hex strings; addresses are 0x-prefixed 20-byte hex.
  */
 export interface Negotiation {
-  /** Profile/agent id of the initiator. */
-  readonly initiatorId: bigint;
-  /** Profile/agent id of the destination party. */
-  readonly destinationId: bigint;
-  /** Opaque reference to the drug under negotiation. */
+  /** App-level party id of the provider (initiator). */
+  readonly providerId: bigint;
+  /** App-level party id of the insurer (destination). */
+  readonly insurerId: bigint;
+  /** Provider wallet address (auth — R11). */
+  readonly providerAddr: string;
+  /** Insurer wallet address (auth — R11). */
+  readonly insurerAddr: string;
+  /** Opaque RxNorm/NDC drug reference. */
   readonly drugRef: string;
-  /** keccak256 of the off-chain patient note. */
-  readonly noteHash: string;
-  /** Benchmark band lower bound. */
-  readonly priceFloor: bigint;
-  /** Benchmark band upper bound. */
-  readonly priceCeil: bigint;
-  /** Opaque ref to the latest off-chain evidence. */
+  /** The provider's billed / requested amount. */
+  readonly requestedAmount: bigint;
+  /** keccak256 of the de-identified justification. */
+  readonly justificationHash: string;
+  /** Opaque ref to the latest public-evidence doc. */
   readonly evidenceUri: string;
-  /** The initiator's position. */
-  readonly initiatorPosition: Position;
-  /** The destination party's position. */
-  readonly destinationPosition: Position;
-  /** Amount recorded at settlement (within band); 0 until settled. */
-  readonly agreedAmount: bigint;
+  /** keccak256 of the insurer's attached policy body (R5). */
+  readonly policyHash: string;
+  /** Opaque ref to the public policy body (R5). */
+  readonly policyUri: string;
+  /** Deterministic covered amount = min(requested, cap) on approve; else 0 (R6a). */
+  readonly coveredAmount: bigint;
+  /** Hash of the agent's latest rationale. */
+  readonly rationaleHash: string;
+  /** The policy clause the agent relied on (R6). */
+  readonly clauseRef: string;
+  /** Public standard cited for a policy flag (R6b). */
+  readonly standardRef: string;
+  /** Latest agent decision (meaningful once `hasRuling`). */
+  readonly lastDecision: Decision;
+  /** Whether an agent decision has landed. */
+  readonly hasRuling: boolean;
+  /** Adjudication round count (bounded to maxRounds — R6c). */
+  readonly round: bigint;
+  /** Whether the provider has accepted the current ruling. */
+  readonly providerAccepted: boolean;
+  /** Whether the insurer has accepted the current ruling. */
+  readonly insurerAccepted: boolean;
+  /** Accumulated agent fees (basis for the 50/50 settlement marker — R8). */
+  readonly totalFees: bigint;
   /** Current lifecycle state. */
   readonly state: State;
   /** In-flight Somnia agent request id (0 if none). */
   readonly pendingRequestId: bigint;
-  /** Block/wall-clock timestamp (seconds) the contract was created. */
+  /** Block/wall-clock timestamp (seconds) the request was created. */
   readonly createdAt: bigint;
   /** After this timestamp a stuck ruling may time out (0 if no request). */
   readonly rulingDeadline: bigint;
@@ -97,11 +135,10 @@ export interface Negotiation {
 
 /**
  * UI-friendly projection of a {@link Negotiation}: the raw record plus the
- * contract id and decoded helpers the views need. This is what the UI table /
- * detail pages render.
+ * request id and decoded helpers the views need.
  */
 export interface NegotiationView {
-  /** On-chain contract id (`reqId`). */
+  /** On-chain request id (`reqId`). */
   readonly reqId: bigint;
   /** The underlying record. */
   readonly negotiation: Negotiation;
@@ -109,37 +146,47 @@ export interface NegotiationView {
   readonly state: State;
   /** Human-readable state name. */
   readonly stateName: string;
-  /** Whether both parties have submitted a position (dispute is possible). */
-  readonly bothPositionsSubmitted: boolean;
-  /** Whether a dispute may currently be raised (state === Ready). */
-  readonly disputable: boolean;
-  /** Whether the contract has reached a terminal state (Settled/Withdrawn). */
+  /** Whether the insurer has attached a policy (state ≥ Ready). */
+  readonly policyAttached: boolean;
+  /** Whether adjudication may currently be requested (state === Ready). */
+  readonly adjudicable: boolean;
+  /** Whether a ruling is in hand to accept/appeal (Approved/Denied). */
+  readonly ruled: boolean;
+  /** Whether both parties have accepted the current ruling (settleable). */
+  readonly bothAccepted: boolean;
+  /** Whether the request has reached a terminal state. */
   readonly terminal: boolean;
 }
 
 // ---------------------------------------------------------------------------
 // Event types — mirror the contract's `event` declarations (SPEC-0001 §3).
-// Each carries only ids/hashes/refs/amounts/state, never raw content.
+// Each carries only ids/hashes/refs/amounts/codes, never raw content.
 // ---------------------------------------------------------------------------
 
 /** Discriminator for the union of negotiation events. */
 export type CoverageEventName =
   | "ContractCreated"
   | "ContentCommitted"
-  | "PositionSubmitted"
+  | "InsurerEngaged"
   | "ContractReady"
-  | "DisputeSubmitted"
+  | "AdjudicationRequested"
   | "RulingRequested"
   | "Ruled"
-  | "RulingTimedOut"
-  | "FeedbackPosted"
+  | "PolicyFlagged"
+  | "PolicyInvalidated"
+  | "EvidenceRequested"
   | "EvidenceSubmitted"
   | "Appealed"
+  | "Accepted"
   | "Settled"
-  | "Withdrawn";
+  | "Deadlocked"
+  | "ProviderRefused"
+  | "Withdrawn"
+  | "RulingTimedOut"
+  | "FeedbackPosted";
 
 interface BaseEvent {
-  /** Contract id the event pertains to. */
+  /** Request id the event pertains to. */
   readonly reqId: bigint;
   /** Optional transaction hash (present for real-chain events). */
   readonly txHash?: string;
@@ -149,11 +196,12 @@ interface BaseEvent {
 
 export interface ContractCreatedEvent extends BaseEvent {
   readonly name: "ContractCreated";
-  readonly initiatorId: bigint;
-  readonly destinationId: bigint;
+  readonly providerId: bigint;
+  readonly insurerId: bigint;
+  readonly providerAddr: string;
+  readonly insurerAddr: string;
   readonly drugRef: string;
-  readonly priceFloor: bigint;
-  readonly priceCeil: bigint;
+  readonly requestedAmount: bigint;
 }
 
 export interface ContentCommittedEvent extends BaseEvent {
@@ -162,19 +210,18 @@ export interface ContentCommittedEvent extends BaseEvent {
   readonly uri: string;
 }
 
-export interface PositionSubmittedEvent extends BaseEvent {
-  readonly name: "PositionSubmitted";
-  readonly partyId: bigint;
-  readonly proposedAmount: bigint;
+export interface InsurerEngagedEvent extends BaseEvent {
+  readonly name: "InsurerEngaged";
+  readonly policyHash: string;
+  readonly policyUri: string;
 }
 
 export interface ContractReadyEvent extends BaseEvent {
   readonly name: "ContractReady";
 }
 
-export interface DisputeSubmittedEvent extends BaseEvent {
-  readonly name: "DisputeSubmitted";
-  readonly byPartyId: bigint;
+export interface AdjudicationRequestedEvent extends BaseEvent {
+  readonly name: "AdjudicationRequested";
 }
 
 export interface RulingRequestedEvent extends BaseEvent {
@@ -186,9 +233,64 @@ export interface RulingRequestedEvent extends BaseEvent {
 export interface RuledEvent extends BaseEvent {
   readonly name: "Ruled";
   readonly requestId: bigint;
-  /** Raw verdict string emitted by the contract ("timeout" on failure). */
-  readonly verdict: string;
+  readonly decision: Decision;
+  readonly coveredAmount: bigint;
+  readonly rationaleHash: string;
+  readonly clauseRef: string;
   readonly receiptId: bigint;
+}
+
+export interface PolicyFlaggedEvent extends BaseEvent {
+  readonly name: "PolicyFlagged";
+  readonly clauseRef: string;
+  readonly standardRef: string;
+}
+
+export interface PolicyInvalidatedEvent extends BaseEvent {
+  readonly name: "PolicyInvalidated";
+  readonly clauseRef: string;
+  readonly standardRef: string;
+}
+
+export interface EvidenceRequestedEvent extends BaseEvent {
+  readonly name: "EvidenceRequested";
+}
+
+export interface EvidenceSubmittedEvent extends BaseEvent {
+  readonly name: "EvidenceSubmitted";
+  readonly evidenceUri: string;
+}
+
+export interface AppealedEvent extends BaseEvent {
+  readonly name: "Appealed";
+  readonly partyId: bigint;
+  readonly evidenceUri: string;
+  readonly round: bigint;
+}
+
+export interface AcceptedEvent extends BaseEvent {
+  readonly name: "Accepted";
+  readonly partyId: bigint;
+}
+
+export interface SettledEvent extends BaseEvent {
+  readonly name: "Settled";
+  readonly coveredAmount: bigint;
+  readonly feePerParty: bigint;
+}
+
+export interface DeadlockedEvent extends BaseEvent {
+  readonly name: "Deadlocked";
+  readonly rounds: bigint;
+}
+
+export interface ProviderRefusedEvent extends BaseEvent {
+  readonly name: "ProviderRefused";
+  readonly reasonHash: string;
+}
+
+export interface WithdrawnEvent extends BaseEvent {
+  readonly name: "Withdrawn";
 }
 
 export interface RulingTimedOutEvent extends BaseEvent {
@@ -202,40 +304,27 @@ export interface FeedbackPostedEvent extends BaseEvent {
   readonly uri: string;
 }
 
-export interface EvidenceSubmittedEvent extends BaseEvent {
-  readonly name: "EvidenceSubmitted";
-  readonly evidenceUri: string;
-}
-
-export interface AppealedEvent extends BaseEvent {
-  readonly name: "Appealed";
-  readonly evidenceUri: string;
-}
-
-export interface SettledEvent extends BaseEvent {
-  readonly name: "Settled";
-  readonly agreedAmount: bigint;
-}
-
-export interface WithdrawnEvent extends BaseEvent {
-  readonly name: "Withdrawn";
-}
-
 /** Discriminated union of every negotiation event the contract can emit. */
 export type CoverageEvent =
   | ContractCreatedEvent
   | ContentCommittedEvent
-  | PositionSubmittedEvent
+  | InsurerEngagedEvent
   | ContractReadyEvent
-  | DisputeSubmittedEvent
+  | AdjudicationRequestedEvent
   | RulingRequestedEvent
   | RuledEvent
-  | RulingTimedOutEvent
-  | FeedbackPostedEvent
+  | PolicyFlaggedEvent
+  | PolicyInvalidatedEvent
+  | EvidenceRequestedEvent
   | EvidenceSubmittedEvent
   | AppealedEvent
+  | AcceptedEvent
   | SettledEvent
-  | WithdrawnEvent;
+  | DeadlockedEvent
+  | ProviderRefusedEvent
+  | WithdrawnEvent
+  | RulingTimedOutEvent
+  | FeedbackPostedEvent;
 
 /** Listener invoked for every emitted {@link CoverageEvent}. */
 export type CoverageEventListener = (event: CoverageEvent) => void;
@@ -244,7 +333,7 @@ export type CoverageEventListener = (event: CoverageEvent) => void;
 export type Unsubscribe = () => void;
 
 /**
- * Wallet operating mode (R11). The same calling code runs in either mode; only
+ * Wallet operating mode (R14). The same calling code runs in either mode; only
  * the signer/provider differs.
  */
 export type WalletMode = "simulated" | "real";

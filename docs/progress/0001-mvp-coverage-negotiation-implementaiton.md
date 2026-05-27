@@ -97,6 +97,72 @@ behavior via Context7 (`/websites/somnia_network`); keep all doc writing inside 
   - `src/orchestrator.ts` — `runNegotiation(negotiation, provider, payer, script)` drives the whole loop (open → both positions → dispute → await ruling → settle on approve), subscribing for a transcript. Same script runs in either wallet mode (R11); it just waits for the contract to leave `UnderReview`.
   - Exported from the public API; **`npm run demo:orchestrator`** (`scripts/orchestrator-demo.mjs`, wallet-free, simulated) validates **7 checks**: approve→Settled with full timeline, provider/payer are distinct parties (R13), deny→Denied (no settle), need_more_evidence→EvidenceRequested, and a payer-initiated dispute→Settled. Library build/typecheck clean.
 
-### Status vs SPEC-0001 pass/fail (§6)
+### Status vs SPEC-0001 pass/fail (§6) — ORIGINAL price-band model (superseded 2026-05-27)
 - ✅ Contract compiles + passes Hardhat tests (T1–T6). ✅ Library one-interface/two-mode (R11). ✅ Web app: all required views/actions (R14/R15) + profile switch + wallet/mode display (R12/R13). ✅ no-PHI invariant enforced + asserted (R4). ✅ positions-before-dispute (R5) + dispute fires agent (R6) + settle-within-band (R8). ✅ E2E suite (T8/T9 + T1/T3/T5 at the UI boundary).
 - ⛔ **Remaining, blocked on a funded wallet only:** deploy `CoverageNegotiation.sol` to Somnia testnet (chain 50312); the real-wallet half of T7 (R11) and one **real** native-agent ruling with a viewable receipt + per-request fee on execution (R9); T10 (`eth_getLogs` timeline reconstruction over real RPC). These are the "stop only when you can go no further without a real wallet" boundary.
+
+---
+
+### 2026-05-27 — Iteration 2: REGENERATE to the AI necessity-arbiter spec (A-0003)
+
+SPEC-0001 was revised twice and now describes an **AI necessity-arbiter** (not a price-setter).
+Per the repo "regenerate, don't migrate" rule, the contract, the `src/` library, and (next) the
+web UI are being rebuilt to the new model — the old approve/deny **price band** and the interim
+**price-arbiter** model are removed wholesale.
+
+**What the new model is (vs. what was removed):**
+- *Removed:* price band `[floor, ceil]`, two-party `submitPosition` → `Ready`, `submitDispute`,
+  `agreedAmount` chosen at settlement within the band, `initiator`/`destination` neutrality, the
+  `Verdict` string vocabulary, no-address-gating trust model.
+- *Added:* insurer **attaches a policy** (`insurerEngage`, hash on-chain) **before** adjudication
+  (R5); the agent rules **necessity** `approve|deny|need_more_evidence` **citing a clause**, or
+  **voids** the contract when a relied-on clause contradicts a public standard →
+  `PolicyInvalidated` + `PolicyFlagged` (R6b); covered amount is **deterministic**
+  `min(requested, benchmarkCap)` computed by the CONTRACT, never AI-chosen (R6a); appeals submit
+  **new public evidence** and are **bounded to N rounds** → `Deadlocked` (R6c); per-party
+  `accept` flags then `settle` (event marker + 50/50 fee split, R8); `ProviderRefused` terminal
+  (R7); **wallet-address gating** on every party action — third wallet reverts, `insurerEngage`
+  insurer-only, `submitEvidence`/`refuse` provider-only, reads public (R11).
+
+**DONE — contract + Hardhat tests + library (focus #1 + #2 backend), regenerated.**
+- `contracts/CoverageNegotiation.sol` rewritten: 11-state machine (`Open · Ready · UnderReview ·
+  EvidenceRequested · Approved · Denied · Settled · Deadlocked · PolicyInvalidated ·
+  ProviderRefused · Withdrawn`), `Decision` enum (`Approve|Deny|NeedMoreEvidence|PolicyInvalid`),
+  `createContract`(provider-only)/`insurerEngage`(insurer-only, R5)/`requestAdjudication`(payable,
+  Ready-only)/`handleResponse`(platform-only; decodes `(decision, benchmarkCap, rationaleHash,
+  clauseRef, standardRef, receiptId)` and computes `coveredAmount = min(requested, cap)` —
+  R6a)/`submitEvidence`(provider, round++)/`appeal`(party, new evidence required, round-bounded →
+  `Deadlocked`)/`accept`+`settle`(both-accept → marker + 50/50 fee)/`refuse`(provider →
+  `ProviderRefused`)/`withdraw`/`onRulingTimeout`/`postFeedback`. Views: `getNegotiation`,
+  `stateOf`, `coveredAmountOf`, `roundOf`, `policyOf`, `count`, `maxRounds`. CEI + `nonReentrant`
+  on agent-firing entry points retained. **Somnia interface re-verified** against the live docs
+  (`agents/invoking-agents/from-solidity`) — `createRequest`/`getRequestDeposit`/`handleResponse`
+  signatures + `Response`/`Request`/`ResponseStatus` unchanged; we keep `handleResponse.selector`.
+  (Context7 MCP was not connected this session; used the official docs as the source.)
+- `MockAgentPlatform.sol` `triggerRuling` now encodes the arbiter tuple `(uint8 decision,
+  benchmarkCap, rationaleHash, clauseRef, standardRef, receiptId)`.
+- **Hardhat tests: 10 passing**, coarse AAA, T1–T10 + a security block — incl. T4 deterministic
+  `min(requested, cap)` both directions, T5 `policy_invalid` → `PolicyInvalidated`, T6 bounded
+  appeals → `Deadlocked` + empty-evidence appeal reverts, T7 `ProviderRefused`, T8 settle + 50/50
+  marker, **T9 third-wallet-reverts on every party action + reads-open + single-wallet via
+  `partyId`** (R11/R12/R13), T10 guards + non-platform `handleResponse` revert.
+- `src/` library regenerated: `coverage.types.ts` (new `State`/`Decision` enums, `Negotiation`
+  struct mirror, new event union), `contract/abi.ts`, `contract/types.ts` (new
+  `CoverageNegotiationClient`), `contract/simulated.ts` (in-memory mirror + **mocked arbiter**
+  configurable by `decision`/`benchmarkCap`/refs; deterministic `min`), `contract/real.ts` (ethers
+  v6, 25-field tuple decode, new events, payable adjudication), `agents/*` (PartyAgent: file /
+  engage / adjudicate / submitEvidence / appeal / accept / settle / refuse; provider + **insurer**
+  factories), `orchestrator.ts` (file→engage→adjudicate→accept→settle, scripted deny / NME /
+  policy_invalid / appeal→deadlock), `profiles.ts` (provider + insurer defaults). All free text
+  (justification, policy body, evidence, appeal reason, feedback) is hashed into the off-chain
+  `ContentStore` — only hashes/refs cross into contract calls (R3/R4).
+- **Verified green:** `npm --prefix contracts run test` (10/10), `npm run build` + `npm run
+  typecheck` clean, `node scripts/orchestrator-demo.mjs` (12 checks: approve→Settled, deny→Denied,
+  NME→EvidenceRequested→submitEvidence→approve→Settled, policy_invalid→PolicyInvalidated,
+  appeal→Deadlocked), and `scripts/real-backend-localnode.sh` (16 checks: RealBackend
+  Open→Ready→UnderReview→Approved→Settled on a local node, deterministic covered amount, live
+  subscription + `getEvents` reconstruction, simulated/real state-sequence parity).
+- **Next:** regenerate the web UI (insurer engage/attach-policy, ruling + rationale + cited
+  clause, covered amount, round counter, accept/appeal/refuse/settle) + the demo fixtures
+  (incl. a **non-compliant policy** fixture to demo `PolicyInvalidated`). Still blocked on a
+  funded wallet for the real Somnia deploy + a real native-agent ruling (R9).

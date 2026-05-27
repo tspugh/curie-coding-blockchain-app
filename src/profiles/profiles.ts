@@ -1,12 +1,12 @@
 /**
  * App-level profile registry + active-profile switching (SPEC-0001 R12/R13).
  *
- * A "profile" is an app-level identity (a provider or payer persona) that maps
+ * A "profile" is an app-level identity (a provider or insurer persona) that maps
  * to a numeric on-chain party id. The MVP supports a SINGLE wallet shared by
  * MULTIPLE profiles: switching the active profile changes the on-chain identity
  * used for the next action, while the underlying wallet stays the same. Because
- * two profiles can share one wallet (or be the same id), self-contract /
- * pay-yourself is naturally supported (R13).
+ * two profiles can share one wallet (or be the same id), self-claim (provider ==
+ * insurer) is naturally supported (R13).
  *
  * This layer holds no keys and touches no chain — it is pure identity state the
  * UI reads to show the active profile and the contract client reads to know
@@ -16,11 +16,11 @@ import type { Wallet } from "../wallet/index.js";
 
 /** An app-level identity that maps to an on-chain party id. */
 export interface Profile {
-  /** Stable key used to select this profile (e.g. "provider", "payer"). */
+  /** Stable key used to select this profile (e.g. "provider", "insurer"). */
   readonly id: string;
   /** Display name for the UI. */
   readonly label: string;
-  /** On-chain party id used for `submitPosition` / `submitDispute` etc. */
+  /** On-chain party id used for `appeal` / `accept` / `createContract` etc. */
   readonly partyId: bigint;
 }
 
@@ -32,10 +32,10 @@ export interface ProfileRegistryOptions {
   readonly activeId?: string;
 }
 
-/** Two sensible default identities for the demo loop (provider + payer). */
+/** Two sensible default identities for the demo loop (provider + insurer). */
 export const DEFAULT_PROFILES: readonly Profile[] = [
   { id: "provider", label: "Provider", partyId: 1n },
-  { id: "payer", label: "Payer", partyId: 2n },
+  { id: "insurer", label: "Insurer", partyId: 2n },
 ];
 
 /**

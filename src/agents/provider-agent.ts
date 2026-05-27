@@ -1,7 +1,8 @@
 /**
  * The provider (prescriber) party actor (SPEC-0001 §4). Binds a {@link PartyAgent}
- * to the "provider" profile — the side that requests coverage, opens the contract,
- * and typically proposes the higher price and raises the dispute.
+ * to the "provider" profile — the side that files the coverage-exception request,
+ * supplies the justification + public evidence, requests adjudication, submits
+ * more evidence, appeals, and may refuse the insurer's terms.
  */
 import { type AgentClient, PartyAgent } from "./party-agent.js";
 
@@ -16,6 +17,7 @@ export function createProviderAgent(client: AgentClient): PartyAgent {
     negotiation: client.negotiation,
     content: client.content,
     partyId: profile.partyId,
+    address: client.wallet.address,
     label: profile.label,
   });
 }

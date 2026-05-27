@@ -74,21 +74,31 @@ contract MockAgentPlatform is IAgentRequester {
         observedStateDuringCreate = IStateProbe(callbackAddress).stateOf(reqIdFromPayload);
     }
 
-    /// @notice Drive a successful ruling back into the target as the platform would.
+    /// @notice Drive a successful necessity ruling back into the target as the
+    ///         platform would. Encodes the arbiter tuple the contract decodes:
+    ///         `(Decision, benchmarkCap, rationaleHash, clauseRef, standardRef, receipt)`.
     /// @param target The CoverageNegotiation contract (implements handleResponse).
     /// @param requestId The request to resolve.
-    /// @param verdict One of "approve" | "deny" | "need_more_evidence".
+    /// @param decision Arbiter decision (0=approve,1=deny,2=need_more_evidence,3=policy_invalid).
+    /// @param benchmarkCap Public price cap; the contract computes min(requested, cap).
+    /// @param rationaleHash Hash of the off-chain rationale.
+    /// @param clauseRef The policy clause the agent relied on.
+    /// @param standardRef Public standard cited for a policy flag (R6b).
     /// @param receiptId Off-chain receipt pointer to surface.
     function triggerRuling(
         address target,
         uint256 requestId,
-        string calldata verdict,
+        uint8 decision,
+        uint256 benchmarkCap,
+        bytes32 rationaleHash,
+        bytes32 clauseRef,
+        bytes32 standardRef,
         uint256 receiptId
     ) external {
         Response[] memory responses = new Response[](1);
         responses[0] = Response({
             validator: address(this),
-            result: abi.encode(verdict),
+            result: abi.encode(decision, benchmarkCap, rationaleHash, clauseRef, standardRef, receiptId),
             status: ResponseStatus.Success,
             receipt: receiptId,
             timestamp: block.timestamp,

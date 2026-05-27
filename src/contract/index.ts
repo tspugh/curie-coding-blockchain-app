@@ -14,7 +14,7 @@ import type { CoverageNegotiationClient } from "./types.js";
 export {
   type CoverageNegotiationClient,
   type CreateContractParams,
-  type SubmitPositionParams,
+  type PolicyCommitment,
   type EventFilter,
 } from "./types.js";
 export { SimulatedBackend, type SimulatedAgentOptions, ZERO_HASH } from "./simulated.js";

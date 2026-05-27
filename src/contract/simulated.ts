@@ -1,73 +1,109 @@
 /**
  * SimulatedBackend — an in-memory state machine that MIRRORS
- * `CoverageNegotiation.sol` EXACTLY (SPEC-0001 §3): same states, same
- * transitions, same guards, same events, and a MOCKED native agent ruling that
- * stands in for the Somnia platform's `handleResponse` callback.
+ * `CoverageNegotiation.sol` EXACTLY (SPEC-0001 §3, revised 2026-05-27 — AI
+ * necessity-arbiter model): same states, same transitions, same state guards,
+ * same events, and a MOCKED necessity arbiter that stands in for the Somnia
+ * platform's `handleResponse` callback.
  *
- * This lets the whole app + tests run end-to-end with no chain, no funds, and
- * no real agent (R11). The guards/reverts and event sequence match the Solidity
- * `require`s and `emit`s so the simulated path is behaviourally indistinguishable
- * from the real one through the shared {@link CoverageNegotiationClient}.
+ * This lets the whole app + tests run end-to-end with no chain, no funds, and no
+ * real agent (R14). The guards and event sequence match the Solidity `require`s
+ * and `emit`s so the simulated path is behaviourally indistinguishable from the
+ * real one through the shared {@link CoverageNegotiationClient}.
  *
- * Agent ruling (R6): `submitDispute` / `submitEvidence` / `appeal` move to
- * `UnderReview` and schedule a deterministic verdict (default "approve",
+ * NOTE (R12): simulated mode does NOT model `msg.sender`, so it does NOT enforce
+ * the address gates — under the single shared wallet they all pass anyway. It
+ * DOES enforce the state guards and `partyId` membership exactly where the
+ * contract does (e.g. `appeal`/`accept` party must be a party to the request).
+ *
+ * Arbiter ruling (R6): `requestAdjudication` / `submitEvidence` / `appeal` move
+ * to `UnderReview` and schedule a deterministic decision (default Approve,
  * configurable), delivered after `autoResolveMs` OR immediately when the caller
  * invokes the explicit {@link SimulatedBackend.resolve} hook — mimicking the
- * platform calling `handleResponse` back into the contract.
+ * platform calling `handleResponse` back into the contract. On Approve the
+ * covered amount is computed DETERMINISTICALLY as `min(requested, benchmarkCap)`
+ * (R6a) — the arbiter config supplies the cap, never the covered amount.
  */
 import { ethers } from "ethers";
 
 import {
   type CoverageEvent,
   type CoverageEventListener,
+  Decision,
   type Negotiation,
   type NegotiationView,
-  type Position,
   State,
   STATE_NAMES,
+  TERMINAL_STATES,
   type Unsubscribe,
-  type Verdict,
 } from "../types/coverage.types.js";
 import type {
   CoverageNegotiationClient,
   CreateContractParams,
   EventFilter,
-  SubmitPositionParams,
+  PolicyCommitment,
 } from "./types.js";
 
 /** 0x + 64 zeros — the bytes32 zero sentinel (matches Solidity `bytes32(0)`). */
 export const ZERO_HASH = ethers.ZeroHash;
 
-/** Tunables for the mocked agent. */
+/** Default appeal round cap (mirrors the contract's `maxRounds = 3`, R6c). */
+const DEFAULT_MAX_ROUNDS = 3n;
+
+/** Tunables for the mocked necessity arbiter (R6/R6a/R6b). */
 export interface SimulatedAgentOptions {
   /**
-   * Verdict the mocked agent returns. May be a fixed {@link Verdict} or a
-   * function of the negotiation (e.g. rule by where positions sit in the band).
-   * Default: always "approve".
+   * The {@link Decision} the mocked arbiter returns. May be a fixed value or a
+   * function of the negotiation (e.g. rule by round). Default: {@link Decision.Approve}.
    */
-  readonly verdict?: Verdict | ((n: Negotiation, reqId: bigint) => Verdict);
+  readonly decision?: Decision | ((n: Negotiation, reqId: bigint) => Decision);
   /**
-   * Auto-resolve delay in ms after a dispute fires. `0` (default) means the
-   * verdict is delivered on the next microtask; set higher to mimic latency.
-   * Set `autoResolve: false` to require the explicit {@link SimulatedBackend.resolve}
-   * hook instead.
+   * The public price cap fed into the deterministic `min(requested, cap)` on
+   * approve (R6a). May be fixed or a function. Default: the request's
+   * `requestedAmount`, so `coveredAmount === requestedAmount` unless overridden.
+   */
+  readonly benchmarkCap?: bigint | ((n: Negotiation, reqId: bigint) => bigint);
+  /** Hash of the arbiter's rationale. Default: `ethers.id("rationale")`. */
+  readonly rationaleHash?: string;
+  /** The policy clause the arbiter relied on (R6). Default: `ethers.id("clause")`. */
+  readonly clauseRef?: string;
+  /** Public standard cited for a policy flag (R6b). Default: `ethers.id("standard")`. */
+  readonly standardRef?: string;
+  /** Off-chain receipt pointer to surface in the `Ruled` event. Default: the request id. */
+  readonly receiptId?: bigint;
+  /**
+   * Auto-resolve delay in ms after the agent fires. `0` (default) means the
+   * ruling is delivered on the next macrotask; set higher to mimic latency. Set
+   * `autoResolve: false` to require the explicit {@link SimulatedBackend.resolve}.
    */
   readonly autoResolveMs?: number;
   /** When false, no auto-resolve; callers must invoke `resolve()`. */
   readonly autoResolve?: boolean;
+  /** Appeal round cap before `Deadlocked` (R6c). Default: 3. */
+  readonly maxRounds?: bigint;
 }
 
+/** Mutable in-memory mirror of `struct Negotiation`. */
 interface SimNegotiation {
-  initiatorId: bigint;
-  destinationId: bigint;
+  providerId: bigint;
+  insurerId: bigint;
+  providerAddr: string;
+  insurerAddr: string;
   drugRef: string;
-  noteHash: string;
-  priceFloor: bigint;
-  priceCeil: bigint;
+  requestedAmount: bigint;
+  justificationHash: string;
   evidenceUri: string;
-  initiatorPosition: Position;
-  destinationPosition: Position;
-  agreedAmount: bigint;
+  policyHash: string;
+  policyUri: string;
+  coveredAmount: bigint;
+  rationaleHash: string;
+  clauseRef: string;
+  standardRef: string;
+  lastDecision: Decision;
+  hasRuling: boolean;
+  round: bigint;
+  providerAccepted: boolean;
+  insurerAccepted: boolean;
+  totalFees: bigint;
   state: State;
   pendingRequestId: bigint;
   createdAt: bigint;
@@ -86,37 +122,47 @@ export class SimulatedBackend implements CoverageNegotiationClient {
   private readonly history: CoverageEvent[] = [];
   private nextId = 1n;
   private nextRequestId = 1n;
-  private readonly agent: Required<SimulatedAgentOptions>;
+  private readonly agent: SimulatedAgentOptions;
+  private readonly maxRounds: bigint;
   private readonly pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
   constructor(agent: SimulatedAgentOptions = {}) {
-    this.agent = {
-      verdict: agent.verdict ?? "approve",
-      autoResolveMs: agent.autoResolveMs ?? 0,
-      autoResolve: agent.autoResolve ?? true,
-    };
+    this.agent = agent;
+    this.maxRounds = agent.maxRounds ?? DEFAULT_MAX_ROUNDS;
   }
 
   // ---------------------------------------------------------------------
-  // Writes (mirror Solidity lifecycle functions + guards)
+  // Writes (mirror Solidity lifecycle functions + state guards)
   // ---------------------------------------------------------------------
 
   async createContract(params: CreateContractParams): Promise<bigint> {
-    if (params.priceFloor > params.priceCeil) throw new Error("band: floor>ceil");
+    if (params.providerAddr === ethers.ZeroAddress || params.insurerAddr === ethers.ZeroAddress) {
+      throw new Error("addr: zero");
+    }
 
     const reqId = this.nextId++;
     const now = BigInt(Math.floor(Date.now() / 1000));
     this.negotiations.set(reqId, {
-      initiatorId: params.initiatorId,
-      destinationId: params.destinationId,
+      providerId: params.providerId,
+      insurerId: params.insurerId,
+      providerAddr: params.providerAddr,
+      insurerAddr: params.insurerAddr,
       drugRef: params.drugRef,
-      noteHash: params.noteHash,
-      priceFloor: params.priceFloor,
-      priceCeil: params.priceCeil,
+      requestedAmount: params.requestedAmount,
+      justificationHash: params.justificationHash,
       evidenceUri: params.evidenceUri,
-      initiatorPosition: { proposedAmount: 0n, submitted: false },
-      destinationPosition: { proposedAmount: 0n, submitted: false },
-      agreedAmount: 0n,
+      policyHash: ZERO_HASH,
+      policyUri: ZERO_HASH,
+      coveredAmount: 0n,
+      rationaleHash: ZERO_HASH,
+      clauseRef: ZERO_HASH,
+      standardRef: ZERO_HASH,
+      lastDecision: Decision.Approve,
+      hasRuling: false,
+      round: 0n,
+      providerAccepted: false,
+      insurerAccepted: false,
+      totalFees: 0n,
       state: State.Open,
       pendingRequestId: 0n,
       createdAt: now,
@@ -127,111 +173,133 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     this.emit({
       name: "ContractCreated",
       reqId,
-      initiatorId: params.initiatorId,
-      destinationId: params.destinationId,
+      providerId: params.providerId,
+      insurerId: params.insurerId,
+      providerAddr: params.providerAddr,
+      insurerAddr: params.insurerAddr,
       drugRef: params.drugRef,
-      priceFloor: params.priceFloor,
-      priceCeil: params.priceCeil,
+      requestedAmount: params.requestedAmount,
     });
+    if (params.justificationHash !== ZERO_HASH) {
+      this.emit({
+        name: "ContentCommitted",
+        reqId,
+        contentHash: params.justificationHash,
+        uri: params.evidenceUri,
+      });
+    }
     return reqId;
   }
 
-  async attachContent(reqId: bigint, contentHash: string, uri: string): Promise<void> {
+  async insurerEngage(reqId: bigint, policyHash: string, policyUri: string): Promise<void> {
     const n = this.must(reqId);
-    if (!this.isActive(n.state)) throw new Error("not active");
-    n.noteHash = contentHash;
-    n.evidenceUri = uri;
-    this.emit({ name: "ContentCommitted", reqId, contentHash, uri });
+    if (n.state !== State.Open) throw new Error("engage: not Open");
+    if (policyHash === ZERO_HASH) throw new Error("policy: empty");
+
+    n.policyHash = policyHash;
+    n.policyUri = policyUri;
+    n.state = State.Ready;
+
+    this.emit({ name: "InsurerEngaged", reqId, policyHash, policyUri });
+    this.emit({ name: "ContractReady", reqId });
   }
 
-  async submitPosition(params: SubmitPositionParams): Promise<void> {
-    const { reqId, partyId, proposedAmount, contentHash, uri } = params;
+  async requestAdjudication(reqId: bigint): Promise<void> {
     const n = this.must(reqId);
-    if (n.state !== State.Open) throw new Error("not Open");
-
-    const isInitiator = partyId === n.initiatorId;
-    const isDestination = partyId === n.destinationId;
-    if (!isInitiator && !isDestination) throw new Error("unknown party");
-
-    // Self-contract: first call fills initiator slot, second fills destination.
-    if (isInitiator && !n.initiatorPosition.submitted) {
-      n.initiatorPosition = { proposedAmount, submitted: true };
-    } else if (isDestination && !n.destinationPosition.submitted) {
-      n.destinationPosition = { proposedAmount, submitted: true };
-    } else {
-      throw new Error("position already submitted");
-    }
-
-    if (contentHash !== ZERO_HASH) {
-      n.noteHash = contentHash;
-      this.emit({ name: "ContentCommitted", reqId, contentHash, uri });
-    }
-
-    this.emit({ name: "PositionSubmitted", reqId, partyId, proposedAmount });
-
-    if (n.initiatorPosition.submitted && n.destinationPosition.submitted) {
-      n.state = State.Ready;
-      this.emit({ name: "ContractReady", reqId });
-    }
-  }
-
-  async submitDispute(reqId: bigint, byPartyId: bigint): Promise<void> {
-    const n = this.must(reqId);
-    if (n.state !== State.Ready) throw new Error("dispute: not Ready");
-    if (byPartyId !== n.initiatorId && byPartyId !== n.destinationId) {
-      throw new Error("unknown party");
-    }
-    this.emit({ name: "DisputeSubmitted", reqId, byPartyId });
+    if (n.state !== State.Ready) throw new Error("adjudicate: not Ready");
+    n.round = 1n;
+    this.emit({ name: "AdjudicationRequested", reqId });
     this.fireAgent(reqId, n);
   }
 
   async submitEvidence(reqId: bigint, evidenceUri: string): Promise<void> {
     const n = this.must(reqId);
     if (n.state !== State.EvidenceRequested) throw new Error("evidence: wrong state");
+    if (evidenceUri === ZERO_HASH) throw new Error("evidence: empty");
     n.evidenceUri = evidenceUri;
+    n.round += 1n;
     this.emit({ name: "EvidenceSubmitted", reqId, evidenceUri });
     this.fireAgent(reqId, n);
   }
 
-  async appeal(reqId: bigint, evidenceUri: string): Promise<void> {
+  async appeal(
+    reqId: bigint,
+    partyId: bigint,
+    evidenceUri: string,
+    reasonHash: string,
+  ): Promise<void> {
     const n = this.must(reqId);
-    if (n.state !== State.Denied) throw new Error("appeal: not Denied");
+    if (n.state !== State.Approved && n.state !== State.Denied) {
+      throw new Error("appeal: not ruled");
+    }
+    if (partyId !== n.providerId && partyId !== n.insurerId) {
+      throw new Error("appeal: unknown party");
+    }
+    if (evidenceUri === ZERO_HASH) throw new Error("appeal: needs evidence");
+
+    // Bounded to N rounds: at the cap an appeal deadlocks instead of re-firing (R6c).
+    if (n.round >= this.maxRounds) {
+      this.clearRequest(n);
+      n.state = State.Deadlocked;
+      this.emit({ name: "Deadlocked", reqId, rounds: n.round });
+      return;
+    }
+
     n.evidenceUri = evidenceUri;
-    n.state = State.Appealed;
-    this.emit({ name: "Appealed", reqId, evidenceUri });
+    n.rationaleHash = reasonHash;
+    n.round += 1n;
+    this.emit({ name: "Appealed", reqId, partyId, evidenceUri, round: n.round });
     this.fireAgent(reqId, n);
   }
 
-  async postFeedback(reqId: bigint, msgHash: string, uri: string): Promise<void> {
+  async accept(reqId: bigint, partyId: bigint): Promise<void> {
     const n = this.must(reqId);
-    if (!this.isActive(n.state)) throw new Error("feedback: not active");
-    this.emit({ name: "FeedbackPosted", reqId, msgHash, uri });
+    if (n.state !== State.Approved && n.state !== State.Denied) {
+      throw new Error("accept: not ruled");
+    }
+    if (partyId === n.providerId) {
+      n.providerAccepted = true;
+    } else if (partyId === n.insurerId) {
+      n.insurerAccepted = true;
+    } else {
+      throw new Error("accept: unknown party");
+    }
+    this.emit({ name: "Accepted", reqId, partyId });
   }
 
-  async settle(reqId: bigint, agreedAmount: bigint): Promise<void> {
+  async settle(reqId: bigint): Promise<void> {
     const n = this.must(reqId);
-    if (n.state !== State.Approved) throw new Error("settle: not Approved");
-    if (agreedAmount < n.priceFloor || agreedAmount > n.priceCeil) {
-      throw new Error("settle: out of band");
+    if (n.state !== State.Approved && n.state !== State.Denied) {
+      throw new Error("settle: not ruled");
     }
-    n.agreedAmount = agreedAmount;
+    if (!n.providerAccepted || !n.insurerAccepted) throw new Error("settle: not both accepted");
+
+    const feePerParty = n.totalFees / 2n;
+    this.clearRequest(n);
     n.state = State.Settled;
-    this.emit({ name: "Settled", reqId, agreedAmount });
+    this.emit({ name: "Settled", reqId, coveredAmount: n.coveredAmount, feePerParty });
+  }
+
+  async refuse(reqId: bigint, reasonHash: string): Promise<void> {
+    const n = this.must(reqId);
+    if (!this.refusable(n.state)) throw new Error("refuse: not refusable");
+    this.clearRequest(n);
+    n.state = State.ProviderRefused;
+    this.emit({ name: "ProviderRefused", reqId, reasonHash });
   }
 
   async withdraw(reqId: bigint): Promise<void> {
     const n = this.must(reqId);
-    if (n.state === State.Settled || n.state === State.Withdrawn) {
-      throw new Error("withdraw: terminal");
-    }
+    if (TERMINAL_STATES.has(n.state)) throw new Error("withdraw: terminal");
+    this.clearRequest(n);
     n.state = State.Withdrawn;
     this.emit({ name: "Withdrawn", reqId });
   }
 
   /**
    * Keeper-style timeout: route a stuck `UnderReview` to retriable
-   * `EvidenceRequested` (mirrors `onRulingTimeout`). Ignores the deadline check
-   * so tests can force it; production uses the real contract.
+   * `EvidenceRequested` (mirrors `onRulingTimeout`). Skips the deadline check so
+   * tests can force it; the real contract enforces the deadline.
    */
   async onRulingTimeout(reqId: bigint): Promise<void> {
     const n = this.must(reqId);
@@ -240,6 +308,13 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     this.clearRequest(n);
     n.state = State.EvidenceRequested;
     this.emit({ name: "RulingTimedOut", reqId, requestId });
+    this.emit({ name: "EvidenceRequested", reqId });
+  }
+
+  async postFeedback(reqId: bigint, msgHash: string, uri: string): Promise<void> {
+    const n = this.must(reqId);
+    if (TERMINAL_STATES.has(n.state)) throw new Error("feedback: terminal");
+    this.emit({ name: "FeedbackPosted", reqId, msgHash, uri });
   }
 
   // ---------------------------------------------------------------------
@@ -251,12 +326,24 @@ export class SimulatedBackend implements CoverageNegotiationClient {
   }
 
   async getNegotiationView(reqId: bigint): Promise<NegotiationView> {
-    const n = this.must(reqId);
-    return this.toView(reqId, n);
+    return this.toView(reqId, this.must(reqId));
   }
 
   async stateOf(reqId: bigint): Promise<State> {
     return this.must(reqId).state;
+  }
+
+  async coveredAmountOf(reqId: bigint): Promise<bigint> {
+    return this.must(reqId).coveredAmount;
+  }
+
+  async roundOf(reqId: bigint): Promise<bigint> {
+    return this.must(reqId).round;
+  }
+
+  async policyOf(reqId: bigint): Promise<PolicyCommitment> {
+    const n = this.must(reqId);
+    return { policyHash: n.policyHash, policyUri: n.policyUri };
   }
 
   async count(): Promise<bigint> {
@@ -269,9 +356,10 @@ export class SimulatedBackend implements CoverageNegotiationClient {
 
   async getEvents(filter: EventFilter = {}): Promise<CoverageEvent[]> {
     // The recorded log IS the simulated chain history (no blocks to scan).
-    const all = filter.reqId === undefined
-      ? this.history
-      : this.history.filter((e) => e.reqId === filter.reqId);
+    const all =
+      filter.reqId === undefined
+        ? this.history
+        : this.history.filter((e) => e.reqId === filter.reqId);
     return all.map((e) => ({ ...e }));
   }
 
@@ -289,64 +377,101 @@ export class SimulatedBackend implements CoverageNegotiationClient {
   }
 
   // ---------------------------------------------------------------------
-  // Mocked agent + internals
+  // Mocked arbiter + internals
   // ---------------------------------------------------------------------
 
   /**
-   * Deliver a verdict for an in-flight request, mimicking the platform calling
-   * `handleResponse`. If `verdict` is omitted, uses the configured default.
+   * Deliver a ruling for an in-flight request, mimicking the platform calling
+   * `handleResponse`. If `decision` is omitted, uses the configured arbiter.
    * Available for tests / manual control even when auto-resolve is on.
    */
-  resolve(reqId: bigint, verdict?: Verdict): void {
+  resolve(reqId: bigint, decision?: Decision): void {
     const n = this.negotiations.get(reqId);
     if (!n || n.state !== State.UnderReview) return;
-    const v = verdict ?? this.computeVerdict(n, reqId);
-    this.deliverRuling(reqId, n, v);
+    const d = decision ?? this.computeDecision(n, reqId);
+    this.deliverRuling(reqId, n, d);
   }
 
-  /** Fire the mocked agent: move to UnderReview, schedule/await the callback. */
+  /** Fire the mocked arbiter: move to UnderReview, schedule/await the callback. */
   private fireAgent(reqId: bigint, n: SimNegotiation): void {
     const requestId = this.nextRequestId++;
+    // Fee is mocked (no funds in simulated mode); accumulate a nominal 0 (R8).
+    const fee = 0n;
+    n.totalFees += fee;
     n.pendingRequestId = requestId;
     n.rulingDeadline = BigInt(Math.floor(Date.now() / 1000)) + 3600n;
     n.state = State.UnderReview;
     this.requestToReq.set(requestId, reqId);
 
-    // Fee is mocked (no funds in simulated mode); emit a nominal 0 fee.
-    this.emit({ name: "RulingRequested", reqId, requestId, fee: 0n });
+    this.emit({ name: "RulingRequested", reqId, requestId, fee });
 
-    if (this.agent.autoResolve) {
+    if (this.agent.autoResolve ?? true) {
       const timer = setTimeout(() => {
         this.pendingTimers.delete(timer);
         this.resolve(reqId);
-      }, this.agent.autoResolveMs);
+      }, this.agent.autoResolveMs ?? 0);
       // Do not keep the event loop alive solely for a mocked ruling.
       if (typeof timer.unref === "function") timer.unref();
       this.pendingTimers.add(timer);
     }
   }
 
-  private computeVerdict(n: SimNegotiation, reqId: bigint): Verdict {
-    return typeof this.agent.verdict === "function"
-      ? this.agent.verdict(this.snapshot(n), reqId)
-      : this.agent.verdict;
+  private computeDecision(n: SimNegotiation, reqId: bigint): Decision {
+    const cfg = this.agent.decision ?? Decision.Approve;
+    return typeof cfg === "function" ? cfg(this.snapshot(n), reqId) : cfg;
   }
 
-  /** Mirror of the contract's `handleResponse` verdict routing. */
-  private deliverRuling(reqId: bigint, n: SimNegotiation, verdict: Verdict): void {
+  private computeBenchmarkCap(n: SimNegotiation, reqId: bigint): bigint {
+    const cfg = this.agent.benchmarkCap ?? n.requestedAmount;
+    return typeof cfg === "function" ? cfg(this.snapshot(n), reqId) : cfg;
+  }
+
+  /** Mirror of the contract's `handleResponse` decision routing (R6/R6a/R6b). */
+  private deliverRuling(reqId: bigint, n: SimNegotiation, decision: Decision): void {
     const requestId = n.pendingRequestId;
     this.clearRequest(n);
 
-    if (verdict === "approve") {
-      n.state = State.Approved;
-    } else if (verdict === "deny") {
-      n.state = State.Denied;
-    } else {
-      n.state = State.EvidenceRequested;
+    const rationaleHash = this.agent.rationaleHash ?? ethers.id("rationale");
+    const clauseRef = this.agent.clauseRef ?? ethers.id("clause");
+    const standardRef = this.agent.standardRef ?? ethers.id("standard");
+    const receiptId = this.agent.receiptId ?? requestId;
+
+    n.lastDecision = decision;
+    n.hasRuling = true;
+    n.rationaleHash = rationaleHash;
+    n.clauseRef = clauseRef;
+    n.standardRef = standardRef;
+    // A fresh ruling resets prior acceptances — parties accept THIS ruling.
+    n.providerAccepted = false;
+    n.insurerAccepted = false;
+
+    if (decision === Decision.PolicyInvalid) {
+      // R6b: a relied-on clause contradicts a public standard — void the contract.
+      n.coveredAmount = 0n;
+      n.state = State.PolicyInvalidated;
+      this.emit({ name: "PolicyFlagged", reqId, clauseRef, standardRef });
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId });
+      this.emit({ name: "PolicyInvalidated", reqId, clauseRef, standardRef });
+      return;
     }
 
-    // Receipt id is mocked; deterministic per request for traceability.
-    this.emit({ name: "Ruled", reqId, requestId, verdict, receiptId: requestId });
+    if (decision === Decision.Approve) {
+      // R6a: deterministic covered amount = min(requested, cap) — never AI-chosen.
+      const cap = this.computeBenchmarkCap(n, reqId);
+      const covered = n.requestedAmount < cap ? n.requestedAmount : cap;
+      n.coveredAmount = covered;
+      n.state = State.Approved;
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: covered, rationaleHash, clauseRef, receiptId });
+    } else if (decision === Decision.Deny) {
+      n.coveredAmount = 0n;
+      n.state = State.Denied;
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId });
+    } else {
+      // NeedMoreEvidence
+      n.state = State.EvidenceRequested;
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId });
+      this.emit({ name: "EvidenceRequested", reqId });
+    }
   }
 
   private clearRequest(n: SimNegotiation): void {
@@ -363,22 +488,34 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     return n;
   }
 
-  private isActive(s: State): boolean {
-    return s !== State.Settled && s !== State.Withdrawn;
+  /** Mirror of the contract's `_refusable`: `Ready` onward while pre-terminal (R7). */
+  private refusable(s: State): boolean {
+    if (s === State.Open) return false;
+    return !TERMINAL_STATES.has(s);
   }
 
   private snapshot(n: SimNegotiation): Negotiation {
     return {
-      initiatorId: n.initiatorId,
-      destinationId: n.destinationId,
+      providerId: n.providerId,
+      insurerId: n.insurerId,
+      providerAddr: n.providerAddr,
+      insurerAddr: n.insurerAddr,
       drugRef: n.drugRef,
-      noteHash: n.noteHash,
-      priceFloor: n.priceFloor,
-      priceCeil: n.priceCeil,
+      requestedAmount: n.requestedAmount,
+      justificationHash: n.justificationHash,
       evidenceUri: n.evidenceUri,
-      initiatorPosition: { ...n.initiatorPosition },
-      destinationPosition: { ...n.destinationPosition },
-      agreedAmount: n.agreedAmount,
+      policyHash: n.policyHash,
+      policyUri: n.policyUri,
+      coveredAmount: n.coveredAmount,
+      rationaleHash: n.rationaleHash,
+      clauseRef: n.clauseRef,
+      standardRef: n.standardRef,
+      lastDecision: n.lastDecision,
+      hasRuling: n.hasRuling,
+      round: n.round,
+      providerAccepted: n.providerAccepted,
+      insurerAccepted: n.insurerAccepted,
+      totalFees: n.totalFees,
       state: n.state,
       pendingRequestId: n.pendingRequestId,
       createdAt: n.createdAt,
@@ -388,15 +525,17 @@ export class SimulatedBackend implements CoverageNegotiationClient {
   }
 
   private toView(reqId: bigint, n: SimNegotiation): NegotiationView {
-    const both = n.initiatorPosition.submitted && n.destinationPosition.submitted;
+    const ruled = n.state === State.Approved || n.state === State.Denied;
     return {
       reqId,
       negotiation: this.snapshot(n),
       state: n.state,
       stateName: STATE_NAMES[n.state],
-      bothPositionsSubmitted: both,
-      disputable: n.state === State.Ready,
-      terminal: n.state === State.Settled || n.state === State.Withdrawn,
+      policyAttached: n.state >= State.Ready && n.policyHash !== ZERO_HASH,
+      adjudicable: n.state === State.Ready,
+      ruled,
+      bothAccepted: n.providerAccepted && n.insurerAccepted,
+      terminal: TERMINAL_STATES.has(n.state),
     };
   }
 

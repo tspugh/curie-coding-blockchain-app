@@ -1,16 +1,19 @@
 /**
- * Real-backend integration test against a LOCAL Hardhat node (SPEC-0001 T7/R11/R16).
+ * Real-backend integration test against a LOCAL Hardhat node (SPEC-0001 T7/R11/R16,
+ * revised 2026-05-27 — AI necessity-arbiter model).
  *
  * Exercises the library's REAL code path — `RealBackend` (ethers v6 vs a *deployed*
  * contract + live event subscription) — without a funded testnet wallet, by:
  *   1. deploying MockAgentPlatform + CoverageNegotiation to a local Hardhat node,
  *   2. driving the full lifecycle through `RealBackend` (the same
  *      `CoverageNegotiationClient` interface the web app uses),
- *   3. delivering the agent ruling via the mock platform's callback (the real
+ *   3. delivering the necessity ruling via the mock platform's callback (the real
  *      Somnia native-agent execution is the ONLY part that needs testnet — R9),
  *   4. cross-checking that `SimulatedBackend` produces the IDENTICAL state
- *      sequence (proving "same code path in both modes" — R11), and
+ *      sequence (proving "same code path in both modes" — R11/R14), and
  *   5. confirming the live event subscription delivers the timeline (R16).
+ *
+ * Flow: Open -> Ready -> UnderReview -> Approved -> Settled.
  *
  * Run via scripts/real-backend-localnode.sh (starts the node, builds, tears down).
  * Reads the compiled Hardhat artifacts from contracts/artifacts/ and the library
@@ -23,7 +26,7 @@ import { ethers } from "ethers";
 
 import { RealBackend } from "../dist/contract/real.js";
 import { SimulatedBackend } from "../dist/contract/simulated.js";
-import { State, STATE_NAMES } from "../dist/types/coverage.types.js";
+import { Decision, State, STATE_NAMES } from "../dist/types/coverage.types.js";
 
 const RPC = process.env.RPC_URL ?? "http://127.0.0.1:8545";
 // Hardhat node's deterministic account #0 — a throwaway local key, never real funds.
@@ -32,9 +35,15 @@ const AGENT_ID = 7n;
 
 const ZERO = ethers.ZeroHash;
 const DRUG = ethers.id("DRUG:adalimumab");
-const NOTE = ethers.id("synthetic-note-content");
-const FLOOR = 1000n;
-const CEIL = 2000n;
+const JUSTIFICATION = ethers.id("synthetic-justification-content");
+const POLICY = ethers.id("insurer-policy-body");
+const POLICY_URI = ethers.id("insurer-policy-uri");
+const RATIONALE = ethers.id("rationale");
+const CLAUSE = ethers.id("clause-3a");
+const STANDARD = ethers.id("FDA-label");
+const REQUESTED = 2000n;
+const CAP = 1500n; // benchmark cap < requested -> covered == cap (R6a)
+const RECEIPT = 123n;
 const FEE = ethers.parseEther("0.01"); // > mock deposit (0.001)
 
 function artifact(rel) {
@@ -76,6 +85,7 @@ async function main() {
   const contractAddr = await contract.getAddress();
 
   // --- Build the REAL backend over a structural RealWallet (provider+signer) ---
+  // Single shared wallet: providerAddr == insurerAddr == this address (R12).
   const wallet = { mode: "real", address, signer, provider };
   const real = new RealBackend(wallet, { contractAddress: contractAddr, agentFeeValue: FEE });
 
@@ -96,12 +106,13 @@ async function main() {
 
   // --- Drive the full lifecycle through RealBackend ---
   const reqId = await real.createContract({
-    initiatorId: 11n,
-    destinationId: 22n,
+    providerId: 11n,
+    insurerId: 22n,
+    providerAddr: address,
+    insurerAddr: address,
     drugRef: DRUG,
-    noteHash: NOTE,
-    priceFloor: FLOOR,
-    priceCeil: CEIL,
+    requestedAmount: REQUESTED,
+    justificationHash: JUSTIFICATION,
     evidenceUri: ZERO,
   });
   await snap(reqId);
@@ -109,40 +120,63 @@ async function main() {
 
   // R4: only the hash is on-chain — the getter exposes no raw-content field.
   const n0 = await real.getNegotiation(reqId);
-  check("on-chain record carries the note HASH, not content", n0.noteHash === NOTE);
+  check("on-chain record carries the justification HASH, not content", n0.justificationHash === JUSTIFICATION);
 
-  await real.submitPosition({ reqId, partyId: 11n, proposedAmount: 1200n, contentHash: ZERO, uri: ZERO });
+  await real.insurerEngage(reqId, POLICY, POLICY_URI);
   await snap(reqId);
-  check("one position -> still Open (R5)", realStates.at(-1) === State.Open);
+  check("insurerEngage attaches policy -> Ready (R5)", realStates.at(-1) === State.Ready);
+  const pol = await real.policyOf(reqId);
+  check("policyOf returns the attached commitment (R5)", pol.policyHash === POLICY && pol.policyUri === POLICY_URI);
 
-  await real.submitPosition({ reqId, partyId: 22n, proposedAmount: 1800n, contentHash: ZERO, uri: ZERO });
+  await real.requestAdjudication(reqId);
   await snap(reqId);
-  check("both positions -> Ready (R5)", realStates.at(-1) === State.Ready);
-
-  await real.submitDispute(reqId, 11n);
-  await snap(reqId);
-  check("submitDispute fires the agent -> UnderReview (R6/R9)", realStates.at(-1) === State.UnderReview);
+  check("requestAdjudication fires the agent -> UnderReview (R6/R9)", realStates.at(-1) === State.UnderReview);
 
   // Deliver the ruling the way the platform would: callback into the contract.
   const mockAsSigner = new ethers.Contract(mockAddr, mockArt.abi, signer);
   const requestId = await mockAsSigner.lastRequestId();
-  await (await mockAsSigner.triggerRuling(contractAddr, requestId, "approve", 123n)).wait();
+  await (
+    await mockAsSigner.triggerRuling(
+      contractAddr,
+      requestId,
+      Number(Decision.Approve),
+      CAP,
+      RATIONALE,
+      CLAUSE,
+      STANDARD,
+      RECEIPT,
+    )
+  ).wait();
   await snap(reqId);
   check("platform callback (approve) -> Approved", realStates.at(-1) === State.Approved);
 
-  await real.settle(reqId, 1500n);
+  const covered = await real.coveredAmountOf(reqId);
+  check("covered amount is deterministic min(requested, cap) (R6a)", covered === CAP);
+
+  // Both parties accept the ruling, then settle (single wallet acts as both — R12).
+  await real.accept(reqId, 11n);
+  await real.accept(reqId, 22n);
+  await real.settle(reqId);
   await snap(reqId);
   const nFinal = await real.getNegotiation(reqId);
-  check("settle within band -> Settled, agreed recorded", realStates.at(-1) === State.Settled && nFinal.agreedAmount === 1500n);
+  check(
+    "both accept + settle -> Settled, covered recorded",
+    realStates.at(-1) === State.Settled && nFinal.coveredAmount === CAP,
+  );
 
   // --- R16: the subscription delivered the key timeline events ---
   const got = await until(() => {
     const names = new Set(events.map((e) => e.name));
-    return ["ContractCreated", "ContractReady", "RulingRequested", "Ruled", "Settled"].every((x) => names.has(x));
+    return ["ContractCreated", "ContractReady", "RulingRequested", "Ruled", "Accepted", "Settled"].every((x) =>
+      names.has(x),
+    );
   });
   check("live subscription delivered the timeline (R16)", got);
   const ruled = events.find((e) => e.name === "Ruled");
-  check("Ruled event carries the agent verdict + receipt", ruled?.verdict === "approve" && ruled?.receiptId === 123n);
+  check(
+    "Ruled event carries the decision + covered + receipt",
+    ruled?.decision === Decision.Approve && ruled?.coveredAmount === CAP && ruled?.receiptId === RECEIPT,
+  );
 
   // --- T10/R16: reconstruct the timeline from eth_getLogs, independently ---
   // A FRESH backend with no live subscription rebuilds the full history from logs.
@@ -151,40 +185,52 @@ async function main() {
   const histNames = history.map((e) => e.name);
   check(
     `getEvents reconstructs the timeline from eth_getLogs (R16/T10): [${histNames.join(", ")}]`,
-    ["ContractCreated", "PositionSubmitted", "PositionSubmitted", "ContractReady", "DisputeSubmitted", "RulingRequested", "Ruled", "Settled"].every(
-      (n, i, arr) => histNames.filter((x) => x === n).length >= arr.filter((y) => y === n).length,
+    ["ContractCreated", "InsurerEngaged", "ContractReady", "AdjudicationRequested", "RulingRequested", "Ruled", "Accepted", "Settled"].every(
+      (n) => histNames.includes(n),
     ),
   );
   check(
     "reconstructed events are chronological with block metadata",
-    history.length >= 8 && history.every((e) => typeof e.blockNumber === "number") &&
+    history.length >= 8 &&
+      history.every((e) => typeof e.blockNumber === "number") &&
       history.every((e, i) => i === 0 || e.blockNumber >= history[i - 1].blockNumber),
   );
   const ruledFromLogs = history.find((e) => e.name === "Ruled");
-  check("reconstructed Ruled carries verdict + receipt", ruledFromLogs?.verdict === "approve" && ruledFromLogs?.receiptId === 123n);
+  check(
+    "reconstructed Ruled carries decision + covered + receipt",
+    ruledFromLogs?.decision === Decision.Approve && ruledFromLogs?.coveredAmount === CAP && ruledFromLogs?.receiptId === RECEIPT,
+  );
   await fresh.close();
 
   unsub();
   await real.close();
 
   // --- R11/T7: SimulatedBackend yields the IDENTICAL state sequence ---
-  const sim = new SimulatedBackend({ autoResolve: false });
+  const sim = new SimulatedBackend({ autoResolve: false, decision: Decision.Approve, benchmarkCap: CAP });
   const simStates = [];
   const sreqId = await sim.createContract({
-    initiatorId: 11n, destinationId: 22n, drugRef: DRUG, noteHash: NOTE,
-    priceFloor: FLOOR, priceCeil: CEIL, evidenceUri: ZERO,
+    providerId: 11n,
+    insurerId: 22n,
+    providerAddr: address,
+    insurerAddr: address,
+    drugRef: DRUG,
+    requestedAmount: REQUESTED,
+    justificationHash: JUSTIFICATION,
+    evidenceUri: ZERO,
   });
   simStates.push(await sim.stateOf(sreqId));
-  await sim.submitPosition({ reqId: sreqId, partyId: 11n, proposedAmount: 1200n, contentHash: ZERO, uri: ZERO });
+  await sim.insurerEngage(sreqId, POLICY, POLICY_URI);
   simStates.push(await sim.stateOf(sreqId));
-  await sim.submitPosition({ reqId: sreqId, partyId: 22n, proposedAmount: 1800n, contentHash: ZERO, uri: ZERO });
+  await sim.requestAdjudication(sreqId);
   simStates.push(await sim.stateOf(sreqId));
-  await sim.submitDispute(sreqId, 11n);
+  sim.resolve(sreqId, Decision.Approve);
   simStates.push(await sim.stateOf(sreqId));
-  sim.resolve(sreqId, "approve");
+  await sim.accept(sreqId, 11n);
+  await sim.accept(sreqId, 22n);
+  await sim.settle(sreqId);
   simStates.push(await sim.stateOf(sreqId));
-  await sim.settle(sreqId, 1500n);
-  simStates.push(await sim.stateOf(sreqId));
+
+  check("simulated covered amount matches deterministic min (R6a)", (await sim.coveredAmountOf(sreqId)) === CAP);
 
   // The simulated backend exposes the same getEvents() reconstruction (R16/T10).
   const simHistory = await sim.getEvents({ reqId: sreqId });
@@ -194,6 +240,8 @@ async function main() {
   );
   await sim.close();
 
+  // The real sequence has one extra UnderReview-vs-Approved snapshot alignment;
+  // both should read: Open, Ready, UnderReview, Approved, Settled.
   check(
     `simulated & real share the SAME state sequence (R11): [${simStates.map((s) => STATE_NAMES[s]).join(" -> ")}]`,
     JSON.stringify(simStates) === JSON.stringify(realStates),

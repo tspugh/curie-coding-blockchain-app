@@ -1,15 +1,16 @@
 /**
  * RealBackend — ethers v6 binding to the deployed `CoverageNegotiation` contract
- * on Somnia testnet (SPEC-0001 R11). Reads go through the provider, writes are
- * signed by the {@link RealWallet}'s signer, and events come from provider log
- * filters (R16). It implements the SAME {@link CoverageNegotiationClient} as the
- * simulated backend so the calling code path is identical across modes.
+ * on Somnia testnet (SPEC-0001 R11/R14, revised 2026-05-27 — AI necessity-arbiter
+ * model). Reads go through the provider, writes are signed by the
+ * {@link RealWallet}'s signer, and events come from provider log filters (R16).
+ * It implements the SAME {@link CoverageNegotiationClient} as the simulated
+ * backend so the calling code path is identical across modes.
  *
- * NOTE on the agent fee (R9): writes that fire the native agent
- * (`submitDispute` / `submitEvidence` / `appeal`) are `payable`. A real ruling
- * requires the contract to be funded so it can forward the per-request deposit;
- * this client sends the tx and the platform later calls `handleResponse` back
- * into the contract, surfaced here as a `Ruled` event via the subscription.
+ * NOTE on the agent fee (R9): the writes that fire the native arbiter
+ * (`requestAdjudication` / `submitEvidence` / `appeal`) are `payable`. A real
+ * ruling requires the contract to be funded so it can forward the per-request
+ * deposit; this client sends the tx and the platform later calls `handleResponse`
+ * back into the contract, surfaced here as a `Ruled` event via the subscription.
  */
 import { ethers } from "ethers";
 
@@ -17,11 +18,12 @@ import {
   type CoverageEvent,
   type CoverageEventListener,
   type CoverageEventName,
+  type Decision,
   type Negotiation,
   type NegotiationView,
-  type Position,
   State,
   STATE_NAMES,
+  TERMINAL_STATES,
   type Unsubscribe,
 } from "../types/coverage.types.js";
 import type { RealWallet } from "../wallet/wallet.js";
@@ -30,7 +32,7 @@ import type {
   CoverageNegotiationClient,
   CreateContractParams,
   EventFilter,
-  SubmitPositionParams,
+  PolicyCommitment,
 } from "./types.js";
 
 /** Options for {@link RealBackend}. */
@@ -44,11 +46,36 @@ export interface RealBackendOptions {
   readonly agentFeeValue?: bigint;
 }
 
-/** Raw shape returned by ethers for the `getNegotiation` tuple. */
-type RawPosition = readonly [bigint, boolean];
+/**
+ * Raw `Negotiation` tuple returned by ethers — field order matches the Solidity
+ * struct (and `abi.ts`) EXACTLY. 25 fields.
+ */
 type RawNegotiation = readonly [
-  bigint, bigint, string, string, bigint, bigint, string,
-  RawPosition, RawPosition, bigint, bigint | number, bigint, bigint, bigint, boolean,
+  bigint, // providerId
+  bigint, // insurerId
+  string, // providerAddr
+  string, // insurerAddr
+  string, // drugRef
+  bigint, // requestedAmount
+  string, // justificationHash
+  string, // evidenceUri
+  string, // policyHash
+  string, // policyUri
+  bigint, // coveredAmount
+  string, // rationaleHash
+  string, // clauseRef
+  string, // standardRef
+  bigint | number, // lastDecision (uint8)
+  boolean, // hasRuling
+  bigint, // round
+  boolean, // providerAccepted
+  boolean, // insurerAccepted
+  bigint, // totalFees
+  bigint | number, // state (uint8)
+  bigint, // pendingRequestId
+  bigint, // createdAt
+  bigint, // rulingDeadline
+  boolean, // exists
 ];
 
 /** ethers tx overrides (value for payable agent-firing calls). */
@@ -63,21 +90,36 @@ type Overrides = { value?: bigint };
  */
 interface CoverageContract extends ethers.BaseContract {
   createContract(
-    initiatorId: bigint, destinationId: bigint, drugRef: string, noteHash: string,
-    priceFloor: bigint, priceCeil: bigint, evidenceUri: string,
+    providerId: bigint,
+    insurerId: bigint,
+    providerAddr: string,
+    insurerAddr: string,
+    drugRef: string,
+    requestedAmount: bigint,
+    justificationHash: string,
+    evidenceUri: string,
   ): Promise<ethers.ContractTransactionResponse>;
-  attachContent(reqId: bigint, contentHash: string, uri: string): Promise<ethers.ContractTransactionResponse>;
-  submitPosition(
-    reqId: bigint, partyId: bigint, proposedAmount: bigint, contentHash: string, uri: string,
-  ): Promise<ethers.ContractTransactionResponse>;
-  submitDispute(reqId: bigint, byPartyId: bigint, overrides?: Overrides): Promise<ethers.ContractTransactionResponse>;
+  insurerEngage(reqId: bigint, policyHash: string, policyUri: string): Promise<ethers.ContractTransactionResponse>;
+  requestAdjudication(reqId: bigint, overrides?: Overrides): Promise<ethers.ContractTransactionResponse>;
   submitEvidence(reqId: bigint, evidenceUri: string, overrides?: Overrides): Promise<ethers.ContractTransactionResponse>;
-  appeal(reqId: bigint, evidenceUri: string, overrides?: Overrides): Promise<ethers.ContractTransactionResponse>;
-  postFeedback(reqId: bigint, msgHash: string, uri: string): Promise<ethers.ContractTransactionResponse>;
-  settle(reqId: bigint, agreedAmount: bigint): Promise<ethers.ContractTransactionResponse>;
+  appeal(
+    reqId: bigint,
+    partyId: bigint,
+    evidenceUri: string,
+    reasonHash: string,
+    overrides?: Overrides,
+  ): Promise<ethers.ContractTransactionResponse>;
+  accept(reqId: bigint, partyId: bigint): Promise<ethers.ContractTransactionResponse>;
+  settle(reqId: bigint): Promise<ethers.ContractTransactionResponse>;
+  refuse(reqId: bigint, reasonHash: string): Promise<ethers.ContractTransactionResponse>;
   withdraw(reqId: bigint): Promise<ethers.ContractTransactionResponse>;
+  onRulingTimeout(reqId: bigint): Promise<ethers.ContractTransactionResponse>;
+  postFeedback(reqId: bigint, msgHash: string, uri: string): Promise<ethers.ContractTransactionResponse>;
   getNegotiation(reqId: bigint): Promise<RawNegotiation>;
   stateOf(reqId: bigint): Promise<bigint | number>;
+  coveredAmountOf(reqId: bigint): Promise<bigint>;
+  roundOf(reqId: bigint): Promise<bigint>;
+  policyOf(reqId: bigint): Promise<readonly [string, string]>;
   count(): Promise<bigint>;
 }
 
@@ -116,12 +158,13 @@ export class RealBackend implements CoverageNegotiationClient {
 
   async createContract(params: CreateContractParams): Promise<bigint> {
     const tx = await this.contract.createContract(
-      params.initiatorId,
-      params.destinationId,
+      params.providerId,
+      params.insurerId,
+      params.providerAddr,
+      params.insurerAddr,
       params.drugRef,
-      params.noteHash,
-      params.priceFloor,
-      params.priceCeil,
+      params.requestedAmount,
+      params.justificationHash,
       params.evidenceUri,
     );
     const receipt = await tx.wait();
@@ -135,24 +178,13 @@ export class RealBackend implements CoverageNegotiationClient {
     return reqId;
   }
 
-  async attachContent(reqId: bigint, contentHash: string, uri: string): Promise<void> {
-    const tx = await this.contract.attachContent(reqId, contentHash, uri);
+  async insurerEngage(reqId: bigint, policyHash: string, policyUri: string): Promise<void> {
+    const tx = await this.contract.insurerEngage(reqId, policyHash, policyUri);
     await tx.wait();
   }
 
-  async submitPosition(params: SubmitPositionParams): Promise<void> {
-    const tx = await this.contract.submitPosition(
-      params.reqId,
-      params.partyId,
-      params.proposedAmount,
-      params.contentHash,
-      params.uri,
-    );
-    await tx.wait();
-  }
-
-  async submitDispute(reqId: bigint, byPartyId: bigint): Promise<void> {
-    const tx = await this.contract.submitDispute(reqId, byPartyId, { value: this.agentFeeValue });
+  async requestAdjudication(reqId: bigint): Promise<void> {
+    const tx = await this.contract.requestAdjudication(reqId, { value: this.agentFeeValue });
     await tx.wait();
   }
 
@@ -161,23 +193,45 @@ export class RealBackend implements CoverageNegotiationClient {
     await tx.wait();
   }
 
-  async appeal(reqId: bigint, evidenceUri: string): Promise<void> {
-    const tx = await this.contract.appeal(reqId, evidenceUri, { value: this.agentFeeValue });
+  async appeal(
+    reqId: bigint,
+    partyId: bigint,
+    evidenceUri: string,
+    reasonHash: string,
+  ): Promise<void> {
+    const tx = await this.contract.appeal(reqId, partyId, evidenceUri, reasonHash, {
+      value: this.agentFeeValue,
+    });
     await tx.wait();
   }
 
-  async postFeedback(reqId: bigint, msgHash: string, uri: string): Promise<void> {
-    const tx = await this.contract.postFeedback(reqId, msgHash, uri);
+  async accept(reqId: bigint, partyId: bigint): Promise<void> {
+    const tx = await this.contract.accept(reqId, partyId);
     await tx.wait();
   }
 
-  async settle(reqId: bigint, agreedAmount: bigint): Promise<void> {
-    const tx = await this.contract.settle(reqId, agreedAmount);
+  async settle(reqId: bigint): Promise<void> {
+    const tx = await this.contract.settle(reqId);
+    await tx.wait();
+  }
+
+  async refuse(reqId: bigint, reasonHash: string): Promise<void> {
+    const tx = await this.contract.refuse(reqId, reasonHash);
     await tx.wait();
   }
 
   async withdraw(reqId: bigint): Promise<void> {
     const tx = await this.contract.withdraw(reqId);
+    await tx.wait();
+  }
+
+  async onRulingTimeout(reqId: bigint): Promise<void> {
+    const tx = await this.contract.onRulingTimeout(reqId);
+    await tx.wait();
+  }
+
+  async postFeedback(reqId: bigint, msgHash: string, uri: string): Promise<void> {
+    const tx = await this.contract.postFeedback(reqId, msgHash, uri);
     await tx.wait();
   }
 
@@ -192,21 +246,36 @@ export class RealBackend implements CoverageNegotiationClient {
 
   async getNegotiationView(reqId: bigint): Promise<NegotiationView> {
     const n = await this.getNegotiation(reqId);
-    const both = n.initiatorPosition.submitted && n.destinationPosition.submitted;
+    const ruled = n.state === State.Approved || n.state === State.Denied;
     return {
       reqId,
       negotiation: n,
       state: n.state,
       stateName: STATE_NAMES[n.state],
-      bothPositionsSubmitted: both,
-      disputable: n.state === State.Ready,
-      terminal: n.state === State.Settled || n.state === State.Withdrawn,
+      policyAttached: n.state >= State.Ready && n.policyHash !== ethers.ZeroHash,
+      adjudicable: n.state === State.Ready,
+      ruled,
+      bothAccepted: n.providerAccepted && n.insurerAccepted,
+      terminal: TERMINAL_STATES.has(n.state),
     };
   }
 
   async stateOf(reqId: bigint): Promise<State> {
     const raw = (await this.contract.stateOf(reqId)) as bigint | number;
     return Number(raw) as State;
+  }
+
+  async coveredAmountOf(reqId: bigint): Promise<bigint> {
+    return (await this.contract.coveredAmountOf(reqId)) as bigint;
+  }
+
+  async roundOf(reqId: bigint): Promise<bigint> {
+    return (await this.contract.roundOf(reqId)) as bigint;
+  }
+
+  async policyOf(reqId: bigint): Promise<PolicyCommitment> {
+    const [policyHash, policyUri] = (await this.contract.policyOf(reqId)) as readonly [string, string];
+    return { policyHash, policyUri };
   }
 
   async count(): Promise<bigint> {
@@ -218,11 +287,27 @@ export class RealBackend implements CoverageNegotiationClient {
   // ---------------------------------------------------------------------
 
   /** Every event name the contract emits — the set scanned by getEvents/subscribe. */
-  private static readonly EVENT_NAMES = [
-    "ContractCreated", "ContentCommitted", "PositionSubmitted", "ContractReady",
-    "DisputeSubmitted", "RulingRequested", "Ruled", "RulingTimedOut",
-    "FeedbackPosted", "EvidenceSubmitted", "Appealed", "Settled", "Withdrawn",
-  ] as const;
+  private static readonly EVENT_NAMES: readonly CoverageEventName[] = [
+    "ContractCreated",
+    "ContentCommitted",
+    "InsurerEngaged",
+    "ContractReady",
+    "AdjudicationRequested",
+    "RulingRequested",
+    "Ruled",
+    "PolicyFlagged",
+    "PolicyInvalidated",
+    "EvidenceRequested",
+    "EvidenceSubmitted",
+    "Appealed",
+    "Accepted",
+    "Settled",
+    "Deadlocked",
+    "ProviderRefused",
+    "Withdrawn",
+    "RulingTimedOut",
+    "FeedbackPosted",
+  ];
 
   async getEvents(filter: EventFilter = {}): Promise<CoverageEvent[]> {
     const from = filter.fromBlock ?? 0;
@@ -263,10 +348,12 @@ export class RealBackend implements CoverageNegotiationClient {
         // older shapes pass the EventLog directly. Handle both.
         const last = args[args.length - 1] as { log?: ethers.EventLog } & ethers.EventLog;
         const log = (last?.log ?? last) as ethers.EventLog;
-        listener(this.buildEvent(name, args.slice(0, -1), {
-          txHash: log.transactionHash,
-          blockNumber: log.blockNumber,
-        }));
+        listener(
+          this.buildEvent(name, args.slice(0, -1), {
+            txHash: log.transactionHash,
+            blockNumber: log.blockNumber,
+          }),
+        );
       };
       void this.contract.on(name, fn);
       handlers.push({ event: name, fn });
@@ -288,33 +375,72 @@ export class RealBackend implements CoverageNegotiationClient {
     const reqId = a[0] as bigint;
     switch (name) {
       case "ContractCreated":
-        return { name, reqId, initiatorId: a[1] as bigint, destinationId: a[2] as bigint, drugRef: a[3] as string, priceFloor: a[4] as bigint, priceCeil: a[5] as bigint, ...meta };
+        return {
+          name,
+          reqId,
+          providerId: a[1] as bigint,
+          insurerId: a[2] as bigint,
+          providerAddr: a[3] as string,
+          insurerAddr: a[4] as string,
+          drugRef: a[5] as string,
+          requestedAmount: a[6] as bigint,
+          ...meta,
+        };
       case "ContentCommitted":
         return { name, reqId, contentHash: a[1] as string, uri: a[2] as string, ...meta };
-      case "PositionSubmitted":
-        return { name, reqId, partyId: a[1] as bigint, proposedAmount: a[2] as bigint, ...meta };
+      case "InsurerEngaged":
+        return { name, reqId, policyHash: a[1] as string, policyUri: a[2] as string, ...meta };
       case "ContractReady":
         return { name, reqId, ...meta };
-      case "DisputeSubmitted":
-        return { name, reqId, byPartyId: a[1] as bigint, ...meta };
+      case "AdjudicationRequested":
+        return { name, reqId, ...meta };
       case "RulingRequested":
         return { name, reqId, requestId: a[1] as bigint, fee: a[2] as bigint, ...meta };
       case "Ruled":
-        return { name, reqId, requestId: a[1] as bigint, verdict: a[2] as string, receiptId: a[3] as bigint, ...meta };
+        return {
+          name,
+          reqId,
+          requestId: a[1] as bigint,
+          decision: Number(a[2]) as Decision,
+          coveredAmount: a[3] as bigint,
+          rationaleHash: a[4] as string,
+          clauseRef: a[5] as string,
+          receiptId: a[6] as bigint,
+          ...meta,
+        };
+      case "PolicyFlagged":
+        return { name, reqId, clauseRef: a[1] as string, standardRef: a[2] as string, ...meta };
+      case "PolicyInvalidated":
+        return { name, reqId, clauseRef: a[1] as string, standardRef: a[2] as string, ...meta };
+      case "EvidenceRequested":
+        return { name, reqId, ...meta };
+      case "EvidenceSubmitted":
+        return { name, reqId, evidenceUri: a[1] as string, ...meta };
+      case "Appealed":
+        return {
+          name,
+          reqId,
+          partyId: a[1] as bigint,
+          evidenceUri: a[2] as string,
+          round: a[3] as bigint,
+          ...meta,
+        };
+      case "Accepted":
+        return { name, reqId, partyId: a[1] as bigint, ...meta };
+      case "Settled":
+        return { name, reqId, coveredAmount: a[1] as bigint, feePerParty: a[2] as bigint, ...meta };
+      case "Deadlocked":
+        return { name, reqId, rounds: a[1] as bigint, ...meta };
+      case "ProviderRefused":
+        return { name, reqId, reasonHash: a[1] as string, ...meta };
+      case "Withdrawn":
+        return { name, reqId, ...meta };
       case "RulingTimedOut":
         return { name, reqId, requestId: a[1] as bigint, ...meta };
       case "FeedbackPosted":
         return { name, reqId, msgHash: a[1] as string, uri: a[2] as string, ...meta };
-      case "EvidenceSubmitted":
-        return { name, reqId, evidenceUri: a[1] as string, ...meta };
-      case "Appealed":
-        return { name, reqId, evidenceUri: a[1] as string, ...meta };
-      case "Settled":
-        return { name, reqId, agreedAmount: a[1] as bigint, ...meta };
-      case "Withdrawn":
-        return { name, reqId, ...meta };
       default:
-        throw new Error(`unknown event ${name}`);
+        throw new Error(`unknown event ${String(name)}`);
     }
   }
 
@@ -334,26 +460,32 @@ export class RealBackend implements CoverageNegotiationClient {
   // ---------------------------------------------------------------------
 
   private decodeNegotiation(raw: RawNegotiation): Negotiation {
-    const toPosition = (p: RawPosition): Position => ({
-      proposedAmount: p[0],
-      submitted: p[1],
-    });
     return {
-      initiatorId: raw[0],
-      destinationId: raw[1],
-      drugRef: raw[2],
-      noteHash: raw[3],
-      priceFloor: raw[4],
-      priceCeil: raw[5],
-      evidenceUri: raw[6],
-      initiatorPosition: toPosition(raw[7]),
-      destinationPosition: toPosition(raw[8]),
-      agreedAmount: raw[9],
-      state: Number(raw[10]) as State,
-      pendingRequestId: raw[11],
-      createdAt: raw[12],
-      rulingDeadline: raw[13],
-      exists: raw[14],
+      providerId: raw[0],
+      insurerId: raw[1],
+      providerAddr: raw[2],
+      insurerAddr: raw[3],
+      drugRef: raw[4],
+      requestedAmount: raw[5],
+      justificationHash: raw[6],
+      evidenceUri: raw[7],
+      policyHash: raw[8],
+      policyUri: raw[9],
+      coveredAmount: raw[10],
+      rationaleHash: raw[11],
+      clauseRef: raw[12],
+      standardRef: raw[13],
+      lastDecision: Number(raw[14]) as Decision,
+      hasRuling: raw[15],
+      round: raw[16],
+      providerAccepted: raw[17],
+      insurerAccepted: raw[18],
+      totalFees: raw[19],
+      state: Number(raw[20]) as State,
+      pendingRequestId: raw[21],
+      createdAt: raw[22],
+      rulingDeadline: raw[23],
+      exists: raw[24],
     };
   }
 
