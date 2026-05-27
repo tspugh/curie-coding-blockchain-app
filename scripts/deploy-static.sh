@@ -18,7 +18,10 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
 
-: "${CURIE_DEPLOY_BUCKET:?set CURIE_DEPLOY_BUCKET to the target S3 bucket}"
+# Load the local .env (gitignored) so CURIE_DEPLOY_* / AWS_PROFILE come from there.
+if [ -f "$here/.env" ]; then set -a; . "$here/.env"; set +a; fi
+
+: "${CURIE_DEPLOY_BUCKET:?set CURIE_DEPLOY_BUCKET (in .env) to the target S3 bucket}"
 : "${CURIE_DEPLOY_DIST_ID:?set CURIE_DEPLOY_DIST_ID to the CloudFront distribution id}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 profile_arg=()
