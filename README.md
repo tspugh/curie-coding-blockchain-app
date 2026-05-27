@@ -31,11 +31,16 @@ patient's record.
 4. Approved coverage **settles through escrow**, bounded by public price
    benchmarks.
 
-> **MVP0 scope (SPEC-0001):** the contract + state machine, the simulated↔real
-> wallet path, the three-view web app, and a native-agent dispute ruling are
-> built and tested. v0 settlement is an **event marker** (no token transfer);
-> real escrow, PHI redaction, and identity verification are out of scope. See
-> [`docs/specs/0001-mvp0-coverage-negotiation.md`](./docs/specs/0001-mvp0-coverage-negotiation.md).
+> **MVP0 scope (SPEC-0001 + SPEC-0002):** the contract + state machine, the
+> simulated↔real wallet path, the web app, and the native-agent **necessity-arbiter**
+> ruling are built and tested — with a **deterministic** covered-amount cap
+> (Mark Cuban Cost Plus per-unit × `quantity`; NADAC is a floor reference) and the
+> **demo experience** (live evolving negotiation, the FDA-label policy-void "gotcha",
+> a price gauge, role/wallet gating, and a mocked CDS-Hooks `order-sign` entry point).
+> v0 settlement is an **event marker** (no token transfer); real escrow, PHI redaction,
+> and identity verification are out of scope. See
+> [`docs/specs/0001-mvp0-coverage-negotiation.md`](./docs/specs/0001-mvp0-coverage-negotiation.md)
+> and [`docs/specs/0002-demo-experience-and-integration-seam.md`](./docs/specs/0002-demo-experience-and-integration-seam.md).
 
 ## Why an agent, why a blockchain, why Somnia
 
@@ -108,7 +113,7 @@ verified field-for-field against the Somnia docs).
 
 ```bash
 npm --prefix contracts run compile      # build artifacts + typechain
-npm --prefix contracts run test         # Hardhat suite (T1–T10 + security), 10 passing
+npm --prefix contracts run test         # Hardhat suite (T1–T10 + deterministic-cap + security), 11 passing
 npm --prefix contracts run deploy:somnia  # deploy to Somnia testnet (chain 50312)
 ```
 
