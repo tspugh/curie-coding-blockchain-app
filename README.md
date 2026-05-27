@@ -82,9 +82,13 @@ npm run build          # compile the TS library to dist/ (the web app imports it
 npm run web:dev        # serve the web app (Overview / Create / Maintain) in simulated mode
 ```
 
-Open the app, click **Load sample case**, create a contract, submit both
-positions, raise a dispute, and watch the (mocked) agent rule and settle. The
-copy-pasteable case + public-formulary fixtures live in [`demo-data/`](./demo-data/).
+Open the app, click **Load sample case**, file a request as the provider, switch
+to the insurer profile to **attach a policy & engage**, **request adjudication**,
+and watch the (mocked) necessity arbiter rule `approve | deny |
+need_more_evidence` (or void the contract on a non-compliant policy clause) — then
+accept and settle, or appeal with new evidence. The copy-pasteable case + the
+Part D / openFDA / NADAC + Cost Plus / non-compliant-policy fixtures live in
+[`demo-data/`](./demo-data/).
 
 The legacy chain smoke test still exists: `cp .env.example .env` then
 `npm run dev` connects to the configured network and prints a summary.
@@ -93,15 +97,18 @@ The legacy chain smoke test still exists: `cp .env.example .env` then
 
 The system of record is [`contracts/contracts/CoverageNegotiation.sol`](./contracts/contracts/CoverageNegotiation.sol)
 (Hardhat, Solidity 0.8.24, OpenZeppelin `Ownable` + `ReentrancyGuard`). It
-implements the full SPEC-0001 §3 state machine and fires a **native Somnia
-agent** on dispute via `createRequest`; the platform calls `handleResponse` back
-into the same contract with the verdict + receipt (the
+implements the full SPEC-0001 §3 state machine (provider files → insurer attaches
+policy → adjudication → ruling → accept/appeal/refuse → settle) and fires a
+**native Somnia agent** as a necessity arbiter on `requestAdjudication` via
+`createRequest`; the platform calls `handleResponse` back into the same contract
+with the decision + cited clause + receipt, and the contract computes the covered
+amount deterministically as `min(requested, benchmarkCap)` (the
 [`ISomniaAgent.sol`](./contracts/contracts/ISomniaAgent.sol) interface is
 verified field-for-field against the Somnia docs).
 
 ```bash
 npm --prefix contracts run compile      # build artifacts + typechain
-npm --prefix contracts run test         # Hardhat suite (T1–T7), 7 passing
+npm --prefix contracts run test         # Hardhat suite (T1–T10 + security), 10 passing
 npm --prefix contracts run deploy:somnia  # deploy to Somnia testnet (chain 50312)
 ```
 
@@ -145,7 +152,7 @@ wallet. Record the Shannon address here and in `.env` once deployed._
 ├── .env.example
 ├── contracts/             # Hardhat workspace
 │   ├── contracts/         # CoverageNegotiation.sol, ISomniaAgent.sol, mocks/
-│   ├── test/              # CoverageNegotiation.test.ts (T1–T7)
+│   ├── test/              # CoverageNegotiation.test.ts (T1–T10 + security)
 │   └── scripts/deploy.ts  # deploy to Somnia testnet (chain 50312)
 ├── src/                   # framework-agnostic TS library (the app surface)
 │   ├── index.ts           # createClient(config): wallet + profiles + content + negotiation
