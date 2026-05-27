@@ -18,7 +18,7 @@ export {
   type PriceBasis,
   type EventFilter,
 } from "./types.js";
-export { SimulatedBackend, type SimulatedAgentOptions, ZERO_HASH } from "./simulated.js";
+export { SimulatedBackend, type SimulatedAgentOptions, ZERO_HASH, ANY_CALLER } from "./simulated.js";
 export { RealBackend, type RealBackendOptions } from "./real.js";
 export { COVERAGE_NEGOTIATION_ABI } from "./abi.js";
 
@@ -41,5 +41,12 @@ export function createCoverageClient(
   if (wallet.mode === "real") {
     return new RealBackend(wallet as RealWallet, options.real);
   }
-  return new SimulatedBackend(options.simulated);
+  // R11 parity (Finding-2): bind the simulated backend's acting address to the
+  // wallet so it enforces the SAME gates the contract does, unless the caller has
+  // explicitly pinned a `caller` in the simulated options.
+  const simulated =
+    options.simulated?.caller !== undefined
+      ? options.simulated
+      : { ...options.simulated, caller: wallet.address };
+  return new SimulatedBackend(simulated);
 }

@@ -10,10 +10,20 @@
  * and `emit`s so the simulated path is behaviourally indistinguishable from the
  * real one through the shared {@link CoverageNegotiationClient}.
  *
- * NOTE (R12): simulated mode does NOT model `msg.sender`, so it does NOT enforce
- * the address gates — under the single shared wallet they all pass anyway. It
- * DOES enforce the state guards and `partyId` membership exactly where the
- * contract does (e.g. `appeal`/`accept` party must be a party to the request).
+ * AUTH PARITY (R11/R12, Finding-2 fix 2026-05-27): simulated mode NOW models
+ * `msg.sender` via an {@link SimulatedBackend.activeAddress active address} so it
+ * enforces the SAME wallet gates the contract does, with matching revert
+ * messages — closing the gap where dev/CI could mask an R11 auth regression.
+ * Party actions require the caller ∈ {providerAddr, insurerAddr}; `insurerEngage`
+ * is insurer-only; `submitEvidence`/`refuse` are provider-only;
+ * `requestAdjudication`/`appeal`/`accept`/`settle`/`withdraw`/`postFeedback`/
+ * `onRulingTimeout` are party-gated; `createContract` must come from the declared
+ * provider address. Reads stay public (no gate). Under the single-shared-wallet
+ * model (R12) provider==insurer so the one address passes and `partyId`
+ * distinguishes the side. The active address defaults to a wildcard that satisfies
+ * every gate (back-compat for callers that never set one) — set it (constructor
+ * `caller` option, {@link SimulatedBackend.setCaller}, or {@link SimulatedBackend.connect})
+ * to exercise the gates.
  *
  * Arbiter ruling (R6): `requestAdjudication` / `submitEvidence` / `appeal` move
  * to `UnderReview` and schedule a deterministic decision (default Approve,
@@ -51,6 +61,14 @@ export const ZERO_HASH = ethers.ZeroHash;
 
 /** Default appeal round cap (mirrors the contract's `maxRounds = 3`, R6c). */
 const DEFAULT_MAX_ROUNDS = 3n;
+
+/**
+ * Wildcard active-address sentinel: when the backend's caller is this value the
+ * R11 gates all pass (back-compat for callers that never set an address). It is
+ * an impossible real address (not 20 bytes), so it can never collide with a
+ * party wallet.
+ */
+export const ANY_CALLER = "*";
 
 /** Tunables for the mocked necessity arbiter (R6/R6a/R6b). */
 export interface SimulatedAgentOptions {
@@ -92,6 +110,15 @@ export interface SimulatedAgentOptions {
   readonly autoResolve?: boolean;
   /** Appeal round cap before `Deadlocked` (R6c). Default: 3. */
   readonly maxRounds?: bigint;
+  /**
+   * The acting wallet address used to enforce the R11 address gates — the
+   * simulated stand-in for `msg.sender`. When omitted, a wildcard
+   * ({@link ANY_CALLER}) is used and every gate passes (back-compat). Set it (or
+   * call {@link SimulatedBackend.setCaller} / {@link SimulatedBackend.connect}) to
+   * enforce the same auth the contract does. Compared case-insensitively, so it
+   * need not be checksummed.
+   */
+  readonly caller?: string;
 }
 
 /** Mutable in-memory mirror of `struct Negotiation`. */
@@ -141,10 +168,32 @@ export class SimulatedBackend implements CoverageNegotiationClient {
   private readonly agent: SimulatedAgentOptions;
   private readonly maxRounds: bigint;
   private readonly pendingTimers = new Set<ReturnType<typeof setTimeout>>();
+  /** Lower-cased acting address (the simulated `msg.sender`), or {@link ANY_CALLER}. */
+  private caller: string;
 
   constructor(agent: SimulatedAgentOptions = {}) {
     this.agent = agent;
     this.maxRounds = agent.maxRounds ?? DEFAULT_MAX_ROUNDS;
+    this.caller = agent.caller ? agent.caller.toLowerCase() : ANY_CALLER;
+  }
+
+  // ---------------------------------------------------------------------
+  // Active-address (simulated msg.sender) — R11 auth parity
+  // ---------------------------------------------------------------------
+
+  /** The current acting address (the simulated `msg.sender`), lower-cased, or {@link ANY_CALLER}. */
+  get activeAddress(): string {
+    return this.caller;
+  }
+
+  /**
+   * Set the acting wallet address used to enforce the R11 gates — the simulated
+   * analogue of choosing which signer sends the next write. Pass {@link ANY_CALLER}
+   * to disable gating. Returns `this` for fluent use (`backend.setCaller(addr)`).
+   */
+  setCaller(address: string): this {
+    this.caller = address === ANY_CALLER ? ANY_CALLER : address.toLowerCase();
+    return this;
   }
 
   // ---------------------------------------------------------------------
@@ -155,6 +204,9 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     if (params.providerAddr === ethers.ZeroAddress || params.insurerAddr === ethers.ZeroAddress) {
       throw new Error("addr: zero");
     }
+    // R11: createContract must come from the declared provider address (matches the
+    // contract's `require(msg.sender == providerAddr, "auth: not provider")`).
+    if (!this.is(params.providerAddr)) throw new Error("auth: not provider");
     if (params.quantity <= 0n) throw new Error("qty: zero");
 
     const reqId = this.nextId++;
@@ -217,6 +269,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
   async insurerEngage(reqId: bigint, policyHash: string, policyUri: string): Promise<void> {
     const n = this.must(reqId);
     if (n.state !== State.Open) throw new Error("engage: not Open");
+    this.onlyInsurer(n); // R11: insurer-only
     if (policyHash === ZERO_HASH) throw new Error("policy: empty");
 
     n.policyHash = policyHash;
@@ -230,6 +283,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
   async requestAdjudication(reqId: bigint): Promise<void> {
     const n = this.must(reqId);
     if (n.state !== State.Ready) throw new Error("adjudicate: not Ready");
+    this.onlyParty(n); // R11: either party may adjudicate
     n.round = 1n;
     this.emit({ name: "AdjudicationRequested", reqId });
     this.fireAgent(reqId, n);
@@ -238,6 +292,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
   async submitEvidence(reqId: bigint, evidenceUri: string): Promise<void> {
     const n = this.must(reqId);
     if (n.state !== State.EvidenceRequested) throw new Error("evidence: wrong state");
+    this.onlyProvider(n); // R11: provider-only
     if (evidenceUri === ZERO_HASH) throw new Error("evidence: empty");
     n.evidenceUri = evidenceUri;
     n.round += 1n;
@@ -255,6 +310,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     if (n.state !== State.Approved && n.state !== State.Denied) {
       throw new Error("appeal: not ruled");
     }
+    this.onlyParty(n); // R11: either party may appeal
     if (partyId !== n.providerId && partyId !== n.insurerId) {
       throw new Error("appeal: unknown party");
     }
@@ -280,6 +336,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     if (n.state !== State.Approved && n.state !== State.Denied) {
       throw new Error("accept: not ruled");
     }
+    this.onlyParty(n); // R11: either party may accept
     if (partyId === n.providerId) {
       n.providerAccepted = true;
     } else if (partyId === n.insurerId) {
@@ -295,6 +352,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     if (n.state !== State.Approved && n.state !== State.Denied) {
       throw new Error("settle: not ruled");
     }
+    this.onlyParty(n); // R11: either party may settle
     if (!n.providerAccepted || !n.insurerAccepted) throw new Error("settle: not both accepted");
 
     const feePerParty = n.totalFees / 2n;
@@ -305,6 +363,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
 
   async refuse(reqId: bigint, reasonHash: string): Promise<void> {
     const n = this.must(reqId);
+    this.onlyProvider(n); // R11: provider-only (matches contract check order)
     if (!this.refusable(n.state)) throw new Error("refuse: not refusable");
     this.clearRequest(n);
     n.state = State.ProviderRefused;
@@ -313,6 +372,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
 
   async withdraw(reqId: bigint): Promise<void> {
     const n = this.must(reqId);
+    this.onlyParty(n); // R11: either party may withdraw
     if (TERMINAL_STATES.has(n.state)) throw new Error("withdraw: terminal");
     this.clearRequest(n);
     n.state = State.Withdrawn;
@@ -336,6 +396,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
 
   async postFeedback(reqId: bigint, msgHash: string, uri: string): Promise<void> {
     const n = this.must(reqId);
+    this.onlyParty(n); // R11: either party may post feedback
     if (TERMINAL_STATES.has(n.state)) throw new Error("feedback: terminal");
     this.emit({ name: "FeedbackPosted", reqId, msgHash, uri });
   }
@@ -538,6 +599,28 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     const n = this.negotiations.get(reqId);
     if (!n || !n.exists) throw new Error("unknown contract");
     return n;
+  }
+
+  /** True when the active address satisfies a gate against `expected` (wildcard always passes). */
+  private is(expected: string): boolean {
+    if (this.caller === ANY_CALLER) return true;
+    return this.caller === expected.toLowerCase();
+  }
+
+  /** Mirror of `_onlyParty`: caller ∈ {providerAddr, insurerAddr} (R11), else "auth: not a party". */
+  private onlyParty(n: SimNegotiation): void {
+    if (this.is(n.providerAddr) || this.is(n.insurerAddr)) return;
+    throw new Error("auth: not a party");
+  }
+
+  /** Gate to the insurer wallet (R11) — matches the contract's "auth: not insurer". */
+  private onlyInsurer(n: SimNegotiation): void {
+    if (!this.is(n.insurerAddr)) throw new Error("auth: not insurer");
+  }
+
+  /** Gate to the provider wallet (R11) — matches the contract's "auth: not provider". */
+  private onlyProvider(n: SimNegotiation): void {
+    if (!this.is(n.providerAddr)) throw new Error("auth: not provider");
   }
 
   /** Mirror of the contract's `_refusable`: `Ready` onward while pre-terminal (R7). */

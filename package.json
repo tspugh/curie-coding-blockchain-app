@@ -18,6 +18,7 @@
     "web:dev": "vite",
     "web:build": "vite build",
     "web:preview": "vite preview --port 4173",
+    "test:lib": "node --import tsx --test \"src/**/*.test.ts\"",
     "test:e2e": "bash web/tests/agent-browser/run.sh",
     "test:real-local": "bash scripts/real-backend-localnode.sh",
     "demo:orchestrator": "node scripts/orchestrator-demo.mjs"
