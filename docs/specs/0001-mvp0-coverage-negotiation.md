@@ -45,12 +45,12 @@ agent and are **bounded to N rounds** → `Deadlocked` if unresolved. Both accep
 
 **Contract & chain**
 - **R1 (MUST)** A single **Solidity** contract, built/deployed and **tested with Hardhat**, is the system of record and mediates the whole flow.
-- **R2 (MUST)** A request is created by a **provider (initiator)** against a named **insurer (destination)**: drug ref (**RxNorm/NDC**), de-identified **justification hash**, **public-evidence URI refs**, and the **requested (billed) amount**.
+- **R2 (MUST)** A request is created by a **provider (initiator)** against a named **insurer (destination)**: drug ref (**RxNorm/NDC**), **quantity** (dispensed units, NDC-pinned — drives the cap), optional **`daysSupply`** (clinical-utilization context for necessity reasoning, NOT a price input), de-identified **justification hash**, **public-evidence URI refs**, and the **requested (billed) amount**.
 - **R3 (MUST)** Note/evidence content is stored **off-chain** (or at its public URL); only `keccak256` hashes + opaque refs are on-chain; both parties can verify their copy matches.
 - **R4 (MUST — hard invariant)** **No PHI / no content beyond hashes, refs, amounts, state is ever on-chain — nor in the agent payload.** v0 uses a **de-identified synthetic** case; the agent receives only a de-identified extract + public URLs (§3 "PHI handling").
 - **R5 (MUST — insurer attaches policy)** The **insurer engages** a filed request by **attaching its governing policy criteria** as a **hashed, public** contract input (hash on-chain, body off-chain/at a public URL) **before** adjudication. Adjudication cannot run until a policy is attached.
 - **R6 (MUST — necessity arbiter)** Adjudication fires the **native agent**, which **weighs the provider's cited public evidence against the insurer's attached policy criteria** and rules **`approve | deny | need_more_evidence`**, recording a **rationale hash** + the **specific policy clause ref** relied on + receipt. (This text-vs-text judgment is the irreplaceable, AI-worthy step — A-0003.)
-- **R6a (MUST — deterministic amount)** The covered amount is **not AI-chosen**: on `approve` it is `coveredAmount = min(requestedAmount, benchmarkCap)` where **`benchmarkCap` = the Mark Cuban Cost Plus retail price × quantity/days-supply** — the fair, transparent v0 benchmark (resolved 2026-05-27). **NADAC** is recorded alongside as the acquisition-cost **floor reference** (a `requested < NADAC` is flagged as suspicious). On `deny` the amount is `0`. (A NADAC+dispensing-fee "payer-reimbursement mode" is a v1 alternative — §7.)
+- **R6a (MUST — deterministic amount)** The covered amount is **not AI-chosen**: on `approve` it is `coveredAmount = min(requestedAmount, benchmarkCap)` where **`benchmarkCap` = the Mark Cuban Cost Plus per-unit retail price × `quantity`** (R2) — the fair, transparent v0 benchmark (resolved 2026-05-27). `daysSupply` does NOT enter the price; it feeds necessity reasoning (e.g. early-refill / excessive-supply flags). **NADAC** is recorded alongside as the acquisition-cost **floor reference** (a `requested < NADAC` is flagged as suspicious). On `deny` the amount is `0`. (A NADAC+dispensing-fee "payer-reimbursement mode" is a v1 alternative — §7.)
 - **R6b (MUST — policy compliance / void)** If a policy clause the agent **relies on contradicts a cited public standard** (FDA-approved indication / guideline), the agent emits **`PolicyFlagged(clauseRef, standardRef)`** and routes the contract to terminal **`PolicyInvalidated`** — the whole request is **voided** (incentivising compliant policy). No silent override.
 - **R6c (MUST — necessity appeals, bounded)** From a ruling, **either party may `accept` or `appeal`**. An **appeal submits new public evidence of necessity** (`{evidenceUri, reasonHash}`) — never price haggling — and **re-fires the agent**, `round++`. Bounded to **N rounds** (config; default 3). **Both accepting** the current ruling makes it settleable; **N rounds without mutual acceptance → terminal `Deadlocked`**.
 - **R7 (MUST — provider refusal)** After the insurer has attached terms, the **provider may `refuse`** → terminal **`ProviderRefused`** (an attributable rejection of the insurer's stated terms, distinct from neutral `Withdrawn` and from `Deadlocked`), recording an optional reason hash.
@@ -68,6 +68,7 @@ agent and are **bounded to N rounds** → `Deadlocked` if unresolved. Both accep
 - **R15 (MUST)** Web app: provider files a request; insurer attaches policy + engages; both watch rulings + the cited clause + the evolving covered amount; accept/appeal; settle.
 - **R16 (MUST)** Three views — **Overview** (claims table + live status), **Create** (file a request), **Maintain/detail** (timeline, current ruling + rationale + cited clause, covered amount, accept/appeal/refuse/settle, gated by state + active profile).
 - **R17 (SHOULD)** Observable over JSON-RPC (events + live subscription).
+- **R18 (MUST — deployment)** The web app is **deployed as a public HTTPS static site** (the SPA is fully client-side; simulated mode needs no backend). v0 target: **AWS S3 (private bucket) + CloudFront (HTTPS) + ACM** (custom domain optional; the default CloudFront cert suffices otherwise), driven by a **repeatable deploy script**. **No PHI and no secrets ship in the static bundle** (synthetic fixtures only; any real-mode key is supplied at runtime, never built in).
 
 ## 3. Technical documentation
 
@@ -166,6 +167,7 @@ exposes **attach-policy / engage**.
 - Off-chain content store + hash commitment + both-party verification.
 - **Sample case** `demo-data/sample-case.md` (de-identified) + **fixtures**: a published **Part D exception-criteria** policy, **openFDA/DailyMed** label snippet, **NADAC + Cost Plus** price refs, and a **non-compliant policy** fixture (to demo `PolicyInvalidated`).
 - Deployed testnet address in `.env.example` / README.
+- **Deploy script** (`scripts/deploy-static.sh`) that builds the web app and publishes it to the HTTPS static host (R18); a recorded **live demo URL**. The flashy demo experience + integration seam are specified separately in **SPEC-0002**.
 
 ## 5. Test cases
 
@@ -212,7 +214,7 @@ exposes **attach-policy / engage**.
 
 ## 8. Open questions
 
-1. **RESOLVED (2026-05-27): Benchmark cap = Mark Cuban Cost Plus retail price × quantity** (neutral/fair); NADAC is the floor reference; NADAC+dispensing-fee is a v1 payer-mode. *Remaining sub-item:* the request needs a **quantity / days-supply** field so the cap is `unitPrice × quantity`. — priority: resolved (sub-item: medium)
+1. **RESOLVED (2026-05-27): Benchmark cap = Mark Cuban Cost Plus per-unit price × `quantity`** (neutral/fair); NADAC is the floor reference; NADAC+dispensing-fee is a v1 payer-mode. The request carries **`quantity`** (cap driver) + optional **`daysSupply`** (necessity context) — R2. — priority: resolved
 2. **De-identified extract schema** — exact safe fields, and the re-identification guarantee for the combination. — priority: high
 3. **Insurer non-engagement** — if the insurer never attaches a policy, does a keeper expire `Open` → `Withdrawn` after a deadline? — priority: medium
 4. **N (round cap)** value and whether `Deadlocked` allows an off-chain human-escalation hook. — priority: medium
