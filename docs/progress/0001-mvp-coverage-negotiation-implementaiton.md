@@ -243,3 +243,53 @@ FDA-approved psoriasis indication that the non-compliant policy clause PD-ADA-09
 data behind the SPEC-0002 R3 "gotcha". Exported via `src/index.ts`. No real CDS-Hooks server (v0 mock
 seam only). **Next:** the SPEC-0002 web experience (live timeline, FDA-gotcha viz, price gauge, role
 gating, CDS prefill) consuming this seam.
+
+---
+
+### 2026-05-27 — Iteration 4: SPEC-0002 demo experience (live view, FDA gotcha, gauge, roles, CDS prefill) + SPEC-0001 quantity/daysSupply in the UI
+
+Implemented the **SPEC-0002** experience layer on the existing Vite+React SPA (no new
+on-chain behavior) and folded the SPEC-0001 quantity/daysSupply Create inputs in.
+
+**DONE — web `web/src/`:**
+- **Create (SPEC-0001):** added **quantity** (required, >0) + **daysSupply** (optional) inputs,
+  passed to `createContract`; sample-case prefill includes them.
+- **R7 CDS-Hooks prefill:** a **"Prefill from EHR order-sign"** button runs
+  `orderSignToDraft(SAMPLE_ORDER_SIGN_REQUEST)` and fills drug/quantity/daysSupply/justification,
+  with a "via mocked CDS Hooks 2.0" provenance note — the embedded-EHR entry point.
+- **R1 live evolving view:** an animated **state stepper** (current lifecycle state highlighted,
+  CSS tween/pulse), timeline entries fade/slide in, and a ruling panel whose **covered amount +
+  rationale + cited clause + round** update as rulings/appeals land.
+- **R3 FDA-label "gotcha":** on `PolicyInvalidated`, a panel renders the offending insurer clause
+  **struck-through** (PD-ADA-09, from `policy-noncompliant.md`) beside the **FDA-approved
+  indication** (from `fda-indication-adalimumab.json`) with a plain-language "voided because…"
+  explanation and the on-chain `clauseRef`/`standardRef`.
+- **R4 verifiability:** per-ruling verify affordance — Somnia **explorer deep link**
+  (`txUrl(SOMNIA_TESTNET, txHash)`) in real mode; **event + on-chain hash** shown in simulated
+  mode.
+- **R5 price gauge:** horizontal bars for **requested vs NADAC floor vs Cost Plus cap vs covered**
+  from `priceBasisOf`, with the deterministic `covered = min(requested, costPlus×qty)` spelled out;
+  Cost Plus / NADAC per-unit-price inputs replace the old single benchmark-cap input.
+- **R6 role + wallet-gating demo:** an **Observer** profile (party 99) — views everything, all
+  mutating actions hidden; an explicit **"attempt as a non-party"** affordance calls a gated method
+  and surfaces the rejection, making R11 neutrality visible.
+- `client.ts` fixed to the new simulated-arbiter options (`costPlusUnitPrice`/`nadacUnitPrice`,
+  replacing the removed `benchmarkCap`); `sampleCase.ts`/`fdaIndication.ts` wired; CSS for the
+  stepper, gauge, gotcha, verify, and non-party panels.
+- `demo-data/sample-case.md` + `price-benchmarks.md` updated to the per-unit Cost Plus cap / NADAC
+  floor model (synthetic, app-repo-authored — no cross-repo boundary crossed).
+- **Verified green:** `npm run build` (lib), `cd web && npx tsc --noEmit`, `npm run web:build`;
+  no PEM keys / secrets in the built bundle. agent-browser e2e testids/scenarios updated
+  best-effort (NOT run — no browser runtime).
+
+### Status vs SPEC-0001 + SPEC-0002 pass/fail
+- ✅ SPEC-0001 fully implemented incl. the resolved deterministic **Cost Plus × quantity** cap,
+  quantity (cap driver) + daysSupply (price-neutral), `priceBasisOf`; 11/11 Hardhat tests.
+- ✅ SPEC-0002 T1–T5 buildable/demoable in simulated mode: live evolving timeline (T1/R1,R2), the
+  FDA-label gotcha voids + explains (T2/R3), verify affordance present (T3/R4), observer can't act +
+  non-party rejection shown (T4/R6), the mocked `order-sign` prefills Create and the typed CDS Hooks
+  2.0 interfaces compile (T5/R7). Price gauge (R5) done.
+- ⛔ **Remaining, blocked on a funded wallet / out-of-box deploy only:** the live HTTPS deploy
+  (R18 — `scripts/deploy-static.sh`, run outside this box), the real Somnia testnet deploy + a real
+  native-agent ruling with receipt + fee (SPEC-0001 R9), real-mode explorer links exercised against
+  a real tx, and the agent-browser e2e run (needs a browser runtime).

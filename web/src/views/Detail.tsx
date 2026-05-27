@@ -1,14 +1,21 @@
 /**
- * Detail / Maintain view (R15/R16): the full lifecycle cockpit for one
- * coverage-exception request — its timeline (rebuilt from the global event log
- * filtered to this reqId — R16), current state, on-chain facts, the insurer's
- * attached policy, the arbiter's ruling (decision + covered amount + cited
- * clause + rationale + round), accept flags, and every party action.
+ * Detail / Maintain view (R15/R16 + SPEC-0002 R1/R3/R4/R5/R6): the full
+ * lifecycle cockpit for one coverage-exception request — its LIVE animated
+ * timeline (rebuilt from the global event log filtered to this reqId), a state
+ * stepper that highlights and tweens to the current lifecycle state, the
+ * arbiter's evolving ruling (decision + covered amount + cited clause +
+ * rationale + round, updated per ruling/appeal), the FDA-label policy-void
+ * "gotcha" panel, a per-ruling on-chain verify affordance, a requested-vs-NADAC-
+ * vs-Cost-Plus-vs-covered price gauge, and every party action.
  *
  * Every action is gated by state + the active profile's role (provider vs.
  * insurer, matched by partyId to providerId/insurerId), so a button that would
- * revert on-chain is hidden. The "simulated arbiter" controls (decision selector
- * + benchmark-cap input, shown only in simulated mode) flip the module-level
+ * revert on-chain is hidden. The Observer profile (party 99) is not a party, so
+ * it sees everything but acts on nothing — plus an explicit non-party attempt
+ * affordance that surfaces the gating rejection (R6/R11).
+ *
+ * The "simulated arbiter" controls (decision selector + Cost Plus / NADAC
+ * per-unit price inputs, shown only in simulated mode) flip the module-level
  * mocked-arbiter config just before adjudication — demonstrating the contract-
  * native ruling callback (R6/R6a/R6b), the deterministic min() (R6a), the
  * policy-void path (R6b), bounded appeals → Deadlocked (R6c) and refusal (R7).
@@ -22,19 +29,31 @@ import {
   ZERO_HASH,
   hashContent,
   verifyContent,
+  txUrl,
+  SOMNIA_TESTNET,
   type CoverageEvent,
   type NegotiationView,
   type PolicyCommitment,
+  type PriceBasis,
   type Profile,
 } from "@lib";
 import {
   client,
-  getNextBenchmarkCap,
+  getNextCostPlusUnitPrice,
   getNextDecision,
-  setNextBenchmarkCap,
+  getNextNadacUnitPrice,
+  setNextCostPlusUnitPrice,
   setNextDecision,
+  setNextNadacUnitPrice,
+  CLAUSE_REF,
+  STANDARD_REF,
 } from "../client.js";
 import { SAMPLE_CASE } from "../sampleCase.js";
+import {
+  FDA_DRUG_LABEL,
+  FDA_INDICATION_TEXT,
+  FDA_LABEL_URL,
+} from "../fdaIndication.js";
 import { describeEvent, fmtAmount, parseAmount, shortHex } from "../shared.js";
 
 interface DetailProps {
@@ -51,17 +70,39 @@ const DECISION_OPTIONS: readonly Decision[] = [
   Decision.PolicyInvalid,
 ];
 
+/** The lifecycle steps shown in the animated stepper (R1). */
+const STEPPER: readonly { readonly label: string; readonly states: readonly State[] }[] = [
+  { label: "Open", states: [State.Open] },
+  { label: "Ready", states: [State.Ready] },
+  { label: "UnderReview", states: [State.UnderReview, State.EvidenceRequested] },
+  { label: "Ruled", states: [State.Approved, State.Denied] },
+  {
+    label: "Terminal",
+    states: [
+      State.Settled,
+      State.Deadlocked,
+      State.PolicyInvalidated,
+      State.ProviderRefused,
+      State.Withdrawn,
+    ],
+  },
+];
+
 export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   const [view, setView] = useState<NegotiationView | null>(null);
   const [policy, setPolicy] = useState<PolicyCommitment | null>(null);
+  const [priceBasis, setPriceBasis] = useState<PriceBasis | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Insurer engage form.
   const [policyText, setPolicyText] = useState("");
   // Adjudication controls (simulated arbiter).
   const [decision, setDecision] = useState<Decision>(getNextDecision());
-  const [benchmarkCap, setBenchmarkCap] = useState(
-    getNextBenchmarkCap()?.toString() ?? "",
+  const [costPlusUnit, setCostPlusUnit] = useState(
+    getNextCostPlusUnitPrice()?.toString() ?? "",
+  );
+  const [nadacUnit, setNadacUnit] = useState(
+    getNextNadacUnitPrice()?.toString() ?? "",
   );
   // Appeal / evidence / refuse / feedback.
   const [appealEvidence, setAppealEvidence] = useState("");
@@ -73,6 +114,8 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   const [verifyResult, setVerifyResult] = useState<"match" | "mismatch" | null>(
     null,
   );
+  // R6: the non-party attempt affordance result (observer).
+  const [nonpartyRejected, setNonpartyRejected] = useState<string | null>(null);
 
   const timeline = useMemo(
     () => events.filter((e) => e.reqId === reqId),
@@ -85,9 +128,14 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
       try {
         const v = await client.negotiation.getNegotiationView(reqId);
         const p = await client.negotiation.policyOf(reqId);
+        // Price basis is meaningful only once the arbiter has priced (ruled);
+        // before that the cap/NADAC totals are unknown, so we leave it null and
+        // show the requested-only gauge (R5).
+        const pb = v.ruled || v.terminal ? await client.negotiation.priceBasisOf(reqId) : null;
         if (!cancelled) {
           setView(v);
           setPolicy(p);
+          setPriceBasis(pb);
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -134,8 +182,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   const canSubmitEvidence = state === State.EvidenceRequested && isProvider;
   const canSettle = ruled && view.bothAccepted && isParty;
   // refuse: provider only, Ready onward, pre-terminal (mirrors _refusable).
-  const canRefuse =
-    isProvider && state !== State.Open && !view.terminal;
+  const canRefuse = isProvider && state !== State.Open && !view.terminal;
   const canWithdraw = isParty && !view.terminal;
   const canFeedback = !view.terminal && isParty;
 
@@ -143,11 +190,18 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   const policyFlagged = [...timeline]
     .reverse()
     .find((e) => e.name === "PolicyFlagged" || e.name === "PolicyInvalidated");
+  const settled = [...timeline].reverse().find((e) => e.name === "Settled");
+  const isVoided = state === State.PolicyInvalidated;
+
+  // The current step index for the animated stepper (R1).
+  const currentStep = STEPPER.findIndex((s) => s.states.includes(state));
 
   function applyArbiterConfig() {
     setNextDecision(decision);
-    const cap = parseAmount(benchmarkCap);
-    if (cap !== null) setNextBenchmarkCap(cap);
+    const cp = parseAmount(costPlusUnit);
+    if (cp !== null) setNextCostPlusUnitPrice(cp);
+    const nd = parseAmount(nadacUnit);
+    if (nd !== null) setNextNadacUnitPrice(nd);
   }
 
   return (
@@ -160,9 +214,69 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
         <span className={`badge state s-${state}`} data-testid="state-badge">
           {STATE_NAMES[state]}
         </span>
+        <span className="role-label" data-testid="active-role">
+          Acting as <strong>{activeProfile.label}</strong>
+          {isProvider ? " (provider)" : isInsurer ? " (insurer)" : " (observer — read-only)"}
+        </span>
       </div>
 
+      {/* R1: animated state stepper — highlights + tweens to the current state. */}
+      <ol className="stepper" data-testid="state-stepper">
+        {STEPPER.map((step, i) => {
+          const cls =
+            i < currentStep ? "done" : i === currentStep ? "current" : "upcoming";
+          return (
+            <li key={step.label} className={`step ${cls}`}>
+              <span className="dot" />
+              <span className="step-label">
+                {i === currentStep ? STATE_NAMES[state] : step.label}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+
       {error && <p className="error">{error}</p>}
+
+      {/* R6: observer / non-party gating made visible. */}
+      {!isParty && (
+        <div className="card nonparty" data-testid="nonparty-panel">
+          <h2>Observer (read-only)</h2>
+          <p className="hint">
+            Active profile (party {partyId.toString()}) is not a party to this
+            request, so every mutating action is hidden. Reads stay public (R11).
+            Switch to the provider or insurer to act.
+          </p>
+          <button
+            type="button"
+            data-testid="nonparty-attempt"
+            onClick={() =>
+              void (async () => {
+                setNonpartyRejected(null);
+                try {
+                  // A gated method called with the observer's (unknown) partyId
+                  // must be rejected — proving R11 neutrality / access control.
+                  await client.negotiation.accept(reqId, partyId);
+                  setNonpartyRejected(
+                    "Unexpected: the action was NOT rejected (gating failed).",
+                  );
+                } catch (err) {
+                  setNonpartyRejected(
+                    err instanceof Error ? err.message : String(err),
+                  );
+                }
+              })()
+            }
+          >
+            Attempt an action as a non-party (expect rejection)
+          </button>
+          {nonpartyRejected && (
+            <p className="error" data-testid="nonparty-rejected">
+              Rejected: {nonpartyRejected}
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="detail-grid">
         <div className="card facts">
@@ -175,6 +289,12 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
             <dt>justificationHash</dt>
             <dd>
               <code title={n.justificationHash}>{shortHex(n.justificationHash)}</code>
+            </dd>
+            <dt>quantity</dt>
+            <dd data-testid="fact-quantity">{n.quantity.toString()}</dd>
+            <dt>daysSupply</dt>
+            <dd data-testid="fact-days-supply">
+              {n.daysSupply > 0n ? n.daysSupply.toString() : "—"}
             </dd>
             <dt>requested</dt>
             <dd>{fmtAmount(n.requestedAmount)}</dd>
@@ -203,13 +323,6 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
               )}
             </dd>
           </dl>
-
-          {!isParty && (
-            <p className="hint">
-              Active profile (party {partyId.toString()}) is not a party to this
-              request. Switch profiles to act as the provider or insurer.
-            </p>
-          )}
 
           <div className="verify">
             <label>
@@ -249,14 +362,15 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
           </div>
         </div>
 
-        <div className="card ruling">
-          <h2>Ruling</h2>
+        {/* R1: the evolving ruling panel — updates per round as rulings land. */}
+        <div className="card ruling" data-testid="ruling-panel">
+          <h2>Ruling (round {n.round.toString()})</h2>
           {lastRuled ? (
             <dl>
               <dt>decision</dt>
               <dd data-testid="ruling-decision">{DECISION_NAMES[lastRuled.decision]}</dd>
               <dt>covered amount</dt>
-              <dd>{fmtAmount(lastRuled.coveredAmount)}</dd>
+              <dd data-testid="ruling-covered">{fmtAmount(lastRuled.coveredAmount)}</dd>
               <dt>cited clause</dt>
               <dd>
                 <code data-testid="cited-clause" title={lastRuled.clauseRef}>
@@ -271,19 +385,67 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
               <dd>{n.round.toString()}</dd>
             </dl>
           ) : (
-            <p className="hint">No ruling yet.</p>
+            <p className="hint">No ruling yet — adjudicate to fire the arbiter.</p>
           )}
-          {policyFlagged && (
-            <p className="error">
-              Policy flagged: clause{" "}
-              <code title={policyFlagged.clauseRef}>{shortHex(policyFlagged.clauseRef)}</code>{" "}
-              contradicts public standard{" "}
-              <code title={policyFlagged.standardRef}>{shortHex(policyFlagged.standardRef)}</code>{" "}
-              — contract voided (R6b).
-            </p>
+
+          {/* R4: per-ruling verify affordance (explorer link / event+hash). */}
+          {(lastRuled || settled) && (
+            <VerifyOnChain
+              event={settled ?? lastRuled!}
+            />
           )}
         </div>
+      </div>
 
+      {/* R5: price gauge — requested vs NADAC floor vs Cost Plus cap vs covered. */}
+      <PriceGauge
+        requested={n.requestedAmount}
+        basis={priceBasis}
+        covered={n.coveredAmount}
+      />
+
+      {/* R3: the FDA-label policy-void "gotcha" panel. */}
+      {isVoided && policyFlagged && (
+        <div className="card gotcha" data-testid="gotcha-panel">
+          <h2>Policy voided — clause contradicts the FDA-approved indication (R6b)</h2>
+          <p className="gotcha-explain">
+            Voided because the relied-on clause contradicts the FDA-approved
+            indication. The arbiter refused to apply it and routed the request to
+            terminal <strong>PolicyInvalidated</strong> — a bad payer clause is
+            thrown out, never silently applied.
+          </p>
+          <div className="gotcha-cols">
+            <div className="gotcha-col">
+              <h3>Offending insurer policy clause ({SAMPLE_CASE.nonCompliantClauseId})</h3>
+              <p className="gotcha-clause" data-testid="gotcha-clause">
+                {SAMPLE_CASE.nonCompliantPolicyText}
+              </p>
+            </div>
+            <div className="gotcha-col">
+              <h3>FDA-approved indication — {FDA_DRUG_LABEL}</h3>
+              <p className="gotcha-fda" data-testid="gotcha-fda-citation">
+                {FDA_INDICATION_TEXT}
+              </p>
+              <p className="hint">
+                Source:{" "}
+                <a href={FDA_LABEL_URL} target="_blank" rel="noreferrer">
+                  openFDA HUMIRA label
+                </a>{" "}
+                (synthetic fixture)
+              </p>
+            </div>
+          </div>
+          <p className="hint gotcha-refs">
+            On-chain clauseRef{" "}
+            <code title={policyFlagged.clauseRef}>{shortHex(policyFlagged.clauseRef)}</code>
+            {policyFlagged.clauseRef === CLAUSE_REF ? " (PD-ADA-09)" : ""} · standardRef{" "}
+            <code title={policyFlagged.standardRef}>{shortHex(policyFlagged.standardRef)}</code>
+            {policyFlagged.standardRef === STANDARD_REF ? " (FDA HUMIRA label)" : ""}
+          </p>
+        </div>
+      )}
+
+      <div className="detail-grid">
         <div className="card actions">
           <h2>Actions</h2>
 
@@ -358,17 +520,30 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                       ))}
                     </select>
                   </label>
-                  <label>
-                    Public benchmark cap (R6a — covered = min(requested, cap))
-                    <input
-                      data-testid="benchmark-cap"
-                      type="text"
-                      inputMode="numeric"
-                      value={benchmarkCap}
-                      onChange={(e) => setBenchmarkCap(e.target.value)}
-                      placeholder={`${SAMPLE_CASE.benchmarkCap} (blank = requested)`}
-                    />
-                  </label>
+                  <div className="row">
+                    <label>
+                      Cost Plus unit price (cap = ×quantity — R6a)
+                      <input
+                        data-testid="costplus-unit-price"
+                        type="text"
+                        inputMode="numeric"
+                        value={costPlusUnit}
+                        onChange={(e) => setCostPlusUnit(e.target.value)}
+                        placeholder={`${SAMPLE_CASE.costPlusUnitPrice} (blank = non-binding)`}
+                      />
+                    </label>
+                    <label>
+                      NADAC unit price (acquisition floor reference)
+                      <input
+                        data-testid="nadac-unit-price"
+                        type="text"
+                        inputMode="numeric"
+                        value={nadacUnit}
+                        onChange={(e) => setNadacUnit(e.target.value)}
+                        placeholder={`${SAMPLE_CASE.nadacUnitPrice} (floor only)`}
+                      />
+                    </label>
+                  </div>
                 </>
               )}
               <button
@@ -564,24 +739,143 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
               actions.
             </p>
           )}
+
+          {!isParty && (
+            <p className="hint">
+              No actions available to an observer; see the read-only panel above.
+            </p>
+          )}
+        </div>
+
+        <div className="card timeline" data-testid="timeline-card">
+          <h2>Timeline (live)</h2>
+          <ol data-testid="timeline">
+            {timeline.length === 0 ? (
+              <li className="empty">No events yet.</li>
+            ) : (
+              timeline.map((e, i) => (
+                <li key={`${e.name}-${i}`} className="ev-row">
+                  <span className="ev-name">{e.name}</span>
+                  <span className="ev-desc">{describeEvent(e)}</span>
+                </li>
+              ))
+            )}
+          </ol>
         </div>
       </div>
-
-      <div className="card timeline">
-        <h2>Timeline</h2>
-        <ol data-testid="timeline">
-          {timeline.length === 0 ? (
-            <li className="empty">No events yet.</li>
-          ) : (
-            timeline.map((e, i) => (
-              <li key={`${e.name}-${i}`}>
-                <span className="ev-name">{e.name}</span>
-                <span className="ev-desc">{describeEvent(e)}</span>
-              </li>
-            ))
-          )}
-        </ol>
-      </div>
     </section>
+  );
+}
+
+/**
+ * R4 verify affordance for a ruling / settlement. In real mode (event carries a
+ * txHash) it deep-links the Somnia explorer + shows the receipt id; in simulated
+ * mode it shows the event name + the on-chain hash(es) with a clear note that no
+ * live tx exists — making "it's actually on-chain" legible either way.
+ */
+function VerifyOnChain({ event }: { readonly event: CoverageEvent }) {
+  const hashes: { readonly label: string; readonly value: string }[] = [];
+  let receiptId: bigint | null = null;
+  // Settled carries no hashes — its on-chain facts are the covered amount + fee.
+  if (event.name === "Ruled") {
+    hashes.push({ label: "rationaleHash", value: event.rationaleHash });
+    hashes.push({ label: "clauseRef", value: event.clauseRef });
+    receiptId = event.receiptId;
+  }
+
+  return (
+    <div className="verify-onchain" data-testid="verify-onchain">
+      {event.txHash ? (
+        <>
+          <a
+            href={txUrl(SOMNIA_TESTNET, event.txHash)}
+            target="_blank"
+            rel="noreferrer"
+            data-testid="verify-onchain-link"
+          >
+            View on Somnia explorer
+          </a>
+          {receiptId !== null && (
+            <span className="hint"> · receipt {receiptId.toString()}</span>
+          )}
+        </>
+      ) : (
+        <div className="sim-verify">
+          <span className="ev-name">{event.name}</span>
+          {hashes.map((h) => (
+            <span key={h.label} className="hint">
+              {h.label}{" "}
+              <code title={h.value}>{shortHex(h.value)}</code>
+            </span>
+          ))}
+          {receiptId !== null && (
+            <span className="hint">receipt {receiptId.toString()}</span>
+          )}
+          <span className="hint sim-note">
+            (simulated — event + hash shown; no live tx)
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * R5 price gauge: a scaled horizontal-bar comparison of requested vs NADAC floor
+ * vs Cost Plus cap vs covered. Before a ruling (no price basis) only the
+ * requested amount is known, so we render just that bar with a "cap / NADAC
+ * unknown until the arbiter prices" note. The covered marker sits at
+ * min(requested, costPlusTotal) (R6a).
+ */
+function PriceGauge({
+  requested,
+  basis,
+  covered,
+}: {
+  readonly requested: bigint;
+  readonly basis: PriceBasis | null;
+  readonly covered: bigint;
+}) {
+  const bars: { readonly label: string; readonly value: bigint; readonly cls: string }[] =
+    basis
+      ? [
+          { label: "Requested", value: basis.requestedAmount, cls: "requested" },
+          { label: "NADAC floor", value: basis.nadacFloorTotal, cls: "nadac" },
+          { label: "Cost Plus cap", value: basis.costPlusTotal, cls: "costplus" },
+          { label: "Covered", value: basis.coveredAmount, cls: "covered" },
+        ]
+      : [{ label: "Requested", value: requested, cls: "requested" }];
+
+  const max = bars.reduce((m, b) => (b.value > m ? b.value : m), 1n);
+  const pct = (v: bigint): number =>
+    max > 0n ? Number((v * 1000n) / max) / 10 : 0;
+  const coveredVal = basis ? basis.coveredAmount : covered;
+
+  return (
+    <div className="card price-gauge" data-testid="price-gauge">
+      <h2>Price gauge — requested vs NADAC vs Cost Plus vs covered (R5/R6a)</h2>
+      {bars.map((b) => (
+        <div key={b.label} className="gauge-row">
+          <span className="gauge-label">{b.label}</span>
+          <span className="gauge-track">
+            <span className={`gauge-bar ${b.cls}`} style={{ width: `${pct(b.value)}%` }} />
+          </span>
+          <span className="gauge-value">{b.value.toString()}</span>
+        </div>
+      ))}
+      {basis ? (
+        <p className="hint">
+          Covered = min(requested {basis.requestedAmount.toString()}, Cost Plus cap{" "}
+          {basis.costPlusTotal.toString()}) ={" "}
+          <strong>{coveredVal.toString()}</strong> (deterministic — R6a). NADAC is the
+          acquisition-cost floor reference only, never the cap.
+        </p>
+      ) : (
+        <p className="hint">
+          Cap / NADAC are unknown until the arbiter prices the request — adjudicate
+          to populate the gauge.
+        </p>
+      )}
+    </div>
   );
 }

@@ -16,8 +16,15 @@ exercise the same calling path the real backend uses (R11).
 | **C — adjudication gating** | `requestAdjudication` before a policy is attached reverts | R5, T3 |
 | **C2 — policy invalidated** | the NON-compliant policy + `policy_invalid` decision routes to terminal `PolicyInvalidated` | R6b, T5 |
 | **D — profiles / wallet** | profile switch changes the active party id (provider 1 / insurer 2); one shared wallet across profiles; simulated mode shown | R12, R13, T9 |
-| **E — sample case** | "Load sample case" prefills drug + requested amount; filing records the requested amount on-chain | §4 |
+| **E — sample case** | "Load sample case" prefills drug + requested amount + quantity + daysSupply; filing records the requested amount + quantity on-chain | §4, SPEC-0001 R2 |
 | **F — note verification** | a matching justification copy verifies against the committed hash; a tampered copy is rejected | R3 |
+| **G — observer / non-party** | the Observer profile (party 99) views but every mutating action is hidden; an explicit non-party attempt is shown rejected | SPEC-0002 R6, SPEC-0001 R11 |
+| **H — CDS-Hooks prefill** | the mocked `order-sign` button prefills drug + quantity + daysSupply and shows the provenance note | SPEC-0002 R7 |
+
+SPEC-0002 R3 (the FDA-label gotcha panel) is additionally asserted inside
+scenario **C2** (struck-through clause beside the FDA indication citation). The
+adjudication panel now drives the per-unit price refs (`costplus-unit-price` /
+`nadac-unit-price`) replacing the old single `benchmark-cap` input.
 
 The Deadlocked (R6c) and ProviderRefused (R7) paths are reachable from the UI
 (appeal at the round cap; provider Refuse button) but not asserted here. Out of

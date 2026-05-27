@@ -122,6 +122,8 @@ scenario_happy_path() {
   ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
   ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
   ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null          # SPEC-0001: quantity drives the cap
+  ab find testid create-days-supply fill "28" >/dev/null      # SPEC-0001: necessity context only
   ab find testid create-submit click >/dev/null
   ab wait 300 >/dev/null
 
@@ -138,15 +140,17 @@ scenario_happy_path() {
   assert_eq "policy attached -> Ready (on-chain)" "1" "$(state_of 1)"
   assert_eq "UI badge reflects Ready (R16)" "Ready" "$(ab get text "[data-testid=state-badge]" | tail -1)"
 
-  # Act: pick decision 'approve' + a benchmark cap of 4200 (< requested 5200) and
-  # request adjudication -> arbiter fires (R6), auto-resolves ~1.2s -> Approved.
+  # Act: pick decision 'approve' + a Cost Plus unit price of 2100 (cap = 2100 ×
+  # quantity 2 = 4200 < requested 5200) and request adjudication -> arbiter fires
+  # (R6), auto-resolves ~1.2s -> Approved (SPEC-0001 2026-05-27 per-unit cap).
   ab select "[data-testid=decision-select]" 0 >/dev/null   # 0 = Decision.Approve
-  ab find testid benchmark-cap fill "4200" >/dev/null
+  ab find testid costplus-unit-price fill "2100" >/dev/null
+  ab find testid nadac-unit-price fill "2000" >/dev/null
   ab find testid adjudicate-submit click >/dev/null
   ab wait 1800 >/dev/null
   assert_eq "approve ruling routes to Approved" "4" "$(state_of 1)"
-  # R6a: deterministic covered amount = min(5200, 4200) = 4200.
-  assert_eq "covered = min(requested, cap) (R6a)" "4200" "$(covered_of 1)"
+  # R6a: deterministic covered amount = min(5200, 2100 × 2) = 4200.
+  assert_eq "covered = min(requested, costPlus × qty) (R6a)" "4200" "$(covered_of 1)"
 
   # Act: both parties accept, then settle (R8 event marker + 50/50 fee).
   ab find testid accept-submit click >/dev/null
@@ -229,6 +233,65 @@ scenario_policy_invalidated() {
   ab find testid adjudicate-submit click >/dev/null
   ab wait 1800 >/dev/null
   assert_eq "non-compliant clause -> PolicyInvalidated (terminal)" "8" "$(state_of 1)"
+
+  # SPEC-0002 R3: the gotcha panel renders the struck-through clause beside the
+  # FDA-approved indication citation.
+  assert_eq "gotcha panel rendered" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=gotcha-panel]'))")"
+  case "$(ab get text "[data-testid=gotcha-clause]" | tail -1)" in
+    *PD-ADA-09*) echo "  ✓ offending clause shown (struck-through)"; PASS=$((PASS + 1));;
+    *) echo "  ✗ offending clause not shown"; FAIL=$((FAIL + 1));;
+  esac
+  case "$(ab get text "[data-testid=gotcha-fda-citation]" | tail -1)" in
+    *psoriasis*) echo "  ✓ FDA indication citation shown"; PASS=$((PASS + 1));;
+    *) echo "  ✗ FDA indication citation not shown"; FAIL=$((FAIL + 1));;
+  esac
+}
+
+# ===========================================================================
+# Scenario G — observer / non-party gating (SPEC-0002 R6, SPEC-0001 R11/T9)
+# ===========================================================================
+scenario_observer() {
+  echo "Scenario G: observer can view but not act; non-party attempt rejected (R6/R11)"
+
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid load-sample click >/dev/null
+  ab find testid create-submit click >/dev/null
+  ab wait 300 >/dev/null
+
+  # Switch to the observer (party 99) and assert mutating actions are hidden.
+  ab select "[data-testid=profile-switcher]" observer >/dev/null
+  ab wait 200 >/dev/null
+  assert_eq "active party is observer (99)" "99" "$(ev "String(window.__curie.profiles.getActivePartyId())")"
+  assert_hidden "engage hidden for observer" "[data-testid=engage-submit]"
+
+  # The explicit non-party attempt surfaces the gating rejection (R11).
+  ab find testid nonparty-attempt click >/dev/null
+  ab wait 200 >/dev/null
+  assert_eq "non-party attempt rejected (R11)" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=nonparty-rejected]'))")"
+}
+
+# ===========================================================================
+# Scenario H — CDS-Hooks order-sign prefill (SPEC-0002 R7/T5)
+# ===========================================================================
+scenario_cds_prefill() {
+  echo "Scenario H: mocked CDS Hooks order-sign prefills Create (R7)"
+
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid cds-prefill click >/dev/null
+  ab wait 200 >/dev/null
+
+  case "$(ab get value "[data-testid=create-drug]" | tail -1)" in
+    *Adalimumab*) echo "  ✓ CDS prefilled drug"; PASS=$((PASS + 1));;
+    *) echo "  ✗ CDS drug not prefilled"; FAIL=$((FAIL + 1));;
+  esac
+  assert_eq "CDS prefilled quantity" "2" "$(ab get value "[data-testid=create-quantity]" | tail -1)"
+  assert_eq "CDS prefilled days supply" "28" "$(ab get value "[data-testid=create-days-supply]" | tail -1)"
+  assert_eq "CDS provenance note shown" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=cds-provenance]'))")"
 }
 
 # ===========================================================================
@@ -277,12 +340,15 @@ scenario_sample_case() {
     *) echo "  ✗ sample drug not prefilled"; FAIL=$((FAIL + 1));;
   esac
   assert_eq "sample requested amount prefilled" "5200" "$(ab get value "[data-testid=create-amount]" | tail -1)"
+  assert_eq "sample quantity prefilled" "2" "$(ab get value "[data-testid=create-quantity]" | tail -1)"
+  assert_eq "sample days supply prefilled" "28" "$(ab get value "[data-testid=create-days-supply]" | tail -1)"
 
   # Act + Assert: filing from the sample case opens a request with that amount.
   ab find testid create-submit click >/dev/null
   ab wait 300 >/dev/null
   assert_eq "sample request filed (Open)" "0" "$(state_of 1)"
   assert_eq "requested amount on-chain" "5200" "$(field_of 1 requestedAmount)"
+  assert_eq "quantity on-chain" "2" "$(field_of 1 quantity)"
 }
 
 # ===========================================================================
@@ -332,6 +398,8 @@ scenario_policy_invalidated;  echo
 scenario_profiles;            echo
 scenario_sample_case;         echo
 scenario_note_verify;         echo
+scenario_observer;            echo
+scenario_cds_prefill;         echo
 
 echo "──────────────────────────────────────────"
 echo "agent-browser E2E: $PASS passed, $FAIL failed"

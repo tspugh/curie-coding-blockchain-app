@@ -15,8 +15,9 @@ arbiter**, which weighs the provider's cited **public evidence** (the openFDA /
 DailyMed label + the clinical justification) against the **insurer's attached
 policy criteria** and rules `approve | deny | need_more_evidence` — citing the
 specific policy clause. On `approve` the **covered amount is deterministic**:
-`min(requestedAmount, benchmarkCap)` from the public price refs (NADAC / Mark
-Cuban Cost Plus). The agent never chooses the amount.
+`min(requestedAmount, costPlusUnitPrice × quantity)` — the Mark Cuban Cost Plus
+**per-unit** retail price drives the cap (NADAC is the acquisition-cost floor
+reference only). The agent never chooses the amount.
 
 ## De-identified clinical justification (paste into "Justification note")
 
@@ -39,9 +40,12 @@ formulary coverage exception with prior authorization.
 | Field | Value | Notes |
 |---|---|---|
 | **Drug (RxNorm/NDC)** | `Adalimumab (RxNorm 1366724 / NDC 00074-3799-02)` | hashed to an opaque `drugRef` (bytes32) on-chain |
+| **Quantity (dispensed units)** | `2` | NDC-pinned dispensed units — **drives the cap** (R2/R6a); required, integer > 0 |
+| **Days supply** | `28` | clinical-utilization **necessity context only**, NOT a price input (R2); optional |
 | **Public-evidence ref** | `https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA` | openFDA label — indication: moderate-to-severe plaque psoriasis; hashed to an opaque ref |
 | **Requested amount** | `5200` | the provider's billed amount |
-| **Benchmark cap** | `4200` | NADAC / Cost Plus cap (see [`price-benchmarks.md`](./price-benchmarks.md)); set in the adjudication panel |
+| **Cost Plus unit price** | `2100` | Mark Cuban Cost Plus **per-unit** retail price; cap = `2100 × 2 = 4200` (see [`price-benchmarks.md`](./price-benchmarks.md)); set in the adjudication panel |
+| **NADAC unit price** | `2000` | NADAC **per-unit** acquisition-cost floor reference (recorded, never the cap) |
 
 ## Insurer policy (paste into the **Detail → Attach policy** textarea)
 
@@ -57,9 +61,10 @@ path. The Detail view ships both as one-click buttons.
 2. Switch profile to **Insurer**; in **Detail**, attach the **compliant** policy
    → state **Ready**.
 3. **Request adjudication** (either party). Pick the simulated arbiter decision +
-   benchmark cap:
-   - **approve**, cap `4200` → **Approved**, `coveredAmount = min(5200, 4200) =
-     4200` (deterministic min — R6a), with the cited clause shown.
+   the per-unit price refs:
+   - **approve**, Cost Plus unit `2100` (cap `2100 × 2 = 4200`) → **Approved**,
+     `coveredAmount = min(5200, 4200) = 4200` (deterministic min — R6a), with the
+     cited clause shown.
    - **deny** → **Denied**, covered `0`.
    - **need_more_evidence** → **EvidenceRequested**; provider **submits evidence**
      → re-fires.
