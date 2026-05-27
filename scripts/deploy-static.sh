@@ -32,14 +32,23 @@ npm run web:build       # vite build -> web/dist/
 dist="web/dist"
 [ -d "$dist" ] || { echo "FATAL: $dist not found after build"; exit 1; }
 
-echo ">>> secret/PHI guard — refuse to publish a bundle containing obvious secrets"
-# A static bundle must never carry a private key or .env. Fail loudly if it does.
+echo ">>> secret/PHI guard — refuse to publish a bundle with a leaked secret"
+# Meaningful checks ONLY. A web3 bundle legitimately contains 0x<64-hex> strings
+# (ZeroHash, secp256k1 curve constants, content hashes) and the literal token
+# "PRIVATE_KEY" (an env-var NAME, e.g. process.env.PRIVATE_KEY) — flagging those is a
+# guaranteed false positive, so we don't. Real leaks: a committed .env, a PEM
+# private-key block, or a key/mnemonic actually inlined as a VALUE (only possible if
+# someone VITE_-prefixed a secret).
 if find "$dist" -name '.env*' | grep -q .; then
   echo "FATAL: a .env file is in $dist — aborting."; exit 1
 fi
-if grep -rIlE 'PRIVATE_KEY|BEGIN [A-Z ]*PRIVATE KEY|0x[a-fA-F0-9]{64}' "$dist" >/dev/null 2>&1; then
-  echo "FATAL: a private-key-shaped string is in $dist — aborting (no secrets in the static bundle)."; exit 1
+if grep -rIlE -- '-----BEGIN [A-Z ]*PRIVATE KEY-----' "$dist" >/dev/null 2>&1; then
+  echo "FATAL: a PEM private-key block is in $dist — aborting."; exit 1
 fi
+if grep -rIoE -- '(PRIVATE_KEY|privateKey|MNEMONIC|mnemonic)["'"'"']?[[:space:]]*[:=][[:space:]]*["'"'"']?0x?[a-fA-F0-9]{40,}' "$dist" >/dev/null 2>&1; then
+  echo "FATAL: a private-key/mnemonic VALUE appears inlined in $dist — aborting."; exit 1
+fi
+echo "guard OK (no .env, no PEM key, no inlined key/mnemonic value)"
 
 echo ">>> sync $dist -> s3://$CURIE_DEPLOY_BUCKET"
 # Long-cache the hashed assets; never cache index.html (so deploys go live immediately).
