@@ -353,18 +353,27 @@ exists only when a signer is connected (R11). Network guard enforces 50312 (R14)
 
 ## 8. Open questions
 
-1. **Testnet RPC host discrepancy** — current Somnia docs give
-   `https://dream-rpc.somnia.network` ([Developer FAQs](https://docs.somnia.network/developer/deployment-and-production/support-and-community/developer-faqs)),
-   but SPEC-0001 §3 records `https://api.infra.testnet.somnia.network/`. Confirm the
-   canonical testnet RPC (and the WS endpoint) before pinning config. — priority: high
-2. **Exact agent npm/SDK surface** — SPEC-0001 names "somnia-agent-kit"; the queried
-   docs expose the on-chain `IAgentRequester`/`IAgentRequesterHandler` plus off-chain
-   `@somnia-chain/reactivity` / `@somnia-chain/streams` (viem-based) but no package
-   literally named `somnia-agent-kit`. Confirm the real package(s)/version to depend on.
-   — priority: high
-3. **`agentId` + per-agent reward values** — pin the live `agentId`(s) for JSON API /
-   LLM Inference / LLM Parse Website and confirm current per-agent prices (table values
-   ~0.03 / ~0.07 ether are examples) and the **subcommittee size** to budget for. — priority: high
+1. **RESOLVED (2026-05-27, Context7).** Somnia's own docs are internally inconsistent:
+   general dApp/FAQ pages list `https://dream-rpc.somnia.network`, but the **Agents
+   quickstart** and the **`@somnia-chain/reactivity` SDK tutorial** use
+   **`https://api.infra.testnet.somnia.network`** — which is what `src/config/networks.ts`
+   already pins. **Decision: keep `api.infra.testnet.somnia.network`** (matches the agent +
+   reactivity docs we actually use); treat `dream-rpc` as a documented alternate/fallback.
+2. **RESOLVED (2026-05-27, npm + Context7).** `somnia-agent-kit` (npm 3.0.11) is
+   **third-party** (`xuanbach0212`/maintainer `tylerdao`), NOT Somnia-official. The official
+   stack is **viem + `@somnia-chain/reactivity`** (the `SDK`) **+ `@somnia-chain/streams`** +
+   **`@somnia-chain/reactivity-contracts`** (Solidity); agents are invoked via the on-chain
+   **`IAgentRequester`/`IAgentRequesterHandler`** interfaces — there is **no** official agent
+   "kit" npm package. **Decision (product owner): adopt the official stack, drop
+   `somnia-agent-kit`.** `CoverageNegotiation.sol` already uses the official on-chain
+   interfaces; the off-chain `src/somnia/kit.ts` must be rewritten to viem +
+   `@somnia-chain/reactivity`. ⚠️ This **conflicts with AGENTS.md / inner CLAUDE.md
+   ("somnia-agent-kit first")** → needs a spec amendment + doc update.
+3. **PARTIALLY RESOLVED (2026-05-27, Context7).** Fund via **`IAgentRequester.getRequestDeposit()`**
+   (returns the exact required `msg.value`) or **`getAdvancedRequestDeposit(subcommitteeSize)`**
+   — NOT a hand-rolled `reward × subcommittee`. Reconcile the contract's current
+   `getRequestDeposit() + agentReward`. Still TODO: pin the live `agentId`(s) per source type
+   from the agents web app and confirm current per-agent prices. — priority: high
 4. **Session keys for UX** — adopt `somnia_getSessionAddress` to reduce signing prompts
    during a multi-step negotiation, or keep per-action signing? — priority: medium
 5. **Registry role model** — single role per address, or can one address hold both
