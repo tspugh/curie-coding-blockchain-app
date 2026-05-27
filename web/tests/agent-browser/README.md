@@ -11,14 +11,19 @@ exercise the same calling path the real backend uses (R11).
 
 | Scenario | Asserts | Requirements |
 |---|---|---|
-| **A — happy path** | Create → both positions → Ready → dispute fires agent → approve → settle within band; UI badge tracks on-chain state | R14, R15, R5, R6, R8, R16, T8, T5 |
-| **B — no PHI on-chain** | committed `noteHash` verifies against the off-chain note; the note sentinel is absent from the on-chain record **and** the DOM | R3, R4 (hard invariant), T1 |
-| **C — dispute gating** | `submitDispute` before `Ready` reverts | R5, T3 |
-| **D — profiles / wallet** | profile switch changes the active party id; one shared wallet across profiles; simulated mode shown | R12, R13, T9 |
+| **A — happy path** | File → insurer attaches policy → Ready → adjudicate(approve) fires arbiter → covered = `min(requested, cap)` → both accept → settle; UI badge tracks on-chain state | R15, R5, R6, R6a, R8, R16 |
+| **B — no PHI on-chain** | committed `justificationHash` verifies against the off-chain note; the sentinel is absent from the on-chain record **and** the DOM | R3, R4 (hard invariant), T1 |
+| **C — adjudication gating** | `requestAdjudication` before a policy is attached reverts | R5, T3 |
+| **C2 — policy invalidated** | the NON-compliant policy + `policy_invalid` decision routes to terminal `PolicyInvalidated` | R6b, T5 |
+| **D — profiles / wallet** | profile switch changes the active party id (provider 1 / insurer 2); one shared wallet across profiles; simulated mode shown | R12, R13, T9 |
+| **E — sample case** | "Load sample case" prefills drug + requested amount; filing records the requested amount on-chain | §4 |
+| **F — note verification** | a matching justification copy verifies against the committed hash; a tampered copy is rejected | R3 |
 
-Out of scope here: T10 (reconstructing the timeline from `eth_getLogs`) is
-real-RPC only, and T7's real-wallet half needs a funded testnet key (R9) — both
-deferred until a wallet exists.
+The Deadlocked (R6c) and ProviderRefused (R7) paths are reachable from the UI
+(appeal at the round cap; provider Refuse button) but not asserted here. Out of
+scope: T10 (reconstructing the timeline from `eth_getLogs`) is real-RPC only, and
+the real-wallet half of any path needs a funded testnet key (R9) — both deferred
+until a wallet exists.
 
 ## Prerequisites
 

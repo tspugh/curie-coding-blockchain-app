@@ -162,7 +162,42 @@ web UI are being rebuilt to the new model — the old approve/deny **price band*
   appeal→Deadlocked), and `scripts/real-backend-localnode.sh` (16 checks: RealBackend
   Open→Ready→UnderReview→Approved→Settled on a local node, deterministic covered amount, live
   subscription + `getEvents` reconstruction, simulated/real state-sequence parity).
-- **Next:** regenerate the web UI (insurer engage/attach-policy, ruling + rationale + cited
-  clause, covered amount, round counter, accept/appeal/refuse/settle) + the demo fixtures
-  (incl. a **non-compliant policy** fixture to demo `PolicyInvalidated`). Still blocked on a
-  funded wallet for the real Somnia deploy + a real native-agent ruling (R9).
+**DONE — web UI + demo fixtures regenerated (focus #2 frontend + §4 fixtures).**
+- `web/src/` rewritten to the necessity-arbiter flow: **Create** (provider files: justification →
+  off-chain hash, drug → opaque RxNorm/NDC ref, public-evidence ref, **requested amount**),
+  **Detail** (insurer **attach-policy + engage**; **request adjudication** with a simulated-mode
+  decision selector + **benchmark-cap** input demonstrating deterministic `min(requested, cap)`;
+  a **Ruling** panel showing decision + covered amount + **cited clause** + rationale + round +
+  the **PolicyFlagged** standard on a void; **accept / appeal-with-new-evidence / submit-evidence
+  / refuse / settle / withdraw / feedback**, each gated by state + the active profile's role;
+  R3 justification-copy verification), **Overview** (reqId / drugRef / state / policy-attached /
+  requested / covered / round). Header keeps wallet + mode + provider↔insurer profile switcher;
+  timeline backfills via `getEvents` then stays live via `subscribe` (R16). Free text never
+  leaves the browser — only hashes/refs cross (R4).
+- All three terminal demo paths are reachable from the UI: **PolicyInvalidated** (engage the
+  NON-compliant policy fixture + pick `policy_invalid`), **Deadlocked** (appeal past the round
+  cap), **ProviderRefused** (provider "Refuse terms" from `Ready` onward).
+- `demo-data/` regenerated: `sample-case.md` (drug RxNorm/NDC + justification + openFDA evidence
+  + requested amount + benchmark cap), compliant Part D policy as `formulary-part-d.{json,html}`
+  (R10 source types), NEW `policy-noncompliant.md` (clause that contradicts the openFDA label →
+  drives `PolicyInvalidated`, R6b), NEW `price-benchmarks.md` (NADAC + Mark Cuban Cost Plus cap
+  inputs backing the deterministic `min`, R10), README updated.
+- **Verified green:** `npm run build` (lib), `cd web && npx tsc --noEmit`, `npm run web:build`.
+  The agent-browser e2e (`test:e2e`) testids/flow were updated best-effort but NOT executed
+  (needs a browser runtime; deferred).
+
+### Status vs SPEC-0001 pass/fail (§6) — necessity-arbiter model (current)
+- ✅ Contract compiles + passes Hardhat tests (T1–T10 + security). ✅ Insurer must attach policy
+  before adjudication (R5); agent rules necessity with a cited clause (R6); covered amount is
+  deterministic `min(requested, cap)` (R6a); a non-compliant clause **voids** the contract (R6b);
+  the appeal loop terminates `Settled`/`Deadlocked` (R6c); provider **refusal** is a distinct
+  terminal (R7); settle is an event marker + 50/50 fee split (R8). ✅ Party actions gated to the
+  two addresses, third wallet rejected, reads open (R11); single-wallet via `partyId` (R12/R13).
+  ✅ Library one-interface/two-mode (R14). ✅ Web app: file / engage / adjudicate / ruling +
+  rationale + clause / accept / appeal / refuse / settle / overview / profile switch / wallet+mode
+  (R15/R16). ✅ De-identified `sample-case.md` + Part D / openFDA / NADAC + Cost Plus /
+  non-compliant-policy fixtures drive the flow.
+- ⛔ **Remaining, blocked on a funded wallet only:** deploy `CoverageNegotiation.sol` to Somnia
+  testnet (chain 50312); a **real** native-agent ruling with a viewable receipt + per-request fee
+  on execution (R9); the real-RPC half of `eth_getLogs` reconstruction (T10) and the agent-browser
+  e2e run. These are the "stop only when you can go no further without a real wallet" boundary.

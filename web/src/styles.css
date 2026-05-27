@@ -194,9 +194,25 @@ tr.row-link:hover {
   color: var(--danger);
   border-color: var(--danger);
 }
-.badge.state.s-7 { /* Settled */
+.badge.state.s-6 { /* Settled */
   color: var(--accent);
   border-color: var(--accent);
+}
+.badge.state.s-7 { /* Deadlocked */
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.badge.state.s-8 { /* PolicyInvalidated */
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.badge.state.s-9 { /* ProviderRefused */
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.badge.state.s-10 { /* Withdrawn */
+  color: var(--muted);
+  border-color: var(--muted);
 }
 
 /* Forms */
@@ -264,6 +280,23 @@ tr.row-link:hover {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
+}
+.btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.card.ruling dl {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 6px 10px;
+  margin: 0;
+}
+.card.ruling dt {
+  color: var(--muted);
+}
+.card.ruling dd {
+  margin: 0;
 }
 @media (max-width: 760px) {
   .detail-grid {

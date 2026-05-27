@@ -9,11 +9,14 @@
 # exposed at `window.__curie` (simulated backend). Scenarios are coarse and
 # high-coverage rather than many tiny unit checks.
 #
-# Coverage: R4/T1 (no PHI on-chain), R5/T3 (dispute gated until Ready),
-# R6 (contract-native ruling), R8/T5 (settle within band), R12/R13/T9 (profile
-# switching / shared wallet), R14/R15/T8 (three views + lifecycle), R16 (live
-# status from events). T10 (eth_getLogs reconstruction) is real-RPC only and is
-# out of scope for the simulated run.
+# Coverage (AI necessity-arbiter model, SPEC-0001 revised 2026-05-27):
+# R4/T1 (no PHI on-chain), R5/T3 (adjudication gated until policy attached),
+# R6/R6a (contract-native ruling + deterministic min() covered amount),
+# R6b/T5 (non-compliant policy voids → PolicyInvalidated), R7/T7 (provider
+# refusal), R8 (settle marker + 50/50 fee), R12/R13/T9 (profile switching /
+# shared wallet), R15/R16 (three views + lifecycle + live status), R3 (note
+# verification). T10 (eth_getLogs reconstruction) is real-RPC only and is out of
+# scope for the simulated run.
 #
 # Prerequisites (see README.md):
 #   - `agent-browser` on PATH (npm i -g agent-browser)
@@ -74,8 +77,9 @@ assert_hidden() { # desc selector
 
 # --- on-chain helpers (read the simulated mirror) ---------------------------
 
-state_of()  { ev "(async()=>String(await window.__curie.negotiation.stateOf(${1}n)))()"; }
-agreed_of() { ev "(async()=>String((await window.__curie.negotiation.getNegotiation(${1}n)).agreedAmount))()"; }
+state_of()   { ev "(async()=>String(await window.__curie.negotiation.stateOf(${1}n)))()"; }
+covered_of() { ev "(async()=>String(await window.__curie.negotiation.coveredAmountOf(${1}n)))()"; }
+field_of()   { ev "(async()=>String((await window.__curie.negotiation.getNegotiation(${1}n)).${2}))()"; }
 
 # --- lifecycle --------------------------------------------------------------
 
@@ -104,56 +108,56 @@ start_server() {
 
 # ===========================================================================
 # Scenario A — full happy-path lifecycle, driven through the UI
-#   (R14/R15 three views, R5 positions->Ready, R6 dispute fires agent,
-#    R8 settle within band, R16 UI reflects on-chain state)
+#   (R15 three views, R5 engage->Ready, R6 adjudication fires arbiter,
+#    R6a deterministic covered = min(requested, cap), R8 settle marker,
+#    R16 UI reflects on-chain state)
 # ===========================================================================
 scenario_happy_path() {
-  echo "Scenario A: happy-path lifecycle (create → positions → dispute → approve → settle)"
+  echo "Scenario A: happy-path lifecycle (file → engage → adjudicate(approve) → accept → settle)"
 
-  # Arrange: fresh app, open the Create view, fill the form.
+  # Arrange: fresh app, file a request as the provider.
   open_app
   ab find testid nav-create click >/dev/null
   ab find testid create-note fill "Severe plaque psoriasis; documented failure of methotrexate and topical therapy." >/dev/null
-  ab find testid create-drug fill "Adalimumab" >/dev/null
-  ab find testid create-floor fill "1000" >/dev/null
-  ab find testid create-ceil fill "5000" >/dev/null
-
-  # Act: create -> navigates to the Detail view for reqId 1.
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "5200" >/dev/null
   ab find testid create-submit click >/dev/null
   ab wait 300 >/dev/null
 
-  # Assert: contract opened in Open; dispute is NOT possible yet (R5 gate).
-  assert_eq "contract created in Open state" "0" "$(state_of 1)"
-  assert_hidden "dispute hidden before both positions (R5)" "[data-testid=dispute-submit]"
+  # Assert: request opened in Open; adjudication NOT possible yet (R5 gate).
+  assert_eq "request filed in Open state" "0" "$(state_of 1)"
+  assert_hidden "adjudicate hidden before policy attached (R5)" "[data-testid=adjudicate-submit]"
 
-  # Act: provider (active) submits a position; one side only -> still Open.
-  ab find testid position-amount fill "2000" >/dev/null
-  ab find testid position-submit click >/dev/null
+  # Act: switch to insurer, attach the compliant policy -> Ready (R5).
+  ab select "[data-testid=profile-switcher]" insurer >/dev/null
   ab wait 200 >/dev/null
-  assert_eq "still Open after one position" "0" "$(state_of 1)"
-
-  # Act: switch to payer and submit the second position -> Ready (R5).
-  ab select "[data-testid=profile-switcher]" payer >/dev/null
-  ab wait 200 >/dev/null
-  ab find testid position-amount fill "4000" >/dev/null
-  ab find testid position-submit click >/dev/null
+  ab find testid engage-load-compliant click >/dev/null
+  ab find testid engage-submit click >/dev/null
   ab wait 300 >/dev/null
-  assert_eq "both positions -> Ready (on-chain)" "1" "$(state_of 1)"
+  assert_eq "policy attached -> Ready (on-chain)" "1" "$(state_of 1)"
   assert_eq "UI badge reflects Ready (R16)" "Ready" "$(ab get text "[data-testid=state-badge]" | tail -1)"
 
-  # Act: choose verdict 'approve' and raise the dispute -> agent fires (R6),
-  # auto-resolves after ~1.2s -> Approved.
-  ab select "[data-testid=verdict-select]" approve >/dev/null
-  ab find testid dispute-submit click >/dev/null
+  # Act: pick decision 'approve' + a benchmark cap of 4200 (< requested 5200) and
+  # request adjudication -> arbiter fires (R6), auto-resolves ~1.2s -> Approved.
+  ab select "[data-testid=decision-select]" 0 >/dev/null   # 0 = Decision.Approve
+  ab find testid benchmark-cap fill "4200" >/dev/null
+  ab find testid adjudicate-submit click >/dev/null
   ab wait 1800 >/dev/null
   assert_eq "approve ruling routes to Approved" "4" "$(state_of 1)"
+  # R6a: deterministic covered amount = min(5200, 4200) = 4200.
+  assert_eq "covered = min(requested, cap) (R6a)" "4200" "$(covered_of 1)"
 
-  # Act: settle within the band [1000, 5000] (R8 event marker).
-  ab find testid settle-amount fill "3000" >/dev/null
+  # Act: both parties accept, then settle (R8 event marker + 50/50 fee).
+  ab find testid accept-submit click >/dev/null
+  ab wait 200 >/dev/null
+  ab select "[data-testid=profile-switcher]" provider >/dev/null
+  ab wait 200 >/dev/null
+  ab find testid accept-submit click >/dev/null
+  ab wait 200 >/dev/null
   ab find testid settle-submit click >/dev/null
   ab wait 300 >/dev/null
-  assert_eq "settled (terminal)" "7" "$(state_of 1)"
-  assert_eq "agreed amount recorded within band" "3000" "$(agreed_of 1)"
+  assert_eq "settled (terminal)" "6" "$(state_of 1)"
 }
 
 # ===========================================================================
@@ -163,19 +167,18 @@ scenario_no_phi() {
   echo "Scenario B: no PHI on-chain (R4 hard invariant)"
   local token="ZZ_SECRET_PHI_TOKEN_99"
 
-  # Arrange + Act: create a contract whose note contains a unique sentinel.
+  # Arrange + Act: file a request whose justification contains a unique sentinel.
   open_app
   ab find testid nav-create click >/dev/null
-  ab find testid create-note fill "$token — patient note body that must never be committed." >/dev/null
+  ab find testid create-note fill "$token — justification body that must never be committed." >/dev/null
   ab find testid create-drug fill "Adalimumab" >/dev/null
-  ab find testid create-floor fill "1000" >/dev/null
-  ab find testid create-ceil fill "5000" >/dev/null
+  ab find testid create-amount fill "5200" >/dev/null
   ab find testid create-submit click >/dev/null
   ab wait 300 >/dev/null
 
-  # Assert: the committed noteHash verifies against the off-chain note (R3)…
-  assert_eq "note verifies against on-chain hash (R3)" "true" \
-    "$(ev "(async()=>{const n=await window.__curie.negotiation.getNegotiation(1n);return String(window.__curie.content.verify('${token} — patient note body that must never be committed.', n.noteHash))})()")"
+  # Assert: the committed justificationHash verifies against the off-chain note (R3)…
+  assert_eq "justification verifies against on-chain hash (R3)" "true" \
+    "$(ev "(async()=>{const n=await window.__curie.negotiation.getNegotiation(1n);return String(window.__curie.content.verify('${token} — justification body that must never be committed.', n.justificationHash))})()")"
   # …the sentinel never appears in the serialized on-chain record (R4)…
   assert_eq "sentinel absent from on-chain record (R4)" "true" \
     "$(ev "(async()=>{const n=await window.__curie.negotiation.getNegotiation(1n);const s=JSON.stringify(n,(_,v)=>typeof v==='bigint'?v.toString():v);return String(!s.includes('${token}'))})()")"
@@ -185,27 +188,47 @@ scenario_no_phi() {
 }
 
 # ===========================================================================
-# Scenario C — dispute is gated until Ready (R5/T3 guard)
+# Scenario C — adjudication is gated until a policy is attached (R5/T3 guard)
 # ===========================================================================
-scenario_dispute_gating() {
-  echo "Scenario C: dispute gated until both positions submitted (R5/T3)"
+scenario_adjudication_gating() {
+  echo "Scenario C: adjudication gated until insurer attaches a policy (R5/T3)"
 
-  # Arrange: a fresh contract with only one position submitted (still Open).
+  # Arrange: a fresh request with no policy attached (still Open).
   open_app
   ab find testid nav-create click >/dev/null
-  ab find testid create-note fill "Single-position contract for the gating check." >/dev/null
+  ab find testid create-note fill "Request for the policy-gating check." >/dev/null
   ab find testid create-drug fill "Etanercept" >/dev/null
-  ab find testid create-floor fill "500" >/dev/null
-  ab find testid create-ceil fill "2500" >/dev/null
+  ab find testid create-amount fill "2500" >/dev/null
   ab find testid create-submit click >/dev/null
   ab wait 300 >/dev/null
-  ab find testid position-amount fill "1500" >/dev/null
-  ab find testid position-submit click >/dev/null
-  ab wait 200 >/dev/null
 
-  # Act + Assert: a dispute before Ready must revert (mirrors the contract guard).
-  assert_eq "submitDispute before Ready reverts" "reverted" \
-    "$(ev "(async()=>{try{await window.__curie.negotiation.submitDispute(1n,1n);return 'no-revert'}catch(e){return 'reverted'}})()")"
+  # Act + Assert: adjudication before a policy is attached must revert (guard).
+  assert_eq "requestAdjudication before Ready reverts" "reverted" \
+    "$(ev "(async()=>{try{await window.__curie.negotiation.requestAdjudication(1n);return 'no-revert'}catch(e){return 'reverted'}})()")"
+}
+
+# ===========================================================================
+# Scenario C2 — non-compliant policy voids the contract (R6b/T5)
+# ===========================================================================
+scenario_policy_invalidated() {
+  echo "Scenario C2: non-compliant policy -> PolicyInvalidated (R6b)"
+
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid load-sample click >/dev/null
+  ab find testid create-submit click >/dev/null
+  ab wait 300 >/dev/null
+
+  # Insurer attaches the NON-compliant policy, then adjudicate with policy_invalid.
+  ab select "[data-testid=profile-switcher]" insurer >/dev/null
+  ab wait 200 >/dev/null
+  ab find testid engage-noncompliant-toggle click >/dev/null
+  ab find testid engage-submit click >/dev/null
+  ab wait 300 >/dev/null
+  ab select "[data-testid=decision-select]" 3 >/dev/null   # 3 = Decision.PolicyInvalid
+  ab find testid adjudicate-submit click >/dev/null
+  ab wait 1800 >/dev/null
+  assert_eq "non-compliant clause -> PolicyInvalidated (terminal)" "8" "$(state_of 1)"
 }
 
 # ===========================================================================
@@ -221,10 +244,10 @@ scenario_profiles() {
   local addr1 addr2
   addr1="$(ev "window.__curie.wallet.address")"
 
-  # Act: switch to payer -> active party id is 2.
-  ab select "[data-testid=profile-switcher]" payer >/dev/null
+  # Act: switch to insurer -> active party id is 2.
+  ab select "[data-testid=profile-switcher]" insurer >/dev/null
   ab wait 150 >/dev/null
-  assert_eq "active party is payer (2)" "2" "$(ev "String(window.__curie.profiles.getActivePartyId())")"
+  assert_eq "active party is insurer (2)" "2" "$(ev "String(window.__curie.profiles.getActivePartyId())")"
 
   # Act: switch to provider -> active party id is 1.
   ab select "[data-testid=profile-switcher]" provider >/dev/null
@@ -248,19 +271,18 @@ scenario_sample_case() {
   ab find testid load-sample click >/dev/null
   ab wait 200 >/dev/null
 
-  # Assert: the fixture's drug + benchmark band were prefilled.
-  assert_eq "sample drug prefilled" "Adalimumab" "$(ab get value "[data-testid=create-drug]" | tail -1)"
-  assert_eq "sample band floor prefilled" "2800" "$(ab get value "[data-testid=create-floor]" | tail -1)"
-  assert_eq "sample band ceil prefilled" "5200" "$(ab get value "[data-testid=create-ceil]" | tail -1)"
+  # Assert: the fixture's drug + requested amount were prefilled.
+  case "$(ab get value "[data-testid=create-drug]" | tail -1)" in
+    *Adalimumab*) echo "  ✓ sample drug prefilled"; PASS=$((PASS + 1));;
+    *) echo "  ✗ sample drug not prefilled"; FAIL=$((FAIL + 1));;
+  esac
+  assert_eq "sample requested amount prefilled" "5200" "$(ab get value "[data-testid=create-amount]" | tail -1)"
 
-  # Act + Assert: creating from the sample case opens a contract with that band.
+  # Act + Assert: filing from the sample case opens a request with that amount.
   ab find testid create-submit click >/dev/null
   ab wait 300 >/dev/null
-  assert_eq "sample contract created (Open)" "0" "$(state_of 1)"
-  assert_eq "band lower bound on-chain" "2800" \
-    "$(ev "(async()=>String((await window.__curie.negotiation.getNegotiation(1n)).priceFloor))()")"
-  assert_eq "band upper bound on-chain" "5200" \
-    "$(ev "(async()=>String((await window.__curie.negotiation.getNegotiation(1n)).priceCeil))()")"
+  assert_eq "sample request filed (Open)" "0" "$(state_of 1)"
+  assert_eq "requested amount on-chain" "5200" "$(field_of 1 requestedAmount)"
 }
 
 # ===========================================================================
@@ -269,18 +291,17 @@ scenario_sample_case() {
 scenario_note_verify() {
   echo "Scenario F: verify an off-chain note copy against the on-chain hash (R3)"
 
-  # Arrange: create a contract with a known note, landing on Detail.
+  # Arrange: file a request with a known justification, landing on Detail.
   open_app
   ab find testid nav-create click >/dev/null
-  ab find testid create-note fill "VERIFY_ME canonical note body" >/dev/null
+  ab find testid create-note fill "VERIFY_ME canonical justification body" >/dev/null
   ab find testid create-drug fill "Adalimumab" >/dev/null
-  ab find testid create-floor fill "1000" >/dev/null
-  ab find testid create-ceil fill "5000" >/dev/null
+  ab find testid create-amount fill "5200" >/dev/null
   ab find testid create-submit click >/dev/null
   ab wait 300 >/dev/null
 
   # Act + Assert: the exact copy matches the committed hash…
-  ab find testid verify-note-input fill "VERIFY_ME canonical note body" >/dev/null
+  ab find testid verify-note-input fill "VERIFY_ME canonical justification body" >/dev/null
   ab find testid verify-note-submit click >/dev/null
   ab wait 150 >/dev/null
   case "$(ab find testid verify-note-result text | tail -1)" in
@@ -304,12 +325,13 @@ start_server
 echo "Running agent-browser E2E suite against $URL"
 echo
 
-scenario_happy_path;    echo
-scenario_no_phi;        echo
-scenario_dispute_gating; echo
-scenario_profiles;      echo
-scenario_sample_case;   echo
-scenario_note_verify;   echo
+scenario_happy_path;          echo
+scenario_no_phi;              echo
+scenario_adjudication_gating; echo
+scenario_policy_invalidated;  echo
+scenario_profiles;            echo
+scenario_sample_case;         echo
+scenario_note_verify;         echo
 
 echo "──────────────────────────────────────────"
 echo "agent-browser E2E: $PASS passed, $FAIL failed"

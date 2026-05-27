@@ -1,12 +1,15 @@
 /**
- * Create view (R15): capture a note + drug + price band and open a contract.
+ * Create view (R15/R16): the provider files a drug coverage-exception request.
  *
- * R4 boundary, made visible: the raw note text goes into the off-chain
- * ContentStore via `content.put`, and ONLY the returned keccak256 hash is
- * passed to `createContract({ noteHash })`. The drug name is likewise hashed
- * (`hashContent`) into an opaque bytes32 drugRef. The committed hash is shown
- * to the user with a "raw note stays off-chain" note so the boundary is
+ * R4 boundary, made visible: the raw justification note goes into the off-chain
+ * ContentStore via `content.put`, and ONLY the returned keccak256 hash is passed
+ * to `createContract({ justificationHash })`. The drug name and the public-
+ * evidence ref are likewise hashed (`hashContent`) into opaque bytes32 refs. The
+ * committed hash is shown with a "stays off-chain" note so the boundary is
  * auditable from the UI.
+ *
+ * The active profile files as the PROVIDER (partyId + wallet address); the other
+ * default profile is the INSURER (same wallet address under single-wallet, R12).
  */
 import { useMemo, useState } from "react";
 import { ZERO_HASH, hashContent, type Profile } from "@lib";
@@ -16,24 +19,24 @@ import { SAMPLE_CASE } from "../sampleCase.js";
 
 interface CreateProps {
   readonly activeProfile: Profile;
-  /** Navigate to the new contract once created. */
+  /** Navigate to the new request once filed. */
   readonly onCreated: (reqId: bigint) => void;
   readonly onCancel: () => void;
 }
 
 export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
-  const [note, setNote] = useState("");
+  const [justification, setJustification] = useState("");
   const [drug, setDrug] = useState("");
-  const [floor, setFloor] = useState("");
-  const [ceil, setCeil] = useState("");
+  const [evidence, setEvidence] = useState("");
+  const [amount, setAmount] = useState("");
   const [committedHash, setCommittedHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // The destination is the OTHER default profile. With a single shared wallet,
-  // switching profiles lets that wallet act as both parties (R13); a
-  // self-contract (destination === initiator) is also valid if only one exists.
-  const otherProfile = useMemo<Profile>(() => {
+  // The insurer is the OTHER default profile. With a single shared wallet,
+  // switching profiles lets that wallet act as both parties (R12); a self-claim
+  // (insurer === provider) is also valid if only one profile exists (R13).
+  const insurerProfile = useMemo<Profile>(() => {
     const all = client.profiles.listProfiles();
     return all.find((p) => p.id !== activeProfile.id) ?? activeProfile;
   }, [activeProfile]);
@@ -42,31 +45,28 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
     e.preventDefault();
     setError(null);
 
-    const priceFloor = parseAmount(floor);
-    const priceCeil = parseAmount(ceil);
-    if (note.trim() === "") return setError("Note text is required.");
+    const requestedAmount = parseAmount(amount);
+    if (justification.trim() === "") return setError("Justification note is required.");
     if (drug.trim() === "") return setError("Drug name is required.");
-    if (priceFloor === null || priceCeil === null) {
-      return setError("Price floor and ceiling must be non-negative integers.");
-    }
-    if (priceFloor > priceCeil) {
-      return setError("Price floor must not exceed the ceiling.");
+    if (requestedAmount === null) {
+      return setError("Requested amount must be a non-negative integer.");
     }
 
     setBusy(true);
     try {
-      // R4: store the note off-chain; commit only its hash.
-      const stored = client.content.put(note);
+      // R4: store the justification off-chain; commit only its hash.
+      const stored = client.content.put(justification);
       setCommittedHash(stored.hash);
 
       const reqId = await client.negotiation.createContract({
-        initiatorId: activeProfile.partyId,
-        destinationId: otherProfile.partyId,
+        providerId: activeProfile.partyId,
+        insurerId: insurerProfile.partyId,
+        providerAddr: client.wallet.address,
+        insurerAddr: client.wallet.address,
         drugRef: hashContent(drug),
-        noteHash: stored.hash,
-        priceFloor,
-        priceCeil,
-        evidenceUri: ZERO_HASH,
+        requestedAmount,
+        justificationHash: stored.hash,
+        evidenceUri: evidence.trim() === "" ? ZERO_HASH : hashContent(evidence),
       });
       onCreated(reqId);
     } catch (err) {
@@ -78,17 +78,17 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
   return (
     <section className="view create">
       <div className="view-head">
-        <h1>Create contract</h1>
+        <h1>File coverage-exception request</h1>
         <div>
           <button
             type="button"
             data-testid="load-sample"
             onClick={() => {
               // Prefill from the synthetic demo case (demo-data/sample-case.md).
-              setNote(SAMPLE_CASE.note);
+              setJustification(SAMPLE_CASE.justification);
               setDrug(SAMPLE_CASE.drug);
-              setFloor(SAMPLE_CASE.priceFloor);
-              setCeil(SAMPLE_CASE.priceCeil);
+              setEvidence(SAMPLE_CASE.evidenceRef);
+              setAmount(SAMPLE_CASE.requestedAmount);
               setError(null);
             }}
           >
@@ -102,60 +102,58 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
 
       <form className="form" onSubmit={onSubmit}>
         <label>
-          Patient note (kept off-chain)
+          De-identified justification note (kept off-chain)
           <textarea
             data-testid="create-note"
-            rows={4}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="Clinical note text — stays off-chain; only its hash is committed."
+            rows={5}
+            value={justification}
+            onChange={(e) => setJustification(e.target.value)}
+            placeholder="Clinical justification — stays off-chain; only its keccak256 hash is committed."
           />
         </label>
 
         <label>
-          Drug name
+          Drug (RxNorm / NDC)
           <input
             data-testid="create-drug"
             type="text"
             value={drug}
             onChange={(e) => setDrug(e.target.value)}
-            placeholder="e.g. Adalimumab"
+            placeholder="e.g. Adalimumab (RxNorm 1366724)"
           />
         </label>
 
-        <div className="row">
-          <label>
-            Price floor
-            <input
-              data-testid="create-floor"
-              type="text"
-              inputMode="numeric"
-              value={floor}
-              onChange={(e) => setFloor(e.target.value)}
-              placeholder="1000"
-            />
-          </label>
-          <label>
-            Price ceiling
-            <input
-              data-testid="create-ceil"
-              type="text"
-              inputMode="numeric"
-              value={ceil}
-              onChange={(e) => setCeil(e.target.value)}
-              placeholder="5000"
-            />
-          </label>
-        </div>
+        <label>
+          Public-evidence reference (openFDA / DailyMed URL)
+          <input
+            data-testid="create-evidence"
+            type="text"
+            value={evidence}
+            onChange={(e) => setEvidence(e.target.value)}
+            placeholder="https://api.fda.gov/drug/label.json?search=… (optional)"
+          />
+        </label>
+
+        <label>
+          Requested (billed) amount
+          <input
+            data-testid="create-amount"
+            type="text"
+            inputMode="numeric"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="5200"
+          />
+        </label>
 
         <div className="parties">
           <span>
-            Initiator: <strong>{activeProfile.label}</strong> (party{" "}
+            Provider (you): <strong>{activeProfile.label}</strong> (party{" "}
             {activeProfile.partyId.toString()})
           </span>
           <span>
-            Destination: <strong>{otherProfile.label}</strong> (party{" "}
-            {otherProfile.partyId.toString()})
+            Insurer: <strong>{insurerProfile.label}</strong> (party{" "}
+            {insurerProfile.partyId.toString()})
           </span>
         </div>
 
@@ -167,19 +165,19 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
           data-testid="create-submit"
           disabled={busy}
         >
-          {busy ? "Creating…" : "Create contract"}
+          {busy ? "Filing…" : "File request"}
         </button>
       </form>
 
       {committedHash && (
         <div className="committed">
           <div>
-            Committed note hash:{" "}
+            Committed justification hash:{" "}
             <code data-testid="committed-hash">{committedHash}</code>
           </div>
           <p className="hint">
-            Raw note stays off-chain in the ContentStore; only this keccak256
-            hash is committed on-chain (R4).
+            The justification body stays off-chain in the ContentStore; only this
+            keccak256 hash is committed on-chain (R4). No PHI crosses the boundary.
           </p>
         </div>
       )}

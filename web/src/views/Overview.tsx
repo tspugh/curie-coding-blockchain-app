@@ -1,8 +1,9 @@
 /**
- * Overview (R15): a live table of every contract (reqId 1..count()) with state,
- * the dispute flags, the price band, and the agreed amount. Re-fetches whenever
- * a new event arrives (passed down from the App's subscription — R16). Each row
- * opens the contract's Detail view.
+ * Overview (R15/R16): a live table of every coverage-exception request
+ * (reqId 1..count()) with its state, whether the insurer has attached a policy,
+ * the requested amount, the deterministic covered amount, and the adjudication
+ * round. Re-fetches whenever a new event arrives (passed down from the App's
+ * subscription — R16). Each row opens the request's Detail view.
  */
 import { useEffect, useState } from "react";
 import {
@@ -43,14 +44,16 @@ export function Overview({ events, onOpen, onCreate }: OverviewProps) {
   return (
     <section className="view overview">
       <div className="view-head">
-        <h1>Contracts</h1>
+        <h1>Coverage-exception requests</h1>
         <button type="button" className="primary" onClick={onCreate}>
-          Create new
+          File request
         </button>
       </div>
 
       {rows.length === 0 ? (
-        <p className="empty">No contracts yet. Create one to get started.</p>
+        <p className="empty">
+          No requests yet. File one to start the arbitration flow.
+        </p>
       ) : (
         <table className="contracts">
           <thead>
@@ -58,10 +61,10 @@ export function Overview({ events, onOpen, onCreate }: OverviewProps) {
               <th>reqId</th>
               <th>drugRef</th>
               <th>state</th>
-              <th>both positions?</th>
-              <th>disputable?</th>
-              <th>band [floor, ceil]</th>
-              <th>agreed</th>
+              <th>policy attached?</th>
+              <th>requested</th>
+              <th>covered</th>
+              <th>round</th>
             </tr>
           </thead>
           <tbody>
@@ -87,17 +90,14 @@ export function Overview({ events, onOpen, onCreate }: OverviewProps) {
                     {STATE_NAMES[v.state]}
                   </span>
                 </td>
-                <td>{v.bothPositionsSubmitted ? "yes" : "no"}</td>
-                <td>{v.disputable ? "yes" : "no"}</td>
+                <td>{v.policyAttached ? "yes" : "no"}</td>
+                <td>{fmtAmount(v.negotiation.requestedAmount)}</td>
                 <td>
-                  [{fmtAmount(v.negotiation.priceFloor)},{" "}
-                  {fmtAmount(v.negotiation.priceCeil)}]
-                </td>
-                <td>
-                  {v.negotiation.agreedAmount > 0n
-                    ? fmtAmount(v.negotiation.agreedAmount)
+                  {v.negotiation.coveredAmount > 0n
+                    ? fmtAmount(v.negotiation.coveredAmount)
                     : "—"}
                 </td>
+                <td>{v.negotiation.round.toString()}</td>
               </tr>
             ))}
           </tbody>

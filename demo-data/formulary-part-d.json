@@ -1,34 +1,35 @@
 {
-  "_comment": "SYNTHETIC, public-formulary-shaped fixture for SPEC-0001 (R10). Stands in for a published Medicare Part D formulary + coverage criteria. No PHI. Shapes the JSON API Request agent path; the HTML twin (formulary-part-d.html) shapes the LLM Parse Website path. Prices are illustrative benchmark figures, not a real price for any product.",
-  "source": "Synthetic Part D formulary (demo fixture)",
+  "_comment": "SYNTHETIC, published-Part-D-policy-shaped fixture for SPEC-0001 (R5/R6/R10). Stands in for an insurer's published exception-criteria policy that the insurer ATTACHES (hash on-chain, body here/at a public URL) before adjudication. The arbiter weighs the provider's cited public evidence against THIS policy and cites the clauseRef it relies on. No PHI. Shapes the JSON API Request agent path; the HTML twin (formulary-part-d.html) shapes the LLM Parse Website path. The benchmarkCap is the deterministic min() input (R6a), NOT an AI-chosen amount. Prices are illustrative markers, not a real price for any product.",
+  "source": "Synthetic insurer Part D exception-criteria policy (demo fixture)",
+  "policyUri": "https://example-plan.test/part-d/exception-criteria/adalimumab",
   "asOf": "2026-05-01",
-  "benchmarkBasis": "neutral public reference band (NADAC / Cost Plus style)",
+  "benchmarkBasis": "public price reference (NADAC / Mark Cuban Cost Plus) — see price-benchmarks.md",
+  "compliant": true,
   "drugs": [
     {
       "name": "Adalimumab",
-      "rxcui": "000000",
+      "rxcui": "1366724",
+      "ndc": "00074-3799-02",
       "tier": 5,
       "tierLabel": "Specialty",
       "coverage": "covered-with-restrictions",
       "restrictions": ["prior_authorization", "step_therapy", "quantity_limit"],
-      "stepTherapy": {
-        "preferredFirst": ["methotrexate", "high-potency topical corticosteroid"],
-        "exceptionWhen": [
-          "documented inadequate response to a preferred conventional systemic agent",
-          "documented intolerance/contraindication to a preferred agent"
-        ]
-      },
-      "priorAuthCriteria": {
-        "indication": "moderate-to-severe chronic plaque psoriasis",
-        "requires": [
-          "BSA >= 10% OR PASI >= 12 OR involvement of a sensitive area",
-          "trial-and-failure or intolerance of at least one preferred conventional systemic therapy",
-          "no active serious infection; latent TB screening performed"
-        ]
-      },
-      "benchmarkBand": { "floor": 2800, "ceil": 5200, "currency": "unitless-marker" },
-      "verdictVocabulary": ["approve", "deny", "need_more_evidence"],
-      "rulingGuidance": "approve when the prior-auth criteria and a valid step-therapy exception are documented; need_more_evidence when documentation is incomplete; deny when a preferred agent has not been tried and no exception applies."
+      "clauses": [
+        {
+          "clauseRef": "PD-ADA-01",
+          "text": "Covered with prior authorization for moderate-to-severe chronic plaque psoriasis when (a) BSA >= 10% OR PASI >= 12, AND (b) trial-and-failure or intolerance of >= 1 preferred conventional systemic therapy (e.g. methotrexate), AND (c) no active serious infection and latent TB screening performed.",
+          "publicStandard": "openFDA HUMIRA label — approved for moderate-to-severe chronic plaque psoriasis",
+          "compliant": true
+        },
+        {
+          "clauseRef": "PD-ADA-02",
+          "text": "Step-therapy exception applies when a preferred conventional systemic agent is contraindicated or not tolerated, with documentation.",
+          "compliant": true
+        }
+      ],
+      "decisionVocabulary": ["approve", "deny", "need_more_evidence"],
+      "rulingGuidance": "approve when PD-ADA-01 criteria and a valid PD-ADA-02 step-therapy exception are documented; need_more_evidence when documentation is incomplete; deny when a preferred agent has not been tried and no exception applies. If a relied-on clause contradicts the cited public standard, flag it (policy_invalid) instead of applying it."
     }
-  ]
+  ],
+  "benchmarkCap": { "value": 4200, "currency": "unitless-marker", "basis": "min(NADAC, CostPlus) — see price-benchmarks.md" }
 }

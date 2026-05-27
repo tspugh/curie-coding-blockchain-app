@@ -1,7 +1,9 @@
 /**
- * App shell: persistent header (wallet + profile switcher — R12), a global
- * event log accumulated from the live subscription (R16), and state-driven view
- * switching between Overview / Create / Detail (R15). No router lib.
+ * App shell: persistent header (wallet + mode + profile switcher + active party
+ * — R12), a global event log accumulated from the live subscription + backfilled
+ * via getEvents (R16), and state-driven view switching between Overview / Create
+ * / Detail (R15). No router lib. Wording follows the AI necessity-arbiter
+ * coverage-exception model (SPEC-0001, revised 2026-05-27).
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { STATE_NAMES, type CoverageEvent, type Profile } from "@lib";
@@ -78,7 +80,7 @@ export function App() {
   return (
     <div className="app">
       <header className="header">
-        <div className="brand">Curie Negotiation Protocol — MVP0</div>
+        <div className="brand">Curie — AI coverage-exception arbiter (MVP0)</div>
 
         <nav className="nav">
           <button
@@ -95,7 +97,7 @@ export function App() {
             className={view.kind === "create" ? "active" : ""}
             onClick={goCreate}
           >
-            Create new
+            File request
           </button>
         </nav>
 
