@@ -16,7 +16,7 @@
  * at PolicyInvalidated; an appeal at the round cap ends at Deadlocked.
  */
 import type { PartyAgent } from "./agents/party-agent.js";
-import type { CoverageNegotiationClient } from "./contract/types.js";
+import type { CoverageNegotiationClient, PriceBasis } from "./contract/types.js";
 import {
   type CoverageEvent,
   Decision,
@@ -44,6 +44,10 @@ export interface NegotiationScript {
   readonly evidenceRef?: string;
   /** The provider's billed / requested amount. */
   readonly requestedAmount: bigint;
+  /** Dispensed units (NDC-pinned) — DRIVES the deterministic cap; must be > 0 (R2/R6a). */
+  readonly quantity: bigint;
+  /** Optional clinical-utilization context (necessity reasoning, NOT price) (R2). */
+  readonly daysSupply?: bigint;
   /**
    * What to do once the first ruling lands. Default: `accept-and-settle` on a
    * ruled state, `submit-evidence` on EvidenceRequested, else `stop`.
@@ -70,6 +74,11 @@ export interface NegotiationTranscript {
   readonly decisionName?: string;
   /** The deterministic covered amount on the final state (R6a). */
   readonly coveredAmount: bigint;
+  /**
+   * The deterministic price-basis breakdown (requested, quantity, Cost Plus cap
+   * total, NADAC floor total, covered) behind the covered amount (R6a/R10).
+   */
+  readonly priceBasis: PriceBasis;
   /** The policy clause the arbiter relied on, if a ruling landed (R6). */
   readonly clauseRef?: string;
   /** The final adjudication round count (R6c). */
@@ -102,6 +111,8 @@ export async function runNegotiation(
       drug: script.drug,
       justification: script.justification,
       requestedAmount: script.requestedAmount,
+      quantity: script.quantity,
+      ...(script.daysSupply !== undefined ? { daysSupply: script.daysSupply } : {}),
       ...(script.evidenceRef !== undefined ? { evidence: script.evidenceRef } : {}),
     });
 
@@ -187,6 +198,7 @@ async function buildTranscript(
   events: readonly CoverageEvent[],
 ): Promise<NegotiationTranscript> {
   const n = await negotiation.getNegotiation(reqId);
+  const priceBasis = await negotiation.priceBasisOf(reqId);
   const lastRuled = lastRuledEvent(events);
   const decision = lastRuled?.decision;
   return {
@@ -195,6 +207,7 @@ async function buildTranscript(
     finalStateName: STATE_NAMES[n.state],
     ...(decision !== undefined ? { decision, decisionName: DECISION_NAMES[decision] } : {}),
     coveredAmount: n.coveredAmount,
+    priceBasis,
     ...(lastRuled !== undefined ? { clauseRef: lastRuled.clauseRef } : {}),
     round: n.round,
     events: [...events],

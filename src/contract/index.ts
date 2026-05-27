@@ -15,6 +15,7 @@ export {
   type CoverageNegotiationClient,
   type CreateContractParams,
   type PolicyCommitment,
+  type PriceBasis,
   type EventFilter,
 } from "./types.js";
 export { SimulatedBackend, type SimulatedAgentOptions, ZERO_HASH } from "./simulated.js";

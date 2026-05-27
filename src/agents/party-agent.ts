@@ -43,6 +43,10 @@ export interface FileRequestInput {
   readonly justification: string;
   /** The provider's billed / requested amount. */
   readonly requestedAmount: bigint;
+  /** Dispensed units (NDC-pinned) — DRIVES the deterministic cap; must be > 0 (R2/R6a). */
+  readonly quantity: bigint;
+  /** Optional clinical-utilization context (necessity reasoning, NOT price) (R2). Default 0. */
+  readonly daysSupply?: bigint;
   /** Optional public-evidence text; only its hash crosses (R4). Omit for none. */
   readonly evidence?: string;
 }
@@ -76,6 +80,8 @@ export class PartyAgent {
       insurerAddr: input.insurerAddr,
       drugRef: ethers.keccak256(ethers.toUtf8Bytes(input.drug)),
       requestedAmount: input.requestedAmount,
+      quantity: input.quantity,
+      daysSupply: input.daysSupply ?? 0n,
       justificationHash,
       evidenceUri,
     });

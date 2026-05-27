@@ -42,7 +42,11 @@ const RATIONALE = ethers.id("rationale");
 const CLAUSE = ethers.id("clause-3a");
 const STANDARD = ethers.id("FDA-label");
 const REQUESTED = 2000n;
-const CAP = 1500n; // benchmark cap < requested -> covered == cap (R6a)
+const QUANTITY = 2n; // dispensed units; drives the deterministic cap (R2/R6a)
+const DAYS_SUPPLY = 28n; // clinical context only — never enters the price math (R2)
+const COST_PLUS_UNIT = 750n; // Mark Cuban Cost Plus per-unit -> cap total 1500
+const NADAC_UNIT = 400n; // NADAC per-unit acquisition-cost FLOOR reference only
+const CAP = COST_PLUS_UNIT * QUANTITY; // 1500 < requested 2000 -> covered == cap (R6a)
 const RECEIPT = 123n;
 const FEE = ethers.parseEther("0.01"); // > mock deposit (0.001)
 
@@ -112,6 +116,8 @@ async function main() {
     insurerAddr: address,
     drugRef: DRUG,
     requestedAmount: REQUESTED,
+    quantity: QUANTITY,
+    daysSupply: DAYS_SUPPLY,
     justificationHash: JUSTIFICATION,
     evidenceUri: ZERO,
   });
@@ -136,22 +142,35 @@ async function main() {
   const mockAsSigner = new ethers.Contract(mockAddr, mockArt.abi, signer);
   const requestId = await mockAsSigner.lastRequestId();
   await (
-    await mockAsSigner.triggerRuling(
-      contractAddr,
-      requestId,
-      Number(Decision.Approve),
-      CAP,
-      RATIONALE,
-      CLAUSE,
-      STANDARD,
-      RECEIPT,
-    )
+    await mockAsSigner.triggerRuling(contractAddr, requestId, {
+      decision: Number(Decision.Approve),
+      costPlusUnitPrice: COST_PLUS_UNIT,
+      nadacUnitPrice: NADAC_UNIT,
+      rationaleHash: RATIONALE,
+      clauseRef: CLAUSE,
+      standardRef: STANDARD,
+      receiptId: RECEIPT,
+    })
   ).wait();
   await snap(reqId);
   check("platform callback (approve) -> Approved", realStates.at(-1) === State.Approved);
 
   const covered = await real.coveredAmountOf(reqId);
-  check("covered amount is deterministic min(requested, cap) (R6a)", covered === CAP);
+  check(
+    "covered amount is deterministic min(requested, costPlusUnitPrice*quantity), the CAP (R6a)",
+    covered === CAP && CAP < REQUESTED,
+  );
+
+  // The contract's priceBasisOf exposes the deterministic breakdown (R6a/R10).
+  const basis = await real.priceBasisOf(reqId);
+  check(
+    "priceBasisOf: totals = per-unit x quantity; NADAC is a floor ref, not the cap (R6a/R10)",
+    basis.requestedAmount === REQUESTED &&
+      basis.quantity === QUANTITY &&
+      basis.costPlusTotal === COST_PLUS_UNIT * QUANTITY &&
+      basis.nadacFloorTotal === NADAC_UNIT * QUANTITY &&
+      basis.coveredAmount === CAP,
+  );
 
   // Both parties accept the ruling, then settle (single wallet acts as both — R12).
   await real.accept(reqId, 11n);
@@ -206,7 +225,12 @@ async function main() {
   await real.close();
 
   // --- R11/T7: SimulatedBackend yields the IDENTICAL state sequence ---
-  const sim = new SimulatedBackend({ autoResolve: false, decision: Decision.Approve, benchmarkCap: CAP });
+  const sim = new SimulatedBackend({
+    autoResolve: false,
+    decision: Decision.Approve,
+    costPlusUnitPrice: COST_PLUS_UNIT,
+    nadacUnitPrice: NADAC_UNIT,
+  });
   const simStates = [];
   const sreqId = await sim.createContract({
     providerId: 11n,
@@ -215,6 +239,8 @@ async function main() {
     insurerAddr: address,
     drugRef: DRUG,
     requestedAmount: REQUESTED,
+    quantity: QUANTITY,
+    daysSupply: DAYS_SUPPLY,
     justificationHash: JUSTIFICATION,
     evidenceUri: ZERO,
   });
@@ -231,6 +257,13 @@ async function main() {
   simStates.push(await sim.stateOf(sreqId));
 
   check("simulated covered amount matches deterministic min (R6a)", (await sim.coveredAmountOf(sreqId)) === CAP);
+  const simBasis = await sim.priceBasisOf(sreqId);
+  check(
+    "simulated priceBasisOf mirrors the contract's deterministic breakdown (R6a/R10)",
+    simBasis.costPlusTotal === COST_PLUS_UNIT * QUANTITY &&
+      simBasis.nadacFloorTotal === NADAC_UNIT * QUANTITY &&
+      simBasis.coveredAmount === CAP,
+  );
 
   // The simulated backend exposes the same getEvents() reconstruction (R16/T10).
   const simHistory = await sim.getEvents({ reqId: sreqId });

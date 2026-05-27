@@ -21,6 +21,7 @@ import {
   runNegotiation,
   Decision,
   State,
+  SimulatedBackend,
 } from "../dist/index.js";
 
 // The mocked arbiter decision is reconfigured per scenario via this closure.
@@ -33,7 +34,8 @@ const client = createClient({
   contract: {
     simulated: {
       autoResolveMs: 5,
-      // requestedAmount drives the default benchmarkCap, so covered == requested.
+      // No costPlusUnitPrice override: the default per-unit (ceil(requested/quantity))
+      // makes the cap non-binding, so covered == requested.
       decision: (n, reqId) => (decisionFn ? decisionFn(n, reqId) : nextDecision),
     },
   },
@@ -54,6 +56,8 @@ const baseScript = {
   policyText: "Insurer specialty-drug step-therapy policy — off-chain body.",
   evidenceRef: "Peer-reviewed evidence of medical necessity.",
   requestedAmount: 4200n,
+  quantity: 6n, // 6 dispensed units; drives the deterministic cap (R2/R6a)
+  daysSupply: 28n, // clinical context only — never enters the price math (R2)
 };
 
 async function main() {
@@ -67,6 +71,14 @@ async function main() {
   check(`approve path runs to Settled [${t.finalStateName}]`, t.finalState === State.Settled);
   check("approve path: decision recorded", t.decision === Decision.Approve);
   check("approve path: covered == requested (deterministic min, R6a)", t.coveredAmount === 4200n);
+  check(
+    "approve path: price basis exposes the deterministic breakdown (R6a/R10)",
+    t.priceBasis.requestedAmount === 4200n &&
+      t.priceBasis.quantity === 6n &&
+      t.priceBasis.coveredAmount === 4200n &&
+      // default per-unit = ceil(4200/6) = 700 -> cap total 4200 (non-binding)
+      t.priceBasis.costPlusTotal >= 4200n,
+  );
   check(
     "approve path: full timeline emitted",
     ["ContractCreated", "InsurerEngaged", "ContractReady", "AdjudicationRequested", "RulingRequested", "Ruled", "Accepted", "Settled"].every(
@@ -136,6 +148,64 @@ async function main() {
   check(`appeal path eventually Deadlocked at the round cap (R6c) [${State[st]}]`, st === State.Deadlocked);
 
   await client.close();
+
+  // --- cap-binding approve: covered == min(requested, costPlusUnitPrice*quantity) ---
+  // requested is high; costPlusUnitPrice*quantity is LOWER, so the cap binds and
+  // covered == the cap total, NOT the requested amount (R6a). NADAC is a floor ref.
+  {
+    const REQUESTED = 10000n;
+    const QTY = 4n;
+    const UNIT = 1500n; // Cost Plus per-unit -> cap total 6000 < requested 10000
+    const NADAC = 900n; // floor reference only; must not enter the cap math
+    const capClient = createClient({
+      wallet: { mode: "simulated" },
+      contract: {
+        simulated: {
+          autoResolveMs: 5,
+          decision: Decision.Approve,
+          costPlusUnitPrice: UNIT,
+          nadacUnitPrice: NADAC,
+        },
+      },
+    });
+    const capProvider = createProviderAgent(capClient);
+    const capInsurer = createInsurerAgent(capClient);
+    const capScript = { ...baseScript, requestedAmount: REQUESTED, quantity: QTY, daysSupply: 30n };
+    const ct = await runNegotiation(capClient.negotiation, capProvider, capInsurer, capScript);
+    const expectedCap = UNIT * QTY; // 6000
+    const expectedCovered = REQUESTED < expectedCap ? REQUESTED : expectedCap; // 6000
+
+    check(
+      `cap-binding approve runs to Settled [${ct.finalStateName}]`,
+      ct.finalState === State.Settled && ct.decision === Decision.Approve,
+    );
+    check(
+      "cap-binding: covered == min(requested, costPlusUnitPrice*quantity), the CAP (R6a)",
+      ct.coveredAmount === expectedCovered && ct.coveredAmount === expectedCap && ct.coveredAmount < REQUESTED,
+    );
+    check(
+      "cap-binding: priceBasis totals reflect the per-unit prices x quantity (R6a/R10)",
+      ct.priceBasis.costPlusTotal === expectedCap &&
+        ct.priceBasis.nadacFloorTotal === NADAC * QTY &&
+        ct.priceBasis.coveredAmount === expectedCovered,
+    );
+    check(
+      "cap-binding: NADAC floor is a reference only — it does NOT drive the cap",
+      ct.priceBasis.nadacFloorTotal !== ct.coveredAmount,
+    );
+
+    // daysSupply must NOT change the price: same inputs, different daysSupply -> same covered.
+    const dt = await runNegotiation(capClient.negotiation, capProvider, capInsurer, {
+      ...capScript,
+      daysSupply: 90n,
+    });
+    check(
+      "daysSupply does not change the deterministic price (R2)",
+      dt.coveredAmount === ct.coveredAmount && dt.priceBasis.costPlusTotal === ct.priceBasis.costPlusTotal,
+    );
+
+    await capClient.close();
+  }
   console.log(`\norchestrator demo: ${passed} checks passed`);
 }
 

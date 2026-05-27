@@ -42,8 +42,28 @@ const STANDARD_REF = ethers.id("FDA:label:semaglutide");
 const REASON_HASH = ethers.id("appeal:reason");
 
 const REQUESTED = 2000n;
+const QUANTITY = 10n; // dispensed units — drives the deterministic cap (R6a)
+const DAYS_SUPPLY = 30n; // clinical-utilization context — NEVER affects price (R6a)
+const NADAC_UNIT = 80n; // NADAC per-unit acquisition-cost floor reference
 const RECEIPT_ID = 999n;
 const FEE = ethers.parseEther("0.01"); // > mock deposit (0.001 ether)
+
+/** Build the MockAgentPlatform.Ruling struct (ethers v6 takes a plain object). */
+function ruling(
+  decision: number,
+  costPlusUnitPrice: bigint,
+  nadacUnitPrice: bigint = NADAC_UNIT
+) {
+  return {
+    decision,
+    costPlusUnitPrice,
+    nadacUnitPrice,
+    rationaleHash: RATIONALE_HASH,
+    clauseRef: CLAUSE_REF,
+    standardRef: STANDARD_REF,
+    receiptId: RECEIPT_ID,
+  };
+}
 
 /** Deploy a fresh mock platform + contract. Deployer (signer[0]) is owner. */
 async function deploy() {
@@ -63,7 +83,9 @@ async function createAs(
   contract: CoverageNegotiation,
   provider: HardhatEthersSigner,
   insurerAddr: string,
-  requestedAmount = REQUESTED
+  requestedAmount = REQUESTED,
+  quantity = QUANTITY,
+  daysSupply = DAYS_SUPPLY
 ) {
   await contract
     .connect(provider)
@@ -74,6 +96,8 @@ async function createAs(
       insurerAddr,
       DRUG_REF,
       requestedAmount,
+      quantity,
+      daysSupply,
       JUSTIFICATION_HASH,
       EVIDENCE_URI
     );
@@ -86,9 +110,11 @@ async function createEngageAdjudicate(
   platform: MockAgentPlatform,
   provider: HardhatEthersSigner,
   insurer: HardhatEthersSigner,
-  requestedAmount = REQUESTED
+  requestedAmount = REQUESTED,
+  quantity = QUANTITY,
+  daysSupply = DAYS_SUPPLY
 ) {
-  const reqId = await createAs(contract, provider, insurer.address, requestedAmount);
+  const reqId = await createAs(contract, provider, insurer.address, requestedAmount, quantity, daysSupply);
   await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
   await contract.connect(provider).requestAdjudication(reqId, { value: FEE });
   const requestId = await platform.lastRequestId();
@@ -111,12 +137,14 @@ describe("CoverageNegotiation", () => {
           insurer.address,
           DRUG_REF,
           REQUESTED,
+          QUANTITY,
+          DAYS_SUPPLY,
           JUSTIFICATION_HASH,
           EVIDENCE_URI
         )
     )
       .to.emit(contract, "ContractCreated")
-      .withArgs(1n, PROVIDER_ID, INSURER_ID, provider.address, insurer.address, DRUG_REF, REQUESTED);
+      .withArgs(1n, PROVIDER_ID, INSURER_ID, provider.address, insurer.address, DRUG_REF, REQUESTED, QUANTITY, DAYS_SUPPLY);
 
     // T1: getter exposes only hashes/refs/amounts — no raw-content field exists.
     const n = await contract.getNegotiation(1n);
@@ -124,7 +152,27 @@ describe("CoverageNegotiation", () => {
     expect(n.drugRef).to.equal(DRUG_REF);
     expect(n.evidenceUri).to.equal(EVIDENCE_URI);
     expect(n.requestedAmount).to.equal(REQUESTED);
+    expect(n.quantity).to.equal(QUANTITY);
+    expect(n.daysSupply).to.equal(DAYS_SUPPLY);
     expect(n.state).to.equal(State.Open);
+
+    // createContract requires quantity > 0.
+    await expect(
+      contract
+        .connect(provider)
+        .createContract(
+          PROVIDER_ID,
+          INSURER_ID,
+          provider.address,
+          insurer.address,
+          DRUG_REF,
+          REQUESTED,
+          0n,
+          DAYS_SUPPLY,
+          JUSTIFICATION_HASH,
+          EVIDENCE_URI
+        )
+    ).to.be.revertedWith("qty: zero");
 
     // T3: adjudication reverts before engage (still Open / not Ready).
     await expect(
@@ -176,44 +224,31 @@ describe("CoverageNegotiation", () => {
     expect(await platform.lastCallbackSelector()).to.equal(sel);
   });
 
-  it("T4 (R6a): approve covers min(requested,cap) both ways; deny → 0; refs surfaced & stored; need_more_evidence & failure → EvidenceRequested", async () => {
+  it("T4 (R6a): deny → 0; refs surfaced & stored; need_more_evidence & failure & timeout → EvidenceRequested", async () => {
     const { platform, contract } = await deploy();
     const [provider, insurer] = await ethers.getSigners();
     const target = await contract.getAddress();
 
-    // cap < requested → covered == cap
+    // approve: refs stored on the negotiation; lastDecision/hasRuling set.
     {
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n);
-      await expect(
-        platform.triggerRuling(target, requestId, Decision.Approve, 1500n, RATIONALE_HASH, CLAUSE_REF, STANDARD_REF, RECEIPT_ID)
-      )
-        .to.emit(contract, "Ruled")
-        .withArgs(reqId, requestId, Decision.Approve, 1500n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID);
+      await platform.triggerRuling(target, requestId, ruling(Decision.Approve, 150n));
       expect(await contract.stateOf(reqId)).to.equal(State.Approved);
-      expect(await contract.coveredAmountOf(reqId)).to.equal(1500n);
-      // Refs are stored on the negotiation.
       const n = await contract.getNegotiation(reqId);
       expect(n.rationaleHash).to.equal(RATIONALE_HASH);
       expect(n.clauseRef).to.equal(CLAUSE_REF);
       expect(n.standardRef).to.equal(STANDARD_REF);
       expect(n.lastDecision).to.equal(BigInt(Decision.Approve));
       expect(n.hasRuling).to.equal(true);
-    }
-
-    // cap >= requested → covered == requested
-    {
-      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n);
-      await platform.triggerRuling(target, requestId, Decision.Approve, 5000n, RATIONALE_HASH, CLAUSE_REF, STANDARD_REF, RECEIPT_ID);
-      expect(await contract.stateOf(reqId)).to.equal(State.Approved);
-      expect(await contract.coveredAmountOf(reqId)).to.equal(2000n);
+      // Per-unit price lookups are stored (cap basis + NADAC floor reference).
+      expect(n.costPlusUnitPrice).to.equal(150n);
+      expect(n.nadacUnitPrice).to.equal(NADAC_UNIT);
     }
 
     // deny → Denied, covered 0
     {
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
-      await expect(
-        platform.triggerRuling(target, requestId, Decision.Deny, 1500n, RATIONALE_HASH, CLAUSE_REF, STANDARD_REF, RECEIPT_ID)
-      )
+      await expect(platform.triggerRuling(target, requestId, ruling(Decision.Deny, 150n)))
         .to.emit(contract, "Ruled")
         .withArgs(reqId, requestId, Decision.Deny, 0n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID);
       expect(await contract.stateOf(reqId)).to.equal(State.Denied);
@@ -223,9 +258,8 @@ describe("CoverageNegotiation", () => {
     // need_more_evidence → EvidenceRequested; submitEvidence re-fires (round++) → UnderReview
     {
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
-      await expect(
-        platform.triggerRuling(target, requestId, Decision.NeedMoreEvidence, 0n, RATIONALE_HASH, CLAUSE_REF, STANDARD_REF, RECEIPT_ID)
-      ).to.emit(contract, "EvidenceRequested");
+      await expect(platform.triggerRuling(target, requestId, ruling(Decision.NeedMoreEvidence, 0n)))
+        .to.emit(contract, "EvidenceRequested");
       expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested);
 
       // empty evidence reverts
@@ -260,6 +294,69 @@ describe("CoverageNegotiation", () => {
     }
   });
 
+  it("T4/R6a (deterministic cap): covered = min(requested, costPlusUnitPrice × quantity), both directions; quantity drives the cap; priceBasisOf; daysSupply is price-neutral", async () => {
+    const { platform, contract } = await deploy();
+    const [provider, insurer] = await ethers.getSigners();
+    const target = await contract.getAddress();
+
+    // --- Cap binds: requested=2000, qty=10, costPlus/unit=150 → cap=1500 → covered=1500 ---
+    {
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
+      await expect(platform.triggerRuling(target, requestId, ruling(Decision.Approve, 150n)))
+        .to.emit(contract, "Ruled")
+        .withArgs(reqId, requestId, Decision.Approve, 1500n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID);
+      expect(await contract.coveredAmountOf(reqId)).to.equal(1500n);
+      expect((await contract.getNegotiation(reqId)).coveredAmount).to.equal(1500n);
+
+      // priceBasisOf: requested / qty / costPlusTotal / nadacFloorTotal / covered.
+      const basis = await contract.priceBasisOf(reqId);
+      expect(basis.requestedAmount).to.equal(2000n);
+      expect(basis.quantity).to.equal(10n);
+      expect(basis.costPlusTotal).to.equal(1500n); // 150 × 10
+      expect(basis.nadacFloorTotal).to.equal(NADAC_UNIT * 10n); // 80 × 10 = 800
+      expect(basis.coveredAmount).to.equal(1500n);
+    }
+
+    // --- Requested binds: requested=2000, qty=10, costPlus/unit=500 → cap=5000 → covered=2000 ---
+    {
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
+      await expect(platform.triggerRuling(target, requestId, ruling(Decision.Approve, 500n)))
+        .to.emit(contract, "Ruled")
+        .withArgs(reqId, requestId, Decision.Approve, 2000n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID);
+      expect(await contract.coveredAmountOf(reqId)).to.equal(2000n);
+      const basis = await contract.priceBasisOf(reqId);
+      expect(basis.costPlusTotal).to.equal(5000n); // 500 × 10
+      expect(basis.coveredAmount).to.equal(2000n);
+    }
+
+    // --- quantity drives the cap: same per-unit price (150), different quantity → different cap ---
+    {
+      // qty=4 → cap=600 (binds, < requested 2000) → covered=600
+      const a = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 4n);
+      await platform.triggerRuling(target, a.requestId, ruling(Decision.Approve, 150n));
+      expect(await contract.coveredAmountOf(a.reqId)).to.equal(600n);
+
+      // qty=20 → cap=3000 (>= requested 2000) → covered=2000
+      const b = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 20n);
+      await platform.triggerRuling(target, b.requestId, ruling(Decision.Approve, 150n));
+      expect(await contract.coveredAmountOf(b.reqId)).to.equal(2000n);
+    }
+
+    // --- daysSupply is price-neutral: two requests identical except daysSupply → identical covered ---
+    {
+      const x = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n, 30n);
+      const y = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n, 90n);
+      await platform.triggerRuling(target, x.requestId, ruling(Decision.Approve, 150n));
+      await platform.triggerRuling(target, y.requestId, ruling(Decision.Approve, 150n));
+      const covX = await contract.coveredAmountOf(x.reqId);
+      const covY = await contract.coveredAmountOf(y.reqId);
+      expect(covX).to.equal(1500n);
+      expect(covY).to.equal(covX); // daysSupply changed (30 vs 90) but covered identical
+      expect((await contract.getNegotiation(x.reqId)).daysSupply).to.equal(30n);
+      expect((await contract.getNegotiation(y.reqId)).daysSupply).to.equal(90n);
+    }
+  });
+
   it("T5 (R6b): policy_invalid → PolicyFlagged + Ruled + terminal PolicyInvalidated", async () => {
     const { platform, contract } = await deploy();
     const [provider, insurer] = await ethers.getSigners();
@@ -267,7 +364,7 @@ describe("CoverageNegotiation", () => {
     const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
 
     await expect(
-      platform.triggerRuling(target, requestId, Decision.PolicyInvalid, 1500n, RATIONALE_HASH, CLAUSE_REF, STANDARD_REF, RECEIPT_ID)
+      platform.triggerRuling(target, requestId, ruling(Decision.PolicyInvalid, 150n))
     )
       .to.emit(contract, "PolicyFlagged")
       .withArgs(reqId, CLAUSE_REF, STANDARD_REF)
@@ -299,7 +396,7 @@ describe("CoverageNegotiation", () => {
     expect(await contract.roundOf(reqId)).to.equal(1n); // initial round
 
     // First ruling: deny.
-    await platform.triggerRuling(target, requestId, Decision.Deny, 0n, RATIONALE_HASH, CLAUSE_REF, STANDARD_REF, RECEIPT_ID);
+    await platform.triggerRuling(target, requestId, ruling(Decision.Deny, 0n));
     expect(await contract.stateOf(reqId)).to.equal(State.Denied);
 
     // price-only / empty-evidence appeal reverts.
@@ -316,7 +413,7 @@ describe("CoverageNegotiation", () => {
 
     // Resolve the re-fired round (deny again), then a further appeal at round>=maxRounds → Deadlocked.
     const rid2 = await platform.lastRequestId();
-    await platform.triggerRuling(target, rid2, Decision.Deny, 0n, RATIONALE_HASH, CLAUSE_REF, STANDARD_REF, RECEIPT_ID);
+    await platform.triggerRuling(target, rid2, ruling(Decision.Deny, 0n));
     expect(await contract.stateOf(reqId)).to.equal(State.Denied);
 
     await expect(contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE }))
@@ -329,10 +426,12 @@ describe("CoverageNegotiation", () => {
     const { platform, contract } = await deploy();
     const [provider, insurer] = await ethers.getSigners();
     const target = await contract.getAddress();
-    const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n);
+    // requested=2000, qty=10, costPlus/unit=120 → cap=1200 (binds) → covered=1200.
+    const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
 
-    await platform.triggerRuling(target, requestId, Decision.Approve, 1200n, RATIONALE_HASH, CLAUSE_REF, STANDARD_REF, RECEIPT_ID);
+    await platform.triggerRuling(target, requestId, ruling(Decision.Approve, 120n));
     expect(await contract.stateOf(reqId)).to.equal(State.Approved);
+    expect(await contract.coveredAmountOf(reqId)).to.equal(1200n);
 
     // settle before mutual accept reverts.
     await expect(contract.connect(provider).settle(reqId)).to.be.revertedWith("settle: not both accepted");
@@ -391,6 +490,8 @@ describe("CoverageNegotiation", () => {
           insurer.address,
           DRUG_REF,
           REQUESTED,
+          QUANTITY,
+          DAYS_SUPPLY,
           JUSTIFICATION_HASH,
           EVIDENCE_URI
         )
@@ -425,13 +526,13 @@ describe("CoverageNegotiation", () => {
     const requestId = await platform.lastRequestId();
 
     // attacker cannot submitEvidence even when applicable — first drive to EvidenceRequested.
-    await platform.triggerRuling(target, requestId, Decision.NeedMoreEvidence, 0n, RATIONALE_HASH, CLAUSE_REF, STANDARD_REF, RECEIPT_ID);
+    await platform.triggerRuling(target, requestId, ruling(Decision.NeedMoreEvidence, 0n));
     await expect(
       contract.connect(attacker).submitEvidence(reqId, EVIDENCE_URI_2, { value: FEE })
     ).to.be.revertedWith("auth: not provider");
     await contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI_2, { value: FEE });
     const rid2 = await platform.lastRequestId();
-    await platform.triggerRuling(target, rid2, Decision.Deny, 0n, RATIONALE_HASH, CLAUSE_REF, STANDARD_REF, RECEIPT_ID);
+    await platform.triggerRuling(target, rid2, ruling(Decision.Deny, 0n));
 
     // attacker cannot appeal / accept / settle on a ruled request.
     await expect(
@@ -451,13 +552,13 @@ describe("CoverageNegotiation", () => {
     const solo = provider; // one wallet plays both roles
     await contract
       .connect(solo)
-      .createContract(PROVIDER_ID, INSURER_ID, solo.address, solo.address, DRUG_REF, REQUESTED, JUSTIFICATION_HASH, EVIDENCE_URI);
+      .createContract(PROVIDER_ID, INSURER_ID, solo.address, solo.address, DRUG_REF, REQUESTED, QUANTITY, DAYS_SUPPLY, JUSTIFICATION_HASH, EVIDENCE_URI);
     const soloId = await contract.count();
     // same wallet engages (insurer side) and adjudicates (provider side).
     await contract.connect(solo).insurerEngage(soloId, POLICY_HASH, POLICY_URI);
     await contract.connect(solo).requestAdjudication(soloId, { value: FEE });
     const soloReq = await platform.lastRequestId();
-    await platform.triggerRuling(target, soloReq, Decision.Approve, 1000n, RATIONALE_HASH, CLAUSE_REF, STANDARD_REF, RECEIPT_ID);
+    await platform.triggerRuling(target, soloReq, ruling(Decision.Approve, 100n));
     // same wallet accepts BOTH sides (distinguished by partyId), then settles.
     await contract.connect(solo).accept(soloId, PROVIDER_ID);
     await contract.connect(solo).accept(soloId, INSURER_ID);
@@ -485,8 +586,8 @@ describe("CoverageNegotiation", () => {
 
     // Non-platform caller cannot invoke the callback. Encode the new arbiter tuple.
     const fakeResult = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["uint8", "uint256", "bytes32", "bytes32", "bytes32", "uint256"],
-      [Decision.Approve, 1500n, RATIONALE_HASH, CLAUSE_REF, STANDARD_REF, RECEIPT_ID]
+      ["uint8", "uint256", "uint256", "bytes32", "bytes32", "bytes32", "uint256"],
+      [Decision.Approve, 150n, NADAC_UNIT, RATIONALE_HASH, CLAUSE_REF, STANDARD_REF, RECEIPT_ID]
     );
     const fakeResponses = [
       {
@@ -539,7 +640,7 @@ describe("CoverageNegotiation", () => {
     await expect(contract.connect(provider).withdraw(reqId)).to.emit(contract, "Withdrawn").withArgs(reqId);
     expect(await contract.stateOf(reqId)).to.equal(State.Withdrawn);
     await expect(
-      platform.triggerRuling(target, requestId, Decision.Approve, 1n, RATIONALE_HASH, CLAUSE_REF, STANDARD_REF, RECEIPT_ID)
+      platform.triggerRuling(target, requestId, ruling(Decision.Approve, 1n))
     ).to.be.revertedWith("callback: unknown request");
     expect(await contract.stateOf(reqId)).to.equal(State.Withdrawn);
 

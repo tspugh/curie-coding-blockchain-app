@@ -201,3 +201,45 @@ web UI are being rebuilt to the new model — the old approve/deny **price band*
   testnet (chain 50312); a **real** native-agent ruling with a viewable receipt + per-request fee
   on execution (R9); the real-RPC half of `eth_getLogs` reconstruction (T10) and the agent-browser
   e2e run. These are the "stop only when you can go no further without a real wallet" boundary.
+
+---
+
+### 2026-05-27 — Iteration 3: deterministic Cost Plus cap + quantity/daysSupply (SPEC-0001 update) + CDS-Hooks seam (SPEC-0002 R7)
+
+Pulled new spec changes: SPEC-0001 R2/R6a/R10 now fix the cap as **Cost Plus per-unit × `quantity`**
+(NADAC is a floor reference, never the cap; never AI-chosen), requests carry **`quantity`** (cap
+driver) + optional **`daysSupply`** (necessity context, NOT price). Also new **SPEC-0002** (demo
+experience) and an S3+CloudFront static-deploy script (R18) — deploy is handled outside this box,
+so **no AWS/deploy commands were run here**.
+
+**DONE — SPEC-0001 cap change across contract + library + tests.**
+- `CoverageNegotiation.sol`: `createContract` gained `quantity` (require `> 0`) + `daysSupply`;
+  `Negotiation` struct gained `quantity`, `daysSupply`, `costPlusUnitPrice`, `nadacUnitPrice`;
+  `ContractCreated` carries quantity+daysSupply; the agent tuple is now `(decision,
+  costPlusUnitPrice, nadacUnitPrice, rationaleHash, clauseRef, standardRef, receiptId)` and the
+  CONTRACT computes `benchmarkCap = costPlusUnitPrice × quantity`, `coveredAmount = min(requested,
+  cap)` (R6a — deterministic, never AI-chosen); NADAC stored as floor reference; new view
+  `priceBasisOf` (requested/quantity/costPlusTotal/nadacFloorTotal/covered) for the demo gauge.
+  `MockAgentPlatform.triggerRuling` now takes a `Ruling` calldata struct (kept the build off the
+  stack-too-deep limit without `viaIR` — production bytecode unchanged).
+- Library: `coverage.types.ts`/`abi.ts`/`contract/types.ts` (new `PriceBasis`), `simulated.ts`
+  (mocked arbiter now `costPlusUnitPrice`/`nadacUnitPrice`; deterministic `min`), `real.ts`
+  (29-field tuple decode + `priceBasisOf`), `party-agent.ts` (`fileRequest` quantity/daysSupply),
+  `orchestrator.ts` + the two demo scripts.
+- **Hardhat tests: 11 passing** — added the deterministic-cap block (cap binds both directions,
+  quantity drives the cap, `priceBasisOf`, `qty: zero` revert, **daysSupply is price-neutral**),
+  T1–T10 + security intact.
+- **Verified green:** `npm run build` + `typecheck`, `npm --prefix contracts run test` (11/11),
+  `node scripts/orchestrator-demo.mjs` (18 checks incl. cap-binding + daysSupply-invariance),
+  `bash scripts/real-backend-localnode.sh` (18 checks incl. real/sim `priceBasisOf` parity).
+
+**DONE — SPEC-0002 R7 CDS-Hooks integration seam (library side).** New `src/integrations/cds-hooks/`:
+typed **CDS Hooks 2.0** interfaces (`CdsHooksRequest<TContext,TPrefetch>`, `OrderSignContext` with a
+minimal FHIR R4 `MedicationRequest` bundle, `Card`, `SystemAction`, `CdsHooksResponse`), a synthetic
+`SAMPLE_ORDER_SIGN_REQUEST` fixture (+ `demo-data/cds-hooks-order-sign.json`), and a pure
+`orderSignToDraft` mapper → `CoverageRequestDraft` (drug/quantity/daysSupply/diagnosis/justification —
+no PHI propagated). New `demo-data/fda-indication-adalimumab.json` (openFDA-label-shaped) states the
+FDA-approved psoriasis indication that the non-compliant policy clause PD-ADA-09 contradicts — the
+data behind the SPEC-0002 R3 "gotcha". Exported via `src/index.ts`. No real CDS-Hooks server (v0 mock
+seam only). **Next:** the SPEC-0002 web experience (live timeline, FDA-gotcha viz, price gauge, role
+gating, CDS prefill) consuming this seam.

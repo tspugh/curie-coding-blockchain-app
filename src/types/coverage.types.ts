@@ -93,6 +93,10 @@ export interface Negotiation {
   readonly drugRef: string;
   /** The provider's billed / requested amount. */
   readonly requestedAmount: bigint;
+  /** Dispensed units (NDC-pinned) — DRIVES the deterministic cap (R2/R6a). */
+  readonly quantity: bigint;
+  /** Optional clinical-utilization context (necessity reasoning, NOT price) (R2). */
+  readonly daysSupply: bigint;
   /** keccak256 of the de-identified justification. */
   readonly justificationHash: string;
   /** Opaque ref to the latest public-evidence doc. */
@@ -103,6 +107,10 @@ export interface Negotiation {
   readonly policyUri: string;
   /** Deterministic covered amount = min(requested, cap) on approve; else 0 (R6a). */
   readonly coveredAmount: bigint;
+  /** Mark Cuban Cost Plus per-unit price the agent looked up (cap basis — R6a/R10). */
+  readonly costPlusUnitPrice: bigint;
+  /** NADAC per-unit acquisition-cost FLOOR reference (R6a/R10). */
+  readonly nadacUnitPrice: bigint;
   /** Hash of the agent's latest rationale. */
   readonly rationaleHash: string;
   /** The policy clause the agent relied on (R6). */
@@ -202,6 +210,8 @@ export interface ContractCreatedEvent extends BaseEvent {
   readonly insurerAddr: string;
   readonly drugRef: string;
   readonly requestedAmount: bigint;
+  readonly quantity: bigint;
+  readonly daysSupply: bigint;
 }
 
 export interface ContentCommittedEvent extends BaseEvent {

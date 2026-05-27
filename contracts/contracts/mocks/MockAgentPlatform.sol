@@ -74,33 +74,34 @@ contract MockAgentPlatform is IAgentRequester {
         observedStateDuringCreate = IStateProbe(callbackAddress).stateOf(reqIdFromPayload);
     }
 
+    /// @dev The arbiter ruling fields the contract decodes from `responses[0].result`.
+    ///      Passed as one calldata struct to keep `triggerRuling` off the stack limit.
+    struct Ruling {
+        uint8 decision; // 0=approve,1=deny,2=need_more_evidence,3=policy_invalid
+        uint256 costPlusUnitPrice; // Mark Cuban Cost Plus per-unit; contract caps at × quantity
+        uint256 nadacUnitPrice; // NADAC per-unit acquisition-cost floor reference
+        bytes32 rationaleHash;
+        bytes32 clauseRef; // policy clause the agent relied on
+        bytes32 standardRef; // public standard cited for a policy flag (R6b)
+        uint256 receiptId; // off-chain receipt pointer to surface
+    }
+
     /// @notice Drive a successful necessity ruling back into the target as the
-    ///         platform would. Encodes the arbiter tuple the contract decodes:
-    ///         `(Decision, benchmarkCap, rationaleHash, clauseRef, standardRef, receipt)`.
+    ///         platform would, encoding the arbiter tuple the contract decodes:
+    ///         `(decision, costPlusUnitPrice, nadacUnitPrice, rationaleHash, clauseRef,
+    ///         standardRef, receiptId)`.
     /// @param target The CoverageNegotiation contract (implements handleResponse).
     /// @param requestId The request to resolve.
-    /// @param decision Arbiter decision (0=approve,1=deny,2=need_more_evidence,3=policy_invalid).
-    /// @param benchmarkCap Public price cap; the contract computes min(requested, cap).
-    /// @param rationaleHash Hash of the off-chain rationale.
-    /// @param clauseRef The policy clause the agent relied on.
-    /// @param standardRef Public standard cited for a policy flag (R6b).
-    /// @param receiptId Off-chain receipt pointer to surface.
-    function triggerRuling(
-        address target,
-        uint256 requestId,
-        uint8 decision,
-        uint256 benchmarkCap,
-        bytes32 rationaleHash,
-        bytes32 clauseRef,
-        bytes32 standardRef,
-        uint256 receiptId
-    ) external {
+    /// @param r The ruling fields (see {@link Ruling}).
+    function triggerRuling(address target, uint256 requestId, Ruling calldata r) external {
         Response[] memory responses = new Response[](1);
         responses[0] = Response({
             validator: address(this),
-            result: abi.encode(decision, benchmarkCap, rationaleHash, clauseRef, standardRef, receiptId),
+            result: abi.encode(
+                r.decision, r.costPlusUnitPrice, r.nadacUnitPrice, r.rationaleHash, r.clauseRef, r.standardRef, r.receiptId
+            ),
             status: ResponseStatus.Success,
-            receipt: receiptId,
+            receipt: r.receiptId,
             timestamp: block.timestamp,
             executionCost: deposit
         });

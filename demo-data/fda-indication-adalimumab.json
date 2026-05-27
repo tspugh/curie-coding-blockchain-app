@@ -1,0 +1,12 @@
+{
+  "openfda": {
+    "brand_name": ["HUMIRA"],
+    "generic_name": ["ADALIMUMAB"],
+    "rxcui": ["1366724"],
+    "product_ndc": ["00074-3799"]
+  },
+  "indications_and_usage": [
+    "1 INDICATIONS AND USAGE. HUMIRA (adalimumab) is a tumor necrosis factor (TNF) blocker indicated for the treatment of: Plaque Psoriasis (Ps): adult patients with moderate to severe chronic plaque psoriasis who are candidates for systemic therapy or phototherapy, and when other systemic therapies are medically less appropriate. Other approved indications include Rheumatoid Arthritis, Psoriatic Arthritis, Ankylosing Spondylitis, Crohn's Disease, and Ulcerative Colitis."
+  ],
+  "_curie_note": "synthetic fixture; FDA-approved indications for the policy-void gotcha (SPEC-0002 R3)"
+}

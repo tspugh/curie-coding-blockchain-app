@@ -37,6 +37,7 @@ export {
   type CoverageNegotiationClient,
   type CreateContractParams,
   type PolicyCommitment,
+  type PriceBasis,
   type EventFilter,
   type CoverageClientOptions,
   type SimulatedAgentOptions,
@@ -75,6 +76,34 @@ export {
   type NegotiationTranscript,
   type PostRulingAction,
 } from "./orchestrator.js";
+
+// --- Re-exports: mocked CDS-Hooks 2.0 integration seam (SPEC-0002 R7) ---
+export {
+  type CdsHooksRequest,
+  type CdsHooksResponse,
+  type OrderSignContext,
+  type Card,
+  type CardSource,
+  type CardLink,
+  type SystemAction,
+  type Suggestion,
+  type SuggestionAction,
+  type OverrideReason,
+  type FhirAuthorization,
+  type FhirBundle,
+  type FhirBundleEntry,
+  type FhirMedicationRequest,
+  type FhirDispenseRequest,
+  type FhirCodeableConcept,
+  type FhirCoding,
+  type FhirQuantity,
+  type FhirDuration,
+  type FhirReference,
+  type FhirResource,
+  type CoverageRequestDraft,
+  SAMPLE_ORDER_SIGN_REQUEST,
+  orderSignToDraft,
+} from "./integrations/cds-hooks/index.js";
 
 import {
   createCoverageClient,

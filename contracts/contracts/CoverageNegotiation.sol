@@ -80,11 +80,15 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         address insurerAddr; // insurer wallet (auth — R11)
         bytes32 drugRef; // opaque RxNorm/NDC drug reference
         uint256 requestedAmount; // provider's billed / requested amount
+        uint256 quantity; // dispensed units (NDC-pinned) — DRIVES the cap (R2/R6a)
+        uint256 daysSupply; // optional clinical-utilization context (necessity, NOT price)
         bytes32 justificationHash; // keccak256 of the de-identified justification
         bytes32 evidenceUri; // opaque ref to the latest public-evidence doc
         bytes32 policyHash; // keccak256 of the insurer's attached policy body
         bytes32 policyUri; // opaque ref to the public policy body (R5)
         uint256 coveredAmount; // deterministic min(requested, cap) on approve (R6a)
+        uint256 costPlusUnitPrice; // Mark Cuban Cost Plus per-unit price (agent lookup, R10)
+        uint256 nadacUnitPrice; // NADAC per-unit acquisition-cost FLOOR reference (R6a/R10)
         bytes32 rationaleHash; // hash of the agent's latest rationale
         bytes32 clauseRef; // the policy clause the agent relied on (R6)
         bytes32 standardRef; // public standard cited for a policy flag (R6b)
@@ -138,7 +142,9 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         address providerAddr,
         address insurerAddr,
         bytes32 drugRef,
-        uint256 requestedAmount
+        uint256 requestedAmount,
+        uint256 quantity,
+        uint256 daysSupply
     );
     event ContentCommitted(uint256 indexed reqId, bytes32 contentHash, bytes32 uri);
     event InsurerEngaged(uint256 indexed reqId, bytes32 policyHash, bytes32 policyUri);
@@ -229,11 +235,14 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         address insurerAddr,
         bytes32 drugRef,
         uint256 requestedAmount,
+        uint256 quantity,
+        uint256 daysSupply,
         bytes32 justificationHash,
         bytes32 evidenceUri
     ) external returns (uint256 reqId) {
         require(providerAddr != address(0) && insurerAddr != address(0), "addr: zero");
         require(msg.sender == providerAddr, "auth: not provider");
+        require(quantity > 0, "qty: zero"); // quantity drives the deterministic cap (R6a)
 
         reqId = _nextId++;
         Negotiation storage n = _negotiations[reqId];
@@ -243,6 +252,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         n.insurerAddr = insurerAddr;
         n.drugRef = drugRef;
         n.requestedAmount = requestedAmount;
+        n.quantity = quantity;
+        n.daysSupply = daysSupply;
         n.justificationHash = justificationHash;
         n.evidenceUri = evidenceUri;
         n.state = State.Open;
@@ -250,7 +261,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         n.exists = true;
 
         emit ContractCreated(
-            reqId, providerId, insurerId, providerAddr, insurerAddr, drugRef, requestedAmount
+            reqId, providerId, insurerId, providerAddr, insurerAddr,
+            drugRef, requestedAmount, quantity, daysSupply
         );
         if (justificationHash != bytes32(0)) {
             emit ContentCommitted(reqId, justificationHash, evidenceUri);
@@ -427,13 +439,17 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     ///      responses, status, details)` signature, so that is what we implement and
     ///      the selector we pass to `createRequest`. From `responses[0].result` we
     ///      decode the arbiter tuple:
-    ///        `(Decision decision, uint256 benchmarkCap, bytes32 rationaleHash,
-    ///          bytes32 clauseRef, bytes32 standardRef, uint256 receiptId)`.
-    ///      SPEC-0001 §3 names a `coveredAmount` field in this tuple, but R6a forbids
-    ///      an AI-chosen amount: we therefore treat the decoded amount as the public
-    ///      price `benchmarkCap` and the CONTRACT computes the covered amount
-    ///      deterministically as `min(requestedAmount, benchmarkCap)` (R6a). A
-    ///      `PolicyInvalid` decision voids the contract (R6b). Gated to the platform.
+    ///        `(Decision decision, uint256 costPlusUnitPrice, uint256 nadacUnitPrice,
+    ///          bytes32 rationaleHash, bytes32 clauseRef, bytes32 standardRef,
+    ///          uint256 receiptId)`.
+    ///      R6a forbids an AI-chosen amount: the agent supplies only PUBLIC PRICE
+    ///      LOOKUPS (Mark Cuban Cost Plus per-unit retail price + NADAC per-unit
+    ///      acquisition-cost floor), and the CONTRACT computes the cap
+    ///      deterministically as `benchmarkCap = costPlusUnitPrice * quantity` then
+    ///      `coveredAmount = min(requestedAmount, benchmarkCap)` (R6a, resolved
+    ///      2026-05-27). `quantity` (R2) is the cap driver; `daysSupply` never enters
+    ///      the price. NADAC is recorded as the floor reference. A `PolicyInvalid`
+    ///      decision voids the contract (R6b). Gated to the platform.
     function handleResponse(
         uint256 requestId,
         Response[] memory responses,
@@ -460,18 +476,27 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
         (
             Decision decision,
-            uint256 benchmarkCap,
+            uint256 costPlusUnitPrice,
+            uint256 nadacUnitPrice,
             bytes32 rationaleHash,
             bytes32 clauseRef,
             bytes32 standardRef,
             uint256 receiptId
-        ) = abi.decode(responses[0].result, (Decision, uint256, bytes32, bytes32, bytes32, uint256));
+        ) = abi.decode(
+            responses[0].result,
+            (Decision, uint256, uint256, bytes32, bytes32, bytes32, uint256)
+        );
 
         n.lastDecision = decision;
         n.hasRuling = true;
         n.rationaleHash = rationaleHash;
         n.clauseRef = clauseRef;
         n.standardRef = standardRef;
+        // Record the public price lookups (R6a/R10): Cost Plus is the cap basis,
+        // NADAC the acquisition-cost floor reference. The CONTRACT — not the agent —
+        // multiplies by quantity and applies the min, so the amount is deterministic.
+        n.costPlusUnitPrice = costPlusUnitPrice;
+        n.nadacUnitPrice = nadacUnitPrice;
         // A fresh ruling resets prior acceptances — parties accept THIS ruling.
         n.providerAccepted = false;
         n.insurerAccepted = false;
@@ -487,7 +512,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         }
 
         if (decision == Decision.Approve) {
-            // R6a: deterministic covered amount — never AI-chosen.
+            // R6a: deterministic cap = Cost Plus per-unit × quantity; covered = min(requested, cap).
+            uint256 benchmarkCap = costPlusUnitPrice * n.quantity;
             uint256 covered = n.requestedAmount < benchmarkCap ? n.requestedAmount : benchmarkCap;
             n.coveredAmount = covered;
             n.state = State.Approved;
@@ -523,6 +549,34 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         return _get(reqId).coveredAmount;
     }
 
+    /// @notice The price basis behind the deterministic cap (R6a) — for the demo
+    ///         price gauge (SPEC-0002 R5): requested vs NADAC vs Cost Plus vs covered.
+    /// @return requestedAmount The provider's billed amount.
+    /// @return quantity Dispensed units (cap driver).
+    /// @return costPlusTotal Cost Plus per-unit × quantity (the benchmark cap).
+    /// @return nadacFloorTotal NADAC per-unit × quantity (acquisition-cost floor reference).
+    /// @return coveredAmount The deterministic covered amount.
+    function priceBasisOf(uint256 reqId)
+        external
+        view
+        returns (
+            uint256 requestedAmount,
+            uint256 quantity,
+            uint256 costPlusTotal,
+            uint256 nadacFloorTotal,
+            uint256 coveredAmount
+        )
+    {
+        Negotiation storage n = _get(reqId);
+        return (
+            n.requestedAmount,
+            n.quantity,
+            n.costPlusUnitPrice * n.quantity,
+            n.nadacUnitPrice * n.quantity,
+            n.coveredAmount
+        );
+    }
+
     /// @notice Current adjudication round count (R6c).
     function roundOf(uint256 reqId) external view returns (uint256) {
         return _get(reqId).round;
@@ -547,11 +601,14 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     ///      CEI: state is set to UnderReview BEFORE the external call.
     function _fireAgent(uint256 reqId, Negotiation storage n) internal {
         // Payload carries ONLY the de-identified extract: drug ref, requested amount,
-        // the public policy ref, and the public-evidence ref — never raw content (R4).
+        // quantity (cap driver) + daysSupply (necessity context), the public policy
+        // ref, and the public-evidence ref — never raw content (R4).
         bytes memory payload = abi.encode(
             reqId,
             n.drugRef,
             n.requestedAmount,
+            n.quantity,
+            n.daysSupply,
             n.policyHash,
             n.policyUri,
             n.evidenceUri

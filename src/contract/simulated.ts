@@ -20,8 +20,10 @@
  * configurable), delivered after `autoResolveMs` OR immediately when the caller
  * invokes the explicit {@link SimulatedBackend.resolve} hook — mimicking the
  * platform calling `handleResponse` back into the contract. On Approve the
- * covered amount is computed DETERMINISTICALLY as `min(requested, benchmarkCap)`
- * (R6a) — the arbiter config supplies the cap, never the covered amount.
+ * covered amount is computed DETERMINISTICALLY as
+ * `min(requested, costPlusUnitPrice * quantity)` (R6a) — the arbiter config
+ * supplies the per-unit Cost Plus price (the cap basis) and the NADAC floor
+ * reference, never the covered amount. NADAC is stored as a floor reference only.
  */
 import { ethers } from "ethers";
 
@@ -41,6 +43,7 @@ import type {
   CreateContractParams,
   EventFilter,
   PolicyCommitment,
+  PriceBasis,
 } from "./types.js";
 
 /** 0x + 64 zeros — the bytes32 zero sentinel (matches Solidity `bytes32(0)`). */
@@ -57,11 +60,20 @@ export interface SimulatedAgentOptions {
    */
   readonly decision?: Decision | ((n: Negotiation, reqId: bigint) => Decision);
   /**
-   * The public price cap fed into the deterministic `min(requested, cap)` on
-   * approve (R6a). May be fixed or a function. Default: the request's
-   * `requestedAmount`, so `coveredAmount === requestedAmount` unless overridden.
+   * The Mark Cuban Cost Plus PER-UNIT price the arbiter looks up. It is the cap
+   * basis for the deterministic `min(requested, costPlusUnitPrice * quantity)` on
+   * approve (R6a) — never the covered amount itself. May be fixed or a function.
+   * Default: a per-unit price that makes the cap non-binding, i.e.
+   * `ceil(requestedAmount / quantity)`, so `coveredAmount === requestedAmount`
+   * unless overridden. Set it lower to demonstrate the cap binding.
    */
-  readonly benchmarkCap?: bigint | ((n: Negotiation, reqId: bigint) => bigint);
+  readonly costPlusUnitPrice?: bigint | ((n: Negotiation, reqId: bigint) => bigint);
+  /**
+   * The NADAC acquisition-cost PER-UNIT FLOOR reference the arbiter looks up
+   * (R6a/R10). Stored on the record for transparency; it is a floor reference
+   * only and NEVER enters the cap math. May be fixed or a function. Default: 0.
+   */
+  readonly nadacUnitPrice?: bigint | ((n: Negotiation, reqId: bigint) => bigint);
   /** Hash of the arbiter's rationale. Default: `ethers.id("rationale")`. */
   readonly rationaleHash?: string;
   /** The policy clause the arbiter relied on (R6). Default: `ethers.id("clause")`. */
@@ -90,11 +102,15 @@ interface SimNegotiation {
   insurerAddr: string;
   drugRef: string;
   requestedAmount: bigint;
+  quantity: bigint;
+  daysSupply: bigint;
   justificationHash: string;
   evidenceUri: string;
   policyHash: string;
   policyUri: string;
   coveredAmount: bigint;
+  costPlusUnitPrice: bigint;
+  nadacUnitPrice: bigint;
   rationaleHash: string;
   clauseRef: string;
   standardRef: string;
@@ -139,6 +155,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     if (params.providerAddr === ethers.ZeroAddress || params.insurerAddr === ethers.ZeroAddress) {
       throw new Error("addr: zero");
     }
+    if (params.quantity <= 0n) throw new Error("qty: zero");
 
     const reqId = this.nextId++;
     const now = BigInt(Math.floor(Date.now() / 1000));
@@ -149,11 +166,15 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       insurerAddr: params.insurerAddr,
       drugRef: params.drugRef,
       requestedAmount: params.requestedAmount,
+      quantity: params.quantity,
+      daysSupply: params.daysSupply,
       justificationHash: params.justificationHash,
       evidenceUri: params.evidenceUri,
       policyHash: ZERO_HASH,
       policyUri: ZERO_HASH,
       coveredAmount: 0n,
+      costPlusUnitPrice: 0n,
+      nadacUnitPrice: 0n,
       rationaleHash: ZERO_HASH,
       clauseRef: ZERO_HASH,
       standardRef: ZERO_HASH,
@@ -179,6 +200,8 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       insurerAddr: params.insurerAddr,
       drugRef: params.drugRef,
       requestedAmount: params.requestedAmount,
+      quantity: params.quantity,
+      daysSupply: params.daysSupply,
     });
     if (params.justificationHash !== ZERO_HASH) {
       this.emit({
@@ -337,6 +360,17 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     return this.must(reqId).coveredAmount;
   }
 
+  async priceBasisOf(reqId: bigint): Promise<PriceBasis> {
+    const n = this.must(reqId);
+    return {
+      requestedAmount: n.requestedAmount,
+      quantity: n.quantity,
+      costPlusTotal: n.costPlusUnitPrice * n.quantity,
+      nadacFloorTotal: n.nadacUnitPrice * n.quantity,
+      coveredAmount: n.coveredAmount,
+    };
+  }
+
   async roundOf(reqId: bigint): Promise<bigint> {
     return this.must(reqId).round;
   }
@@ -421,8 +455,21 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     return typeof cfg === "function" ? cfg(this.snapshot(n), reqId) : cfg;
   }
 
-  private computeBenchmarkCap(n: SimNegotiation, reqId: bigint): bigint {
-    const cfg = this.agent.benchmarkCap ?? n.requestedAmount;
+  /**
+   * The Cost Plus per-unit price the arbiter looks up. Default: a per-unit price
+   * that makes the cap non-binding — `ceil(requestedAmount / quantity)` — so
+   * `coveredAmount === requestedAmount` unless overridden.
+   */
+  private computeCostPlusUnitPrice(n: SimNegotiation, reqId: bigint): bigint {
+    const cfg =
+      this.agent.costPlusUnitPrice ??
+      (n.quantity > 0n ? (n.requestedAmount + n.quantity - 1n) / n.quantity : n.requestedAmount);
+    return typeof cfg === "function" ? cfg(this.snapshot(n), reqId) : cfg;
+  }
+
+  /** The NADAC per-unit floor reference the arbiter looks up. Default: 0. */
+  private computeNadacUnitPrice(n: SimNegotiation, reqId: bigint): bigint {
+    const cfg = this.agent.nadacUnitPrice ?? 0n;
     return typeof cfg === "function" ? cfg(this.snapshot(n), reqId) : cfg;
   }
 
@@ -441,6 +488,10 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     n.rationaleHash = rationaleHash;
     n.clauseRef = clauseRef;
     n.standardRef = standardRef;
+    // A fresh ruling stores the per-unit prices the arbiter looked up: Cost Plus
+    // (the cap basis) and NADAC (the floor reference) (R6a/R10).
+    n.costPlusUnitPrice = this.computeCostPlusUnitPrice(n, reqId);
+    n.nadacUnitPrice = this.computeNadacUnitPrice(n, reqId);
     // A fresh ruling resets prior acceptances — parties accept THIS ruling.
     n.providerAccepted = false;
     n.insurerAccepted = false;
@@ -456,8 +507,9 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     }
 
     if (decision === Decision.Approve) {
-      // R6a: deterministic covered amount = min(requested, cap) — never AI-chosen.
-      const cap = this.computeBenchmarkCap(n, reqId);
+      // R6a: deterministic covered amount = min(requested, costPlusUnitPrice * quantity)
+      // — never AI-chosen. Mirrors the contract exactly (NADAC is a floor ref only).
+      const cap = n.costPlusUnitPrice * n.quantity;
       const covered = n.requestedAmount < cap ? n.requestedAmount : cap;
       n.coveredAmount = covered;
       n.state = State.Approved;
@@ -502,11 +554,15 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       insurerAddr: n.insurerAddr,
       drugRef: n.drugRef,
       requestedAmount: n.requestedAmount,
+      quantity: n.quantity,
+      daysSupply: n.daysSupply,
       justificationHash: n.justificationHash,
       evidenceUri: n.evidenceUri,
       policyHash: n.policyHash,
       policyUri: n.policyUri,
       coveredAmount: n.coveredAmount,
+      costPlusUnitPrice: n.costPlusUnitPrice,
+      nadacUnitPrice: n.nadacUnitPrice,
       rationaleHash: n.rationaleHash,
       clauseRef: n.clauseRef,
       standardRef: n.standardRef,

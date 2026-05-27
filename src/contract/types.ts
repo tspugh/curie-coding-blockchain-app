@@ -40,6 +40,10 @@ export interface CreateContractParams {
   readonly drugRef: string;
   /** The provider's billed / requested amount. */
   readonly requestedAmount: bigint;
+  /** Dispensed units (NDC-pinned) — DRIVES the deterministic cap; must be > 0 (R2/R6a). */
+  readonly quantity: bigint;
+  /** Optional clinical-utilization context (necessity reasoning, NOT price) (R2). */
+  readonly daysSupply: bigint;
   /** keccak256 of the de-identified justification (commit the hash only — R3/R4). */
   readonly justificationHash: string;
   /** Opaque 0x-bytes32 ref to the public-evidence doc (use ZERO_HASH if none). */
@@ -62,6 +66,25 @@ export interface PolicyCommitment {
   readonly policyHash: string;
   /** Opaque ref to the public policy body. */
   readonly policyUri: string;
+}
+
+/**
+ * The deterministic price-basis breakdown behind a covered amount — see
+ * `priceBasisOf` (R6a/R10). All totals are per-unit price × quantity; the
+ * covered amount is `min(requestedAmount, costPlusTotal)` on approve (NADAC is a
+ * stored floor reference only, never the cap).
+ */
+export interface PriceBasis {
+  /** The provider's billed / requested amount. */
+  readonly requestedAmount: bigint;
+  /** Dispensed units the totals are computed against. */
+  readonly quantity: bigint;
+  /** Mark Cuban Cost Plus cap total = costPlusUnitPrice × quantity (the cap basis). */
+  readonly costPlusTotal: bigint;
+  /** NADAC acquisition-cost floor total = nadacUnitPrice × quantity (reference only). */
+  readonly nadacFloorTotal: bigint;
+  /** Deterministic covered amount = min(requestedAmount, costPlusTotal) on approve; else 0. */
+  readonly coveredAmount: bigint;
 }
 
 /**
@@ -124,6 +147,9 @@ export interface CoverageNegotiationClient {
 
   /** The deterministic covered amount (0 unless approved+computed — R6a). */
   coveredAmountOf(reqId: bigint): Promise<bigint>;
+
+  /** The deterministic price-basis breakdown behind the covered amount (R6a/R10). */
+  priceBasisOf(reqId: bigint): Promise<PriceBasis>;
 
   /** Current adjudication round count (R6c). */
   roundOf(reqId: bigint): Promise<bigint>;

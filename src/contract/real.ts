@@ -33,6 +33,7 @@ import type {
   CreateContractParams,
   EventFilter,
   PolicyCommitment,
+  PriceBasis,
 } from "./types.js";
 
 /** Options for {@link RealBackend}. */
@@ -48,7 +49,7 @@ export interface RealBackendOptions {
 
 /**
  * Raw `Negotiation` tuple returned by ethers — field order matches the Solidity
- * struct (and `abi.ts`) EXACTLY. 25 fields.
+ * struct (and `abi.ts`) EXACTLY. 29 fields.
  */
 type RawNegotiation = readonly [
   bigint, // providerId
@@ -57,11 +58,15 @@ type RawNegotiation = readonly [
   string, // insurerAddr
   string, // drugRef
   bigint, // requestedAmount
+  bigint, // quantity
+  bigint, // daysSupply
   string, // justificationHash
   string, // evidenceUri
   string, // policyHash
   string, // policyUri
   bigint, // coveredAmount
+  bigint, // costPlusUnitPrice
+  bigint, // nadacUnitPrice
   string, // rationaleHash
   string, // clauseRef
   string, // standardRef
@@ -76,6 +81,15 @@ type RawNegotiation = readonly [
   bigint, // createdAt
   bigint, // rulingDeadline
   boolean, // exists
+];
+
+/** Raw `priceBasisOf` tuple returned by ethers — matches the view's return order. */
+type RawPriceBasis = readonly [
+  bigint, // requestedAmount
+  bigint, // quantity
+  bigint, // costPlusTotal
+  bigint, // nadacFloorTotal
+  bigint, // coveredAmount
 ];
 
 /** ethers tx overrides (value for payable agent-firing calls). */
@@ -96,6 +110,8 @@ interface CoverageContract extends ethers.BaseContract {
     insurerAddr: string,
     drugRef: string,
     requestedAmount: bigint,
+    quantity: bigint,
+    daysSupply: bigint,
     justificationHash: string,
     evidenceUri: string,
   ): Promise<ethers.ContractTransactionResponse>;
@@ -118,6 +134,7 @@ interface CoverageContract extends ethers.BaseContract {
   getNegotiation(reqId: bigint): Promise<RawNegotiation>;
   stateOf(reqId: bigint): Promise<bigint | number>;
   coveredAmountOf(reqId: bigint): Promise<bigint>;
+  priceBasisOf(reqId: bigint): Promise<RawPriceBasis>;
   roundOf(reqId: bigint): Promise<bigint>;
   policyOf(reqId: bigint): Promise<readonly [string, string]>;
   count(): Promise<bigint>;
@@ -164,6 +181,8 @@ export class RealBackend implements CoverageNegotiationClient {
       params.insurerAddr,
       params.drugRef,
       params.requestedAmount,
+      params.quantity,
+      params.daysSupply,
       params.justificationHash,
       params.evidenceUri,
     );
@@ -267,6 +286,12 @@ export class RealBackend implements CoverageNegotiationClient {
 
   async coveredAmountOf(reqId: bigint): Promise<bigint> {
     return (await this.contract.coveredAmountOf(reqId)) as bigint;
+  }
+
+  async priceBasisOf(reqId: bigint): Promise<PriceBasis> {
+    const [requestedAmount, quantity, costPlusTotal, nadacFloorTotal, coveredAmount] =
+      (await this.contract.priceBasisOf(reqId)) as RawPriceBasis;
+    return { requestedAmount, quantity, costPlusTotal, nadacFloorTotal, coveredAmount };
   }
 
   async roundOf(reqId: bigint): Promise<bigint> {
@@ -384,6 +409,8 @@ export class RealBackend implements CoverageNegotiationClient {
           insurerAddr: a[4] as string,
           drugRef: a[5] as string,
           requestedAmount: a[6] as bigint,
+          quantity: a[7] as bigint,
+          daysSupply: a[8] as bigint,
           ...meta,
         };
       case "ContentCommitted":
@@ -467,25 +494,29 @@ export class RealBackend implements CoverageNegotiationClient {
       insurerAddr: raw[3],
       drugRef: raw[4],
       requestedAmount: raw[5],
-      justificationHash: raw[6],
-      evidenceUri: raw[7],
-      policyHash: raw[8],
-      policyUri: raw[9],
-      coveredAmount: raw[10],
-      rationaleHash: raw[11],
-      clauseRef: raw[12],
-      standardRef: raw[13],
-      lastDecision: Number(raw[14]) as Decision,
-      hasRuling: raw[15],
-      round: raw[16],
-      providerAccepted: raw[17],
-      insurerAccepted: raw[18],
-      totalFees: raw[19],
-      state: Number(raw[20]) as State,
-      pendingRequestId: raw[21],
-      createdAt: raw[22],
-      rulingDeadline: raw[23],
-      exists: raw[24],
+      quantity: raw[6],
+      daysSupply: raw[7],
+      justificationHash: raw[8],
+      evidenceUri: raw[9],
+      policyHash: raw[10],
+      policyUri: raw[11],
+      coveredAmount: raw[12],
+      costPlusUnitPrice: raw[13],
+      nadacUnitPrice: raw[14],
+      rationaleHash: raw[15],
+      clauseRef: raw[16],
+      standardRef: raw[17],
+      lastDecision: Number(raw[18]) as Decision,
+      hasRuling: raw[19],
+      round: raw[20],
+      providerAccepted: raw[21],
+      insurerAccepted: raw[22],
+      totalFees: raw[23],
+      state: Number(raw[24]) as State,
+      pendingRequestId: raw[25],
+      createdAt: raw[26],
+      rulingDeadline: raw[27],
+      exists: raw[28],
     };
   }
 
