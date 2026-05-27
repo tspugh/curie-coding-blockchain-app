@@ -1,0 +1,139 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Curie web app static hosting (SPEC-0001 R18): a private S3 bucket served over
+  HTTPS by CloudFront via Origin Access Control, with SPA error-rewrites. Default
+  CloudFront certificate (HTTPS on *.cloudfront.net) — no custom domain / ACM.
+  Provisioned locally from an admin profile. Deletable in one command.
+
+Parameters:
+  ProjectTag:
+    Type: String
+    Default: cliqueue-coding-blockchain
+  TeamUsers:
+    Type: CommaDelimitedList
+    Description: >
+      Existing IAM users granted scoped deploy access (S3 rw + CloudFront
+      invalidation) to this site. Supplied at deploy time — e.g.
+      `--parameter-overrides TeamUsers=$CURIE_TEAM_USERS` (see .env). Intentionally
+      NOT defaulted, so no usernames are committed to this repo.
+
+Resources:
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      # Private: only CloudFront (via OAC) may read. No public access, no website endpoint.
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - { Key: Project, Value: !Ref ProjectTag }
+        - { Key: Name, Value: curie-web-static }
+
+  SiteOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "curie-web-oac-${AWS::StackName}"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SiteDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: Curie web app (static SPA)
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100   # cheapest: NA + EU edges
+        HttpVersion: http2and3
+        Origins:
+          - Id: s3origin
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt SiteOAC.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: s3origin
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          # Managed CachingOptimized policy
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        # SPA: client-side routes resolve to index.html
+        CustomErrorResponses:
+          - { ErrorCode: 403, ResponseCode: 200, ResponsePagePath: /index.html, ErrorCachingMinTTL: 10 }
+          - { ErrorCode: 404, ResponseCode: 200, ResponsePagePath: /index.html, ErrorCachingMinTTL: 10 }
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+      Tags:
+        - { Key: Project, Value: !Ref ProjectTag }
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontReadViaOAC
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${SiteBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${SiteDistribution}"
+
+  # Scoped deploy access for the team (S3 rw on this bucket + CloudFront invalidation
+  # on this distribution only). NOT admin — just enough to run scripts/deploy-static.sh.
+  WebDeployPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: curie-web-deploy
+      Description: Deploy access (S3 rw + CloudFront invalidation) for the Curie web static site.
+      Users: !Ref TeamUsers
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: S3List
+            Effect: Allow
+            Action: s3:ListBucket
+            Resource: !GetAtt SiteBucket.Arn
+          - Sid: S3Objects
+            Effect: Allow
+            Action: [s3:PutObject, s3:GetObject, s3:DeleteObject]
+            Resource: !Sub "${SiteBucket.Arn}/*"
+          - Sid: CloudFrontDistribution
+            Effect: Allow
+            Action:
+              - cloudfront:CreateInvalidation
+              - cloudfront:GetInvalidation
+              - cloudfront:ListInvalidations
+              - cloudfront:GetDistribution
+              - cloudfront:GetDistributionConfig
+            Resource: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${SiteDistribution}"
+          - Sid: CloudFrontList
+            Effect: Allow
+            Action: cloudfront:ListDistributions
+            Resource: "*"
+
+Outputs:
+  BucketName:
+    Description: S3 bucket for the static site (CURIE_DEPLOY_BUCKET)
+    Value: !Ref SiteBucket
+  DistributionId:
+    Description: CloudFront distribution id (CURIE_DEPLOY_DIST_ID)
+    Value: !Ref SiteDistribution
+  SiteUrl:
+    Description: Public HTTPS demo URL
+    Value: !Sub "https://${SiteDistribution.DomainName}"
