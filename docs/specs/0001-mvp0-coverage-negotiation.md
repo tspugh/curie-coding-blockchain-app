@@ -55,7 +55,7 @@ agent and are **bounded to N rounds** → `Deadlocked` if unresolved. Both accep
 - **R6c (MUST — necessity appeals, bounded)** From a ruling, **either party may `accept` or `appeal`**. An **appeal submits new public evidence of necessity** (`{evidenceUri, reasonHash}`) — never price haggling — and **re-fires the agent**, `round++`. Bounded to **N rounds** (config; default 3). **Both accepting** the current ruling makes it settleable; **N rounds without mutual acceptance → terminal `Deadlocked`**.
 - **R7 (MUST — provider refusal)** After the insurer has attached terms, the **provider may `refuse`** → terminal **`ProviderRefused`** (an attributable rejection of the insurer's stated terms, distinct from neutral `Withdrawn` and from `Deadlocked`), recording an optional reason hash.
 - **R8 (MUST — settlement marker)** Settlement in v0 is an **event marker only** (no token transfer): records the **agreed covered amount** and the **per-party fee split** (50/50) deducted from it. Self-claim is a marker.
-- **R9 (MUST — contract-native agent + fees)** The contract fires the native agent via `createRequest`; the platform **calls back** into the same contract. The **per-request fee is charged on execution** (refunded on timeout) — **funded wallet required in real mode**; fees are **split 50/50** and reconciled against the covered amount at settlement (marker in v0; real transfer v1). `Failed`/`TimedOut` (or a keeper) routes to a retriable state.
+- **R9 (MUST — contract-native agent + fees)** The contract fires the native agent via `createRequest`; the platform **calls back** into the same contract. The **per-request fee is charged on execution** (refunded on timeout) — **funded wallet required in real mode**; fees are **split 50/50** and reconciled against the covered amount at settlement (marker in v0; real transfer v1). `Failed`/`TimedOut` (or a keeper) routes to a retriable state. **Fee funding model (resolved 2026-05-27 — closes open question 5):** the **caller funds the fee at fire time** on the `payable` agent-firing entry points (`requestAdjudication` / `submitEvidence` / `appeal`). The contract computes the fee = `getRequestDeposit() + agentReward`, **requires `msg.value >= fee`** (else reverts `fee: underfunded`), **forwards EXACTLY `fee`** to the platform, and **refunds any overpayment** (`msg.value − fee`) to the caller — caller ETH is **never silently trapped** as owner-withdrawable balance. An `appeal` that hits the round cap (→ `Deadlocked`) fires no agent and so **refunds the full `msg.value`**. Refunds happen after the platform call under a `nonReentrant` guard with all state effects already committed (CEI). `withdrawFunds` therefore drains only the deliberate agent-fee float, not misrouted caller funds.
 - **R10 (MUST — public sources)** Drug identity via **RxNorm/NDC**; necessity evidence via **openFDA / DailyMed labels + clinical guidelines** (and the public standard for R6b); price cap via **Mark Cuban Cost Plus** (primary, fair retail) with **NADAC** as the acquisition-cost floor reference; coverage rubric is the **insurer's attached policy** (with a **published Medicare Part D** exception-criteria fixture for v0). Agent selects by source type: HTML → `LLM Parse Website`; JSON/REST → `JSON API Request`.
 
 **Identity & authorization**
@@ -140,6 +140,15 @@ the Somnia platform**.
 `requestAdjudication` and again on every `appeal`/`submitEvidence`; the per-request fee is
 charged on each execution (R9) and split 50/50 at settlement (R8).
 
+**Round semantics (R6c — explicit, to prevent off-by-one misreads).** `round` counts the
+**total number of adjudication cycles** (i.e. how many times the agent has been asked to
+rule), **not** the number of appeals. It is **set to 1** at the first `requestAdjudication`
+and **incremented by 1** on each subsequent agent fire (`submitEvidence` and `appeal`). So
+after the first ruling `round == 1`; the first successful appeal makes it `2`, and so on.
+The appeal cap is reached when **`round >= maxRounds` (N)** — an `appeal` at that point routes
+to terminal `Deadlocked` without firing a new cycle, and `Deadlocked(reqId, rounds)` reports
+that same total. Read `round` as "cycles run", never "appeals so far".
+
 **Agent arbitration mechanism (contract-native).** On `requestAdjudication` the contract
 fires a native Somnia agent (`createRequest`), selecting by source type (R10). The payload
 carries only the **de-identified extract + the insurer policy URL + the provider's public
@@ -218,7 +227,7 @@ exposes **attach-policy / engage**.
 2. **De-identified extract schema** — exact safe fields, and the re-identification guarantee for the combination. — priority: high
 3. **Insurer non-engagement** — if the insurer never attaches a policy, does a keeper expire `Open` → `Withdrawn` after a deadline? — priority: medium
 4. **N (round cap)** value and whether `Deadlocked` allows an off-chain human-escalation hook. — priority: medium
-5. **Real-mode fee funding** — who funds the per-request fee at fire time (contract float vs. caller) before the 50/50 reconciliation. — priority: medium
+5. **RESOLVED (2026-05-27): Real-mode fee funding = caller-funded at fire time.** The `payable` agent-firing entry points require `msg.value >= fee`, forward exactly `fee`, and refund the excess to the caller (no trapped ETH); the 50/50 reconciliation against the covered amount remains an event marker in v0 (real transfer v1). See R9. — priority: resolved
 6. **Public standard for R6b** — which source(s) are authoritative for "non-compliant" (openFDA/DailyMed label indications; specific guideline bodies)? — priority: medium
 7. Ruling timeout window given Somnia callback latency. — priority: low
 
