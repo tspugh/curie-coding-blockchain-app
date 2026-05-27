@@ -1,0 +1,55 @@
+<!doctype html>
+<!--
+  SYNTHETIC published insurer policy page (SPEC-0001 R5/R6/R10 / demo fixture).
+  No PHI. This HTML twin of formulary-part-d.json shapes the `LLM Parse Website`
+  agent path: in real-wallet mode the contract fires `LLM Parse Website` with
+  `ExtractString(options=["approve","deny","need_more_evidence"])` over a page
+  like this — weighing the provider's cited public evidence against THIS attached
+  policy and citing the clause it relies on. The benchmark cap is the
+  deterministic min() input (R6a), not an AI-chosen amount. Prices are
+  illustrative markers, not a real product price.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Part D Exception Criteria — Adalimumab (Demo policy)</title>
+  </head>
+  <body>
+    <h1>Part D Exception-Criteria Policy — Adalimumab (synthetic demo)</h1>
+    <p>As of 2026-05-01. Benchmark basis: public price reference (NADAC / Mark
+    Cuban Cost Plus). This is the insurer's <strong>attached policy</strong>
+    (hash on-chain, body here).</p>
+
+    <section id="adalimumab">
+      <h2>Adalimumab — Specialty (Tier 5)</h2>
+      <p>Status: <strong>Covered with restrictions</strong> — prior authorization,
+      step therapy, quantity limit.</p>
+
+      <h3>Clause PD-ADA-01 — Prior authorization criteria</h3>
+      <ul>
+        <li>Indication: moderate-to-severe chronic plaque psoriasis.</li>
+        <li>Disease severity: BSA &ge; 10%, or PASI &ge; 12.</li>
+        <li>Trial-and-failure or intolerance of &ge; 1 preferred conventional
+          systemic therapy (e.g. methotrexate).</li>
+        <li>No active serious infection; latent TB screening performed.</li>
+      </ul>
+      <p>Public standard: consistent with the openFDA HUMIRA label indication for
+      moderate-to-severe chronic plaque psoriasis. <strong>Compliant.</strong></p>
+
+      <h3>Clause PD-ADA-02 — Step-therapy exception</h3>
+      <p>An exception applies when a preferred conventional systemic agent has been
+      tried and failed, or is contraindicated/not tolerated, with documentation.</p>
+
+      <h3>Benchmark cap</h3>
+      <p>Covered amount = min(requested, 4200) (unitless marker; see
+      price-benchmarks.md). The agent never sets the amount (R6a).</p>
+
+      <h3>Ruling guidance</h3>
+      <p>Return <code>approve</code> when PD-ADA-01 criteria and a valid PD-ADA-02
+      step-therapy exception are documented; <code>need_more_evidence</code> when
+      documentation is incomplete; <code>deny</code> when a preferred agent has not
+      been tried and no exception applies. If a relied-on clause contradicts the
+      cited public standard, flag it (policy_invalid) rather than applying it.</p>
+    </section>
+  </body>
+</html>
