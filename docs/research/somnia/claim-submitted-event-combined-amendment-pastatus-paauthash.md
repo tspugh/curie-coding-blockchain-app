@@ -1,0 +1,32 @@
+# ClaimSubmitted Event: Combined Amendment for paStatus + paAuthHash
+
+## 2026-05-17 — ClaimSubmitted event must be amended once to add both `uint8 indexed paStatus` and `bytes32 paAuthHash`; LOG4 + 32-byte data = 28,800 gas on Somnia; single-amendment is correct per Solidity event stability canon; zero-sentinel for non-SATISFIED paStatus is ABI-valid and indexer-safe
+
+**Question investigated:** Should the `ClaimSubmitted` event spec be formally amended now to include both `uint8 indexed paStatus` and `bytes32 paAuthHash` (non-indexed data, zero when paStatus ≠ 0x02 SATISFIED) in a single amendment — rather than two sequential changes — given both fields are derived from the same CRD `coverage-information` extension object and the on-chain gas impact is already confirmed acceptable?
+
+**Key findings:**
+
+- **YES — single combined amendment is the correct approach.** Event signatures are the on-chain API surface; each change breaks indexers, subgraphs, and off-chain consumers. The established canon (Solidity docs, production DeFi pattern) is to stabilize event signatures early with the full intended field set, using sentinel values (`bytes32(0)`) for conditionally applicable fields. ([Solidity events doc](https://docs.soliditylang.org/en/latest/contracts.html#events); [Solidity ABI spec](https://docs.soliditylang.org/en/latest/abi-spec.html#events))
+
+- **Correct amended signature: `event ClaimSubmitted(bytes32 indexed claimId, bytes32 indexed claimHash, uint8 indexed paStatus, bytes32 paAuthHash)`.** This is LOG4 (4 topics: topic0=event sig, topic1=claimId, topic2=claimHash, topic3=paStatus) + 32 bytes non-indexed data (paAuthHash). ABI-encodes as: `topic3 = bytes32(uint256(paStatus))` (left-padded uint8); `data = abi.encode(paAuthHash)`. ([Solidity ABI spec events](https://docs.soliditylang.org/en/latest/abi-spec.html#events))
+
+- **Somnia gas cost: 28,800 gas.** Formula: `3200 + 5120 × 4 topics + 160 × 32 bytes = 3200 + 20480 + 5120 = 28,800 gas`. This is an increase of 15,360 gas over the LOG2 baseline (13,440 gas) of the prior `ClaimSubmitted(bytes32 indexed claimId, bytes32 indexed claimHash)` shape. At Somnia's current gas price (~$0.000006/gas), the delta is ~$0.000094/emission — negligible. ([Somnia Gas Differences](https://docs.somnia.network/developer/deployment-and-production/somnia-gas-differences-to-ethereum))
+
+- **`uint8 indexed paStatus` enables `eth_subscribe` topic[3] filtering for payer agents.** With paStatus as topic[3], a payer agent can subscribe to `topics: [sig, null, null, bytes32(uint256(0x03))]` to receive only AUTH_NEEDED claims — the highest-value triage filter for payer back-office. Topic[3] filter is confirmed on Ethereum-compatible chains via the `eth_getLogs`/`eth_subscribe` JSON-RPC standard. ([Ethereum JSON-RPC eth_getLogs](https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_getlogs))
+
+- **`bytes32(0)` as sentinel for paAuthHash when paStatus ≠ SATISFIED is ABI-valid and indexer-safe.** `bytes32(0)` is a normal static-type ABI encoding (32 zero bytes); The Graph and Ormi subgraph mappings treat it as a value to branch on. The only pitfall is ambiguity if `bytes32(0)` were a valid real hash — cryptographically negligible for HMAC-SHA256 outputs. Sentinel must be documented in NatSpec: "paAuthHash is the HMAC-SHA256(CLP07_DOMAIN_SEPARATOR, satisfiedPaId) commitment; MUST be bytes32(0) for paStatus ≠ 0x02." ([Solidity ABI spec](https://docs.soliditylang.org/en/latest/abi-spec.html#events); [The Graph event-driven indexing](https://thegraph.com/blog/event-driven-development-unlocking-optimized-dapps-and-subgraphs/))
+
+- **Gas is paid for 32-byte non-indexed data even when paAuthHash = bytes32(0).** The EVM charges per byte of log data regardless of zero or non-zero content. Omitting the field would remove the 5,120-gas data cost but break schema stability. The tradeoff favors schema stability: 28,800 gas total vs 23,680 gas (LOG4 + 0 data) saves 5,120 gas per non-SATISFIED claim at the cost of indexer complexity from a variable-length event. Fixed schema is preferred. ([Somnia Gas Differences](https://docs.somnia.network/developer/deployment-and-production/somnia-gas-differences-to-ethereum))
+
+- **No production DeFi contract uses the exact shape (indexed uint8 status + conditional non-indexed bytes32 commitment).** The closest is Compound Timelock's repeat-context pattern (confirmed in prior research) and OZ AccessControl's indexed-categorical + non-indexed-payload shape. The pattern is consistent with production practice but cliqueue is the first protocol to use it for a healthcare PA status × auth hash combination. ([OZ AccessControl](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/access/AccessControl.sol); [Compound Timelock](https://github.com/compound-finance/compound-protocol/blob/master/contracts/Timelock.sol))
+
+**Design implication:** Amend `ClaimSubmitted` to `event ClaimSubmitted(bytes32 indexed claimId, bytes32 indexed claimHash, uint8 indexed paStatus, bytes32 paAuthHash)` in one change. Enforce `require(paStatus == 0x02 ? paAuthHash != bytes32(0) : paAuthHash == bytes32(0))` in `submitClaim()`. Add NatSpec documenting the conditional-zero invariant. Declare event in `IClaimsAdjudicator` for Ormi subgraph binding. Gas: 28,800 per emission on Somnia (LOG4 + 32 bytes). Payer agents may subscribe via `topics[3]` to filter AUTH_NEEDED (0x03) or CONDITIONAL (0x05) claims for priority triage.
+
+**Open questions generated:**
+1. Should `IClaimsAdjudicator` declare `ClaimSubmitted`, `ClaimAdjudicated`, `PayerClaimRefSet`, `ClaimPaStatusResolved`, and `StaffingFloorReached` as a single interface-level event registry — creating one canonical reference for Ormi subgraph schema generation rather than scattering event declarations across implementation files?
+2. Should the Ormi subgraph entity for `ClaimSubmitted` index `paStatus` as a queryable enum field and `paAuthHash` as a nullable `Bytes` field (null when `bytes32(0)`) — enabling payer agents to query "all SATISFIED claims by hospitalId in the last 30 days" without scanning the full event log?
+3. Should cliqueue's pre-deployment canary suite include a `ClaimSubmitted` event emission test that verifies topic[3] filtering works correctly on Somnia mainnet (chain ID 5031) — confirming that `uint8` indexed values are correctly padded to 32-byte topics and filterable via `eth_subscribe`?
+
+---
+
+**See also** — [[../topics/prior-auth|PA hub]]

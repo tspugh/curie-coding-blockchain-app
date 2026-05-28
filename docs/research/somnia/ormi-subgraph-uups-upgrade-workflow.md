@@ -1,0 +1,32 @@
+# Ormi Subgraph UUPS Upgrade Workflow
+
+## 2026-05-17 — Ormi subgraph UUPS upgrade: no atomic ABI-upgrade-with-history-preservation; grafting is development-only / not recommended for production; correct production pattern is dual data sources with event renaming; full reindex from genesis is the safe default
+
+**Question investigated:** When `ClaimsAdjudicator` is upgraded via UUPS proxy, does the Ormi hosted subgraph environment support an atomic ABI-upgrade + subgraph-redeploy workflow that preserves all indexed history across implementation upgrades — or must the hospital integration team stand up a new subgraph deployment and migrate historical queries?
+
+**Key findings:**
+
+- **No atomic ABI-upgrade-with-history-preservation exists in The Graph or Ormi.** The Graph's subgraph deployment model is immutable per deployment: a subgraph deployment is identified by a deployment ID (IPFS hash of the manifest). Changing the ABI or mappings always creates a new deployment. There is no in-place "swap ABI, keep deployment ID" mechanism. ([The Graph: Deploying a Subgraph](https://thegraph.com/docs/en/subgraphs/developing/creating/deploying-a-subgraph/); [The Graph: Versioning Subgraphs](https://thegraph.com/docs/en/subgraphs/developing/creating/versioning-subgraphs/))
+
+- **Grafting exists but is explicitly not recommended for production or The Graph Network.** The Graph's grafting feature (`graft: { base: <deploymentId>, block: <N> }` in `subgraph.yaml`) copies the old deployment's entity store up to a graft block and continues indexing forward with new mappings. However, The Graph's official documentation states: "It is recommended to not use grafting for Subgraphs published to The Graph Network" and the hotfix guide states: "Grafting is not recommended for Subgraphs intended for The Graph's decentralized network (mainnet)" because "it can complicate indexing and may not be fully supported by all Indexers." ([The Graph: Grafting Guide](https://thegraph.com/docs/en/subgraphs/guides/grafting/); [The Graph: Grafting Hotfix Best Practice](https://thegraph.com/docs/en/subgraphs/best-practices/grafting-hotfix/))
+
+- **Ormi has no documented UUPS-upgrade-specific subgraph workflow.** Ormi is The Graph-compatible (same `graph deploy` CLI, same `subgraph.yaml` spec — confirmed in prior research). Ormi's public docs do not document any capability beyond standard graph-node behavior for UUPS upgrades, grafting, or in-place ABI replacement. The safe assumption is standard graph-node semantics apply. ([Ormi docs landing page](https://ormilabs.com/docs/welcome))
+
+- **Correct production pattern for UUPS ABI-changing upgrade: dual data sources + event renaming.** The Graph-ecosystem recommended approach is: (1) keep the proxy address as the indexed address (proxy address is stable across UUPS upgrades); (2) if event signatures change after the upgrade, add a second `dataSource` entry in `subgraph.yaml` using the new ABI starting at the upgrade block; (3) rename conflicting events in the ABI to distinct handler names (e.g., `LegacyClaimSubmitted` vs `ClaimSubmitted`) enabling one subgraph to index both pre- and post-upgrade event shapes without handler collision. ([Chainstack: Creating a Subgraph for Upgradeable Proxy Contracts](https://docs.chainstack.com/docs/creating-a-subgraph-for-upgradeable-proxy-contracts-a-developers-guide); [The Graph: Subgraph Manifest Data Sources](https://thegraph.com/docs/en/subgraphs/developing/creating/manifest/))
+
+- **UUPS upgrade that does NOT change event signatures requires no subgraph change.** If `ClaimsAdjudicator` is upgraded (e.g., bug fix to internal logic) without altering any event signatures, the existing subgraph continues to index correctly with no action required. Only ABI-breaking changes (added/removed indexed topics, changed event parameter types, renamed events) require a new deployment or dual-source strategy.
+
+- **Full reindex from genesis is the safe default for major ABI changes.** If the dual-source pattern is operationally complex, deploying a new subgraph from genesis with the new ABI is always correct. On Somnia (fast finality, high TPS), a full reindex from genesis is faster than on Ethereum mainnet. The cost is temporary loss of query availability during reindex sync. For cliqueue, this is acceptable for planned protocol upgrades (not acceptable for emergency hotfixes).
+
+- **Grafting graft-point schema compatibility rules (for reference, not production use):** The Graph permits grafted schemas to add nullable fields, add/remove entity types, and change enum values — but not change field types or remove non-nullable fields. This limits its usefulness for major ABI refactors regardless of production recommendations.
+
+**Design implication:** `ClaimsAdjudicator` UUPS upgrades that add new events (e.g., Phase 2 feature additions) should follow the dual-source pattern: increment the implementation version, add a new `dataSource` in `subgraph.yaml` starting at the upgrade block, and keep the existing data source for pre-upgrade history. Upgrades that change existing event signatures (rare, breaking) require a full reindex from genesis — acceptable for planned protocol upgrades with advance notice. cliqueue's deployment runbook must include a "Subgraph Upgrade Procedure" section documenting: (a) the dual-source pattern for additive upgrades, (b) the full-reindex procedure for breaking changes, and (c) an explicit note that grafting is not used in production.
+
+**Open questions generated:**
+1. Should cliqueue's deployment runbook specify a minimum advance-notice window (e.g., 48 hours, matching the TimelockController min-delay) before a `ClaimsAdjudicator` UUPS upgrade that changes event signatures — so hospital integration engineers have time to prepare the new subgraph deployment before the upgrade executes?
+2. Should the Ormi subgraph `subgraph.yaml` use `templates` (dynamic data sources) or static `dataSources` for handling the pre/post-upgrade event split — and does the Ormi hosted environment support dynamic data source templates?
+3. When a dual-source subgraph is deployed after a `ClaimsAdjudicator` upgrade, should cliqueue publish a versioned `subgraph.yaml` artifact in the contracts repo alongside the ABI files — so hospital integration engineers can deploy the updated subgraph without writing YAML from scratch?
+
+---
+
+**See also** — [[../topics/upgradeable-proxy|upgradeable-proxy hub]] · [[../topics/somnia-substrate|Somnia substrate hub]]

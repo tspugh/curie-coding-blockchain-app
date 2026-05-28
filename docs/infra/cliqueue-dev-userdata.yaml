@@ -1,0 +1,136 @@
+#cloud-config
+hostname: cliqueue-dev
+preserve_hostname: false
+
+package_update: true
+package_upgrade: true
+packages:
+  - git
+  - tmux
+  - htop
+  - build-essential
+  - python3
+  - python3-pip
+  - python3-venv
+  - jq
+  - unzip
+  - curl
+  - ca-certificates
+
+write_files:
+  - path: /usr/local/sbin/autoshutdown.sh
+    permissions: '0755'
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      # Shut the instance down after IDLE_THRESHOLD_MIN of no human activity.
+      # Activity = any logged-in user (who), any tmux session, or any live SSM session worker.
+      set -euo pipefail
+      IDLE_THRESHOLD_MIN=60
+      STATE_DIR=/var/lib/autoshutdown
+      STATE_FILE="$STATE_DIR/idle-since"
+      mkdir -p "$STATE_DIR"
+
+      active=0
+      if who | grep -q .; then active=1; fi
+      if command -v tmux >/dev/null 2>&1 && sudo -u ubuntu tmux ls >/dev/null 2>&1; then active=1; fi
+      if pgrep -f 'ssm-session-worker' >/dev/null 2>&1; then active=1; fi
+      # Hermes-aware: if hermes-gateway.service is installed AND enabled AND active, stay up.
+      # No-op on fresh boxes where Hermes is not installed.
+      if systemctl is-enabled hermes-gateway.service >/dev/null 2>&1 \
+         && systemctl is-active  hermes-gateway.service >/dev/null 2>&1; then
+        active=1
+      fi
+
+      now=$(date +%s)
+      if [ "$active" -eq 1 ]; then
+        rm -f "$STATE_FILE"
+        exit 0
+      fi
+      if [ ! -f "$STATE_FILE" ]; then
+        echo "$now" > "$STATE_FILE"
+        exit 0
+      fi
+      idle_since=$(cat "$STATE_FILE")
+      idle_min=$(( (now - idle_since) / 60 ))
+      if [ "$idle_min" -ge "$IDLE_THRESHOLD_MIN" ]; then
+        logger -t autoshutdown "idle for ${idle_min} min, shutting down"
+        /sbin/shutdown -h now
+      fi
+
+  - path: /etc/systemd/system/autoshutdown.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Auto-shutdown when idle
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/autoshutdown.sh
+
+  - path: /etc/systemd/system/autoshutdown.timer
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Run autoshutdown check every 5 minutes
+      [Timer]
+      OnBootSec=15min
+      OnUnitActiveSec=5min
+      Unit=autoshutdown.service
+      [Install]
+      WantedBy=timers.target
+
+  - path: /etc/motd
+    permissions: '0644'
+    content: |
+      ============================================================
+       cliqueue-coding-blockchain :: shared dev instance
+       Auto-shutdown: 60 min idle (no who / no tmux / no SSM)
+       To stay alive across reconnects: start a `tmux` session.
+       Tools preinstalled: node22, npm, claude (CLI), uv, gh, python3.
+       Per-user auth needed once: `claude` and `gh auth login`.
+       Repo: clone manually with your own GitHub credentials.
+      ============================================================
+
+  - path: /usr/local/sbin/install-devtools.sh
+    permissions: '0755'
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      # System-wide install: Node 22 + npm, Claude Code CLI, uv, gh.
+      # Idempotent — re-runs cleanly. Invoked once from cloud-init runcmd.
+      set -euxo pipefail
+      export DEBIAN_FRONTEND=noninteractive
+
+      # Node.js 22 LTS via NodeSource (satisfies engines.node>=20; bundles npm)
+      if ! command -v node >/dev/null || [ "$(node -v | cut -c2-3)" -lt 20 ]; then
+        curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+        apt-get install -y nodejs
+      fi
+
+      # Claude Code CLI (global npm). Per-user auth via `claude` on first run.
+      npm install -g @anthropic-ai/claude-code
+
+      # GitHub CLI from official apt repo
+      if ! command -v gh >/dev/null; then
+        mkdir -p -m 755 /etc/apt/keyrings
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+          -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
+        chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+          > /etc/apt/sources.list.d/github-cli.list
+        apt-get update
+        apt-get install -y gh
+      fi
+
+      # uv (Astral) — system-wide in /usr/local/bin
+      if ! command -v uv >/dev/null; then
+        curl -LsSf https://astral.sh/uv/install.sh \
+          | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh
+      fi
+
+runcmd:
+  - [ systemctl, daemon-reload ]
+  - [ systemctl, enable, --now, autoshutdown.timer ]
+  - [ snap, install, amazon-ssm-agent, --classic ]
+  - [ snap, start, --enable, amazon-ssm-agent ]
+  - [ bash, /usr/local/sbin/install-devtools.sh ]

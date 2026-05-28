@@ -1,0 +1,32 @@
+## 2026-05-16 — Architecture A payer integration barrier: claimId-only webhook and payer CLM01 cross-reference
+
+**Question investigated:** For Architecture A (cliqueue-operated dispute-listener that fires only `{ claimId, disputeWindowEnd, contractAddress }` to the payer's webhook), does requiring the payer to perform its own `(claimId → payer claim reference)` lookup create a real integration barrier — and is there a viable lookup mechanism the payer can use without cliqueue providing enrichment?
+
+**Key findings:**
+
+- **CLM01 is the canonical cross-reference bridge in X12 EDI.** The provider-assigned patient control number in CLM01 of the 837I/837P is echoed verbatim as CLP01 in the payer's 835 ERA remittance and in 277 claim status responses. Payer adjudication systems are built to cross-reference their internal ICN (CLP07) against this provider-assigned identifier. ([BCBS NC 835 Companion Guide](https://www.bluecrossnc.com/content/dam/bcbsnc/pdf/providers/network-participation/hipaa/835-5010-v3-0.pdf); [Stedi 276/277 API](https://stedi.com/docs/api-reference/healthcare/post-healthcare-claim-status))
+
+- **Architecture A is viable only if `claimId` is HMAC-derived from CLM01.** If `claimId = HMAC(CLM01 || providerAddress || hmacSalt)`, the payer already holds CLM01 in their adjudication system (from the original 837 or 835). On receipt of the webhook, the payer re-derives `HMAC(CLM01_from_their_system || providerAddress || hmacSalt)` and matches it against the received `claimId`. This requires the payer to know the `hmacSalt` — which must be shared securely at onboarding (not on-chain) and treated as a shared secret under the BAA. This pattern is consistent with existing cliqueue architecture (HMAC-keyed claimId) per docs/research/agreement-layer/edi-adapter-offchain-store-phi-reconstruction-risk.md.
+
+- **If `claimId` is a purely opaque identifier with no derivation from any X12 field, the payer cannot perform the lookup** without a separate registry or enrichment step. No standard X12 transaction (837, 835, 276, 277) supports receiving an external opaque hash and reverse-mapping it to a claim. The payer's adjudication system has no built-in hook for this. Architecture A breaks down in this case.
+
+- **Payer adjudication systems do not currently support inbound push webhooks for supplemental settlement notifications.** The current standard is pull-based: providers query 276/277 for claim status. Waystar and Claim.MD support outbound webhooks to providers (enrollment updates, claim acceptance), but no major payer exposes an inbound webhook endpoint for supplemental third-party settlement event injection. This means the payer must build a receiver service as a net-new integration. ([Waystar Platform](https://www.waystar.com/our-platform/smart-platform/); [Claim.MD API](https://api.claim.md/))
+
+- **The integration lift for a payer back-office team is 1–3 engineering sprints**, not a fundamental barrier, but requires payer willingness to invest. The receiver must: (1) accept cliqueue's webhook POST, (2) validate the `contractAddress` against a known cliqueue deployment whitelist, (3) derive `HMAC(CLM01 || providerAddress || hmacSalt)` for candidate claims in the dispute window, (4) match against `claimId`, (5) flag the matched claim for manual review. Steps 3–4 require a CLM01 lookup query against the payer's adjudication database — a standard internal API call.
+
+- **Avaneer Health (Aetna/Anthem/Elevance consortium) is the closest public precedent** for blockchain-connected real-time adjudication, but uses a permissioned consortium chain (not public Somnia) and requires bilateral enrollment agreement with each payer. No public documentation of their claim identifier scheme exists. ([Avaneer Health](https://avaneerhealth.com/press/avaneer-health-launches-its-decentralized-network-and-platform-to-transform-healthcare-administration/))
+
+- **CMS 2024 Interoperability Rule mandates FHIR Provider Access and Prior Authorization APIs by January 1, 2027**, but does not mandate payer support for inbound supplemental settlement notifications from third parties. The regulatory runway does not eliminate the payer integration lift. ([CMS Interoperability APIs](https://www.cms.gov/priorities/burden-reduction/overview/interoperability/implementation-guides-standards/application-programming-interfaces-apis-relevant-standards-implementation-guides-igs))
+
+- **Architecture B (hospital self-hosted listener) sidesteps the payer integration barrier entirely**: the hospital's middleware holds both the `hmacSalt` and the CLM01 mapping locally, enriches the payer notification internally, and delivers a payer-system-native reference (CLM01 or ICN). The payer receives a standard claim reference they already understand — no new payer integration required. This makes Architecture B significantly lower-friction for initial payer adoption.
+
+**Design implication:** Architecture A requires that `claimId` be HMAC-derived from CLM01 (already the design), AND that each payer build a CLM01-based HMAC verification receiver at onboarding. This is a non-trivial payer integration task. Architecture B (hospital self-hosted, enriched notification) avoids new payer development entirely and should be the **primary recommended path for the first production deployment**. Architecture A should be positioned as the preferred long-term architecture for payer-sophisticated deployments. The onboarding checklist must include a "Payer Readiness Questionnaire" gating Architecture A selection.
+
+**Open questions generated:**
+1. Should the onboarding checklist include a formal "Payer Readiness Questionnaire" — assessing whether the payer's back-office team can build a CLM01-HMAC verification receiver before Architecture A is selected for a given hospital deployment?
+2. Should the shared `hmacSalt` (required for payer CLM01 verification in Architecture A) be delivered to the payer via a separate BAA-governed key-exchange process — and does this key-exchange create a new BA relationship between cliqueue and the payer?
+3. For Architecture B, should the hospital's self-hosted listener be documented as a reference TypeScript implementation in the cliqueue open-source repo — to reduce hospital IT integration friction and demonstrate that no cliqueue-operated service ever touches the hospital's EDI data?
+
+---
+
+**See also** — [[../topics/x12|X12 hub]]

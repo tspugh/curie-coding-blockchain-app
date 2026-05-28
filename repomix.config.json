@@ -1,0 +1,27 @@
+{
+  "output": {
+    "filePath": ".claude/codebase.md",
+    "style": "markdown",
+    "showLineNumbers": false,
+    "removeComments": true,
+    "compress": true,
+    "topFilesLength": 20,
+    "includeEmptyDirectories": false
+  },
+  "include": [],
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      "*.mp3", "*.png", "*.jpg", "*.gif", "*.svg",
+      "audio/**", "*.min.js", "*.min.css",
+      "node_modules/**", "dist/**", "build/**",
+      "vendor/**", "*.vendor.*",
+      "docs/**",
+      ".claude/codebase.md",
+      "walkthrough-app/content/**/steps/*.md",
+      "walkthrough-app/content/**/*.json",
+      "specs/**"
+    ]
+  }
+}

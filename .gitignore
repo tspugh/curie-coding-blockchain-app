@@ -14,3 +14,17 @@ dist/
 
 # Logs
 *.log
+video/*
+demo-screenshots/*
+.playwright-mcp/*
+# .claude — expose agents/skills/hooks to judges; exclude generated/local artifacts
+.claude/settings.json
+.claude/settings.local.json
+.claude/codebase.md
+.claude/graph/
+CLAUDE.local.md
+docs/demo-midpoint-script.md
+public/curie-live-demo.webm
+scripts/record-live-demo.mjs
+remotion/*
+.claude/*

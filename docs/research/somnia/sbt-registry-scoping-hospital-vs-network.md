@@ -1,0 +1,30 @@
+## 2026-05-15 — Should the SBTRegistry for HumanAttestor credentials be hospital-scoped or network-scoped?
+
+**Question:** Should the SBTRegistry for HumanAttestor credentials be hospital-scoped (each hospital deploys its own ERC-5484 contract) or network-scoped (cliqueue deploys one registry, hospitals call `grantRole(attestor, hospitalId, credentialType)`)?
+
+- **Hospital-scoped deployment gas:** ~$44 one-time per hospital + ~$0.10–0.15 per SBT mint. At 50 hospitals × 10 coders each = ~$22,000 in redundant contract deployments plus minting costs. Each hospital is the issuer and controls `burn()` directly under `BurnAuth.IssuerOnly`. Liability stays within the issuing hospital by design — cross-hospital SBT reuse is technically impossible. [EIP-5484: https://eips.ethereum.org/EIPS/eip-5484]
+
+- **Network-scoped deployment gas:** Single ~$44 deployment (cliqueue-operated). Same per-attestor mint cost (~$0.10–0.15), plus ~$0.000025 per `grantRole()` call. Saves ~$22k in redundant deployments. Revocation requires role-admin checks (extra 5–10k gas per call ~$0.0003–0.0005 on Somnia). OpenZeppelin AccessControl role hierarchy gates revocation per `hospitalId`. [OpenZeppelin AccessControl, training data]
+
+- **ERC-5484 `BurnAuth` mechanics:** Four modes — `IssuerOnly`, `OwnerOnly`, `Both`, `Neither`. Hospital-scoped maps cleanly to `IssuerOnly` (hospital = deployer = issuer). Network-scoped requires `BurnAuth.IssuerOnly` where the "issuer" is a role-gated contract that only allows `HOSPITAL_ADMIN` role holders to revoke their own hospital's SBTs. Both patterns are spec-compliant; network-scoped requires 2–3 additional SLOADs per revocation call. [EIP-5484: https://eips.ethereum.org/EIPS/eip-5484]
+
+- **Industry precedent leans toward organization-scoped or hybrid:** Hyperledger Fabric MSP uses organization-scoped certificate authorities — each hospital maintains its own MSP and cross-org revocation is impossible by design. W3C VC 2.0 (May 2025) supports issuer-independent registries with revocation lists controlled by the original issuer — a hybrid model where a network registry exists but each issuer controls its own revocation list. [W3C VC 2.0, training data; Hyperledger Fabric MSP docs, training data — **weakly sourced: no direct URL available**]
+
+- **Cross-hospital fraud risk differs materially between models:** In the hospital-scoped model, a stale SBT from Hospital A cannot be used to attest Hospital B claims — the `ClaimsAdjudicator` references a specific contract address per hospital. In the network-scoped model, without explicit `hospitalId` enforcement per claim submission, a stale SBT could theoretically be reused across hospitals. Adding a `require(SBTRegistry.hospitalIdOf(attestorSBT) == claim.hospitalId)` check closes this gap at ~10k gas (~$0.00055/claim on Somnia). [Inferred from FCA precedent in prior research: docs/research/somnia/human-attestor-credential-representation.md — **liability claim: inferred, not case-cited**]
+
+- **Hybrid pattern (network-scoped issuance + hospital-controlled revocation) recommended:** Deploy single cliqueue-operated `SBTRegistry` with `mint(attestorAddress, hospitalId, credentialType, expiry)` gated by `onlyRole(HOSPITAL_ADMIN, hospitalId)`. Embed `hospitalId` in token metadata (requires ERC-5484 extension with ERC-721 metadata). Revocation: `burn(tokenId)` callable only by the hospital whose `hospitalId` matches `tokenIdToHospitalId[tokenId]`. Claim validation enforces `hospitalId` matching per submission. Gas overhead: ~10k/claim for the check (~$0.00055/claim).
+
+- **Central key risk in network-scoped model:** If cliqueue's deployer key is compromised, an attacker can `grantRole(HOSPITAL_ADMIN, attackerAddress, anyHospitalId)`. Mitigate with multisig (3-of-5 Gnosis Safe) or governance timelock on the registry admin role. Hospital-scoped model eliminates this attack surface entirely but at the cost of redundant deployments and higher operational complexity for cliqueue's onboarding flow. [OpenZeppelin Governor / TimelockController patterns, training data]
+
+- **Locum tenens edge case:** A coder holding credentials at multiple hospitals simultaneously (common in locum staffing) must hold separate SBTs per `(attestorAddress, hospitalId)` pair in the network-scoped model, or use a separate wallet per hospital engagement. One-to-many SBT holding is spec-compliant (ERC-5484 does not restrict multiple tokens per address). [EIP-5484: https://eips.ethereum.org/EIPS/eip-5484 — **application to locum staffing: inferred**]
+
+**Design implication:** The on-chain `SBTRegistry` for cliqueue should use the hybrid pattern — single network-scoped contract with hospital-role-gated revocation and per-claim `hospitalId` enforcement in the `ClaimsAdjudicator`. The `REGISTRY_ADMIN` role (for onboarding new hospitals) should be held by a 3-of-5 multisig to eliminate central key risk. This decision eliminates ~$22k in redundant deployment costs at 50 hospitals while preserving the liability-boundary isolation that the hospital-scoped model would provide by design.
+
+**Open questions generated:**
+- Does AHIMA/AAPC credential verification API rate-limiting allow cliqueue to pre-validate credentials before SBT minting at onboarding time, or must each hospital verify credentials off-chain before calling `grantRole()` (creating a potential verify-then-mint race condition)?
+- Should the `hospitalId` be a `bytes32` hash of the hospital's NPI (National Provider Identifier) to allow third-party verifiers to reconstruct it without a separate on-chain NPI registry — and does NPI-to-address correlation on a public chain constitute a HIPAA disclosure under the proposed 2026 Security Rule?
+- If a locum tenens coder holds multiple SBTs (one per hospitalId), should the `ClaimsAdjudicator` enforce a maximum concurrent SBT count per address to prevent a single compromised key from being a cross-hospital fraud vector?
+
+---
+
+**See also** — [[../topics/sbt|SBT hub]]
