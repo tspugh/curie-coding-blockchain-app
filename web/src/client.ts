@@ -126,6 +126,9 @@ export const client: CurieClient = IS_REAL
       contract: {
         real: {
           contractAddress: import.meta.env.VITE_CONTRACT_ADDRESS,
+          // Fee forwarded to the Somnia LLM agent platform per requestAdjudication.
+          // = platform.getRequestDeposit() (0.03 STT) + 0.10 STT × 3 validators = 0.33 STT.
+          agentFeeValue: BigInt(import.meta.env.VITE_AGENT_FEE_WEI ?? "330000000000000000"),
         },
       },
     })
