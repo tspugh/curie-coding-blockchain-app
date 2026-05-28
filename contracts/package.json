@@ -9,7 +9,10 @@
     "test": "hardhat test",
     "deploy:somnia": "hardhat run scripts/deploy.ts --network somniaTestnet",
     "deploy:mock": "hardhat run scripts/deploy-mock.ts --network somniaTestnet",
-    "admin:somnia": "hardhat run scripts/admin.ts --network somniaTestnet"
+    "admin:somnia": "hardhat run scripts/admin.ts --network somniaTestnet",
+    "switch-mock:somnia": "hardhat run scripts/switch-to-mock.ts --network somniaTestnet",
+    "trigger-ruling:somnia": "hardhat run scripts/trigger-ruling.ts --network somniaTestnet",
+    "restore-real:somnia": "hardhat run scripts/restore-real-platform.ts --network somniaTestnet"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",

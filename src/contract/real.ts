@@ -208,7 +208,7 @@ export class RealBackend implements CoverageNegotiationClient {
   }
 
   async submitEvidence(reqId: bigint, evidenceUri: string): Promise<void> {
-    const tx = await this.contract.submitEvidence(reqId, evidenceUri, { value: this.agentFeeValue });
+    const tx = await this.contract.submitEvidence(reqId, evidenceUri);
     await tx.wait();
   }
 
