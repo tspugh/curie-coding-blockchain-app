@@ -475,7 +475,13 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                   type="button"
                   data-testid="engage-noncompliant-toggle"
                   className={`policy-card noncompliant${policyChoice === "noncompliant" ? " selected" : ""}`}
-                  onClick={() => { setPolicyText(SAMPLE_CASE.nonCompliantPolicyText); setPolicyChoice("noncompliant"); }}
+                  onClick={() => {
+                    setPolicyText(SAMPLE_CASE.nonCompliantPolicyText);
+                    setPolicyChoice("noncompliant");
+                    // Pre-steer the simulated AI outcome: non-compliant policy → AI asks for more evidence
+                    setDecision(Decision.NeedMoreEvidence);
+                    setNextDecision(Decision.NeedMoreEvidence);
+                  }}
                 >
                   <span className="policy-card-icon">⚠</span>
                   <strong>Non-Compliant Policy (Demo)</strong>
@@ -608,18 +614,35 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
 
           {canSubmitEvidence && (
             <div className="action">
+              <div className="demo-hero" style={{ marginBottom: "0.75rem" }}>
+                <div className="demo-hero-text">
+                  <strong>Use the demo evidence</strong>
+                  <span>
+                    Phase 3 RCT proving Humira is FDA-indicated for this patient's condition
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="primary"
+                  data-testid="load-demo-evidence"
+                  onClick={() => setEvidenceText(SAMPLE_CASE.additionalEvidenceRef)}
+                >
+                  Load Demo Evidence →
+                </button>
+              </div>
               <label>
                 Submit additional evidence
                 <textarea
                   data-testid="evidence-text"
-                  rows={2}
+                  rows={3}
                   value={evidenceText}
                   onChange={(e) => setEvidenceText(e.target.value)}
-                  placeholder="Public evidence URL the AI requested."
+                  placeholder="Paste a public evidence URL or reference (PubMed, FDA, clinical guideline…)"
                 />
               </label>
               <button
                 type="button"
+                className="primary"
                 data-testid="evidence-submit"
                 onClick={() => {
                   if (!evidenceText.trim()) { setError("Evidence reference is required."); return; }
@@ -629,7 +652,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                   setEvidenceText("");
                 }}
               >
-                Submit Evidence
+                Submit Evidence →
               </button>
             </div>
           )}

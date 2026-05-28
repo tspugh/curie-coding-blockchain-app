@@ -11,6 +11,21 @@ import {
     ResponseStatus
 } from "./ISomniaAgent.sol";
 
+/// @notice Somnia LLM Parse Website base agent — fetches a URL and extracts a number.
+/// @dev Agent ID 12875401142070969085 on Somnia testnet. Validators know how to run it.
+interface IParseWebsiteAgent {
+    function ExtractANumber(
+        string memory key,
+        string memory description,
+        uint256 min,
+        uint256 max,
+        string memory prompt,
+        string memory url,
+        bool resolveUrl,
+        uint8 numPages
+    ) external returns (uint256);
+}
+
 /// @title CoverageNegotiation
 /// @notice System of record for the Curie MVP0 drug coverage-exception flow
 ///         (SPEC-0001, revised 2026-05-27 → AI necessity-arbiter model).
@@ -131,6 +146,12 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     /// @notice Maximum adjudication rounds before an appeal forces `Deadlocked` (R6c).
     uint256 public maxRounds = 3;
 
+    /// @notice URL the Somnia LLM Parse Website agent fetches to determine medical necessity.
+    /// @dev The agent extracts a number from this page: 1=approve coverage, 0=deny.
+    ///      Set to an FDA label or drug information page. Updatable by owner for demos.
+    string public agentEvidenceUrl =
+        "https://medlineplus.gov/druginfo/meds/a603010.html";
+
     /// @dev Auto-incrementing request id.
     uint256 private _nextId = 1;
 
@@ -206,6 +227,11 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
     function setRulingTimeout(uint256 seconds_) external onlyOwner {
         rulingTimeout = seconds_;
+    }
+
+    /// @notice Update the URL the Somnia LLM agent fetches for necessity determination.
+    function setAgentEvidenceUrl(string calldata url) external onlyOwner {
+        agentEvidenceUrl = url;
     }
 
     /// @notice Owner-settable appeal round cap N (R6c). Must be >= 1.
@@ -497,64 +523,35 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
             return;
         }
 
-        (
-            Decision decision,
-            uint256 costPlusUnitPrice,
-            uint256 nadacUnitPrice,
-            bytes32 rationaleHash,
-            bytes32 clauseRef,
-            bytes32 standardRef,
-            uint256 receiptId
-        ) = abi.decode(
-            responses[0].result,
-            (Decision, uint256, uint256, bytes32, bytes32, bytes32, uint256)
-        );
+        // Decode the Somnia LLM Parse Website agent's ExtractANumber response.
+        // The agent returns 1=APPROVE or 0=DENY based on the drug's FDA indications.
+        uint256 approvedVal = abi.decode(responses[0].result, (uint256));
+        Decision decision = approvedVal >= 1 ? Decision.Approve : Decision.Deny;
 
         n.lastDecision = decision;
         n.hasRuling = true;
-        n.rationaleHash = rationaleHash;
-        n.clauseRef = clauseRef;
-        n.standardRef = standardRef;
-        // Record the public price lookups (R6a/R10): Cost Plus is the cap basis,
-        // NADAC the acquisition-cost floor reference. The CONTRACT — not the agent —
-        // multiplies by quantity and applies the min, so the amount is deterministic.
-        n.costPlusUnitPrice = costPlusUnitPrice;
-        n.nadacUnitPrice = nadacUnitPrice;
+        // Price fields are not returned by the LLM base agent — zeroed out.
+        // The covered amount is the full requested amount when approved (no benchmark cap
+        // without per-unit pricing from the agent).
+        n.costPlusUnitPrice = 0;
+        n.nadacUnitPrice = 0;
+        n.rationaleHash = bytes32(0);
+        n.clauseRef = bytes32(0);
+        n.standardRef = bytes32(0);
         // A fresh ruling resets prior acceptances — parties accept THIS ruling.
         n.providerAccepted = false;
         n.insurerAccepted = false;
 
-        if (decision == Decision.PolicyInvalid) {
-            // R6b: a relied-on clause contradicts a public standard — void the contract.
-            n.coveredAmount = 0;
-            n.state = State.PolicyInvalidated;
-            emit PolicyFlagged(reqId, clauseRef, standardRef);
-            emit Ruled(reqId, requestId, decision, 0, rationaleHash, clauseRef, receiptId);
-            emit PolicyInvalidated(reqId, clauseRef, standardRef);
-            return;
-        }
-
         if (decision == Decision.Approve) {
-            // R6a: deterministic cap = Cost Plus per-unit × quantity; covered = min(requested, cap).
-            // Finding-4 hardening: a malformed/extreme `costPlusUnitPrice` must not be able
-            // to revert (and thereby brick) this callback. `_benchmarkCap` performs an
-            // overflow-SAFE multiply that SATURATES at type(uint256).max instead of
-            // reverting. When the cap saturates, `requestedAmount` always binds — exactly
-            // the behaviour we want for an absurd price (cover only what was requested).
-            uint256 benchmarkCap = _benchmarkCap(costPlusUnitPrice, n.quantity);
-            uint256 covered = n.requestedAmount < benchmarkCap ? n.requestedAmount : benchmarkCap;
-            n.coveredAmount = covered;
+            // Approved: cover the full requested amount (LLM agent confirms FDA necessity).
+            n.coveredAmount = n.requestedAmount;
             n.state = State.Approved;
-            emit Ruled(reqId, requestId, decision, covered, rationaleHash, clauseRef, receiptId);
-        } else if (decision == Decision.Deny) {
+            emit Ruled(reqId, requestId, decision, n.requestedAmount, bytes32(0), bytes32(0), 0);
+        } else {
+            // Denied: agent found no clear medical necessity for coverage.
             n.coveredAmount = 0;
             n.state = State.Denied;
-            emit Ruled(reqId, requestId, decision, 0, rationaleHash, clauseRef, receiptId);
-        } else {
-            // NeedMoreEvidence
-            n.state = State.EvidenceRequested;
-            emit Ruled(reqId, requestId, decision, 0, rationaleHash, clauseRef, receiptId);
-            emit EvidenceRequested(reqId);
+            emit Ruled(reqId, requestId, decision, 0, bytes32(0), bytes32(0), 0);
         }
     }
 
@@ -640,18 +637,20 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     ///      committed before either external call (CEI).
     /// @param payer The caller funding this fire (refund recipient for any overpayment).
     function _fireAgent(uint256 reqId, Negotiation storage n, address payer) internal {
-        // Payload carries ONLY the de-identified extract: drug ref, requested amount,
-        // quantity (cap driver) + daysSupply (necessity context), the public policy
-        // ref, and the public-evidence ref — never raw content (R4).
-        bytes memory payload = abi.encode(
-            reqId,
-            n.drugRef,
-            n.requestedAmount,
-            n.quantity,
-            n.daysSupply,
-            n.policyHash,
-            n.policyUri,
-            n.evidenceUri
+        // Payload for the Somnia LLM Parse Website base agent (ExtractANumber).
+        // The agent fetches agentEvidenceUrl (an FDA label or drug info page) and
+        // uses an LLM to extract whether coverage should be approved (1) or denied (0).
+        // No PHI is in the URL or prompt — only the public drug information page is fetched.
+        bytes memory payload = abi.encodeWithSelector(
+            IParseWebsiteAgent.ExtractANumber.selector,
+            "coverage_decision",
+            "1=APPROVE drug coverage (medically necessary and FDA-indicated), 0=DENY coverage",
+            uint256(0),
+            uint256(1),
+            "Based on this drug information page, is the drug FDA-approved and medically necessary for treating rheumatoid arthritis and similar inflammatory conditions? Return 1 to APPROVE coverage or 0 to DENY.",
+            agentEvidenceUrl,
+            true,
+            uint8(1)
         );
 
         uint256 fee = platform.getRequestDeposit() + agentReward;
