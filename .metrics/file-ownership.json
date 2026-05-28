@@ -1,8 +1,26 @@
 {
-  "e:\\Repos\\curie-coding-blockchain-app\\.gitignore": {
+  "e:\\Repos\\curie-coding-blockchain-app\\scripts\\register-agent.mjs": {
     "last_editor": "claude",
-    "last_mtime": "1779996807.2454615",
-    "last_edit_time": "2026-05-28T19:33:27.641337+00:00",
+    "last_mtime": "1779998846.1981747",
+    "last_edit_time": "2026-05-28T20:07:26.587581+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\contracts\\hardhat.config.ts": {
+    "last_editor": "claude",
+    "last_mtime": "1779999256.7637794",
+    "last_edit_time": "2026-05-28T20:14:17.184825+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\web\\src\\views\\Detail.tsx": {
+    "last_editor": "claude",
+    "last_mtime": "1780001161.1234715",
+    "last_edit_time": "2026-05-28T20:46:01.955301+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\web\\src\\views\\Create.tsx": {
+    "last_editor": "claude",
+    "last_mtime": "1780001231.7450879",
+    "last_edit_time": "2026-05-28T20:47:12.131928+00:00",
     "ticket_id": null
   }
 }

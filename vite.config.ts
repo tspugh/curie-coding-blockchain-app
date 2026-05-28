@@ -2,10 +2,14 @@
  * Vite config for the Curie web UI (SPEC-0001 R14/R15).
  *
  * The app lives under `web/` and consumes the already-built library from
- * `dist/` via the `@lib` alias, so we never recompile the lib through Vite. The
- * `process.env` define is a browser safety net: the library's wallet factory
- * reads env in real mode, but we always pass `mode: 'simulated'` explicitly, so
- * this just guarantees no bare `process.env` reference can blow up in-browser.
+ * `dist/` via the `@lib` alias, so we never recompile the lib through Vite.
+ *
+ * `envDir` is set to the repo root so that VITE_* vars in the root `.env` are
+ * loaded and available as `import.meta.env.VITE_*` in the browser build.
+ *
+ * `process.env` is stubbed to `{}` so no bare `process.env` reference from the
+ * library bundle blows up in-browser; the web client reads Vite env vars and
+ * passes them explicitly to createClient() instead.
  */
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -16,6 +20,7 @@ const repoRoot = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   root: "web",
+  envDir: repoRoot,
   plugins: [react()],
   resolve: {
     alias: {
