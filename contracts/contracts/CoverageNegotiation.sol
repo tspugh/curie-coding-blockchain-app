@@ -337,9 +337,11 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     }
 
     /// @notice Provider submits more public evidence of necessity from
-    ///         `EvidenceRequested`; re-fires the agent → `UnderReview`, round++ (R6c).
+    ///         `EvidenceRequested` → moves back to `Ready` so either party can
+    ///         re-request adjudication. The caller does NOT need to fund an agent
+    ///         fee here; the fee is paid on the subsequent `requestAdjudication`.
     /// @dev Provider-only (R11). Records only the opaque evidence ref (R3/R4).
-    function submitEvidence(uint256 reqId, bytes32 evidenceUri) external payable nonReentrant {
+    function submitEvidence(uint256 reqId, bytes32 evidenceUri) external {
         Negotiation storage n = _get(reqId);
         require(n.state == State.EvidenceRequested, "evidence: wrong state");
         require(msg.sender == n.providerAddr, "auth: not provider");
@@ -347,8 +349,9 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
         n.evidenceUri = evidenceUri;
         n.round += 1;
+        n.state = State.Ready;
         emit EvidenceSubmitted(reqId, evidenceUri);
-        _fireAgent(reqId, n, msg.sender);
+        emit ContractReady(reqId);
     }
 
     /// @notice Appeal a ruling with NEW public evidence of necessity (R6c). From
