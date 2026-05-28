@@ -1046,13 +1046,315 @@ tr.row-link:hover td:first-child {
   color: var(--text-2);
 }
 
-/* ─── 23. Footer ────────────────────────────────────────────────────────── */
+/* ─── 23. Brand sub-title ───────────────────────────────────────────────── */
 
-.footer {
-  padding: 16px 40px;
-  border-top: 1px solid var(--border);
-  background: var(--panel-2);
+.brand-sub {
+  font-size: 12px;
+  font-weight: 400;
   color: var(--muted-lt);
-  font-size: 11.5px;
-  letter-spacing: 0.01em;
+  margin-left: 8px;
+  letter-spacing: 0.03em;
 }
+
+/* ─── 24. Demo hero (Create page) ──────────────────────────────────────── */
+
+.demo-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  background: var(--accent-lt);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius);
+  padding: 18px 24px;
+  margin-bottom: 24px;
+}
+
+.demo-hero-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.demo-hero-text strong {
+  font-size: 15px;
+  color: var(--text);
+}
+
+.demo-hero-text span {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+/* ─── 25. Empty state (Overview) ────────────────────────────────────────── */
+
+.empty-state {
+  text-align: center;
+  padding: 64px 24px;
+  color: var(--text-2);
+}
+
+.empty-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.empty-state p {
+  font-size: 16px;
+  margin-bottom: 6px;
+}
+
+.empty-state .primary {
+  margin-top: 20px;
+}
+
+/* ─── 26. Policy choice cards (Insurer engage) ──────────────────────────── */
+
+.policy-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 12px 0 16px;
+}
+
+.policy-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  font: inherit;
+}
+
+.policy-card:hover {
+  border-color: var(--accent);
+  background: var(--accent-lt);
+  box-shadow: 0 2px 8px rgba(29, 78, 216, 0.08);
+}
+
+.policy-card.selected {
+  border-color: var(--accent);
+  background: var(--accent-lt);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.policy-card.noncompliant {
+  border-color: var(--warn-border);
+}
+
+.policy-card.noncompliant:hover,
+.policy-card.noncompliant.selected {
+  border-color: var(--warn-mid);
+  background: var(--warn-lt);
+  box-shadow: 0 0 0 3px rgba(180, 83, 9, 0.1);
+}
+
+.policy-card-icon {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.policy-card strong {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.policy-card p {
+  font-size: 12.5px;
+  color: var(--text-2);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* ─── 27. Decision option cards (Adjudication) ──────────────────────────── */
+
+.decision-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 10px 0 14px;
+}
+
+.decision-option {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.decision-option strong {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.decision-option span {
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.decision-option.approve:hover,
+.decision-option.approve.selected {
+  border-color: var(--ok-mid);
+  background: var(--ok-lt);
+}
+
+.decision-option.deny:hover,
+.decision-option.deny.selected {
+  border-color: var(--danger);
+  background: var(--danger-lt);
+}
+
+.decision-option.evidence:hover,
+.decision-option.evidence.selected {
+  border-color: var(--warn-mid);
+  background: var(--warn-lt);
+}
+
+.decision-option.void:hover,
+.decision-option.void.selected {
+  border-color: var(--accent);
+  background: var(--accent-lt);
+}
+
+/* ─── 28. Ruling hero (AI decision display) ─────────────────────────────── */
+
+.ruling-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ruling-result {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  border-radius: var(--radius);
+  border: 2px solid var(--border);
+}
+
+.ruling-result.approved {
+  border-color: var(--ok-mid);
+  background: var(--ok-lt);
+}
+
+.ruling-result.denied {
+  border-color: var(--danger);
+  background: var(--danger-lt);
+}
+
+.ruling-result.evidence {
+  border-color: var(--warn-mid);
+  background: var(--warn-lt);
+}
+
+.ruling-result.voided {
+  border-color: var(--warn-mid);
+  background: var(--warn-lt);
+}
+
+.ruling-icon {
+  font-size: 32px;
+  line-height: 1;
+  flex-shrink: 0;
+  font-style: normal;
+}
+
+.ruling-result.approved .ruling-icon { color: var(--ok); }
+.ruling-result.denied .ruling-icon   { color: var(--danger); }
+.ruling-result.evidence .ruling-icon { color: var(--warn); }
+.ruling-result.voided .ruling-icon   { color: var(--warn); }
+
+.ruling-result strong {
+  font-size: 18px;
+  font-weight: 700;
+  display: block;
+}
+
+.ruling-result p {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.ruling-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 16px;
+  font-size: 13px;
+}
+
+.ruling-meta dt { color: var(--muted); }
+.ruling-meta dd { font-weight: 600; }
+
+/* ─── 29. Next-step guidance banner ─────────────────────────────────────── */
+
+.next-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--accent-lt);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-size: 13.5px;
+  color: var(--accent-dk);
+  font-weight: 500;
+}
+
+.next-step-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+/* ─── 30. Proof toggle + block ──────────────────────────────────────────── */
+
+.proof-toggle {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 8px 0 0;
+  font: inherit;
+  font-size: 12px;
+}
+
+.proof-toggle:hover { text-decoration: underline; }
+
+.proof-block {
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: var(--panel-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+}
+
+/* ─── 31. Action label ──────────────────────────────────────────────────── */
+
+.action-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin: 0 0 10px;
+}
+
+/* ─── 32. ok-text helper ────────────────────────────────────────────────── */
+
+.ok-text { color: var(--ok); font-weight: 600; }
+.bad     { color: var(--danger); font-size: 12.5px; }

@@ -26,7 +26,7 @@ import {
   FDA_INDICATION_TEXT,
   FDA_LABEL_URL,
 } from "../fdaIndication.js";
-import { describeEvent, fmtAmount, hashContent as _, parseAmount, shortHex } from "../shared.js";
+import { describeEvent, fmtAmount, shortHex } from "../shared.js";
 
 interface DetailProps {
   readonly reqId: bigint;

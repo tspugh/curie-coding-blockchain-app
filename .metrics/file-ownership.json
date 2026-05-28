@@ -13,14 +13,32 @@
   },
   "e:\\Repos\\curie-coding-blockchain-app\\web\\src\\views\\Detail.tsx": {
     "last_editor": "claude",
-    "last_mtime": "1780001161.1234715",
-    "last_edit_time": "2026-05-28T20:46:01.955301+00:00",
+    "last_mtime": "1780001476.0734172",
+    "last_edit_time": "2026-05-28T20:51:16.405319+00:00",
     "ticket_id": null
   },
   "e:\\Repos\\curie-coding-blockchain-app\\web\\src\\views\\Create.tsx": {
     "last_editor": "claude",
     "last_mtime": "1780001231.7450879",
     "last_edit_time": "2026-05-28T20:47:12.131928+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\web\\src\\views\\Overview.tsx": {
+    "last_editor": "claude",
+    "last_mtime": "1780001261.8663044",
+    "last_edit_time": "2026-05-28T20:47:42.227725+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\web\\src\\App.tsx": {
+    "last_editor": "claude",
+    "last_mtime": "1780001289.9683063",
+    "last_edit_time": "2026-05-28T20:48:10.340524+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\web\\src\\styles.css": {
+    "last_editor": "claude",
+    "last_mtime": "1780001389.598804",
+    "last_edit_time": "2026-05-28T20:49:49.935645+00:00",
     "ticket_id": null
   }
 }
