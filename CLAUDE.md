@@ -5,6 +5,11 @@ drug coverage-exception arbitration on Somnia). It covers the working philosophy
 folder layout, architectural constraints, the spec-driven workflow, and the
 cross-repo policy.
 
+**Tech-stack and on-chain interface decisions are authoritative in
+[`AGENTS.md`](AGENTS.md) — read it first.** If anything below contradicts
+`AGENTS.md`, `AGENTS.md` wins. Product framing lives in
+[`docs/VISION.md`](docs/VISION.md).
+
 ## Spec-driven development
 
 This project is **spec-driven**: work starts as a spec in [`docs/specs/`](docs/specs/),
@@ -18,6 +23,7 @@ alongside the code, never left to drift. The current build target is
 
 ```
 .
+├── AGENTS.md      # authoritative tech-stack + on-chain interface constraints (read first)
 ├── CLAUDE.md      # this file — working philosophy, layout, constraints, cross-repo policy
 ├── LICENSE        # proprietary; all rights reserved
 ├── README.md
@@ -25,9 +31,17 @@ alongside the code, never left to drift. The current build target is
 ├── .claude/       # tooling: context7-mcp (Context7 docs) + spec-author (docs/specs/ standard)
 ├── src/           # TypeScript source. Entry: src/index.ts; Somnia core in src/somnia/.
 └── docs/
-    ├── specs/          # what to build (see below)
-    ├── research/       # what we're still researching (see below)
-    └── documentation/  # copied-down hard API/code docs (see below)
+    ├── VISION.md            # product vision (start here for the product)
+    ├── ROADMAP.md
+    ├── specs/               # what to build (see below)
+    ├── amendments/          # ADR-style decision records (A-NNNN)
+    ├── progress/            # implementation progress notes
+    ├── domain/              # healthcare-domain reference (e.g. payer architecture)
+    ├── technical-design/    # technical design notes
+    ├── demo/                # demo materials (synthetic only)
+    ├── research/            # what we're still researching (see below)
+    ├── reference/           # external reference material copied down (curie, somnia-agent-kit)
+    └── documentation/       # copied-down hard API/code docs (see below)
 ```
 
 ## Architectural constraints

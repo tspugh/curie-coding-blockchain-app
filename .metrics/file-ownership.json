@@ -1,0 +1,104 @@
+{
+  "e:\\Repos\\curie-coding-blockchain-app\\scripts\\register-agent.mjs": {
+    "last_editor": "claude",
+    "last_mtime": "1779998846.1981747",
+    "last_edit_time": "2026-05-28T20:07:26.587581+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\contracts\\hardhat.config.ts": {
+    "last_editor": "claude",
+    "last_mtime": "1779999256.7637794",
+    "last_edit_time": "2026-05-28T20:14:17.184825+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\web\\src\\views\\Detail.tsx": {
+    "last_editor": "claude",
+    "last_mtime": "1780003627.518072",
+    "last_edit_time": "2026-05-28T21:27:07.855498+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\web\\src\\views\\Create.tsx": {
+    "last_editor": "claude",
+    "last_mtime": "1780001231.7450879",
+    "last_edit_time": "2026-05-28T20:47:12.131928+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\web\\src\\views\\Overview.tsx": {
+    "last_editor": "claude",
+    "last_mtime": "1780001261.8663044",
+    "last_edit_time": "2026-05-28T20:47:42.227725+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\web\\src\\App.tsx": {
+    "last_editor": "claude",
+    "last_mtime": "1780001289.9683063",
+    "last_edit_time": "2026-05-28T20:48:10.340524+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\web\\src\\styles.css": {
+    "last_editor": "claude",
+    "last_mtime": "1780001389.598804",
+    "last_edit_time": "2026-05-28T20:49:49.935645+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\contracts\\scripts\\deploy-mock.ts": {
+    "last_editor": "claude",
+    "last_mtime": "1780002310.256551",
+    "last_edit_time": "2026-05-28T21:05:10.602346+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\contracts\\package.json": {
+    "last_editor": "claude",
+    "last_mtime": "1780004312.4165475",
+    "last_edit_time": "2026-05-28T21:38:32.787675+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\contracts\\contracts\\CoverageNegotiation.sol": {
+    "last_editor": "claude",
+    "last_mtime": "1780003829.786893",
+    "last_edit_time": "2026-05-28T21:30:30.154197+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\contracts\\scripts\\admin.ts": {
+    "last_editor": "claude",
+    "last_mtime": "1780003232.4556308",
+    "last_edit_time": "2026-05-28T21:20:32.828369+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\web\\src\\client.ts": {
+    "last_editor": "claude",
+    "last_mtime": "1780003297.5334787",
+    "last_edit_time": "2026-05-28T21:21:37.851988+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\web\\src\\sampleCase.ts": {
+    "last_editor": "claude",
+    "last_mtime": "1780003599.8896604",
+    "last_edit_time": "2026-05-28T21:26:40.191092+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\src\\contract\\real.ts": {
+    "last_editor": "claude",
+    "last_mtime": "1780003837.07648",
+    "last_edit_time": "2026-05-28T21:30:37.449641+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\contracts\\scripts\\switch-to-mock.ts": {
+    "last_editor": "claude",
+    "last_mtime": "1780003991.7583818",
+    "last_edit_time": "2026-05-28T21:33:12.096060+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\contracts\\scripts\\trigger-ruling.ts": {
+    "last_editor": "claude",
+    "last_mtime": "1780004006.439821",
+    "last_edit_time": "2026-05-28T21:33:26.810725+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\contracts\\scripts\\restore-real-platform.ts": {
+    "last_editor": "claude",
+    "last_mtime": "1780004303.0923526",
+    "last_edit_time": "2026-05-28T21:38:23.455958+00:00",
+    "ticket_id": null
+  }
+}
