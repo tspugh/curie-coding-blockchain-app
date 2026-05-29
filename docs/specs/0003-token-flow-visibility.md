@@ -53,6 +53,29 @@ delta are not surfaced in the UI — they have to open an explorer to reason abo
 > Future decisions append here as §2.N (2026-MM-DD) blocks. Don't rewrite earlier sections;
 > the chronological order is the audit trail.
 
+### 2.2 (2026-05-29) Persistent tx ledger — dev-server sink, never console (Decision 2)
+
+- **R7 (MUST) No console-spam tx logging.** Tx events MUST NOT be logged via `console.*`
+  in production code paths. Bad-practice noise; also unreadable when agent-browser drives
+  the UI.
+- **R8 (MUST) Per-tx event bus on the real backend.** `RealBackend` exposes a typed event
+  bus (`EventTarget`) that dispatches `tx-confirmed` after each `tx.wait()`, carrying the
+  *method name*, *tx hash*, *value (msg.value)*, *gasUsed*, *effectiveGasPrice*, and
+  *block number*. Per-method semantics live above (R4 attribution).
+- **R9 (MUST) Persistent JSONL ledger via the dev server.** A Vite dev-server middleware
+  exposes `POST /__log/tx` that appends a single JSON record to `.tmp/tx-log.jsonl` per
+  call. The client subscribes to the `tx-confirmed` bus and POSTs each event. The
+  *single source of truth* for a dev-session's spend is this file — not the UI's
+  in-memory state, which resets on reload.
+- **R10 (MUST) `.tmp/` is gitignored.** The ledger never enters version control. Wipe
+  with `rm -rf .tmp` to reset spend tracking.
+- **R11 (SHOULD) Best-effort POST.** A failed POST MUST NOT block the UI or the chain
+  flow — fire-and-forget with a brief retry, drop on permanent failure (logged once to
+  the dev server, not to the browser console).
+- **R12 (SHOULD) Agent-browser inspectable.** The ledger format is line-delimited JSON so
+  `tail -f .tmp/tx-log.jsonl | jq` works from a side terminal, and an agent-browser test
+  can shell out to assert on its contents between scenarios.
+
 ## 3. Technical documentation
 
 - **Balance source:** `wallet.provider.getBalance(wallet.address)`. The web client already

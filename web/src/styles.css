@@ -1358,3 +1358,56 @@ tr.row-link:hover td:first-child {
 
 .ok-text { color: var(--ok); font-weight: 600; }
 .bad     { color: var(--danger); font-size: 12.5px; }
+
+/* ─── 33. WalletBalance chip (SPEC-0003 §2.1 R1) ────────────────────────── */
+
+.wallet-balance {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.wallet-balance .label { color: var(--text-2); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.wallet-balance code   { font-variant-numeric: tabular-nums; font-size: 12.5px; color: var(--text); }
+
+/* ─── 34. TxMonitor floating panel (SPEC-0003 §2.1 R3 + §2.2 R8) ──────── */
+
+.tx-monitor {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  width: min(420px, calc(100vw - 32px));
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, .12);
+  font-size: 12.5px;
+  z-index: 50;
+}
+.tx-monitor header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border-lt);
+  cursor: pointer;
+  font-weight: 600;
+}
+.tx-monitor.empty header     { font-weight: 500; }
+.tx-monitor.empty .muted     { color: var(--text-2); font-weight: 400; font-style: italic; }
+.tx-monitor .totals          { display: inline-flex; gap: 10px; font-weight: 500; color: var(--text-2); }
+.tx-monitor .totals .count   { color: var(--accent); font-weight: 600; }
+.tx-monitor .dropped         { color: var(--danger); font-weight: 600; }
+
+.tx-monitor .tx-list { list-style: none; margin: 0; padding: 4px 0; max-height: 240px; overflow-y: auto; }
+.tx-monitor .tx-list li {
+  display: grid;
+  grid-template-columns: auto auto 1fr; grid-template-rows: auto auto;
+  gap: 2px 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-lt);
+}
+.tx-monitor .tx-list li:last-child { border-bottom: none; }
+.tx-monitor .tx-list .method      { font-weight: 600; }
+.tx-monitor .tx-list .hash        { color: var(--text-2); font-size: 11.5px; }
+.tx-monitor .tx-list .cost        { grid-column: 3 / 4; grid-row: 1; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-2); }
+.tx-monitor .tx-list .attribution { grid-column: 1 / -1; grid-row: 2; color: var(--text-2); font-size: 11.5px; }

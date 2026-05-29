@@ -164,3 +164,9 @@ export const client: CurieClient = IS_REAL
 // Acceptable only because this is a no-funds dev wallet (testnet / simulated):
 // expose the client for debugging and agent-browser tests.
 (window as unknown as { __curie: CurieClient }).__curie = client;
+
+// SPEC-0003 §2.2. Wire the tx-confirmed event bus on the real backend to the
+// JSONL dev-server sink + in-UI monitor. No-op in simulated mode (the helper
+// type-guards on RealBackend).
+import { wireTxLogger } from "./txLogger.js";
+wireTxLogger(client.negotiation);
