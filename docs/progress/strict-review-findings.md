@@ -4857,3 +4857,271 @@ reader following R-citations to the wrong spec section.
 
 ### Final tick-25 verdict: FAIL (0 HIGH; 4 MEDIUM; 6 LOWs; 4 NITs)
 
+## Tick-30 audit — closure verification of ticks 26-29
+
+Strict-review subagent re-running against `cc0a40a..2397045` to verify each
+tick-25 finding closure is real and to flag any new findings introduced by
+the fixes. Audit method: read each closure diff (`git show <sha>`), confirm
+the change matches the finding's required fix, re-grep the tree for any
+residual instance of the smell, then re-run the full gate set.
+
+### Gates
+
+- `npx tsc -p tsconfig.json` — pass, 0 errors (silent).
+- `npx tsc -p web/tsconfig.json --noEmit` — pass, 0 errors (silent).
+- `node --import tsx --test "src/**/*.test.ts"` — **63/63 pass** in 2.66s.
+- `npx vite build` (from repo root, where the `@lib` alias resolves to
+  `dist/index.js`) — succeeds in 3.64s; emits the expected
+  `dist/assets/index-*.{js,css}` bundle. (Running `vite build` from inside
+  `web/` fails because the alias is repo-root relative — this is a config
+  fact, not a regression.)
+- Secret-scan (`grep -rE '0x[0-9a-fA-F]{64}' --include='*.{ts,tsx,js,json,md}'`
+  over `web/ src/ docs/` excluding `node_modules/` and `dist/`): only matches
+  are the well-known Hardhat keccak placeholder
+  `0xc5d24…a470` in pre-existing `docs/progress/*.md` rows. No new secrets
+  introduced.
+
+### Per-finding closure verdicts
+
+#### MEDIUM 1 — Simulated profile-switch loses state — **CLOSED**
+
+Verified via `git show cc0a40a -- web/src/client.ts`. The `insurerClient`
+declaration is now:
+
+```ts
+const insurerClient: CurieClient = IS_REAL
+  ? makeClient(keyOverride("VITE_PRIVATE_KEY_INSURER") ?? keyOverride("VITE_PRIVATE_KEY"))
+  : providerClient;
+```
+
+In simulated mode the two backends collapse to a single shared
+`SimulatedBackend` instance, so flipping the proxy via
+`setActiveClientProfile()` preserves the in-memory negotiation list.
+Real mode keeps two distinct clients with two distinct signers, as required
+by §2.9 R45–R46.
+
+#### MEDIUM 2 — Real-mode missing-key throws at module init — **CLOSED**
+
+Two-step closure across ticks 26 + 27.
+
+- Tick 26 (`cc0a40a`) replaced the unconditional `throw` in
+  `web/src/client.ts:115` with a graceful fallback that constructs a
+  simulated client and sets `walletSetupRequired = true`. The flag is
+  declared at module scope (`export let walletSetupRequired = false;`,
+  line 190) and mutated by `makeClient` before `App.tsx` ever reads it
+  (mutation at the `providerClient = makeClient(...)` call on line 213,
+  module-init order). Live-binding semantics for `let` exports mean App
+  always sees the post-init value, so the read-before-write race is not
+  reachable in practice.
+- Tick 27 (`9c5e893`) wired the flag into `web/src/App.tsx`. The banner
+  renders at the top of `<main>` (lines 151-165) with
+  `role="alert"`, a CTA `<button className="link-button">` calling
+  `goSettings`, and the same `--warn-{lt,mid}` token palette the rest of
+  §2.9 uses (`.setup-banner` styles at `styles.css:1883-1901`).
+- Confirmed `--warn`, `--warn-lt`, `--warn-mid` all exist in `:root`
+  (`styles.css:41-43`).
+
+#### MEDIUM 3 — R30 mis-citations — **CLOSED**
+
+`grep -rn 'SPEC-0003 R30' web/src/` returns no matches. All three sites
+cited in the tick-25 finding have been rewritten to `SPEC-0003 §2.9 R42`:
+
+- `web/src/client.ts:194` (the `keyOverride` jsdoc).
+- `web/src/styles.css:1834` (the Wallet keys panel CSS comment).
+- `web/src/views/Settings.tsx:148` (the `<WalletKeysPanel />` JSX comment).
+
+No stale `R30` references remain anywhere under `web/src/`.
+
+#### MEDIUM 4 — R42 plural-Generate — **CLOSED**
+
+Verified via `git show cc0a40a -- web/src/views/Settings.tsx`. The provider
+row now mirrors the insurer row exactly, including a `<button
+className="key-generate" onClick={() => setProviderKey(generateHexKey())}>
+Generate </button>`. R42's plural "per-row Generate affordances" claim now
+matches the rendered DOM on both rows.
+
+#### LOW 1 — Stale Saved message — **CLOSED**
+
+`git show 9c5e893 -- web/src/views/Settings.tsx` confirms that all four
+relevant handlers (`onChange` for the provider key field, `onChange` for
+the insurer key field, `onClick` for the provider Generate button,
+`onClick` for the insurer Generate button) now also call `setSavedAt(null)`
+so the "Saved. Reload to apply." hint clears the moment the user edits
+again. Verified at lines 234-238, 247-251, 262-266, 287-291 of the
+current `Settings.tsx`.
+
+#### LOW 2 — Confirm before reload — **CLOSED**
+
+`web/src/views/Settings.tsx:322-330` now wraps `window.location.reload()`
+in a `window.confirm("Reload the page now? Any unsaved form input in
+other views will be lost.")` gate. Cancel keeps the user on the page.
+Acceptable v0 trade-off — `window.confirm` is synchronous and blocks the
+UI, but for a one-shot reload-or-not decision this is fine and a
+non-blocking dialog would be over-engineering.
+
+#### LOW 3 — Swallowed localStorage write errors — **CLOSED**
+
+Verified via `git show 2397045 -- web/src/views/Settings.tsx`.
+`writeStoredKey` no longer wraps its `setItem` / `removeItem` calls in a
+`try/catch`; failures now propagate. Both `handleSave` (lines 200-211)
+and `handleClearAll` (lines 215-225) wrap the call in `try/catch`,
+set `saveError` to a human-readable message, and render
+`<span className="key-error" role="alert">Could not save: {saveError}</span>`
+inside `.key-actions` when the state is non-null. Save success clears
+`saveError` back to null. Partial-write atomicity (provider key written,
+insurer key throws) is acceptable: the visible error message tells the
+user to retry, and a half-saved state is still consistent with whatever
+the user typed.
+
+#### LOW 4 — `useWalletBalance` doesn't refresh on profile switch — **CLOSED**
+
+`web/src/hooks/useWalletBalance.ts:41` now reads
+`const address = client.wallet.address;` at the top of the hook and uses
+`[address]` as the effect's dependency array (line 79). The proxy returns
+the active concrete client's address; after `setActiveClientProfile()`
+flips the proxy *and* App's `setActiveProfileId` triggers a re-render,
+`address` changes, the effect re-runs, and the chip refreshes. The hook
+also pre-emptively calls `setBal({ wei: null, refreshedAt: 0 })` before
+firing the first refresh, producing a brief `—` flicker rather than a
+stale value from the previous wallet. Acceptable UX — preferable to
+showing the wrong number for ~30 s, and the new wallet's balance lands
+within one RPC round-trip.
+
+The `provider` capture in line 45 is intentionally not in the deps array
+because `getProvider()` is a pure read of `client.wallet.provider`,
+which is the same memoised object for the lifetime of a given concrete
+client. Profile-switch causes a deps change via `address`, which already
+triggers re-evaluation.
+
+#### LOW 5 — `__curie` leak — **CLOSED**
+
+`web/src/client.ts:255-261` now gates the assignment behind
+`if (import.meta.env.DEV) { ... }`. Vite replaces `import.meta.env.DEV`
+with the literal boolean at build time, so the production bundle from
+`vite build` contains no `__curie` assignment and no reference to the
+two `Wallet`-holding clients on the global object. Dev builds and the
+existing agent-browser tests still see the handle.
+
+#### LOW 6 — R44 OOS hygiene + stale §7 "single signer per build" — **CLOSED**
+
+`git show 2397045 -- docs/specs/0003-token-flow-visibility.md` confirms
+both halves:
+
+- R44's prose (line 365-366) now ends with the brief pointer
+  `(Hot-swap-without-reload is out of scope; see §7.)` — the previous
+  4-line inlined justification is gone.
+- §7 (lines 543-559) gains three coordinated bullets:
+  - **Hot-swapping wallet keys without a page reload (§2.9 R44)** — full
+    reasoning (module-init binding, reactive-bindings refactor cost vs.
+    state-surgery safety risk, reload's acceptability) preserved.
+  - **Per-action signer selection** — properly delimits §2.9's
+    two-profile model and notes the proxy + factory already support a
+    third signer.
+  - **Multi-account *rotation*** — points back at R25's MetaMask + SIWE
+    path for production and explicitly scopes R42-R47 as "demo-loop
+    convenience". This bullet replaces the now-stale §7 line "Wallet
+    management … single signer per build", which directly contradicted
+    the two-wallet model shipped by R42-R47.
+- All three bullets follow the spec-author convention used elsewhere in
+  §7 — bolded headline, parenthetical R-citation where applicable,
+  short reasoning. No internal contradictions surfaced on a fresh
+  read-through of §§ 2.9 and 7.
+
+#### NIT 2 + NIT 3 — `KEY_STORAGE_PREFIX` + hex regex duplicated — **CLOSED**
+
+`web/src/walletKeys.ts` (new file, 23 LOC) exports
+`KEY_STORAGE_PREFIX = "curie:" as const`, `HEX_KEY_RE = /^0x[0-9a-fA-F]{64}$/`,
+and `isValidHexKey(s)` — no default export, no top-level side effects, JSDoc
+for each export.
+
+- `web/src/client.ts:27` imports `KEY_STORAGE_PREFIX, isValidHexKey` and uses
+  them on lines 204-205. The previous in-file `\`curie:\${envName}\``
+  template literal and the inline `/^0x[0-9a-fA-F]{64}$/.test(...)` are
+  gone.
+- `web/src/views/Settings.tsx:24` imports the same two names. The previous
+  local `KEY_STORAGE_PREFIX` constant and the in-file `isValidHexKey`
+  function are gone.
+- `grep -rn 'curie:' web/src/ | grep -v walletKeys.ts` yields only the
+  jsdoc reference at `client.ts:195` and the unrelated `__curie` window
+  global at `client.ts:259` — no `"curie:"` *literal* remains outside
+  `walletKeys.ts`.
+- `grep -rEn '0x\[0-9a-fA-F\]\{64\}' web/src/ | grep -v walletKeys.ts`
+  is empty — no duplicate regex.
+
+#### NIT 1 + NIT 4 — still deferred (explicitly)
+
+Tick-29 commit message lists both as still-deferred. Both are non-blocking
+in tick-25's own write-up:
+
+- NIT 1 (`WalletKeysPanel` extraction) — "Single use, ~120 LOC, mostly
+  self-contained. Borderline. Not blocking."
+- NIT 4 (per-concrete-client `ProfileRegistry`) — "Defensible for v0;
+  worth a SPEC-0003 followup or a `// invariant:` comment."
+
+Deferring NITs that the original finding called non-blocking is a
+legitimate stop-condition. Recording status as DEFERRED-INTENTIONALLY,
+not as new findings.
+
+### New findings introduced by the closures
+
+Walked the closure diffs hunting for new smells. One actionable finding:
+
+#### NIT (new) — Save-error span renders unstyled because `.key-error` is scoped under `.key-row`
+
+- The save-error span is rendered inside the `.key-actions` row:
+
+  ```jsx
+  // web/src/views/Settings.tsx:311
+  <span className="key-error" role="alert">Could not save: {saveError}</span>
+  ```
+
+- But the CSS selector at `web/src/styles.css:1853` is `.key-row .key-error`
+  — a descendant combinator, scoped to the per-field rows where the
+  validation error ("Must be 0x + 64 hex chars") lives. The save-error
+  span is not inside `.key-row`, so `color: var(--danger)` does not apply.
+- Effect: the text still appears (so the user is notified, and `role="alert"`
+  still triggers AT announcement), but it inherits default body colour
+  instead of the danger red the per-row error uses. Cosmetic only —
+  semantics are correct.
+- Fix: either drop the `.key-row` parent from the selector
+  (`.key-error { … }`) or add a sibling rule
+  (`.key-actions .key-error { … }`). Two-line change.
+
+No other actionable issues. The remaining items from the briefing's
+"regression risks to check" list all checked out:
+
+- `walletSetupRequired` mutable-export semantics — correct (mutation
+  during module init, App reads after init).
+- `walletKeys.ts` exhaustiveness — `KEY_STORAGE_PREFIX`, `HEX_KEY_RE`,
+  `isValidHexKey` all named, no default, no side effects.
+- `setup-banner` CSS tokens — `--warn`, `--warn-lt`, `--warn-mid` all
+  defined in `:root`.
+- `window.confirm()` blocking — acceptable v0 trade-off for a one-shot
+  reload decision.
+- `writeStoredKey` no-catch + caller-catch — partial-write atomicity
+  reasoning holds; user can retry.
+- `useWalletBalance` balance reset on profile switch — UX-correct over
+  showing stale balance for ≤30 s.
+- `useEffect` provider capture without provider in deps —
+  `getProvider()` reads from the proxy fresh on each effect run, and the
+  `address` dep guarantees re-runs on profile switch.
+- §7 OOS bullets — well-formed, consistent with spec-author conventions,
+  no internal contradictions with §§ 2.9 or 6.
+
+### Tick-30 verdict
+
+Per-finding count of closures: 4 MEDIUMs (CLOSED), 6 LOWs (CLOSED),
+2 NITs (CLOSED), 2 NITs (DEFERRED-INTENTIONALLY, non-blocking per the
+original review). New findings introduced by the fixes: 1 NIT (cosmetic
+CSS-scope miss on the save-error span). The new NIT is not a regression
+of any tick-25 finding and does not affect functionality — only the
+colour of an already-correctly-rendered, AT-announced error message.
+
+All gates pass. The fixes are real, the fixes work, and the only new
+finding is a two-line CSS scope tweak that a future tick can pick up
+alongside any other Settings.tsx work. Steady state is effectively
+reached at the MEDIUM and LOW levels; only NITs remain.
+
+### Final tick-30 verdict: PASS (0 HIGH; 0 MEDIUM; 0 LOW; 1 new NIT)
+
+
