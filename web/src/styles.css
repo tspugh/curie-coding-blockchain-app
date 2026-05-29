@@ -1667,3 +1667,160 @@ tr.row-link:hover td:first-child {
   text-align: right;
   white-space: nowrap;
 }
+
+/* ─── Settings view ─────────────────────────────────────────────────────── */
+
+/* Panel card — same chrome as .tx-stream-panel */
+.settings-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 20px 24px;
+  margin-bottom: 18px;
+}
+
+.settings-panel .section-label {
+  margin-bottom: 6px;
+}
+
+.settings-panel .hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 14px;
+  line-height: 1.5;
+}
+
+/* Profile card grid: 3 columns with equal width */
+.profile-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+/* Each profile card is a plain button styled as a card */
+.profile-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  border: 1px solid var(--border-dk);
+  background: var(--panel);
+  box-shadow: var(--shadow-xs);
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.profile-card:hover {
+  border-color: var(--accent-mid);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Active state: accent border + tinted background */
+.profile-card.is-active {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--accent-lt);
+  box-shadow: var(--shadow-md);
+}
+
+.profile-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 5px;
+}
+
+.profile-card-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.profile-card.is-active .profile-card-label {
+  color: var(--accent-dk);
+}
+
+.profile-card-party {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.profile-card-sub {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.45;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+/* Fact list: definition list rendered as two-column rows */
+.fact-list {
+  margin: 0;
+  padding: 0;
+}
+
+.fact-row {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 12px;
+  align-items: baseline;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border-lt);
+  font-size: 13.5px;
+}
+
+.fact-row:last-child {
+  border-bottom: none;
+}
+
+.fact-row dt {
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.fact-row dd {
+  margin: 0;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Status pills — reuse existing live-pill chrome */
+.pill.no-dot {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.pill.tone-ok {
+  color: var(--ok);
+  background: var(--ok-lt);
+  border: 1px solid var(--ok-mid);
+}
+
+.pill.tone-warn {
+  color: var(--warn);
+  background: var(--warn-lt);
+  border: 1px solid var(--warn-mid);
+}
+
+/* Responsive: collapse to 1 column on narrow screens */
+@media (max-width: 600px) {
+  .profile-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fact-row {
+    grid-template-columns: 90px 1fr;
+  }
+}

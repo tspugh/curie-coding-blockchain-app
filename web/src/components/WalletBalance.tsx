@@ -3,17 +3,7 @@
  * Empty in simulated mode (no provider → hook returns `null`).
  */
 import { useWalletBalance } from "../hooks/useWalletBalance.js";
-
-const WEI_PER_STT = 10n ** 18n;
-
-/** Format wei → "1.2345 STT" with 4 decimal places. */
-function formatStt(wei: bigint): string {
-  const whole = wei / WEI_PER_STT;
-  const frac = wei % WEI_PER_STT;
-  // 4 decimal places: shift frac by 1e14 (18 − 4 = 14).
-  const fracStr = (frac / 10n ** 14n).toString().padStart(4, "0");
-  return `${whole.toString()}.${fracStr}`;
-}
+import { formatStt } from "../format.js";
 
 export function WalletBalance(): JSX.Element | null {
   const { wei, refreshedAt } = useWalletBalance();

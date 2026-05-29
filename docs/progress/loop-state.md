@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 21 — UNIT-NetworkScreen-stream: real tx-stream section)
+**Last updated:** 2026-05-29 (tick 22 — UNIT-SettingsScreen-narrow: profile picker + wallet panel)
 **Current mode:** `impl`
-**Current tick:** 21
-**Last focus:** Real live tx-stream section appended below Network's 4-stat panel. Renders the `events` prop (from App.tsx's subscribeTxLog), newest-first, bounded to 50, with explorer-linked tx hashes + describeEvent() summaries. Empty state when no events. Pure CSS `@keyframes live-dot-pulse` animation (zero JS, zero fake events). Strict-review caught 1 MEDIUM real (CSS class collision: my new `.ev-name`/`.ev-tx`/`.ev-desc`/`.ev-reqid` collided with Detail.tsx timeline's pre-existing same-named rules, silently regressing it) + 2 LOWs (missing useMemo, `-${i}` in React key causing remounts on prepend). All 3 closed inline: classes renamed to `.tx-ev-*` prefix, streamRows wrapped in useMemo, key simplified to `txHash-name-reqId`. violet's "fake ticker" bug is now structurally addressed — the live stream uses real on-chain events from the wallet's confirmed txs, empty when nothing's happening.
-**Last commit:** `<this tick>` (tick 21 — UNIT-NetworkScreen-stream)
+**Current tick:** 22
+**Last focus:** New Settings view with profile picker (3 cards, real `client.profiles.listProfiles()`) + wallet info panel (address, mode, balance, agent fee, chain id, RPC — all real sources). Agent registry table EXCLUDED (prototype's hardcoded "agent-7B" + fake addresses); non-functional toolbar buttons EXCLUDED. Strict-review caught 1 MEDIUM (`<WalletBalance />` reused in dt/dd context rendered its own `<span class="label">Balance</span>` causing visual stutter) + 2 LOWs (missing aria-pressed, unused events prop). All 3 closed inline by extracting `formatStt`/`formatSttCompact` to new `web/src/format.ts`, using `useWalletBalance` directly in Settings, adding `aria-pressed` to profile cards, dropping unused events prop. Nav now has all 4 tabs matching prototype: Dashboard / Create / Network / Settings.
+**Last commit:** `<this tick>` (tick 22 — UNIT-SettingsScreen-narrow)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)

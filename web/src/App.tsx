@@ -9,6 +9,7 @@ import { Overview } from "./views/Overview.js";
 import { Create } from "./views/Create.js";
 import { Detail } from "./views/Detail.js";
 import { Network } from "./views/Network.js";
+import { Settings } from "./views/Settings.js";
 import { WalletBalance } from "./components/WalletBalance.js";
 import { TxMonitor } from "./components/TxMonitor.js";
 
@@ -16,7 +17,8 @@ type View =
   | { kind: "overview" }
   | { kind: "create" }
   | { kind: "detail"; reqId: bigint }
-  | { kind: "network" };
+  | { kind: "network" }
+  | { kind: "settings" };
 
 export function App() {
   const [view, setView] = useState<View>({ kind: "overview" });
@@ -62,6 +64,7 @@ export function App() {
   const goOverview = useCallback(() => setView({ kind: "overview" }), []);
   const goCreate = useCallback(() => setView({ kind: "create" }), []);
   const goNetwork = useCallback(() => setView({ kind: "network" }), []);
+  const goSettings = useCallback(() => setView({ kind: "settings" }), []);
   const goDetail = useCallback(
     (reqId: bigint) => setView({ kind: "detail", reqId }),
     [],
@@ -99,6 +102,14 @@ export function App() {
             onClick={goNetwork}
           >
             Network
+          </button>
+          <button
+            type="button"
+            data-testid="nav-settings"
+            className={view.kind === "settings" ? "active" : ""}
+            onClick={goSettings}
+          >
+            Settings
           </button>
         </nav>
 
@@ -153,6 +164,13 @@ export function App() {
         )}
         {view.kind === "network" && (
           <Network events={events} onBack={goOverview} />
+        )}
+        {view.kind === "settings" && (
+          <Settings
+            activeProfileId={activeProfileId}
+            onProfileChange={onSwitchProfile}
+            onBack={goOverview}
+          />
         )}
       </main>
 

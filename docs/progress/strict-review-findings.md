@@ -3986,3 +3986,380 @@ timeline renders identically before/after the MEDIUM 1 fix
 
 ### Final tick-21 verdict: FAIL (0 HIGH; 1 MEDIUM; 2 LOWs; 6 NITs)
 
+# Strict-review findings — tick 22 (UNIT-SettingsScreen-narrow, profile picker + wallet panel)
+
+**Scope.** New file `web/src/views/Settings.tsx`; modified
+`web/src/App.tsx` (View union + nav button + route dispatch);
+modified `web/src/styles.css` (Settings-view classes). Closes the
+"Settings screen absent" portion of design-conformance gap #3
+(tick 14 baseline). Excludes per prompt: Agent registry panel
+(hardcoded fake addresses + "agent-7B" in prototype) and the three
+non-functional buttons ("Switch to real" / "Faucet" / "Copy
+address").
+
+## Gates
+
+- **lib tsc** (`tsc -p tsconfig.json`): clean.
+- **web tsc** (`tsc -p web/tsconfig.json --noEmit` via direct
+  invocation): clean.
+- **vite build** (`npm run web:build`): clean — 215 modules
+  transformed, built in 3.55s, no warnings beyond the pre-existing
+  vite oxc-vs-esbuild deprecation noise inherited from prior ticks.
+- **lib tests** (`npm run test:lib`): 60/60 pass.
+
+## Required reads — actual evidence
+
+### `web/src/views/Settings.tsx` (162 LOC)
+
+- **Data sources.** Every fact resolves to a real client/config
+  source: profile list from `client.profiles.listProfiles()`
+  (line 67 → `ProfileRegistry.listProfiles`, profiles.ts:75), wallet
+  address from `client.wallet.address` (line 114), wallet mode from
+  `client.wallet.mode` (line 68), balance from `<WalletBalance />`
+  reused (line 134), agent fee from
+  `BigInt(import.meta.env.VITE_AGENT_FEE_WEI ?? "330000000000000000")`
+  (line 28-30), chain id from `SOMNIA_TESTNET.chainId` (line 47),
+  RPC host extracted from `SOMNIA_TESTNET.rpcUrl` (line 48). No
+  hardcoded "2.9805" balance, no "agent-7B" address. `grep -nE
+  "Math|random|fake|stub|mock|agent-7B|2\.9805"` returns only the
+  doc-comment line denying their presence (line 4).
+- **No timers / no Math.random.** Confirmed by grep. The view is
+  pure data display.
+- **Fee formatting precision.** `formatFeeSTT(BigInt(330000000000000000))`
+  → whole=0, frac=3.3×10^17, `frac / 10^14 = 3300`, padStart(4) =
+  "3300", trailing-zero strip "33" → `"0.33"`. Spot-checked edge
+  cases: 0.03 STT → "0.03"; 1.0 STT exactly → "1.0" (via `|| "0"`
+  fallback); 1.1 STT → "1.1"; 0.0001 STT → "0.0001"; values below
+  0.0001 STT truncate to "0.0" (acceptable for the agent-fee use
+  case — fees are always ≥ 0.33 STT). Math is precision-safe at
+  bigint throughout (no Number coercion).
+- **RPC host extraction.** `rpcHost("https://api.infra.testnet.somnia.network/")`
+  → `replace(/^https?:\/\//, "")` strips scheme → strips trailing
+  `/` → `"api.infra.testnet.somnia.network"`. Matches prototype
+  line 710 exactly.
+- **Profile cards as `<button type="button">`.** Confirmed at
+  Settings.tsx:88-101. Keyboard activatable (Enter/Space), native
+  focus ring, screen-reader role=button. The `is-active`
+  computation `activeProfileId === p.id` is correct (string
+  comparison against the active-profile id state lifted into
+  App.tsx:26-28). `partyId: bigint` is rendered via
+  `.toString()` at line 97 (correct — React refuses to render
+  bigint and would throw at runtime otherwise).
+- **CSS class collision check.** `grep -n "fact-row|fact-list|
+  profile-card|settings-panel|pill\b|no-dot|tone-ok|tone-warn"`
+  shows zero prior occurrences before line 1674 (new Settings
+  block). The new classes do not collide with any existing rule.
+  `.pill` BASE class has no prior or new rule — only modifier
+  selectors `.pill.no-dot`, `.pill.tone-ok`, `.pill.tone-warn`
+  exist; see NIT-2 below.
+
+### `web/src/App.tsx`
+
+- View union gains `{ kind: "settings" }` at line 21 — clean
+  discriminated-union addition.
+- `goSettings` callback at line 67 — symmetric with goOverview /
+  goCreate / goNetwork.
+- Fourth nav button at lines 106-113 — `data-testid="nav-settings"`,
+  active-class logic matching siblings.
+- Route dispatch at lines 168-175 passes `events`, `activeProfileId`,
+  `onProfileChange: onSwitchProfile`, `onBack: goOverview`.
+- `onSwitchProfile` (line 59-62) calls
+  `client.profiles.setActiveProfile(id)` to mutate the registry
+  AND `setActiveProfileId(id)` to trigger React re-render. Correct
+  — without the React state setter, the header `<select>` and the
+  new Settings `<button>` would not visually update.
+
+### `web/src/styles.css` (new block lines 1670-1826)
+
+- All design tokens consumed exist in `:root` (lines 10-57):
+  `--panel`, `--border`, `--border-lt`, `--border-dk`, `--text`,
+  `--muted`, `--accent`, `--accent-dk`, `--accent-lt`,
+  `--accent-mid`, `--ok`, `--ok-lt`, `--ok-mid`, `--warn`,
+  `--warn-lt`, `--warn-mid`, `--shadow-xs`, `--shadow-sm`,
+  `--shadow-md`, `--radius`, `--radius-lg`. No raw hex outside
+  the token system (only `'SF Mono'` / `Menlo` / `Consolas`
+  monospace stack, which matches existing `--mono` family
+  conventions but is hardcoded — see NIT-3).
+- `color-mix(in srgb, var(--accent) 45%, transparent)` for
+  `.profile-card.is-active` border (line 1726) matches prototype
+  inline style at screens.jsx:688 verbatim.
+- Responsive collapse at `@media (max-width: 600px)` (lines
+  1818-1825) for narrow screens. Sensible.
+- No `!important`, no global tag selectors, no leakage into
+  other views.
+
+### `docs/reference/ui-prototype-handoff/project/screens.jsx`
+lines 674-740
+
+- Lines 679-701 (Active profile panel): structurally matches —
+  panel, SectionLabel, caption hint, 3-column grid, per-profile
+  card with label + party + sub. Conformance: high.
+- Lines 703-715 (Wallet panel): six FactRows — Address, Mode,
+  Balance, Agent fee, Network, RPC. Production mirrors all six
+  with the same labels and value sources. Three buttons at lines
+  711-715 ("Switch to real" / "Faucet" / "Copy address") are
+  EXPLICITLY EXCLUDED per prompt — verified absent from
+  Settings.tsx.
+- Lines 718-738 (Agent registry panel with `agent-7B` hardcoded
+  addresses): EXPLICITLY EXCLUDED per prompt — verified absent
+  from Settings.tsx.
+
+### `src/profiles/profiles.ts`
+
+- `interface Profile { id: string; label: string; partyId: bigint }`
+  at lines 18-25. Confirmed: NO description field. Dev's fallback
+  to `p.id` is the correct production-side handling.
+- `listProfiles(): Profile[]` at line 75 returns
+  `[...this.profiles.values()]` — real registry data, ordered.
+
+## Findings
+
+### HIGH — none.
+
+### MEDIUM 1 — `<WalletBalance />` reuse renders a redundant inner "Balance" label inside the fact-row (visual stutter in real mode)
+
+**Where.** `web/src/views/Settings.tsx:129-136` renders
+`<dt>Balance</dt><dd><WalletBalance /></dd>`. The
+`<WalletBalance>` component itself
+(`web/src/components/WalletBalance.tsx:21-30`) wraps its output in:
+
+```jsx
+<span className="wallet-balance" data-testid="wallet-balance" ...>
+  <span className="label">Balance</span>
+  <code>{formatStt(wei)} STT</code>
+</span>
+```
+
+So in real mode the fact-row visibly reads
+**"Balance   Balance 1.2345 STT"** — the dt label, then the
+component's own internal "Balance" label, then the value. In
+simulated mode `WalletBalance` returns null (line 20 of
+WalletBalance.tsx), so the row collapses to **"Balance   "**
+(empty `<dd>`) — also a defect, since the prototype shows
+`<span className="mono tabular">{stt(PROFILES[profile].balance)}</span>`
+unconditionally (screens.jsx:707), and the production header
+fact-row's chrome with an empty `<dd>` looks broken.
+
+**Why it matters.** The dev report claimed "`<WalletBalance />`
+reused unchanged" but did not catch that its internal `<span
+class="label">Balance</span>` is intended for the header context
+(where the row IS a labeled chip), not the dt/dd context (where
+the `<dt>` IS the label). Reusing it in a fact-row produces a
+design-conformance regression vs. the prototype, which the tick
+brief was meant to close.
+
+**Fix options (choose one):**
+
+(a) Inline a stripped formatter in Settings.tsx — render
+`<code>{formatStt(wei)} STT</code>` directly, using a shared
+`formatStt` extracted to `web/src/format.ts` (also fixes NIT-3).
+(b) Add a `labeled?: boolean` prop to `<WalletBalance>` defaulting
+true; pass `labeled={false}` from Settings.
+
+(a) is preferred — keeps `<WalletBalance>` single-purpose for the
+header chip and avoids API growth on a leaf component.
+
+**Severity rationale.** MEDIUM because:
+- Real mode shows a duplicated word on a top-level settings
+  screen.
+- Simulated mode (the default for the demo) shows a row with an
+  empty value cell, which looks like a broken render.
+- The tick brief is "narrow" but conformance-focused; a visible
+  stutter on the very row the screen exists to display fails the
+  conformance gate.
+
+### LOW 1 — Profile-card `is-active` state has no `aria-pressed` / `aria-current` attribute
+
+**Where.** `web/src/views/Settings.tsx:88-101`. The card is a
+toggle button (`<button type="button">`) styled with `is-active`
+when `activeProfileId === p.id`, but the active state is conveyed
+ONLY by CSS (border color + background tint). Screen-reader users
+and keyboard users relying on focus mode won't know which card
+is the currently active profile.
+
+**Fix.** Add `aria-pressed={activeProfileId === p.id}` to the
+button. (Two-state toggle semantics — exactly what a profile
+picker is. `aria-current="page"` would be wrong since these are
+not navigation links.)
+
+The strict prompt's check #9 explicitly called this out as a
+required audit item. Filing as LOW (not blocking the screen from
+function, but explicitly flagged in the brief).
+
+### LOW 2 — `events` prop declared on `SettingsProps` and never read
+
+**Where.** `web/src/views/Settings.tsx:56` —
+`readonly events: readonly CoverageEvent[]; // for
+shape-consistency with other views; unused here`. App.tsx:170
+passes `events={events}` and the component never references it.
+
+**Why it matters.**
+- React DevTools shows the unused prop on every Settings render.
+- "Shape-consistency" is not a real reason — Overview, Detail,
+  Network, Create all have DIFFERENT prop shapes already; there's
+  no convention enforcing a shared shape.
+- TypeScript `noUnusedParameters` (if it were enabled) would
+  flag this; it currently passes because the destructure omits
+  `events` and tsx unused-destructure detection is per-config.
+
+**Fix.** Remove the prop from the interface AND from the App.tsx
+dispatch. Two-line cleanup. Filing as LOW because it's dead code
+on a leaf, not a correctness bug.
+
+### NIT 1 — `.fact-row` is a generic class name with high future-collision risk
+
+`grep` confirms no current collision, but `fact-row` reads like
+a pattern likely to recur on Detail's hash/clause-ref panel or
+Create's review step. Namespace candidate: `.settings-fact-row`.
+Tick 21's `.ev-*` cross-screen collision (now tracked as the
+tick-21 MEDIUM) is the cautionary precedent the prompt's check
+#7 explicitly cited.
+
+### NIT 2 — `.pill` base class never defined; only `.pill.no-dot` etc.
+
+`web/src/views/Settings.tsx:122` renders `className="pill no-dot
+tone-ok"` or `"pill no-dot tone-warn"`. `styles.css` defines only:
+
+```css
+.pill.no-dot { ... }
+.pill.tone-ok { ... }
+.pill.tone-warn { ... }
+```
+
+There is NO `.pill {}` base rule. Current render is correct
+because `.pill.no-dot` carries all the structural styles
+(display, font-size, padding, border-radius) and is always
+present in the className. But if a future developer writes
+`<span className="pill">` without `no-dot`, they get unstyled
+output — a trap. Also, the prototype's design system likely has
+a real `.pill` base (the chip-with-dot variant); this tick only
+introduces the dot-less variant.
+
+**Fix candidate.** Extract a `.pill { display: inline-flex; ... }`
+base rule and have `.no-dot`, `.tone-ok`, `.tone-warn` be pure
+modifiers. Defer until a `.pill` (with dot) variant is needed
+elsewhere.
+
+### NIT 3 — `formatFeeSTT` duplicates `formatStt` in `WalletBalance.tsx`
+
+Both files implement the same wei→STT conversion with the same
+`WEI_PER_STT = 10n ** 18n` constant and the same 4-decimal frac
+math. `Settings.tsx`'s version additionally strips trailing
+zeros; `WalletBalance.tsx`'s version always shows 4 decimals.
+Candidate: extract `formatStt(wei, { trimZeros?: boolean })` to
+`web/src/format.ts`. Compounds with MEDIUM 1's fix (option a).
+
+### NIT 4 — Profile-card sub-line falls back to `p.id`, which is barely informative
+
+Prototype renders profile-specific sub captions like "files
+coverage-exception requests" or "adjudicates necessity"
+(screens.jsx:696 reading `PROFILES[key].sub`). Production
+`Profile` shape has no `sub`/`description`, so the dev correctly
+falls back to `p.id` → cards read "provider" / "insurer" /
+"observer" on the sub-line. Functionally complete; informationally
+thin.
+
+**Fix candidate.** Add an optional `description?: string` field
+to `Profile` and populate `DEFAULT_PROFILES` in `profiles.ts`,
+OR a static label map in Settings.tsx (keyed by id). Either is
+fine. Defer to a follow-up tick; dev report already flagged.
+
+### NIT 5 — No `onBack` button is in the prototype; the production-side back-button is a convention extension
+
+Prototype's SettingsScreen has only the top-nav tab — no in-page
+"← Back" affordance. Production adds one at Settings.tsx:73-75
+wired to `goOverview`. This is consistent with how Network and
+Detail already render their `← Back` button (a production-side
+convention added in earlier ticks). Mild divergence from the
+prototype but consistent with internal patterns; not a finding,
+recorded for traceability.
+
+### NIT 6 — `rpcHost(url)` utility is local
+
+If Network screen (or a future Wallet/Network panel) also needs
+to display the RPC host, this should move to a shared helper. No
+current second consumer; defer.
+
+### NIT 7 — `formatFeeSTT` output for fees exactly under 0.0001 STT truncates to "0.0"
+
+Edge case: wei = 50000000000000 (5×10^13) → frac/10^14 = 0 →
+"0.0". Acceptable for the agent-fee use case (fees are always
+≥ 0.33 STT in the configured client.ts default). Not a defect;
+noted for future formatter consumers.
+
+## Cross-references
+
+- **Tick 14, design-conformance gap #3** ("Navigation incomplete:
+  Network + Settings screens absent") — Settings portion now
+  CLOSED. Update `docs/progress/design-conformance.md` separately;
+  this tick exists to close it.
+- **Tick 21 MEDIUM 1** (cross-screen `.ev-*` collision) — the
+  prompt's check #7 was a direct callback to that pattern. This
+  tick's `.fact-row` is the same shape of risk but with zero
+  current collision (NIT 1).
+- **SPEC-0003 §2.1 R1** (`<WalletBalance>` design) — MEDIUM 1 is
+  not a regression on R1 itself; R1 specifies the header-chip
+  variant. Reuse in a fact-row context is the new context and
+  the new defect.
+
+## Tick-22 verdict
+
+The data-source audit IS clean: every visible value resolves to a
+real client/config source, no `Math.random`, no `setInterval`, no
+hardcoded "2.9805" or "agent-7B". Excluded items (Agent registry
+panel, non-functional buttons) are correctly absent. The CSS new
+block introduces no collisions against any existing rule and uses
+the token system throughout. The View-union extension and
+profile-state plumbing in App.tsx are clean. All four gates (lib
+tsc, web tsc, vite build, lib tests) pass.
+
+The blocking finding is **MEDIUM 1**: `<WalletBalance />` reused
+inside the fact-row renders a redundant internal "Balance" label
+in real mode (producing "Balance | Balance 1.2345 STT" visual
+stutter) and an empty `<dd>` in simulated mode (the demo's
+default). The component was designed for the header-chip context,
+not the dt/dd context. The fix is small (~10 LOC: extract a
+shared `formatStt` to `web/src/format.ts` and render
+`<code>{formatStt(wei)} STT</code>` directly in Settings.tsx for
+the Balance row, falling through to the WalletBalance hook for
+the wei source). This also subsumes NIT 3.
+
+Two LOWs: the profile-cards' `is-active` state has no
+`aria-pressed` (the brief's check #9 called this out
+explicitly), and the `events` prop is dead. Both single-line
+fixes.
+
+Seven NITs cover the generic-class-name risk, the missing `.pill`
+base rule, the formatter duplication (subsumed by MEDIUM 1 fix
+option a), the thin profile-card sub fallback, the
+convention-extension `← Back` button, and the local `rpcHost`
+helper plus a sub-0.0001-STT formatter edge case.
+
+Briefing required "zero findings." This tick is **one MEDIUM, two
+LOWs, seven NITs → does not clear the gate.**
+
+**Recommended remediation summary for next tick:**
+
+1. **MEDIUM 1** — Extract `formatStt` to `web/src/format.ts` with
+   an optional `trimZeros` flag; update both `WalletBalance.tsx`
+   and `Settings.tsx` to consume it. In `Settings.tsx`, replace
+   `<WalletBalance />` inside the Balance fact-row with a direct
+   `<code>{formatStt(wei)} STT</code>` reading from
+   `useWalletBalance()`. In simulated mode (wei === null), render
+   `<code className="muted">—</code>` so the row is not blank.
+   **Required.**
+2. **LOW 1** — Add `aria-pressed={activeProfileId === p.id}` to
+   each profile card button. **Recommended.**
+3. **LOW 2** — Remove the unused `events` prop from
+   `SettingsProps` and from the App.tsx dispatch.
+   **Recommended.**
+4. NITs 1, 2, 4, 6, 7 — defer or batch into a "settings polish"
+   tick. NITs 3 and 5 are subsumed/non-actionable.
+
+Re-run all four gates after each change. After MEDIUM 1, do a
+quick visual check in both simulated and real modes that the
+Balance row reads as a single labeled value, not a doubled
+label.
+
+### Final tick-22 verdict: FAIL (0 HIGH; 1 MEDIUM; 2 LOWs; 7 NITs)
+
