@@ -1,20 +1,20 @@
-# Solidity compliance — tick 8
+# Solidity compliance — tick 9
 
 **Date:** 2026-05-29
 **Scope:** no `contracts/` diff this tick — audit deferred to next contract-touching tick
 **Verdict:** PASS (no contracts/ diff → no new findings)
 
-## This tick's diff scope
+## This tick's diff scope (UNIT-3b)
 
-Verified via `git diff --name-only origin/main..HEAD -- contracts/` and `git status`:
+Verified via `git diff --name-only HEAD~1..HEAD -- contracts/` (empty result) and
+`git diff --name-only HEAD~1..HEAD`:
 
-- New (untracked) this tick:
-  - `demo-data/scenarios/partd-approvable/` (5 markdown + JSON fixtures)
-  - `src/protocol/scenarios.partd-approvable.test.ts`
-- No new changes to `contracts/contracts/CoverageNegotiation.sol`,
+- New this tick:
+  - `demo-data/scenarios/commercial-policy-void/` (5 fixture files)
+  - `src/protocol/scenarios.commercial-policy-void.test.ts`
+- No changes to `contracts/contracts/CoverageNegotiation.sol`,
   `contracts/contracts/mocks/MockAgentPlatform.sol`, or
-  `contracts/test/CoverageNegotiation.test.ts` beyond what was already in the
-  cumulative branch diff at tick 4 (UNIT-2).
+  `contracts/test/CoverageNegotiation.test.ts`.
 
 Because no Solidity source or contract-level test was touched this tick, no new
 audit pass is warranted. The next contract-touching tick should re-trigger a
@@ -32,7 +32,10 @@ From tick 4 (UNIT-2):
   `uint8 indexed round` width gap was explicitly noted as forward-compatible
   and accepted, not an open finding.
 
-No unresolved compliance items carry into tick 8.
+Tick 8 (UNIT-3a, partd-approvable fixtures + scenario test) also touched no
+`contracts/` files and added no new findings.
+
+No unresolved compliance items carry into tick 9.
 
 ## Tick 4 (UNIT-2) audit — preserved for reference
 

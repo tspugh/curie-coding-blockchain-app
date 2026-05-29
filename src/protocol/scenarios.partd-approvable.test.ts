@@ -160,3 +160,29 @@ test('UNIT-3 partd-approvable R4 — expected-outcome.md mentions "Approve" and 
   assert.ok(content.length > 200, `expected-outcome.md must be >200 bytes (got ${content.length})`);
   assert.ok(/Approve|APPROVE/.test(content), 'expected-outcome.md must contain "Approve" or "APPROVE"');
 });
+
+test("UNIT-3 partd-approvable R1 — expected-outcome.md contains no PHI markers", () => {
+  // R1 applies to ALL curated content, not just note.md. expected-outcome.md is
+  // synthetic narrative authored alongside the note and shares the same exposure.
+  const content = fs.readFileSync(scenarioFile("expected-outcome.md"), "utf-8");
+  const stripped = content.replace(/<!--[\s\S]*?-->/g, "");
+  assert.equal(/\bSSN\b\s*[:#]?\s*\d{3}/i.test(stripped), false, "expected-outcome.md: no SSN markers");
+  assert.equal(/\d{3}-\d{2}-\d{4}/.test(stripped), false, "expected-outcome.md: no SSN-format digit strings");
+  assert.equal(/\b\d{2}\/\d{2}\/\d{4}\b/.test(stripped), false, "expected-outcome.md: no MM/DD/YYYY DOB");
+  assert.equal(/[A-Z]{2}\d{6,}/.test(stripped), false, "expected-outcome.md: no driver-license shapes");
+  assert.equal(
+    /\b(?:\(\d{3}\)\s?|\d{3}[-.])\d{3}[-.\s]?\d{4}\b/.test(stripped),
+    false,
+    "expected-outcome.md: no phone-number shapes",
+  );
+  assert.equal(
+    /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/.test(stripped),
+    false,
+    "expected-outcome.md: no email addresses",
+  );
+  assert.equal(
+    /\bMRN\s*[:#]?\s*\d{7,}\b/i.test(stripped),
+    false,
+    "expected-outcome.md: no real-shaped MRNs",
+  );
+});

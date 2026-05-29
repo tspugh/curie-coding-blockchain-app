@@ -1,39 +1,46 @@
 # Coverage — spec-4-implementation branch
 
-**Date:** 2026-05-29 · **Tick:** 8 (UNIT-3 partd-approvable fixtures + schema-validation test)
+**Date:** 2026-05-29 · **Tick:** 9 (UNIT-3b commercial-policy-void fixtures + scenario test)
 **Branch:** `spec-4-implementation`
-**Last known test counts (tick 6, last code-landing tick):** hardhat 28/28 ✓ · vitest 21/21 ✓
+**Last known test counts:** hardhat 28/28 ✓ · lib (node --test) 33/33 ✓
 
 ---
 
 ## What landed this tick
 
-Five static fixture files under `demo-data/scenarios/partd-approvable/` and one schema-
-validation test (`src/protocol/scenarios.partd-approvable.test.ts`, 6 assertions).
-**No library code, contract code, or web app code was modified.** Line/branch coverage
-of `src/`, `contracts/`, and `web/src/` is therefore unchanged from tick 6.
+Five static fixture files under `demo-data/scenarios/commercial-policy-void/` and one
+scenario test (`src/protocol/scenarios.commercial-policy-void.test.ts`, 6 sub-tests, all
+pass). **No library code, contract code, or web app code was modified.** Line/branch
+coverage of `src/`, `contracts/`, and `web/src/` is therefore unchanged from tick 6.
 
 ---
 
 ## SPEC-0004 R-requirement coverage table
 
-| Req   | Description (short)                                    | Prior (tick 7) | Tick 8       | Notes |
+| Req   | Description (short)                                    | Prior (tick 8) | Tick 9       | Notes |
 |-------|--------------------------------------------------------|----------------|--------------|-------|
-| R1    | Synthetic notes only — no real PHI                     | no test        | **test exists** | `scenarios.partd-approvable.test.ts` checks >500 bytes, no SSN/DOB/DL patterns, presence of "synthetic"/"Patient A" marker |
-| R2    | Three curated cases — one per payer line               | no test        | **partial — test exists** | partd-approvable case covered by this test; `commercial-policy-void/` and `medicaid-denied-then-appealed/` scenarios not yet created — test for those cases pending UNIT-3 completion |
-| R4    | Per-case authoring contract (5 required files + schema) | no test       | **test exists** | All five files validated: existence, note size, payer-profile `payerLine`+`formularyRelease` discriminant, requested-drug 6-field schema, expected-outcome keyword check |
+| R1    | Synthetic notes only — no real PHI                     | test exists    | test exists  | Both scenario tests check >500 bytes, no SSN/DOB/DL patterns, presence of "synthetic" marker |
+| R2    | Three curated cases — one per payer line               | partial (1/3)  | **partial (2/3)** | partd-approvable + commercial-policy-void covered; `medicaid-denied-then-appealed/` pending UNIT-3c |
+| R4    | Per-case authoring contract (5 required files + schema) | test exists   | **test exists + Commercial discriminant** | `scenarios.commercial-policy-void.test.ts` validates `payerLine: "commercial"` discriminant; `formularyRelease` omitted for void case (correct) |
 | R5    | Real per-line formulary data                           | no test        | no test      | Not testable via static fixtures alone; runtime arbiter concern |
 | R6    | Single-source-of-truth invariant                       | no test        | no test      | Arbiter-side; out of scope for static fixtures |
 | R7    | Deterministic read (content-hash at pin time)          | no test        | no test      | Arbiter-side |
-| R8    | Per-line release pin in payer-profile.json             | no test        | **test exists** | `formularyRelease` object with all 5 PartD discriminant fields validated in `scenarios.partd-approvable.test.ts` |
+| R8    | Per-line release pin in payer-profile.json             | test exists    | test exists  | PartD discriminant validated in `scenarios.partd-approvable.test.ts`; void case correctly omits release pin |
 | R9    | Off-chain evidence collection                          | no test        | no test      | Process requirement; not directly testable |
-| R10   | Frozen evidence packet — ≥1 EvidenceReference with shape | no test      | **test exists** | `packet.json` validated for `references` array, `url`, and `contentHash` keccak256 format |
+| R10   | Frozen evidence packet — ≥1 EvidenceReference with shape | test exists  | test exists  | Both scenario packets validated for `references` array, `url`, and `contentHash` keccak256 format |
 | R11   | Merkle leaf + root helpers (`merkleLeaf`, `merkleRoot`) | no test       | no test      | UNIT-9 pending; `src/protocol/packet.ts` not yet written |
 | R13   | `PayerLine` enum + `LADDERS` constant                  | test exists    | test exists  | `ladders.test.ts` (14 assertions, landed tick 3) |
 | R14a  | `appeal()` requires prior ruling = Deny                | test exists    | test exists  | Hardhat + vitest sim/real tests (ticks 4–6) |
 | R15   | All documented stage names present in LADDERS          | test exists    | test exists  | `ladders.test.ts` pins all R15 names |
 | R16   | `payerLine`/`appealRound` on `Negotiation` type        | test exists    | test exists  | Hardhat + TS compilation (tick 3) |
 | R17   | `appealRound` increments on appeal                     | test exists    | test exists  | T6 + R9-deadlock-appeal assertions (tick 3) |
+
+### PolicyInvalidated terminal state — scenario documentation note
+
+`commercial-policy-void/expected-outcome.md` documents the `PolicyInvalidated` terminal
+state as the expected on-chain outcome for this case. This is informational coverage only:
+no executable test drives the contract to `PolicyInvalidated` this tick. An integration
+test exercising that transition remains queued.
 
 ---
 
@@ -68,8 +75,9 @@ To wire coverage: add `@vitest/coverage-v8` (or `c8`) for the `src/` vitest suit
 
 ## Tick verdict
 
-**PASS-for-this-tick.** This tick added only static fixtures and a schema-validation test
-that reads them. No executable logic was introduced, so no new coverage gaps were opened.
-Existing test suites (hardhat 28/28, vitest 21/21 as last measured at tick 6) are not
-regressed. The 85% line/branch target cannot yet be evaluated without a coverage tool,
-but that gap predates this tick and is tracked as a steady-state blocker.
+**PASS-for-this-tick.** This tick added only static fixtures and a scenario-validation
+test (lib suite now 33/33). No executable library, contract, or web app logic was
+introduced, so no new coverage gaps were opened. R2 advances from 1-of-3 to 2-of-3
+curated payer-line cases; `medicaid-denied-then-appealed/` remains the sole open R2 gap.
+The 85% line/branch target cannot yet be evaluated without a coverage tool; that gap
+predates this tick and is tracked as a steady-state blocker.

@@ -4,14 +4,39 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 8 — UNIT-3 partd-approvable scenario landed)
-**Current mode:** `impl` *(token-budget self-throttling deprecated in commit `a68ffe5`; emergency-tag mode flip from tick 7 reverted)*
-**Current tick:** 8
-**Last focus:** UNIT-3 scoped to one-of-three curated scenarios: `demo-data/scenarios/partd-approvable/` (5 R4 files) + `src/protocol/scenarios.partd-approvable.test.ts` (7 assertions pinning §3.4 Packet shape, §3.2 PartD discriminant, R1 PHI guards, R4 file presence)
-**Last commit:** `<this tick>` (tick 8 — UNIT-3 partd-approvable)
+**Last updated:** 2026-05-29 (tick 9 — UNIT-3b commercial-policy-void landed + amendment 0005 resolving R23 vs R6b)
+**Current mode:** `impl`
+**Current tick:** 9
+**Last focus:** UNIT-3b — second of three curated scenarios. Strict-review first pass surfaced 2 HIGH spec-conformance gaps (slice.kind enum, R23 vs R6b conflict) that needed real fixes: (a) `slice.kind` changed to `guideline-recommendation` (in §3.4 enum), (b) authored `docs/amendments/0005-policy-void-r23-supersedes-r6b.md` resolving SPEC-0004 R23 supersedes SPEC-0001 R6b for the on-label policy-void case. Expected ruling for the commercial case is now Approve + policyVoidedClauseIndices, not terminal PolicyInvalidated. Second-pass strict-review: PASS.
+**Last commit:** `<this tick>` (tick 9 — UNIT-3b commercial-policy-void + amendment 0005)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)
+
+### UNIT-3b (LANDED tick 9 — second curated scenario + spec amendment 0005)
+**`demo-data/scenarios/commercial-policy-void/` + mirror schema test + amendment**
+- What landed: 5 R4 fixture files (Aetna Open Access Elect Choice POS / etanercept (Enbrel) / psoriatic arthritis / Aetna CPB 0792 imaging-prerequisite clause contradicts FDA label → R23 escape hatch); `src/protocol/scenarios.commercial-policy-void.test.ts` with 8 sub-tests (R4 file presence, R1 PHI guards on note.md AND expected-outcome.md, §3.2 Commercial discriminant, §3.4 packet shape, §2.6 R23 dual-slice invariant + closed-enum check, R23 Approve header line). Amendment `docs/amendments/0005-policy-void-r23-supersedes-r6b.md` resolves SPEC-0004 R23 supersedes SPEC-0001 R6b for the on-label-policy-void case: ruling becomes Approve + `policyVoidedClauseIndices`, NOT terminal PolicyInvalidated. Also added PHI scan on `expected-outcome.md` to the partd test (symmetric closure of MEDIUM finding 4).
+- R2 progress: **2 of 3 curated cases landed** (`partd-approvable` + `commercial-policy-void`). UNIT-3c (medicaid-denied-then-appealed) is the remaining R2 work.
+- Gate verdict: hardhat 28/28 ✓ (no contracts diff), lib tests 36/36 ✓ (+3 net: split R23 test + 2 new expected-outcome PHI tests), tsc ✓, secret-scan ✓ (well-known placeholder hash + `0x…0002` sentinel only), Opus solidity-compliance PASS (no contracts diff), Opus security-review PASS (5 concerns clean), Opus strict-review SECOND-PASS **PASS** (first pass: 9 findings — 2 HIGH closed via the amendment + slice.kind change, 2 MEDIUM closed via test name/scope rework, 1 LOW closed via header-line assertion, 4 LOWs deferred to dedicated future units). Coverage gate PASS-for-this-tick. Design-conformance gate 57% — pre-existing UI gap, unchanged.
+
+### UNIT-3c (NEW — queued after UNIT-3b)
+**`demo-data/scenarios/medicaid-denied-then-appealed/` + mirror schema test**
+- Files: `demo-data/scenarios/medicaid-denied-then-appealed/{note.md, packet.json, payer-profile.json, requested-drug.json, expected-outcome.md}` + `src/protocol/scenarios.medicaid-denied-then-appealed.test.ts`
+- R-citations: SPEC-0004 §2.1 R1, R2, R4; §3.2 Medicaid discriminant (`{ line: "Medicaid"; state; mco; revision; sourceUrl; contentHash }`); §2.4 R14a (appeal sequencing); §3.4 Packet shape
+- Acceptance criterion: scenario folder has all 5 R4 files; `payer-profile.json` has `payerLine: "Medicaid"` and a Medicaid-shaped `formularyRelease` (state/mco/revision, no planId or carrier); `expected-outcome.md` documents the round-0 Deny narrative AND the round-1 Approve-after-appeal arc; packet for round 0 carries an FDA-label slice + a formulary-entry showing the drug is non-preferred; the test mirrors the commercial test structure with §3.2 Medicaid assertions and a round-0-Deny + round-1-Approve assertion in expected-outcome.md (header line for round 0).
+- Strict-review-9 deferred follow-ups to ALSO close in this unit: distinct-sentinel address (`0x…0003`); extend PHI scan to ALL synthetic narrative files; rename test "six required fields" → "all six fields per R4".
+
+### UNIT-3-refactor (NEW — strict-review tick 9 LOW 7 deferred)
+**Extract shared scenario-test helpers — DRY at the file level**
+- Files: `src/protocol/scenarioFixtures.test-helpers.ts` (new); refactor `src/protocol/scenarios.{partd-approvable,commercial-policy-void,medicaid-denied-then-appealed}.test.ts`
+- R-citations: none (refactor)
+- Acceptance criterion: the three scenario test files share a single helper module exposing `assertNoPHI`, `assertPacketShape`, `assertRequestedDrugShape`, `loadScenarioFile`. Each per-scenario file becomes ~40 lines of scenario-distinct assertions. Test names still appear per-scenario in TAP output. All 36+ tests still pass. Do this AFTER UNIT-3c so the third scenario's exact shape is in scope when extracting the helper.
+
+### SPEC-0001 R6b prose-update (NEW — strict-review tick 9 follow-up)
+**Apply amendment 0005 to SPEC-0001 R6b text + add `policyVoidedClauseIndices` to §3.5 event payload**
+- Files: `docs/specs/0001-mvp0-coverage-negotiation.md`
+- R-citations: amendment `0005-policy-void-r23-supersedes-r6b.md`
+- Acceptance criterion: SPEC-0001 R6b's prose is rewritten to make `PolicyFlagged` an annotation on the Approved ruling for the on-label-policy-void case (not a route to terminal PolicyInvalidated). The §3.5 `Ruled` event payload gains `policyVoidedClauseIndices?: number[]`. The PolicyInvalidated terminal state is retained but its scope is narrowed per amendment 0005.
 
 ### UNIT-3a (LANDED tick 8 — first curated scenario)
 **`demo-data/scenarios/partd-approvable/` + schema-validation test**
@@ -151,6 +176,7 @@
 
 ## Recent findings (rolling — newest first, last 20)
 
+- **2026-05-29 (tick 9 — UNIT-3b landed; first real spec amendment authored by the loop):** Second curated scenario (commercial-policy-void: Aetna / etanercept / Aetna CPB 0792 imaging-prereq vs FDA label) landed cleanly, BUT the first-pass strict-review surfaced two HIGH spec-conformance gaps that turned out to be real: (1) `slice.kind: "policy-clause"` is not in §3.4's closed enum (fixed by changing to `"guideline-recommendation"` — the Aetna CPB is structurally a payer guideline document); (2) the fixture's expected ruling `PolicyInvalidated` contradicted SPEC-0004 R23 which mandates `Approve + policyVoidedClauseIndices` for the commercial-policy-void case. The loop authored its first amendment (`docs/amendments/0005-policy-void-r23-supersedes-r6b.md`) resolving R23 supersedes SPEC-0001 R6b for the on-label-policy-void case, with five reasons (recency, specificity, motivation-alignment, provider-friendliness, payload-preservation). Two follow-up units queued: (a) SPEC-0001 R6b prose-update to apply amendment 0005, (b) test-helper DRY extraction across all three scenario tests. Net diff: 5 commercial fixture files + 1 amendment + 1 test (rewrite) + 1 partd-test PHI scan extension. R2 now **2 of 3** complete.
 - **2026-05-29 (tick 8 — UNIT-3a landed, normal full-breadth tick):** First curated scenario (partd-approvable) authored as 5 R4 fixture files + a 7-assertion node:test schema-validation file. The dev+TDD subagents agreed on the §3.4 `references` packet shape; the TDD subagent's initial assertion against `planIdOrProduct` (R8 line 153 prose-shorthand) was corrected to `planId` per §3.2's discriminated TS union (the canonical type definition), with the spec-internal divergence documented inline in the test and queued as a spec-cleanup follow-up unit. Initial strict-review surfaced 6 findings (2 MEDIUM `_note` antipattern, 4 LOW test-tightening); all 6 fixed inline plus 1 NEW LOW (`submittedAt` union widened too far) introduced and closed in iteration 3. Net diff: 5 fixtures + 1 test file. Coverage gate PASS-for-this-tick (no executable code change); design-conformance unchanged at 57% (pre-existing UI gap, not blocked by this fixture tick); browser-verify DEFERRED until UI consumes the new scenarios directory in a later UI tick. R2 marked as **partial (1 of 3 cases)** in the queue — NOT done.
 - **2026-05-29 (tick 7 — emergency tag, loop session paused):** No new code landed this tick. Token budget assessed at ~80% (75–90% band per procedure). The next queued unit UNIT-3 (three curated scenario folders × five synthetic clinical files each = 15 files of medically-coherent demo content) cannot be completed cleanly without a dev subagent, and the procedure forbids dispatching subagents in this band. Per the loop's "don't grind near the cap" principle, this is the right stopping point. **Six commits landed across ticks 1–6**, all gates green at last commit (hardhat 28/28, vitest 21/21, tsc clean, secret-scan clean, Opus solidity-compliance + security + strict-review all PASS on the most recent strict-review iterations). Operator handoff: restart in a fresh session to land UNIT-3+ (web hooks, UI conformance, curated scenarios, browser-verify). The `tokens-emergency-2026-05-29-1` tag marks this stopping point; `git diff start..HEAD` shows the loop's full delivery.
 - **2026-05-29 (tick 6 — UNIT-2-followup-B landed, very-lean tick):** Closed the zero-address ordering gap from tick 4's strict-review LOW finding. Both UNIT-2 follow-ups now landed; SPEC-0004 Phase 1 contract work fully tested. Token budget after tick 6 estimated ~80% — clearly in the 75–90% band per procedure. Next tick must stop dispatching subagents, do small inline work only, and prepare for emergency tag if a non-trivial unit is next. UI units (UNIT-4+) will require a fresh session — they're too large to safely fit in remaining budget.
