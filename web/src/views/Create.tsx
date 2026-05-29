@@ -4,17 +4,9 @@
  */
 import { useMemo, useState } from "react";
 import { ZERO_HASH, hashContent, PayerLine, type Profile } from "@lib";
-import { client } from "../client.js";
+import { client, INSURER_ADDRESS } from "../client.js";
 import { parseAmount } from "../shared.js";
 import { SAMPLE_CASE } from "../sampleCase.js";
-
-/**
- * Synthetic distinct insurer address used until UNIT-7 ships the counterparty
- * input UI. SPEC-0004 R2b requires `providerAddr != insurerAddr` per request;
- * a hardcoded constant keeps the Create form working in v0 without claiming to
- * support real multi-wallet flows (which is UNIT-7's deliverable per §2.1).
- */
-const SYNTHETIC_INSURER_ADDR = "0x0000000000000000000000000000000000000002";
 
 interface CreateProps {
   readonly activeProfile: Profile;
@@ -78,10 +70,11 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
         providerId: activeProfile.partyId,
         insurerId: insurerProfile.partyId,
         providerAddr: client.wallet.address,
-        // SPEC-0004 R2b: providerAddr != insurerAddr. UNIT-7 will replace this
-        // synthetic placeholder with a user-input counterparty field; for now
-        // we pin a distinct deterministic address so the form doesn't revert.
-        insurerAddr: SYNTHETIC_INSURER_ADDR,
+        // SPEC-0004 R2b: providerAddr != insurerAddr. The insurer is a second
+        // wallet whose private key lives in VITE_PRIVATE_KEY_INSURER (UNIT-7a);
+        // the insurer profile's signer is hot-swapped via setActiveClientProfile
+        // so engage() can later be called by that wallet.
+        insurerAddr: INSURER_ADDRESS,
         payerLine: PayerLine.PartD,
         drugRef: hashContent(drug),
         requestedAmount,

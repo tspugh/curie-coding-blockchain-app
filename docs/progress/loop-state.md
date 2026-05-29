@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 24 — UNIT-event-tones: per-event-type colors in tx-stream)
+**Last updated:** 2026-05-29 (tick 25 — UNIT-7a + SPEC-0003 R42–R47 runtime wallet configurability)
 **Current mode:** `impl`
-**Current tick:** 24
-**Last focus:** Closed tick-21 NIT 6: tx-stream event names were all rendered in `var(--accent)` regardless of semantic. Added `eventTone(name)` to `web/src/shared.ts` returning a union `"ok" | "warn" | "danger" | "purple" | "accent"` per CoverageEvent kind: ok = Accepted/Settled (terminal success); warn = EvidenceRequested/Submitted (needs action); danger = Deadlocked/PolicyInvalidated/PolicyFlagged/ProviderRefused/Withdrawn (terminal fail); purple = procedural mid-flight (ContractCreated/ContentCommitted/InsurerEngaged/Appealed/PacketSubmitted); accent = AI-action transitions (Ruled/RulingRequested/AdjudicationRequested/etc.). Switch covers all 20 CoverageEvent names — tsc exhaustiveness guarantees adding a new event without a tone fails the build. 5 CSS rules added (.tx-ev-name.tone-*). Network.tsx row gains `tone-${eventTone(e.name)}` className. Mirrors prototype's EVENT_META intent without porting its missing tokens (--purple-500/--state-review etc.).
-**Last commit:** `<this tick>` (tick 24 — UNIT-event-tones)
+**Current tick:** 25
+**Last focus:** Closed UNIT-7a (the "auth: not insurer" two-wallet blocker) end-to-end. (a) `web/src/client.ts` rewritten: factored `makeClient(privateKey)`, two concrete clients (providerClient, insurerClient), Proxy-backed `client` export dispatching to whichever is active via module-level pointer, `setActiveClientProfile(id)` flipper. (b) `web/src/App.tsx` calls `setActiveClientProfile` in `onSwitchProfile` BEFORE the React state update so any tx fired same-render uses the right signer. (c) `web/src/views/Create.tsx` drops the synthetic `0x...0002` placeholder for `INSURER_ADDRESS` from the second wallet. (d) Runtime configurability: localStorage override beats .env via `keyOverride()` helper. (e) New "Wallet keys" panel in Settings with two password inputs + Save/Clear/Generate buttons + Reload-now nudge. (f) SPEC-0003 §2.9 added with R42–R47 documenting the requirement (UI-configurable keys, localStorage>env, reload-to-apply, profile-switch flips signer, INSURER_ADDRESS export, browser-verify acceptance test). (g) Fresh insurer wallet generated in worktree .env — user funded externally.
+**Last commit:** `<this tick>` (tick 25 — UNIT-7a + SPEC-0003 R42–R47)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)

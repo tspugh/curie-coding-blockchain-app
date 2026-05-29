@@ -16,6 +16,7 @@
  *   - Chain ID:         SOMNIA_TESTNET.chainId (50312)
  *   - RPC host:         extracted from SOMNIA_TESTNET.rpcUrl
  */
+import { useState } from "react";
 import { SOMNIA_TESTNET } from "@lib";
 import { client } from "../client.js";
 import { formatStt, formatSttCompact } from "../format.js";
@@ -143,6 +144,151 @@ export function Settings({
           </div>
         </dl>
       </div>
+
+      {/* ── Wallet keys (SPEC-0003 R30 runtime configurability) ── */}
+      <WalletKeysPanel />
     </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Wallet-keys panel — paste / clear / generate keys at runtime
+// ---------------------------------------------------------------------------
+
+const KEY_STORAGE_PREFIX = "curie:";
+type KeySlot = "VITE_PRIVATE_KEY" | "VITE_PRIVATE_KEY_INSURER";
+
+function readStoredKey(slot: KeySlot): string {
+  try {
+    return window.localStorage.getItem(KEY_STORAGE_PREFIX + slot) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeStoredKey(slot: KeySlot, value: string): void {
+  try {
+    if (value) {
+      window.localStorage.setItem(KEY_STORAGE_PREFIX + slot, value);
+    } else {
+      window.localStorage.removeItem(KEY_STORAGE_PREFIX + slot);
+    }
+  } catch {
+    /* localStorage unavailable */
+  }
+}
+
+function isValidHexKey(s: string): boolean {
+  return /^0x[0-9a-fA-F]{64}$/.test(s);
+}
+
+/** Generate a random 32-byte private key via the platform CSPRNG. */
+function generateHexKey(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `0x${hex}`;
+}
+
+function WalletKeysPanel() {
+  const [providerKey, setProviderKey] = useState(() => readStoredKey("VITE_PRIVATE_KEY"));
+  const [insurerKey, setInsurerKey] = useState(() => readStoredKey("VITE_PRIVATE_KEY_INSURER"));
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  const providerValid = providerKey === "" || isValidHexKey(providerKey);
+  const insurerValid = insurerKey === "" || isValidHexKey(insurerKey);
+
+  const handleSave = () => {
+    writeStoredKey("VITE_PRIVATE_KEY", providerKey);
+    writeStoredKey("VITE_PRIVATE_KEY_INSURER", insurerKey);
+    setSavedAt(Date.now());
+  };
+
+  const handleClearAll = () => {
+    writeStoredKey("VITE_PRIVATE_KEY", "");
+    writeStoredKey("VITE_PRIVATE_KEY_INSURER", "");
+    setProviderKey("");
+    setInsurerKey("");
+    setSavedAt(Date.now());
+  };
+
+  return (
+    <div className="settings-panel">
+      <div className="section-label">Wallet keys</div>
+      <p className="hint">
+        Override the env-baked keys at runtime. Testnet-only — never paste a key
+        controlling real funds. Keys are stored in this browser's
+        <code>localStorage</code>; clearing site data wipes them. <strong>Reload after saving
+        for changes to take effect.</strong>
+      </p>
+
+      <div className="key-row">
+        <label htmlFor="provider-key">Provider private key</label>
+        <input
+          id="provider-key"
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="0x… (leave empty to use VITE_PRIVATE_KEY from .env)"
+          value={providerKey}
+          onChange={(e) => setProviderKey(e.target.value.trim())}
+          aria-invalid={!providerValid}
+        />
+        {!providerValid && (
+          <span className="key-error">Must be 0x + 64 hex chars</span>
+        )}
+      </div>
+
+      <div className="key-row">
+        <label htmlFor="insurer-key">Insurer private key</label>
+        <input
+          id="insurer-key"
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="0x… (leave empty to fall back to provider key)"
+          value={insurerKey}
+          onChange={(e) => setInsurerKey(e.target.value.trim())}
+          aria-invalid={!insurerValid}
+        />
+        <button
+          type="button"
+          className="key-generate"
+          onClick={() => setInsurerKey(generateHexKey())}
+          title="Generate a fresh random key (you'll need to fund the address)"
+        >
+          Generate
+        </button>
+        {!insurerValid && (
+          <span className="key-error">Must be 0x + 64 hex chars</span>
+        )}
+      </div>
+
+      <div className="key-actions">
+        <button
+          type="button"
+          className="primary"
+          onClick={handleSave}
+          disabled={!providerValid || !insurerValid}
+        >
+          Save
+        </button>
+        <button type="button" onClick={handleClearAll}>
+          Clear all
+        </button>
+        {savedAt !== null && (
+          <span className="hint">
+            Saved. Reload to apply.{" "}
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => window.location.reload()}
+            >
+              Reload now
+            </button>
+          </span>
+        )}
+      </div>
+    </div>
   );
 }

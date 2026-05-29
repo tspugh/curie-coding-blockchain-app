@@ -98,75 +98,135 @@ export function getNextNadacUnitPrice(): bigint | null {
 // ---------------------------------------------------------------------------
 
 /**
- * The one client the UI holds.
+ * Build one CurieClient bound to `privateKey`. Used to construct distinct
+ * provider/insurer clients so the active profile can be paired with a real
+ * signing key (UNIT-7a-two-wallet-demo).
  *
- * Real mode: ethers v6 signer on Somnia Shannon testnet; the on-chain AI arbiter
- * (registered via AgentRegistry) issues the necessity ruling as a contract callback.
- *
- * Simulated mode: no funds/keys needed; `autoResolveMs` mimics agent latency so
- * the timeline visibly transitions Ready → UnderReview → Ruled. A third Observer
- * profile (party 99) is registered for the R6 role/wallet-gating demo.
+ * In simulated mode the privateKey is ignored; both clients are equivalent
+ * mocks (the SimulatedBackend has no signer).
  */
-export const client: CurieClient = IS_REAL
-  ? createClient({
+function makeClient(privateKey: string | undefined): CurieClient {
+  const profileConfig = {
+    profiles: [
+      ...DEFAULT_PROFILES,
+      { id: "observer", label: "Observer", partyId: 99n },
+    ],
+  };
+  if (IS_REAL) {
+    if (!privateKey) {
+      throw new Error(
+        "Real mode requires a private key — set VITE_PRIVATE_KEY (provider) and VITE_PRIVATE_KEY_INSURER (insurer) in .env.",
+      );
+    }
+    return createClient({
       wallet: {
         mode: "real",
-        privateKey: import.meta.env.VITE_PRIVATE_KEY,
+        privateKey,
         rpcUrl: import.meta.env.VITE_RPC_URL,
         network:
           (import.meta.env.VITE_SOMNIA_NETWORK as "testnet" | "mainnet" | undefined) ??
           "testnet",
       },
-      profiles: {
-        profiles: [
-          ...DEFAULT_PROFILES,
-          { id: "observer", label: "Observer", partyId: 99n },
-        ],
-      },
+      profiles: profileConfig,
       contract: {
         real: {
           contractAddress: import.meta.env.VITE_CONTRACT_ADDRESS,
-          // Fee forwarded to the Somnia LLM agent platform per requestAdjudication.
           // = platform.getRequestDeposit() (0.03 STT) + 0.10 STT × 3 validators = 0.33 STT.
           agentFeeValue: BigInt(import.meta.env.VITE_AGENT_FEE_WEI ?? "330000000000000000"),
         },
       },
-    })
-  : createClient({
-      wallet: { mode: "simulated" },
-      profiles: {
-        profiles: [
-          ...DEFAULT_PROFILES,
-          { id: "observer", label: "Observer", partyId: 99n },
-        ],
-      },
-      contract: {
-        simulated: {
-          autoResolveMs: 1200,
-          decision: () => nextDecision,
-          // Deterministic covered amount = min(requested, costPlusUnitPrice × quantity)
-          // — never AI-chosen (R6a). When the demo hasn't set a price the backend
-          // defaults the per-unit price so the cap is non-binding (covered == requested);
-          // setting a lower per-unit price demonstrates the cap binding via min().
-          costPlusUnitPrice: (n: Negotiation) =>
-            nextCostPlusUnitPrice ??
-            (n.quantity > 0n
-              ? (n.requestedAmount + n.quantity - 1n) / n.quantity
-              : n.requestedAmount),
-          // NADAC per-unit acquisition-cost FLOOR reference (recorded; never the cap).
-          nadacUnitPrice: () => nextNadacUnitPrice ?? 0n,
-          clauseRef: CLAUSE_REF,
-          standardRef: STANDARD_REF,
-        },
-      },
     });
+  }
+  return createClient({
+    wallet: { mode: "simulated" },
+    profiles: profileConfig,
+    contract: {
+      simulated: {
+        autoResolveMs: 1200,
+        decision: () => nextDecision,
+        costPlusUnitPrice: (n: Negotiation) =>
+          nextCostPlusUnitPrice ??
+          (n.quantity > 0n
+            ? (n.requestedAmount + n.quantity - 1n) / n.quantity
+            : n.requestedAmount),
+        nadacUnitPrice: () => nextNadacUnitPrice ?? 0n,
+        clauseRef: CLAUSE_REF,
+        standardRef: STANDARD_REF,
+      },
+    },
+  });
+}
 
-// Acceptable only because this is a no-funds dev wallet (testnet / simulated):
-// expose the client for debugging and agent-browser tests.
-(window as unknown as { __curie: CurieClient }).__curie = client;
+// Two concrete clients, one per signing key. Insurer key is optional; if not
+// set, `insurerClient` falls back to the provider key so the app still runs
+// (the engage path will revert "auth: not insurer" as it did pre-UNIT-7a).
+/**
+ * Read a private-key env var with a localStorage override (SPEC-0003 R30 —
+ * runtime wallet configurability). The Settings UI writes overrides under the
+ * `curie:VITE_PRIVATE_KEY*` keys. localStorage wins so the user's UI edit
+ * survives across page loads without an .env rebuild. Empty strings are
+ * treated as not-set so a cleared field reverts to the env value.
+ *
+ * Note: localStorage is plaintext and per-origin. Don't paste a real-funds
+ * key — these are testnet keys only.
+ */
+function keyOverride(envName: "VITE_PRIVATE_KEY" | "VITE_PRIVATE_KEY_INSURER"): string | undefined {
+  try {
+    const stored = window.localStorage.getItem(`curie:${envName}`);
+    if (stored && /^0x[0-9a-fA-F]{64}$/.test(stored)) return stored;
+  } catch {
+    /* localStorage unavailable (private mode, SSR) — fall through to env. */
+  }
+  const fromEnv = import.meta.env[envName];
+  return typeof fromEnv === "string" && fromEnv.length > 0 ? fromEnv : undefined;
+}
 
-// SPEC-0003 §2.2. Wire the tx-confirmed event bus on the real backend to the
-// JSONL dev-server sink + in-UI monitor. No-op in simulated mode (the helper
-// type-guards on RealBackend).
+const providerClient = makeClient(keyOverride("VITE_PRIVATE_KEY"));
+const insurerClient = makeClient(
+  keyOverride("VITE_PRIVATE_KEY_INSURER") ?? keyOverride("VITE_PRIVATE_KEY"),
+);
+
+// Module-level "which client should `client.*` dispatch to" pointer. App.tsx
+// flips this whenever the user switches profile in the UI.
+let activeClient: CurieClient = providerClient;
+
+/**
+ * Tell the proxy which concrete client to dispatch to for chain writes. App
+ * calls this on every profile change. "insurer" → insurerClient (signs as the
+ * second wallet); anything else → providerClient. Idempotent.
+ */
+export function setActiveClientProfile(profileId: string): void {
+  activeClient = profileId === "insurer" ? insurerClient : providerClient;
+}
+
+/**
+ * Address of the second-wallet signer. Create.tsx reads this to populate the
+ * insurer field of the new negotiation so R2b (provider ≠ insurer) is
+ * satisfied and the insurer's engage() can subsequently sign successfully.
+ */
+export const INSURER_ADDRESS: string = insurerClient.wallet.address;
+
+/**
+ * The one `client` the UI holds. A Proxy that dispatches every property
+ * access to whichever concrete client `activeClient` currently points to.
+ * View code keeps using `import { client }` unchanged.
+ */
+export const client: CurieClient = new Proxy({} as CurieClient, {
+  get(_target, prop) {
+    return activeClient[prop as keyof CurieClient];
+  },
+});
+
+// Acceptable only because these are no-funds dev wallets (testnet / simulated):
+// expose both concrete clients for debugging and agent-browser tests.
+(window as unknown as { __curie: { provider: CurieClient; insurer: CurieClient } }).__curie = {
+  provider: providerClient,
+  insurer: insurerClient,
+};
+
+// SPEC-0003 §2.2. Wire the tx-confirmed event bus on BOTH concrete clients so
+// the in-UI monitor + JSONL sink see events regardless of which signer fired
+// them. No-op in simulated mode (the helper type-guards on RealBackend).
 import { wireTxLogger } from "./txLogger.js";
-wireTxLogger(client.negotiation);
+wireTxLogger(providerClient.negotiation);
+if (insurerClient !== providerClient) wireTxLogger(insurerClient.negotiation);

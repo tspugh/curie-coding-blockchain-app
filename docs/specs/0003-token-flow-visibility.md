@@ -338,6 +338,61 @@ SPEC-0001 R9 / R12 territory. Reconsidering whether the contract should
 auto-loop forever, or cap at a hard terminal `Deadlocked` after N timeouts, is
 a SPEC-0001 amendment-level question — captured here as a follow-up.
 
+### 2.9 (2026-05-29) Runtime wallet configurability (Decision 9 — UNIT-7a)
+
+Pragmatic decision to unblock the two-wallet demo (SPEC-0004 R2b requires
+`providerAddr != insurerAddr`, so the existing single-`.env`-key model can't
+sign as both roles). Until the production wallet-connect path lands (R25,
+R26), the dev loop needs a way to set the second key without rebuilding the
+bundle — pasted from the Settings screen, stored in `localStorage`, picked up
+on the next page load.
+
+- **R42 (MUST) UI-configurable private keys for provider + insurer.** The
+  Settings screen MUST expose a "Wallet keys" panel with two
+  `<input type="password">` fields — one for the provider key, one for the
+  insurer key — plus *Save*, *Clear all*, and per-row *Generate* affordances.
+  Values are validated as `/^0x[0-9a-fA-F]{64}$/` before being accepted.
+  Empty fields fall back to the corresponding `VITE_PRIVATE_KEY*` env value.
+  The UI displays a one-line warning: **testnet-only — never paste a key
+  controlling real funds.**
+- **R43 (MUST) `localStorage` override beats `.env`.** At client-construction
+  time, the web bundle reads each private key via a helper that probes
+  `localStorage["curie:VITE_PRIVATE_KEY*"]` first and falls back to the
+  build-time env. Only `0x`-prefixed 64-hex values are accepted from
+  storage; anything else is ignored and the env fallback wins. Keys are
+  never logged, never echoed to the DOM, and never sent over the network.
+- **R44 (MUST) Reload-to-apply.** Changes saved via the UI take effect on
+  the next page load. The UI prompts the user to reload, and offers a
+  "Reload now" button. **Hot-swap without reload is explicitly out of scope
+  for v0** — the client's signer is bound at module-init, and rebuilding it
+  in place would require either reactive contract bindings (large refactor)
+  or unsound state surgery (risk of partial writes signed by the wrong key).
+- **R45 (MUST) `setActiveClientProfile(id)` flips the signer on profile
+  switch.** The web client exposes two concrete clients (`providerClient`,
+  `insurerClient`) plus a Proxy-backed `client` export that dispatches every
+  property access to whichever concrete client a module-level pointer names.
+  App.tsx's profile-switch handler MUST call `setActiveClientProfile(id)`
+  BEFORE the React state update so any tx fired from the same render cycle
+  is signed by the correct wallet.
+- **R46 (SHOULD) Insurer address surfaced as a stable export.** The web
+  client exposes `INSURER_ADDRESS` derived from the insurer wallet. Create.tsx
+  uses this to populate `insurerAddr` on `createContract` so the resulting
+  on-chain Negotiation has a real two-party shape (`providerAddr` = active
+  wallet; `insurerAddr` = the second wallet's actual address). The synthetic
+  `0x...0002` placeholder used pre-UNIT-7a is removed.
+- **R47 (SHOULD) Acceptance test on Settings.** A browser-verify path drives:
+  paste a known 0x+64-hex string into "Insurer private key", click Save, click
+  Reload, switch profile to Insurer, observe the wallet chip flipping to the
+  new address (no longer matching the provider address), and observe that the
+  Network "active rulings" + wallet balance recompute against the new signer.
+
+**Security posture (informational, not a requirement):** `localStorage` is
+per-origin, plaintext, and survives until the user clears site data. This is
+acceptable for a testnet-keys-only dev affordance and is consistent with the
+"never paste a real-funds key" disclaimer. Production v0 keeps R25/R26's
+MetaMask + SIWE as the primary path; R42–R47 is the *demo-loop* convenience,
+not the production wallet model.
+
 ## Implementation plan (auxiliary)
 
 > Non-normative. Phases the polish work into landable PRs against the spec

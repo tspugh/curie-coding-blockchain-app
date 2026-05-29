@@ -3,7 +3,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { type CoverageEvent, type Profile } from "@lib";
-import { client } from "./client.js";
+import { client, setActiveClientProfile } from "./client.js";
 import { shortHex } from "./shared.js";
 import { Overview } from "./views/Overview.js";
 import { Create } from "./views/Create.js";
@@ -57,6 +57,10 @@ export function App() {
   );
 
   const onSwitchProfile = useCallback((id: string) => {
+    // Two-wallet model (UNIT-7a): flip the signing key to match the role
+    // BEFORE the registry update, so any tx fired from this render cycle
+    // uses the right signer.
+    setActiveClientProfile(id);
     client.profiles.setActiveProfile(id);
     setActiveProfileId(id);
   }, []);
