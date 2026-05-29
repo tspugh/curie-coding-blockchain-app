@@ -132,17 +132,28 @@ export function App() {
           </span>
           <span className="wallet-line">
             <span className="label">Role</span>
-            <select
+            <div
+              className="profile-switcher"
               data-testid="profile-switcher"
-              value={activeProfile.id}
-              onChange={(e) => onSwitchProfile(e.target.value)}
+              role="radiogroup"
+              aria-label="Active profile"
             >
-              {profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
+              {profiles.map((p) => {
+                const on = activeProfile.id === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    className={`profile-pill${on ? " is-active" : ""}`}
+                    onClick={() => onSwitchProfile(p.id)}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
           </span>
         </div>
       </header>

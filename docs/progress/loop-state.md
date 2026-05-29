@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 31 — design-conformance refresh + queue rewrite)
+**Last updated:** 2026-05-29 (tick 32 — UNIT-TopBar-profile-pills)
 **Current mode:** `impl`
-**Current tick:** 31
-**Last focus:** Refreshed design-conformance measurement after the run of visible-UI ticks (14-30). **62% → 82% (+20pp)**. Per-surface: Overview 53→88%, Settings 0→90%, Network 0→85%, TopBar 40→72%, Detail 68→72%, Create 70→73%. Top 3 remaining gaps: (1) AppealLadder absent from Detail (`screens.jsx:233-266`); (2) Detail event log missing tx-hash chip + cost + attribution per row (`screens.jsx:386-417`, also reversed order); (3) TopBar ProfileSwitcher is a `<select>` not a pill-row (`app.jsx:115-131`). Queued as `UNIT-TopBar-profile-pills`, `UNIT-AppealLadder`, `UNIT-Detail-event-log-polish`. Each is a separate focused tick.
-**Last commit:** `<this tick>` (tick 31 — design-conformance refresh)
+**Current tick:** 32
+**Last focus:** Closed tick-31 gap #3: replaced TopBar's `<select>` profile picker with a 3-button pill row matching `app.jsx:115-131`. ARIA: `role="radiogroup"` + `role="radio"` + `aria-checked` for keyboard/AT navigation. Active pill fills `var(--accent)` white text; inactive pills stay transparent muted. Visible on every view since the TopBar is sticky. Expected design-conformance bump on TopBar surface (was 72%); remeasurement deferred to a batch tick.
+**Last commit:** `<this tick>` (tick 32 — UNIT-TopBar-profile-pills)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)

@@ -1902,3 +1902,37 @@ tr.row-link:hover td:first-child {
   background: rgba(255, 255, 255, .55);
   padding: 1px 5px;
 }
+
+/* SPEC-0003 TopBar profile switcher — pill row (matches prototype's
+   ProfileSwitcher in app.jsx:115-131). 3 inline buttons inside a rounded
+   container; the active one fills with the accent color. */
+.profile-switcher {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  gap: 2px;
+}
+.profile-pill {
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.14s ease;
+  white-space: nowrap;
+  font-family: inherit;
+}
+.profile-pill:hover:not(.is-active) {
+  color: var(--text-2);
+  background: transparent;
+  box-shadow: none;
+}
+.profile-pill.is-active {
+  background: var(--accent);
+  color: #ffffff;
+}
