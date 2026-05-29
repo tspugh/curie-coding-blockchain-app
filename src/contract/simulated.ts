@@ -211,6 +211,11 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     // contract's `require(msg.sender == providerAddr, "auth: not provider")`).
     if (!this.is(params.providerAddr)) throw new Error("auth: not provider");
     if (params.quantity <= 0n) throw new Error("qty: zero");
+    // SPEC-0004 R2b: rejects providerAddr == insurerAddr (supersedes SPEC-0001 R13's
+    // permissive self-claim — the demo explicitly does not support self-contracting).
+    if (params.providerAddr.toLowerCase() === params.insurerAddr.toLowerCase()) {
+      throw new Error("create: self-contract");
+    }
 
     const reqId = this.nextId++;
     const now = BigInt(Math.floor(Date.now() / 1000));
@@ -312,8 +317,9 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     reasonHash: string,
   ): Promise<void> {
     const n = this.must(reqId);
-    if (n.state !== State.Approved && n.state !== State.Denied) {
-      throw new Error("appeal: not ruled");
+    // SPEC-0004 §2.4 R14a: only a Deny justifies advancing the ladder.
+    if (n.state !== State.Denied) {
+      throw new Error("appeal: prior ruling not Deny");
     }
     this.onlyParty(n); // R11: either party may appeal
     if (partyId !== n.providerId && partyId !== n.insurerId) {
@@ -504,6 +510,17 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     n.state = State.UnderReview;
     this.requestToReq.set(requestId, reqId);
 
+    // SPEC-0004 §3.5: PacketSubmitted before RulingRequested mirrors the on-chain
+    // ordering (event emitted inside `_fireAgent` before `platform.createRequest`).
+    // packetRoot + packetUrl both carry evidenceUri until UNIT-9 wires the Merkle
+    // root + body-store URL.
+    this.emit({
+      name: "PacketSubmitted",
+      reqId,
+      round: n.round,
+      packetRoot: n.evidenceUri,
+      packetUrl: n.evidenceUri,
+    });
     this.emit({ name: "RulingRequested", reqId, requestId, fee });
 
     if (this.agent.autoResolve ?? true) {

@@ -54,11 +54,14 @@ interface IParseWebsiteAgent {
 /// @dev AUTH (R11): every party action is gated to `msg.sender ∈ {providerAddr,
 ///      insurerAddr}`; `insurerEngage` is insurer-only, `submitEvidence`/`refuse`
 ///      are provider-only, `createContract` must come from the provider address.
-///      A third, unrelated wallet reverts. Reads are public (no gate). Under the
-///      single-shared-wallet model (R12) both addresses are equal and the parties
-///      are distinguished by the trusted app-level `partyId` argument. The platform
-///      callback `handleResponse` is gated to the agent-platform address. Agent-
-///      firing entry points are `nonReentrant` and follow checks-effects-interactions.
+///      A third, unrelated wallet reverts. Reads are public (no gate). SPEC-0004
+///      R2b supersedes SPEC-0001 R12/R13: `providerAddr == insurerAddr` is rejected
+///      at `createContract` — the two addresses MUST be distinct per request.
+///      `partyId` still distinguishes which side of an action the caller represents
+///      when the same EOA holds multiple party roles across DIFFERENT requests; never
+///      within a single request. The platform callback `handleResponse` is gated to
+///      the agent-platform address. Agent-firing entry points are `nonReentrant`
+///      and follow checks-effects-interactions.
 contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler {
     // ---------------------------------------------------------------------
     // State machine (SPEC-0001 §3 "State machine" table — implemented exactly)
@@ -188,6 +191,19 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     // ---------------------------------------------------------------------
     // Events (SPEC-0001 §3 — names implemented exactly)
     // ---------------------------------------------------------------------
+
+    /// @notice SPEC-0004 §3.5. Emitted on every agent fire (initial requestAdjudication and
+    ///         every appeal/submitEvidence) so off-chain indexers + the Curie packet store
+    ///         can correlate the on-chain ruling request with the off-chain packet body.
+    ///         `packetRoot` is the bytes32 evidenceUri until UNIT-9 (Merkle root) lands;
+    ///         `packetUrl` is also a bytes32 until UNIT-9 swaps to a string body-store URL.
+    event PacketSubmitted(
+        uint256 indexed reqId,
+        uint256 indexed round,
+        bytes32 packetRoot,
+        bytes32 packetUrl
+    );
+
     event ContractCreated(
         uint256 indexed reqId,
         uint256 indexed providerId,
@@ -285,9 +301,11 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     // ---------------------------------------------------------------------
 
     /// @notice File a coverage-exception request as the provider → `Open` (R2).
-    /// @dev Caller MUST be the provider address (R11). Self-claim (providerAddr ==
-    ///      insurerAddr / providerId == insurerId) is permitted (R13). Stores only
-    ///      the justification hash + opaque refs — never raw content (R3/R4).
+    /// @dev Caller MUST be the provider address (R11). Stores only the justification
+    ///      hash + opaque refs — never raw content (R3/R4).
+    ///      SPEC-0004 R2b: rejects providerAddr == insurerAddr (supersedes SPEC-0001
+    ///      R13's permissive self-claim — the demo explicitly does not support
+    ///      single-party self-contracting).
     /// @return reqId The new request id.
     function createContract(
         uint256 providerId,
@@ -305,6 +323,7 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         require(providerAddr != address(0) && insurerAddr != address(0), "addr: zero");
         require(msg.sender == providerAddr, "auth: not provider");
         require(quantity > 0, "qty: zero"); // quantity drives the deterministic cap (R6a)
+        require(providerAddr != insurerAddr, "create: self-contract"); // SPEC-0004 R2b
 
         reqId = _nextId++;
         Negotiation storage n = _negotiations[reqId];
@@ -399,12 +418,17 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     }
 
     /// @notice Appeal a ruling with NEW public evidence of necessity (R6c). From
-    ///         `Approved`/`Denied`. Re-fires the agent (round++) while under the
-    ///         round cap; at the cap (`round >= maxRounds`) without mutual accept it
-    ///         routes to terminal `Deadlocked`.
+    ///         `Denied` ONLY (R14a: only a Deny justifies advancing the ladder;
+    ///         appealing an Approved ruling is non-sensical — you already got what
+    ///         you asked for, possibly capped). Re-fires the agent (round++) while
+    ///         under the round cap; at the cap (`round >= maxRounds`) without mutual
+    ///         accept it routes to terminal `Deadlocked`.
     /// @dev Either party may appeal (R11); `partyId` must be a party to the request.
     ///      An appeal MUST carry new public evidence — an empty `evidenceUri`
     ///      (price-only / free-prose appeal) reverts (T6).
+    ///      SPEC-0004 §2.4 R14a: `requestAdjudication(round=N)` is refused unless
+    ///      `round=N-1` was ruled Deny. In this contract's model that gate lives here
+    ///      on `appeal()`.
     function appeal(
         uint256 reqId,
         uint256 partyId,
@@ -412,7 +436,7 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         bytes32 reasonHash
     ) external payable nonReentrant {
         Negotiation storage n = _get(reqId);
-        require(n.state == State.Approved || n.state == State.Denied, "appeal: not ruled");
+        require(n.state == State.Denied, "appeal: prior ruling not Deny");
         _onlyParty(n);
         require(partyId == n.providerId || partyId == n.insurerId, "appeal: unknown party");
         require(evidenceUri != bytes32(0), "appeal: needs evidence");
@@ -745,6 +769,14 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         // Effects before interaction (CEI).
         n.rulingDeadline = block.timestamp + rulingTimeout;
         n.state = State.UnderReview;
+
+        // SPEC-0004 §3.5: emit PacketSubmitted before the external call (CEI-safe — all
+        // state effects above are already committed). `n.round` already holds the round
+        // being requested: requestAdjudication sets it to 1 before calling _fireAgent;
+        // submitEvidence and appeal each do `n.round += 1` before calling _fireAgent.
+        // `packetRoot` and `packetUrl` proxy the on-chain evidenceUri until UNIT-9
+        // (Merkle root + string body-store URL) lands.
+        emit PacketSubmitted(reqId, n.round, n.evidenceUri, n.evidenceUri);
 
         // Expose the reqId for transparent probing during the external call (mock
         // platforms in tests, reentrancy guards, off-chain indexers). The slot is set

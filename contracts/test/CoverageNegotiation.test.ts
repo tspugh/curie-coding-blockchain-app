@@ -206,6 +206,20 @@ describe("CoverageNegotiation", () => {
     expect(await platform.createRequestCalls()).to.equal(0n);
   });
 
+  it("R2b (SPEC-0004 §2.1 AC-6): createContract reverts when providerAddr == insurerAddr (self-contract)", async () => {
+    const { contract } = await deploy();
+    const [provider] = await ethers.getSigners();
+    await expect(
+      contract.connect(provider).createContract(
+        PROVIDER_ID, INSURER_ID,
+        provider.address, provider.address,  // SAME address → self-contract
+        DRUG_REF, REQUESTED, QUANTITY, DAYS_SUPPLY,
+        JUSTIFICATION_HASH, EVIDENCE_URI,
+        0 /* payerLine: PartD */
+      )
+    ).to.be.revertedWith("create: self-contract");
+  });
+
   it("T4 (R6/R9): adjudication fires the agent → UnderReview; mock records the createRequest", async () => {
     const { platform, contract } = await deploy();
     const [provider, insurer] = await ethers.getSigners();
@@ -225,6 +239,30 @@ describe("CoverageNegotiation", () => {
     // The forwarded selector is handleResponse's (the real Somnia callback).
     const sel = contract.interface.getFunction("handleResponse").selector;
     expect(await platform.lastCallbackSelector()).to.equal(sel);
+  });
+
+  it("SPEC-0004 §3.5: PacketSubmitted emitted on every agent fire (requestAdjudication, submitEvidence, appeal)", async () => {
+    const { platform, contract } = await deploy();
+    const [provider, insurer] = await ethers.getSigners();
+    const target = await contract.getAddress();
+    const reqId = await createAs(contract, provider, insurer.address);
+    await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+    // initial requestAdjudication — round 1
+    await expect(contract.connect(provider).requestAdjudication(reqId, { value: FEE }))
+      .to.emit(contract, "PacketSubmitted")
+      .withArgs(reqId, 1n, EVIDENCE_URI, EVIDENCE_URI);
+    const rid1 = await platform.lastRequestId();
+    // NeedMoreEvidence → submitEvidence re-fire emits PacketSubmitted with round 2
+    await platform.triggerRuling(target, rid1, ruling(Decision.NeedMoreEvidence, 0n));
+    await expect(contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI_2, { value: FEE }))
+      .to.emit(contract, "PacketSubmitted")
+      .withArgs(reqId, 2n, EVIDENCE_URI_2, EVIDENCE_URI_2);
+    const rid2 = await platform.lastRequestId();
+    // Deny → appeal re-fire emits PacketSubmitted with round 3
+    await platform.triggerRuling(target, rid2, ruling(Decision.Deny, 0n));
+    await expect(contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE }))
+      .to.emit(contract, "PacketSubmitted")
+      .withArgs(reqId, 3n, EVIDENCE_URI, EVIDENCE_URI);
   });
 
   it("T4 (R6a): deny → 0; refs surfaced & stored; need_more_evidence & failure & timeout → EvidenceRequested", async () => {
@@ -450,6 +488,18 @@ describe("CoverageNegotiation", () => {
     expect(await contract.stateOf(reqId)).to.equal(State.Deadlocked);
   });
 
+  it("R14a (SPEC-0004 §2.4): appeal from Approved reverts — only Deny justifies advancing the ladder", async () => {
+    const { platform, contract } = await deploy();
+    const [provider, insurer] = await ethers.getSigners();
+    const target = await contract.getAddress();
+    const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+    await platform.triggerRuling(target, requestId, ruling(Decision.Approve, 0n));
+    expect(await contract.stateOf(reqId)).to.equal(State.Approved);
+    await expect(
+      contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI_2, REASON_HASH, { value: FEE })
+    ).to.be.revertedWith("appeal: prior ruling not Deny");
+  });
+
   it("T6/T8 (R6c/R8): both accept → settle emits Settled(coveredAmount, feePerParty 50/50)", async () => {
     const { platform, contract } = await deploy();
     const [provider, insurer] = await ethers.getSigners();
@@ -576,23 +626,14 @@ describe("CoverageNegotiation", () => {
     const n = await contract.connect(attacker).getNegotiation(reqId);
     expect(n.providerAddr).to.equal(provider.address);
 
-    // --- Single shared wallet (R12/R13): providerAddr == insurerAddr; one signer does both
-    //     sides, parties distinguished by partyId. ---
-    const solo = provider; // one wallet plays both roles
-    await contract
-      .connect(solo)
-      .createContract(PROVIDER_ID, INSURER_ID, solo.address, solo.address, DRUG_REF, REQUESTED, QUANTITY, DAYS_SUPPLY, JUSTIFICATION_HASH, EVIDENCE_URI, 0 /* payerLine: PartD */);
-    const soloId = await contract.count();
-    // same wallet engages (insurer side) and adjudicates (provider side).
-    await contract.connect(solo).insurerEngage(soloId, POLICY_HASH, POLICY_URI);
-    await contract.connect(solo).requestAdjudication(soloId, { value: FEE });
-    const soloReq = await platform.lastRequestId();
-    await platform.triggerRuling(target, soloReq, ruling(Decision.Approve, 100n));
-    // same wallet accepts BOTH sides (distinguished by partyId), then settles.
-    await contract.connect(solo).accept(soloId, PROVIDER_ID);
-    await contract.connect(solo).accept(soloId, INSURER_ID);
-    await expect(contract.connect(solo).settle(soloId)).to.emit(contract, "Settled");
-    expect(await contract.stateOf(soloId)).to.equal(State.Settled);
+    // --- SPEC-0004 R2b (supersedes SPEC-0001 R13): providerAddr == insurerAddr is now
+    //     rejected at createContract. The single-shared-wallet scenario that was valid
+    //     under R13 is no longer supported; the demo explicitly rejects self-contracting. ---
+    await expect(
+      contract
+        .connect(provider)
+        .createContract(PROVIDER_ID, INSURER_ID, provider.address, provider.address, DRUG_REF, REQUESTED, QUANTITY, DAYS_SUPPLY, JUSTIFICATION_HASH, EVIDENCE_URI, 0 /* payerLine: PartD */)
+    ).to.be.revertedWith("create: self-contract");
   });
 
   it("R9 (fee model): underfunded reverts; exact fee forwarded; overpayment refunded; no trapped caller ETH", async () => {
@@ -714,7 +755,7 @@ describe("CoverageNegotiation", () => {
     await expect(contract.connect(provider).accept(reqId, PROVIDER_ID)).to.be.revertedWith("accept: not ruled");
     await expect(
       contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
-    ).to.be.revertedWith("appeal: not ruled");
+    ).to.be.revertedWith("appeal: prior ruling not Deny");
     // submitEvidence reverts on the state guard before the fee check — no value needed here.
     await expect(
       contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI)

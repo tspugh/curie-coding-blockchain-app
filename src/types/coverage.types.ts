@@ -187,6 +187,7 @@ export type CoverageEventName =
   | "InsurerEngaged"
   | "ContractReady"
   | "AdjudicationRequested"
+  | "PacketSubmitted"
   | "RulingRequested"
   | "Ruled"
   | "PolicyFlagged"
@@ -247,6 +248,20 @@ export interface RulingRequestedEvent extends BaseEvent {
   readonly name: "RulingRequested";
   readonly requestId: bigint;
   readonly fee: bigint;
+}
+
+/**
+ * SPEC-0004 §3.5 PacketSubmitted: emitted on every agent fire (initial
+ * `requestAdjudication`, `submitEvidence`, and `appeal`) so off-chain indexers
+ * and the Curie packet store can correlate the on-chain ruling request with the
+ * off-chain packet body. `packetRoot` and `packetUrl` carry the evidenceUri
+ * (bytes32) until UNIT-9 lands the Merkle root + the body-store URL.
+ */
+export interface PacketSubmittedEvent extends BaseEvent {
+  readonly name: "PacketSubmitted";
+  readonly round: bigint;
+  readonly packetRoot: string;
+  readonly packetUrl: string;
 }
 
 export interface RuledEvent extends BaseEvent {
@@ -330,6 +345,7 @@ export type CoverageEvent =
   | InsurerEngagedEvent
   | ContractReadyEvent
   | AdjudicationRequestedEvent
+  | PacketSubmittedEvent
   | RulingRequestedEvent
   | RuledEvent
   | PolicyFlaggedEvent

@@ -125,18 +125,19 @@ test("party actions reject a third wallet with matching messages", async () => {
   assert.equal(n.providerAddr, PROVIDER);
 });
 
-test("single shared wallet (R12): one address acts as both parties", async () => {
+test("R2b (SPEC-0004 §2.1): self-contract (providerAddr == insurerAddr) is rejected at createContract", async () => {
+  // SPEC-0004 R2b supersedes SPEC-0001 R13's permissive self-claim. The single-shared-wallet
+  // scenario that was valid under R13 is no longer supported.
   const b = backend();
   const solo = PROVIDER;
   b.setCaller(solo);
-  const reqId = await b.createContract(params({ providerAddr: solo, insurerAddr: solo }));
-  await b.insurerEngage(reqId, POLICY_HASH, POLICY_URI); // same wallet, insurer side
-  await b.requestAdjudication(reqId);
-  b.resolve(reqId, Decision.Approve);
-  await b.accept(reqId, PROVIDER_ID);
-  await b.accept(reqId, INSURER_ID);
-  await b.settle(reqId);
-  assert.equal(await b.stateOf(reqId), State.Settled);
+  await assert.rejects(
+    () => b.createContract(params({ providerAddr: solo, insurerAddr: solo })),
+    (e: unknown) => {
+      assert.equal((e as Error).message, "create: self-contract");
+      return true;
+    },
+  );
 });
 
 test("ANY_CALLER wildcard preserves back-compat (no gating)", async () => {

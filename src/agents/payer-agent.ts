@@ -12,9 +12,14 @@ import { type AgentClient, PartyAgent } from "./party-agent.js";
 /**
  * Build an insurer {@link PartyAgent} from an app client. Uses the "insurer"
  * profile if present, else the second registered profile (falling back to the
- * first).
+ * first). Accepts an optional `addressOverride` so multi-wallet flows (SPEC-0004
+ * R2b: `providerAddr != insurerAddr` per request) can bind the insurer to a
+ * distinct address without spinning up a second client + backend.
  */
-export function createInsurerAgent(client: AgentClient): PartyAgent {
+export function createInsurerAgent(
+  client: AgentClient,
+  options: { readonly addressOverride?: string } = {},
+): PartyAgent {
   const profiles = client.profiles.listProfiles();
   const profile = client.profiles.getProfile("insurer") ?? profiles[1] ?? profiles[0];
   if (!profile) throw new Error("no profile available for the insurer agent");
@@ -22,7 +27,7 @@ export function createInsurerAgent(client: AgentClient): PartyAgent {
     negotiation: client.negotiation,
     content: client.content,
     partyId: profile.partyId,
-    address: client.wallet.address,
+    address: options.addressOverride ?? client.wallet.address,
     label: profile.label,
   });
 }

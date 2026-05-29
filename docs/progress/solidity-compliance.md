@@ -1,4 +1,4 @@
-# Solidity compliance — tick 3 (UNIT-1)
+# Solidity compliance — tick 4 (UNIT-2)
 
 **Verdict:** PASS (0 findings)
 
@@ -8,30 +8,59 @@ None.
 
 ## Notes
 
-UNIT-1 = SPEC-0004 §2.4 Phase 2 Solidity surface only (R13 + payerLine/appealRound carriers). R14a sequencing predicate is explicitly out of scope (UNIT-2).
+Reviewed the uncommitted diff against `contracts/contracts/CoverageNegotiation.sol`
+and `contracts/test/CoverageNegotiation.test.ts`. All seven focused checks pass.
 
-Checks performed (all pass):
+1. **R14a precondition tightening (appeal()).** The new
+   `require(n.state == State.Denied, "appeal: prior ruling not Deny")` at line 436
+   is the sole entry-state gate on `appeal()` — there are no alternate entry points.
+   The `_onlyParty(n)` R11 auth check still runs on line 437 (after the state check,
+   which is correct: state-validity should gate before party-validity to keep error
+   ordering deterministic, and `_onlyParty` is read-only so reordering has no
+   security effect). The cap-deadlock short-circuit
+   (`if (n.round >= maxRounds)`) at line 445 still runs AFTER the state check, so
+   you cannot deadlock from an `Approved` state — the R14a revert fires first. The
+   existing cap-deadlock test (line 700) already uses a `Decision.Deny` ruling
+   before exercising the cap, so it correctly survives R14a tightening.
 
-1. **Enum placement + values.** `PayerLine { PartD, Commercial, Medicaid }` declared inside the contract, immediately above `enum State` under the "State machine" block comment with a docstring tying it to SPEC-0004 R13/R14b. Implicit values 0/1/2 match `LADDERS` indexing in the spec and the test annotations (`0 /* payerLine: PartD */`).
+2. **R2b placement (createContract).**
+   `require(providerAddr != insurerAddr, "create: self-contract")` at line 323 sits
+   AFTER the address/auth/qty checks and BEFORE `_nextId++` (line 325) and any
+   struct field writes (lines 326–341). No state effects to roll back; CEI-clean.
+   Order also ensures parameter-validation errors (`addr: zero`, `auth: not
+   provider`, `qty: zero`) still surface ahead of the self-contract rejection,
+   preserving error specificity.
 
-2. **Struct field placement.** New fields land at `Negotiation` lines 126-127, immediately after `round` (line 125) and BEFORE `providerAccepted`/`insurerAccepted`. Comment block above `round` (lines 118-124, ROUND SEMANTICS) is preserved unbroken. Storage layout: this is a NEW deploy (no proxy, no migration of existing chain state), so the +2 slot shift on all subsequent fields (`providerAccepted` onward) is benign. `PayerLine` (1 byte) + `uint8 appealRound` (1 byte) co-pack into a single slot with the neighboring `providerAccepted`/`insurerAccepted` bools — no extra slot cost in v0.
+3. **PacketSubmitted placement (_fireAgent).** Emitted at line 776, AFTER all state
+   effects (`n.totalFees`, `n.rulingDeadline`, `n.state = UnderReview`) and BEFORE
+   the external `platform.createRequest` call at line 785. CEI is preserved. At
+   emit time, `n.round` correctly equals the round being requested: confirmed by
+   reading all three call sites — `requestAdjudication` sets `n.round = 1` at
+   line 378, `submitEvidence` bumps `n.round += 1` at line 412, `appeal` bumps
+   `n.round += 1` at line 458, each immediately before calling `_fireAgent`. The
+   inline comment at 770–775 documents this contract correctly.
 
-3. **`appealRound` increment in `appeal()`** (line 429). Placement verified:
-   - Line 415: cap check `if (n.round >= maxRounds)` — if cap hit, deadlocks + refunds + returns. `appealRound` is NOT bumped on the deadlock path. Correct.
-   - Lines 426-427: evidence + rationale writes.
-   - Line 428: `n.round += 1`.
-   - Line 429: `n.appealRound += 1`.
-   - Line 430: `Appealed` event.
-   - Line 431: `_fireAgent` (interaction).
-   Sequence is: cap-check -> effects (including appealRound) -> event -> interaction. CEI-safe; the `appealRound` bump is committed before the external call as required.
-   Overflow: `uint8` holds 0..255. Cap is `maxRounds = 3` (line 155); appealRound therefore bounded well below 255. No overflow risk.
+4. **No new external calls / storage / modifiers.** Diff only adds: one event
+   declaration, one `require`, one `emit`, comment/docstring revisions. No new
+   storage slots, no new modifiers, no new external interactions. Verified against
+   the full diff.
 
-4. **`createContract` signature change.** New trailing param `PayerLine payerLine` at line 294. Struct init at lines 312-313 sets `n.payerLine = payerLine; n.appealRound = 0;` — both fields written. Exhaustive search of `_negotiations[reqId]` confirms only one storage-init site (line 301 in `createContract`); the other two `_negotiations[reqId]` reads (line 546 in `handleResponse`, line 792 in `_get`) operate on already-initialized records, no shadow inits. `appealRound = 0` is redundant with Solidity zero-init but is good explicit-intent hygiene.
+5. **Event signature width.** `uint256 indexed round` matches `n.round`'s declared
+   type (line 134). SPEC-0004 §3.5 proposes `uint8 indexed round`; the contract's
+   wider type is forward-compatible (no overflow, simpler ABI, no truncation at
+   the emit site). Acceptable trade-off and explicitly called out in the change
+   list.
 
-5. **Modifiers intact.** `createContract` remains `external returns (uint256 reqId)` — no payable/nonReentrant change needed (no agent fire, unchanged from baseline). `appeal` remains `external payable nonReentrant` (line 404) — modifiers untouched. No new external entry points added; UNIT-1 only modifies the two existing signatures/bodies.
+6. **Cross-callsite ripple.** `_fireAgent` is invoked from exactly three sites
+   (`requestAdjudication` line 380, `submitEvidence` line 414, `appeal` line 461).
+   All three set `n.round` to the round being fired before the call — confirmed by
+   direct read of each function body.
 
-6. **Event emissions.** `ContractCreated` (lines 182-192) NOT modified — `payerLine` is not added to the event signature. SPEC-0004 R13 specifies that `payerLine` is "carried on each contract instance" (i.e. struct storage), not in the creation event. The value is readable via `getNegotiation` (line 636). Omitting it from the event is correct, not gold-plating it in.
-
-7. **Tests updated.** All 5 `createContract` call sites in `CoverageNegotiation.test.ts` (lines 92, 134, 165, 511, 581 in the new file) pass the trailing `0 /* payerLine: PartD */` arg. Grep confirms 5 callsites x 5 annotations — exact match, no orphaned calls. The `createAs` helper (line 92) routes all per-test creations through the new shape. No drift.
-
-No additional Solidity surface changed (ISomniaAgent.sol, Mock files untouched). The diff is minimally invasive — exactly UNIT-1 scope, nothing more. No sequencing predicate, no event-shape changes, no view-fn additions — all correctly deferred to UNIT-2 / later units.
+7. **Tests updated.** Three new test cases added: R2b self-contract revert
+   (line 209), PacketSubmitted on all three fire paths with rounds 1/2/3
+   (line 244), R14a appeal-from-Approved revert (line 491). Two existing tests
+   updated: T9's single-shared-wallet scenario (line 626) flipped from
+   end-to-end happy-path to a `create: self-contract` revert assertion; T10's
+   `"appeal: not ruled"` expectation (line 758) updated to
+   `"appeal: prior ruling not Deny"`. No stale references to the old error
+   string remain in the test file.

@@ -4,13 +4,31 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 3 — UNIT-1 landed; LADDERS + types green)
+**Last updated:** 2026-05-29 (tick 4 — UNIT-2 landed; R14a + R2b + PacketSubmitted green)
 **Current mode:** `impl`
-**Current tick:** 3
-**Last focus:** UNIT-1 — LADDERS typed constant + payerLine/appealRound (DONE; 15/15 + 19/19)
-**Last commit:** *(set after tick 3 commit)*
+**Current tick:** 4
+**Last focus:** UNIT-2 — R14a sequencing + R2b self-contract rejection + PacketSubmitted (DONE; 18/18 + 19/19)
+**Last commit:** *(set after tick 4 commit)*
 
 ## Work queue (priority order)
+
+### UNIT-2 (LANDED tick 4 — SPEC-0004 Phase 1 contracts)
+**R14a sequencing predicate + R2b self-contract rejection + PacketSubmitted event**
+- What landed: `appeal()` precondition tightened from `state == Approved||Denied` to `state == Denied` only (R14a; only a Deny justifies advancing the ladder). `createContract` rejects `providerAddr == insurerAddr` with "create: self-contract" (R2b; supersedes SPEC-0001 R12/R13). `PacketSubmitted(reqId, round, packetRoot, packetUrl)` event emitted inside `_fireAgent` BEFORE `platform.createRequest` (covers requestAdjudication + submitEvidence + appeal, all three fire paths). Contract @dev block rewritten to drop the now-false R12 single-shared-wallet claim. Sim/real parity: PacketSubmittedEvent added to TS event union; simulated.ts emits it before RulingRequested; real.ts subscribes + decodes the ethers log. Cross-callsite ripple: `createInsurerAgent` gained optional `addressOverride`; `scripts/orchestrator-demo.mjs` uses a distinct synthetic insurer address; `scripts/real-backend-localnode.mjs` uses Hardhat account #1 for insurer; `web/src/views/Create.tsx` uses `SYNTHETIC_INSURER_ADDR` constant pending UNIT-7's real counterparty input.
+- Gate verdict: hardhat 18/18 ✓ (15 + 3 new: R2b self-contract, R14a Approve→appeal, PacketSubmitted emission on all three fire paths), vitest 19/19 ✓, tsc ✓, secret-scan ✓, Opus solidity-compliance PASS, Opus security-review PASS, Opus strict-review PASS (after addressing 3 CRITICAL findings + 1 MEDIUM deferral inline — see strict-review-findings.md).
+- Deferred follow-up units (queued below): UNIT-2-followup-A (parameterized appeal-from-any-non-Denied-state edge tests), UNIT-2-followup-B (R2b zero-address-ordering test).
+
+### UNIT-2-followup-A (NEW — deferred from tick 4 strict-review)
+**Parameterized "appeal from any non-Denied state reverts" test**
+- Files: `contracts/test/CoverageNegotiation.test.ts`
+- R-citations: SPEC-0004 §2.4 R14a; SPEC-0001 §3 state machine completeness
+- Acceptance criterion: a parameterized test loops over `[Open, Ready, UnderReview, EvidenceRequested, Approved, Settled, Deadlocked, PolicyInvalidated, ProviderRefused, Withdrawn]` and asserts each reverts `"appeal: prior ruling not Deny"`. Use the existing state-driving helpers; small (~60 lines). Mirror in `src/contract/simulated.auth.test.ts` for sim parity.
+
+### UNIT-2-followup-B (NEW — deferred from tick 4 strict-review)
+**R2b createContract guard ordering test**
+- Files: `contracts/test/CoverageNegotiation.test.ts`, `src/contract/simulated.auth.test.ts`
+- R-citations: SPEC-0004 §2.1 R2b AC-6
+- Acceptance criterion: test pins that `provider==0 → "addr: zero"`; `insurer==0 → "addr: zero"`; `provider==insurer==0 → "addr: zero"` (NOT "create: self-contract"); `provider==insurer!=0 → "create: self-contract"`. Prevents silent revert-string drift if a future refactor swaps the require lines.
 
 ### UNIT-1 (LANDED tick 3 — SPEC-0004 Phase 2)
 **`LADDERS` typed constant + `PayerLine` enum + `payerLine`/`appealRound` on `Negotiation`**
@@ -98,6 +116,7 @@
 
 ## Recent findings (rolling — newest first, last 20)
 
+- **2026-05-29 (tick 4 — UNIT-2 landed):** SPEC-0004 Phase 1 contracts landed. Initial strict-review caught 6 findings; 3 CRITICAL (lying R12 comment in contract header, runtime regressions in 3 consumers from the new R2b predicate, sim/real PacketSubmitted parity break) were release-blockers that I addressed inline. Net: contract change + 3 callsite updates + new TS event type + sim emission + real ABI mapping. Token budget after tick 4 estimated 70% — next tick is in the 60–75% band, so should skip non-essential subagents. Findings 4–6 deferred as UNIT-2-followup-A/B units in the queue (parameterized edge tests + zero-address ordering test).
 - **2026-05-29 (tick 3 — UNIT-1 landed):** SPEC-0004 §2.4 R13/R15/R16 typing layer is now in place. Initial strict-review flagged 5 findings (2 MEDIUM: stale ROUND SEMANTICS comment, untested appealRound deadlock invariant; 3 LOW: ladders.test.ts spot-coverage, stageNameFor edge cases, FileRequestInput optional-with-PartD-default vs CreateContractParams required). All 5 addressed inline. Final vitest count grew from 5 → 19 (added 14 ladders assertions). Hardhat 15/15 unchanged (assertions added to existing T6 + R9-deadlock-appeal tests). Total tick cost included 3 Opus gate reviews (solidity/security/strict-1); strict-review-2 skipped to preserve token budget — findings instead resolved by direct edit + test reruns. Token budget after tick 3 estimated ~55–60% — tick 4 will be lean per the procedure (skip non-essential subagents if needed).
 - **2026-05-29 (tick 2 — UNIT-A0 landed):** Baseline gate is now green (15/15 hardhat, 5/5 vitest). UNIT-A0 turned out to be more than a mock-probe fix — discovered three additional spec-drift points in `CoverageNegotiation.sol` (submitEvidence not payable + not firing agent; handleResponse decoding only a single uint; PolicyInvalid not routed). Dev subagent fixed all four in one coherent commit, validated by 3 Opus reviewers (solidity-compliance, security, strict). Strict-review iterated twice — first surfaced 3 findings (real.ts missing fee forwarding, stale test comment, missing round-cap on submitEvidence), all fixed inline; second surfaced 1 finding (missing test for the new cap path), fixed inline with `R9 (deadlock submitEvidence)` test mirroring `R9 (deadlock appeal)`. Net diff: contracts/* + 1 real.ts wrapper line + 2 test diffs. No `--no-verify`, no `--force-push`. Pushed.
 - **2026-05-29 (tick 1 — BASELINE-BROKEN PIVOT):** `cd contracts && npx hardhat test` reports **2 passing / 12 failing** on the unmodified `e78b51f` baseline (verified by running tests with and without UNIT-1 source — same 12 failures both ways). Root cause: `MockAgentPlatform.sol` line 71–73 — the assembly probe `calldataload(payload.offset)` was written assuming `_fireAgent` passes `(reqId, ...)` as the payload, but production `_fireAgent` now passes `abi.encodeWithSelector(IParseWebsiteAgent.ExtractANumber.selector, ...)` whose first word is an ABI offset. The probe calls `stateOf(32)` → `'unknown contract'` revert → cascades through 10 tests. Two additional tests (T10 guards, one CEI test) fail for related-but-not-identical reasons. The loop's "100% tests pass" gate cannot be satisfied while this baseline is broken, so UNIT-1 (typing-only) was demoted and UNIT-A0 (fix baseline) inserted as new top priority. UNIT-1 source changes were reverted clean — only the loop-state.md update lands this tick. This is exactly the kind of finding the loop should surface: a gate-blocking bug that pre-existed the loop's first commit.

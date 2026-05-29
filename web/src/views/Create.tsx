@@ -8,6 +8,14 @@ import { client } from "../client.js";
 import { parseAmount } from "../shared.js";
 import { SAMPLE_CASE } from "../sampleCase.js";
 
+/**
+ * Synthetic distinct insurer address used until UNIT-7 ships the counterparty
+ * input UI. SPEC-0004 R2b requires `providerAddr != insurerAddr` per request;
+ * a hardcoded constant keeps the Create form working in v0 without claiming to
+ * support real multi-wallet flows (which is UNIT-7's deliverable per §2.1).
+ */
+const SYNTHETIC_INSURER_ADDR = "0x0000000000000000000000000000000000000002";
+
 interface CreateProps {
   readonly activeProfile: Profile;
   readonly onCreated: (reqId: bigint) => void;
@@ -70,7 +78,10 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
         providerId: activeProfile.partyId,
         insurerId: insurerProfile.partyId,
         providerAddr: client.wallet.address,
-        insurerAddr: client.wallet.address,
+        // SPEC-0004 R2b: providerAddr != insurerAddr. UNIT-7 will replace this
+        // synthetic placeholder with a user-input counterparty field; for now
+        // we pin a distinct deterministic address so the form doesn't revert.
+        insurerAddr: SYNTHETIC_INSURER_ADDR,
         payerLine: PayerLine.PartD,
         drugRef: hashContent(drug),
         requestedAmount,

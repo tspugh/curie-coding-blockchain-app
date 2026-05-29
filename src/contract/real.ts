@@ -383,6 +383,7 @@ export class RealBackend implements CoverageNegotiationClient {
     "InsurerEngaged",
     "ContractReady",
     "AdjudicationRequested",
+    "PacketSubmitted",
     "RulingRequested",
     "Ruled",
     "PolicyFlagged",
@@ -486,6 +487,15 @@ export class RealBackend implements CoverageNegotiationClient {
         return { name, reqId, ...meta };
       case "AdjudicationRequested":
         return { name, reqId, ...meta };
+      case "PacketSubmitted":
+        return {
+          name,
+          reqId,
+          round: a[1] as bigint,
+          packetRoot: a[2] as string,
+          packetUrl: a[3] as string,
+          ...meta,
+        };
       case "RulingRequested":
         return { name, reqId, requestId: a[1] as bigint, fee: a[2] as bigint, ...meta };
       case "Ruled":
