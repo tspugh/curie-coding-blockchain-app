@@ -36,6 +36,11 @@ export interface SampleCase {
   readonly costPlusUnitPrice: string;
   /** NADAC PER-UNIT acquisition-cost floor reference (never the cap) (R6a/R10). */
   readonly nadacUnitPrice: string;
+  /**
+   * Demo additional evidence the provider submits when the AI requests more information.
+   * Pre-fills the evidence textarea in the EvidenceRequested state.
+   */
+  readonly additionalEvidenceRef: string;
 }
 
 export const SAMPLE_CASE: SampleCase = {
@@ -81,4 +86,11 @@ export const SAMPLE_CASE: SampleCase = {
   // NADAC is the acquisition-cost FLOOR reference only (never the cap).
   costPlusUnitPrice: "2100",
   nadacUnitPrice: "2000",
+  additionalEvidenceRef: [
+    "https://pubmed.ncbi.nlm.nih.gov/16952715/ — REVEAL Phase 3 RCT:",
+    "adalimumab achieved PASI 75 in 71% of patients at week 16 vs 7% placebo (p<0.001)",
+    "in adults with moderate-to-severe chronic plaque psoriasis.",
+    "Step-therapy exception criteria met: prior methotrexate failure documented",
+    "(intolerance: transaminitis). Patient meets FDA-approved indication.",
+  ].join(" "),
 };

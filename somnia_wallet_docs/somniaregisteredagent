@@ -1,0 +1,29 @@
+
+Connecting to Somnia Shannon testnet…
+Wallet address: 0x69b5C79E8ceE7e6444Fa52d1f64a337ecbe10F77
+STT balance: 0.1 STT
+Agents registered so far: 45
+Registering Curie Necessity Arbiter agent…
+Transaction submitted: 0x695d62e8dad8fec9bac584450952ea354df319adb3fbd6f06fb66a85f6840870
+Waiting for confirmation…
+Confirmed in block 394606436
+
+✅  Agent registered successfully!
+──────────────────────────────────────────────────
+AGENT_ID=46
+AGENT_PLATFORM_ADDRESS=0x157C56dEdbAB6caD541109daabA4663Fc016026e
+──────────────────────────────────────────────────
+
+Network: somniaTestnet
+Deployer: 0x69b5C79E8ceE7e6444Fa52d1f64a337ecbe10F77
+Platform: 0x157C56dEdbAB6caD541109daabA4663Fc016026e  AgentId: 46
+CoverageNegotiation deployed at: 0xcCb087672Ee9d990A56DB000E6C38f65c0B41C4B  (put in env)
+
+Next steps:
+1. Add these to your .env:
+   AGENT_ID=46
+   AGENT_PLATFORM_ADDRESS=0x157C56dEdbAB6caD541109daabA4663Fc016026e
+2. Deploy the contract:  npm --prefix contracts run deploy
+3. Copy COVERAGE_CONTRACT_ADDRESS from deploy output into .env
+
+violet wallet address: 0x69b5C79E8ceE7e6444Fa52d1f64a337ecbe10F77
