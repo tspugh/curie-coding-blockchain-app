@@ -166,15 +166,17 @@ function readStoredKey(slot: KeySlot): string {
   }
 }
 
+/**
+ * Persist (or clear) a key in localStorage. Throws on failure so the caller
+ * can surface "couldn't save" instead of silently dropping the user's edit
+ * (tick-25 LOW 3 closure). Failure modes: Safari private mode (QuotaExceeded),
+ * disabled site data, browser extensions intercepting Storage.
+ */
 function writeStoredKey(slot: KeySlot, value: string): void {
-  try {
-    if (value) {
-      window.localStorage.setItem(KEY_STORAGE_PREFIX + slot, value);
-    } else {
-      window.localStorage.removeItem(KEY_STORAGE_PREFIX + slot);
-    }
-  } catch {
-    /* localStorage unavailable */
+  if (value) {
+    window.localStorage.setItem(KEY_STORAGE_PREFIX + slot, value);
+  } else {
+    window.localStorage.removeItem(KEY_STORAGE_PREFIX + slot);
   }
 }
 
@@ -190,19 +192,33 @@ function WalletKeysPanel() {
   const [providerKey, setProviderKey] = useState(() => readStoredKey("VITE_PRIVATE_KEY"));
   const [insurerKey, setInsurerKey] = useState(() => readStoredKey("VITE_PRIVATE_KEY_INSURER"));
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const providerValid = providerKey === "" || isValidHexKey(providerKey);
   const insurerValid = insurerKey === "" || isValidHexKey(insurerKey);
 
   const handleSave = () => {
-    writeStoredKey("VITE_PRIVATE_KEY", providerKey);
-    writeStoredKey("VITE_PRIVATE_KEY_INSURER", insurerKey);
-    setSavedAt(Date.now());
+    try {
+      writeStoredKey("VITE_PRIVATE_KEY", providerKey);
+      writeStoredKey("VITE_PRIVATE_KEY_INSURER", insurerKey);
+      setSavedAt(Date.now());
+      setSaveError(null);
+    } catch (err) {
+      // tick-25 LOW 3 closure: surface the failure instead of swallowing it.
+      setSaveError(err instanceof Error ? err.message : String(err));
+      setSavedAt(null);
+    }
   };
 
   const handleClearAll = () => {
-    writeStoredKey("VITE_PRIVATE_KEY", "");
-    writeStoredKey("VITE_PRIVATE_KEY_INSURER", "");
+    try {
+      writeStoredKey("VITE_PRIVATE_KEY", "");
+      writeStoredKey("VITE_PRIVATE_KEY_INSURER", "");
+      setSaveError(null);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+      return;
+    }
     setProviderKey("");
     setInsurerKey("");
     setSavedAt(Date.now());
@@ -292,13 +308,26 @@ function WalletKeysPanel() {
         <button type="button" onClick={handleClearAll}>
           Clear all
         </button>
+        {saveError !== null && (
+          <span className="key-error" role="alert">
+            Could not save: {saveError}
+          </span>
+        )}
         {savedAt !== null && (
           <span className="hint">
             Saved. Reload to apply.{" "}
             <button
               type="button"
               className="link-button"
-              onClick={() => window.location.reload()}
+              onClick={() => {
+                // tick-25 LOW 2 closure: confirm before discarding any
+                // in-flight form state elsewhere in the app.
+                if (window.confirm(
+                  "Reload the page now? Any unsaved form input in other views will be lost.",
+                )) {
+                  window.location.reload();
+                }
+              }}
             >
               Reload now
             </button>

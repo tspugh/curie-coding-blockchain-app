@@ -363,10 +363,7 @@ on the next page load.
   never logged, never echoed to the DOM, and never sent over the network.
 - **R44 (MUST) Reload-to-apply.** Changes saved via the UI take effect on
   the next page load. The UI prompts the user to reload, and offers a
-  "Reload now" button. **Hot-swap without reload is explicitly out of scope
-  for v0** — the client's signer is bound at module-init, and rebuilding it
-  in place would require either reactive contract bindings (large refactor)
-  or unsound state surgery (risk of partial writes signed by the wrong key).
+  "Reload now" button. (Hot-swap-without-reload is out of scope; see §7.)
 - **R45 (MUST) `setActiveClientProfile(id)` flips the signer on profile
   switch.** The web client exposes two concrete clients (`providerClient`,
   `insurerClient`) plus a Proxy-backed `client` export that dispatches every
@@ -545,8 +542,21 @@ sent without the user being able to see its expected and realized cost from the 
 
 - USD pricing of STT.
 - Historical balance charting / portfolio view.
-- Wallet management (rotation, multi-account) — single signer per build, as today.
 - ERC-20 / non-native token flows — STT only in v0.
+- **Hot-swapping wallet keys without a page reload (§2.9 R44).** The web
+  client's signer is bound at module-init. Rebuilding it in place would
+  require either reactive contract bindings (large refactor) or unsound
+  state surgery (risk of partial writes being signed by the previous key
+  mid-flight). The reload contract is acceptable because the UI nudges the
+  user and the operation is rare (per-session, not per-action).
+- **Per-action signer selection** beyond the existing two-profile
+  (provider, insurer) model — e.g. an "arbiter" or "auditor" client.
+  Adding a third signer is a configuration extension; the proxy + factory
+  already support it but no v0 view consumes it.
+- Multi-account *rotation* (provider key A → provider key B mid-session)
+  beyond the Settings paste-and-reload affordance. Production v0 keeps
+  R25's MetaMask + SIWE as the rotation path; R42–R47 is the demo-loop
+  convenience.
 
 ## 8. Open questions
 
