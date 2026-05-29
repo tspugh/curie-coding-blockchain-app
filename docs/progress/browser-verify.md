@@ -1,5 +1,32 @@
 # Browser-verify
 
+Last run: tick 40 — 2026-05-29 — **12/35 pass** (was 9/35 at tick 39)
+
+## Tick 40 update
+
+The window.__curie API-shape mismatch from tick 39 is fixed (client.ts now exposes
+`.negotiation`, `.content`, `.wallet`, `.profiles` getters that delegate to the active
+client) and is opt-in for production preview builds via `VITE_EXPOSE_TEST_API=1`.
+The profile-switcher pills now carry per-pill `data-testid="profile-pill-{id}"` so
+the harness can drive profile switching.
+
+### Score delta
+
+- 9/35 (tick 39) → 12/35 (tick 40, +3).
+- Scenario D (profile switching): **4/4 PASS** (was 2/4). Both insurer and provider
+  switches succeed.
+- Scenario G (observer): **2/3 PASS** (was 1/3). Observer-profile switch succeeds;
+  one non-party-rejection assertion still fails because Scenario A didn't create the
+  underlying request.
+- All other deltas are 0 — the remaining 23 failures are downstream of
+  `requestId=1` never existing because Scenario A's `ab find testid create-submit
+  click` doesn't fire React's form `onSubmit`. That click-bug is tracked as
+  UNIT-fix-react-submit-click-workaround in `loop-state.md`.
+
+---
+
+## Original tick 39 run
+
 Last run: tick 39 — 2026-05-29
 
 ## Environment

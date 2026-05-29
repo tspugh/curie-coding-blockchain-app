@@ -147,6 +147,7 @@ export function App() {
                     role="radio"
                     aria-checked={on}
                     className={`profile-pill${on ? " is-active" : ""}`}
+                    data-testid={`profile-pill-${p.id}`}
                     onClick={() => onSwitchProfile(p.id)}
                   >
                     {p.label}

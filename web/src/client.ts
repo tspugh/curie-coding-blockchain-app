@@ -252,13 +252,33 @@ export const client: CurieClient = new Proxy({} as CurieClient, {
   },
 });
 
-// Dev-build-only window export so the agent-browser tests and DevTools can
-// reach both clients. Gated behind `import.meta.env.DEV` so the production
+// Window export for the agent-browser tests and DevTools. Gated behind
+// `import.meta.env.DEV` (dev server) OR `VITE_EXPOSE_TEST_API=1` (opt-in for
+// production preview builds the e2e harness drives) so a normal production
 // bundle does NOT leak the second signer onto window (tick-25 LOW 5 closure).
-if (import.meta.env.DEV) {
-  (window as unknown as { __curie: { provider: CurieClient; insurer: CurieClient } }).__curie = {
+//
+// Shape matches what `web/tests/agent-browser/run.sh` queries
+// (window.__curie.{negotiation,content,wallet,profiles}). Each top-level
+// accessor delegates to `client`, the Proxy that forwards to whichever signer
+// the user has selected via Settings — so profile-switching during a scenario
+// transparently changes the on-chain identity the harness reads from.
+if (import.meta.env.DEV || import.meta.env.VITE_EXPOSE_TEST_API === "1") {
+  (window as unknown as {
+    __curie: {
+      provider: CurieClient;
+      insurer: CurieClient;
+      negotiation: CurieClient["negotiation"];
+      content: CurieClient["content"];
+      wallet: CurieClient["wallet"];
+      profiles: CurieClient["profiles"];
+    };
+  }).__curie = {
     provider: providerClient,
     insurer: insurerClient,
+    get negotiation() { return client.negotiation; },
+    get content() { return client.content; },
+    get wallet() { return client.wallet; },
+    get profiles() { return client.profiles; },
   };
 }
 

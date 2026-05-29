@@ -93,7 +93,10 @@ start_server() {
   [ "${SKIP_SERVE:-0}" = "1" ] && { echo "SKIP_SERVE=1 — using already-served $URL"; return; }
   if [ "${SKIP_BUILD:-0}" != "1" ]; then
     echo "Building lib + web…"
-    ( cd "$REPO_ROOT" && npm run build && npm run web:build ) >/dev/null 2>&1 \
+    # VITE_EXPOSE_TEST_API=1 opts the production preview bundle into the
+    # `window.__curie.{negotiation,content,wallet,profiles}` test surface
+    # client.ts gates behind this flag (see tick-40 e2e-harness-api-shape).
+    ( cd "$REPO_ROOT" && npm run build && VITE_EXPOSE_TEST_API=1 npm run web:build ) >/dev/null 2>&1 \
       || { echo "BUILD FAILED"; exit 2; }
   fi
   echo "Serving $URL …"
@@ -132,7 +135,7 @@ scenario_happy_path() {
   assert_hidden "adjudicate hidden before policy attached (R5)" "[data-testid=adjudicate-submit]"
 
   # Act: switch to insurer, attach the compliant policy -> Ready (R5).
-  ab select "[data-testid=profile-switcher]" insurer >/dev/null
+  ab find testid profile-pill-insurer click >/dev/null
   ab wait 200 >/dev/null
   ab find testid engage-load-compliant click >/dev/null
   ab find testid engage-submit click >/dev/null
@@ -155,7 +158,7 @@ scenario_happy_path() {
   # Act: both parties accept, then settle (R8 event marker + 50/50 fee).
   ab find testid accept-submit click >/dev/null
   ab wait 200 >/dev/null
-  ab select "[data-testid=profile-switcher]" provider >/dev/null
+  ab find testid profile-pill-provider click >/dev/null
   ab wait 200 >/dev/null
   ab find testid accept-submit click >/dev/null
   ab wait 200 >/dev/null
@@ -224,7 +227,7 @@ scenario_policy_invalidated() {
   ab wait 300 >/dev/null
 
   # Insurer attaches the NON-compliant policy, then adjudicate with policy_invalid.
-  ab select "[data-testid=profile-switcher]" insurer >/dev/null
+  ab find testid profile-pill-insurer click >/dev/null
   ab wait 200 >/dev/null
   ab find testid engage-noncompliant-toggle click >/dev/null
   ab find testid engage-submit click >/dev/null
@@ -261,7 +264,7 @@ scenario_observer() {
   ab wait 300 >/dev/null
 
   # Switch to the observer (party 99) and assert mutating actions are hidden.
-  ab select "[data-testid=profile-switcher]" observer >/dev/null
+  ab find testid profile-pill-observer click >/dev/null
   ab wait 200 >/dev/null
   assert_eq "active party is observer (99)" "99" "$(ev "String(window.__curie.profiles.getActivePartyId())")"
   assert_hidden "engage hidden for observer" "[data-testid=engage-submit]"
@@ -308,12 +311,12 @@ scenario_profiles() {
   addr1="$(ev "window.__curie.wallet.address")"
 
   # Act: switch to insurer -> active party id is 2.
-  ab select "[data-testid=profile-switcher]" insurer >/dev/null
+  ab find testid profile-pill-insurer click >/dev/null
   ab wait 150 >/dev/null
   assert_eq "active party is insurer (2)" "2" "$(ev "String(window.__curie.profiles.getActivePartyId())")"
 
   # Act: switch to provider -> active party id is 1.
-  ab select "[data-testid=profile-switcher]" provider >/dev/null
+  ab find testid profile-pill-provider click >/dev/null
   ab wait 150 >/dev/null
   assert_eq "active party is provider (1)" "1" "$(ev "String(window.__curie.profiles.getActivePartyId())")"
 

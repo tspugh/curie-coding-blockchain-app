@@ -5560,3 +5560,121 @@ None observed. Spot checks performed:
 ### Verdict
 
 **PASS (zero findings).**
+
+---
+
+## Tick 40 strict-review
+
+**Date:** 2026-05-29
+**Scope:** Tick-40 diff vs `bd7e4f9` —
+- `web/src/client.ts` (gate extended + `__curie` shape grown to expose
+  `negotiation/content/wallet/profiles` as Proxy-delegating getters)
+- `web/src/App.tsx` (added `data-testid={profile-pill-${p.id}}` to each pill)
+- `web/tests/agent-browser/run.sh` (set `VITE_EXPOSE_TEST_API=1` in the build
+  line; rewrote 6× `ab select [data-testid=profile-switcher] PROFILE` to
+  `ab find testid profile-pill-PROFILE click`)
+
+R-citations the unit claims to satisfy: SPEC-0001 R17 (observable over JSON-RPC,
+SHOULD) — the harness consumes the simulated/in-process equivalent surface.
+
+### Scrutiny points
+
+- **Security — gate is true opt-in. CLOSED.** `client.ts:265` reads
+  `if (import.meta.env.DEV || import.meta.env.VITE_EXPOSE_TEST_API === "1")`.
+  Both subexpressions are statically resolvable at build time: Vite folds
+  `import.meta.env.DEV` to `false` for production builds and replaces
+  `import.meta.env.VITE_EXPOSE_TEST_API` with the literal value of the env var
+  at build time (unset → `undefined`, fails the `=== "1"` check). The strict
+  equality on the literal `"1"` (not a truthy check) means typo-prone values
+  like `"true"`, `"yes"`, or accidental `"0"` will NOT enable the surface.
+  Verified `VITE_EXPOSE_TEST_API` is NOT present in committed `.env` or
+  `.env.example` (`grep` of both files returned no hits), so a normal
+  `npm run web:build` from a clean checkout does not enable it — the variable
+  has to be set inline at the build command, which is what `run.sh:99` does.
+- **Security — leak surface. CLOSED.** The `__curie` object exposes only
+  the simulated/local client (in real mode, this is the user's own signers
+  which they already control via the Settings panel). No additional secret
+  material beyond what `client.wallet.address` already exposes in the visible
+  `data-testid=wallet-address` `<code>` element. There is no path by which an
+  unintended deployment ships with the flag set without an operator explicitly
+  passing `VITE_EXPOSE_TEST_API=1` to the build invocation.
+- **Shape claim — getters truly delegate, not module-init captured. CLOSED.**
+  Lines 278-281 define each accessor as a getter (`get negotiation() { return
+  client.negotiation; }`), not as an eager property assignment. `client`
+  (line 249) is the Proxy whose `get` trap reads `activeClient[prop]`, where
+  `activeClient` (line 226, `let`) is reassigned on every
+  `setActiveClientProfile()` call. So `window.__curie.negotiation` is
+  resolved on every access through two hops (window getter → Proxy get →
+  active client property), making the active-client switch transparent. The
+  empirical evidence cited (`profiles.getActivePartyId()` returning 1/2/99
+  per pill) matches this mechanism.
+- **Type-cast soundness — assigned object matches asserted shape. CLOSED.**
+  The cast `(window as unknown as { __curie: { provider, insurer, negotiation,
+  content, wallet, profiles } }).__curie = { ... }` asserts 6 keys, and the
+  object literal at lines 275-282 has exactly those 6 keys: `provider` and
+  `insurer` are direct `CurieClient` assignments matching their declared
+  types; the other four are getters whose return statements are
+  `client.X` where `client: CurieClient`, so each returns a value of type
+  `CurieClient[X]` matching `CurieClient["negotiation"]`, etc. Cast is
+  honest; no structural lie.
+- **Test-ID naming consistency. CLOSED.** Surveyed `web/src/views/` testids:
+  the established pattern is `kebab-case-with-scope-prefix`
+  (`profile-switcher`, `state-badge`, `engage-load-compliant`,
+  `verify-note-input`, `create-amount`, etc.). The new
+  `profile-pill-${p.id}` slot follows the same `{component}-{identifier}`
+  convention (cf. `engage-load-compliant`, `gotcha-fda-citation`), and `p.id`
+  values are `"provider"`/`"insurer"`/`"observer"` — already lowercase
+  kebab-friendly tokens. Consistent.
+- **Comment quality. CLOSED.** New comment at `client.ts:255-264` honestly
+  describes both the gate (`DEV OR VITE_EXPOSE_TEST_API`) and the shape
+  contract with `web/tests/agent-browser/run.sh`. It does not paraphrase the
+  code; it explains the *why* (the Proxy delegation chain, the production
+  leak guard). The `run.sh:96-98` inline comment correctly explains why
+  `VITE_EXPOSE_TEST_API=1` is on the build line ("opts the production
+  preview bundle into the … test surface"). No deleted comments — the prior
+  gate had a single-line comment that survived as the longer block.
+- **R-citation soundness — SPEC-0001 R17. CLOSED.** R17 ("Observable over
+  JSON-RPC (events + live subscription)") is a SHOULD that the real-mode
+  client satisfies natively via the on-chain event stream. The `__curie`
+  surface is the *test-harness equivalent* for the simulated backend — it
+  does NOT claim to BE the R17 surface; it exposes the same
+  `negotiation/content/wallet/profiles` segments of `CurieClient` that the UI
+  itself consumes, so the harness drives the app through the same API the
+  app uses. T12 explicitly notes "timeline reconstructs from `eth_getLogs` +
+  live subscription" is the real-mode R17 path; the harness scope-note in
+  `run.sh:18-19` correctly flags T10 (eth_getLogs reconstruction) as
+  real-RPC-only and out of scope for the simulated run. No R-citation lie.
+- **Build-flag drift — inline comment sufficiency. CLOSED.** `run.sh:96-98`
+  contains a 3-line block comment immediately above the build line, naming
+  the flag, its purpose, the file that gates on it, and a cross-reference to
+  "tick-40 e2e-harness-api-shape". A casual copy of just the build line
+  would lose the comment, but `run.sh` is a harness script (not a deployment
+  recipe), and there is no parallel `npm run web:build` invocation in any
+  deployment or CI workflow path that would inadvertently inherit the flag.
+  The flag is also absent from `.env`/`.env.example`, so a developer running
+  `npm run web:build` directly does not get the leaky build. Acceptable risk;
+  no finding.
+
+### New findings introduced by the fix
+
+None observed. Spot checks performed:
+
+- `client.ts` re-read end-to-end; the `__curie` assignment is the only
+  module-level side effect inside the gate and it touches only `window`.
+- `App.tsx` re-read end-to-end; the new `data-testid` is the only addition,
+  template-string interpolated against `p.id` which is already used as the
+  React `key` (so id-uniqueness is implicitly already enforced upstream).
+- `run.sh` re-read end-to-end; 6 call-site rewrites confirmed against the
+  Scenario-A/D/G/policy-invalidated flows; no orphaned `profile-switcher`
+  `ab select` calls remain (grep for `profile-switcher` in `run.sh` returns
+  only the `data-testid=profile-switcher` parent locator on the wrapper div,
+  which still exists in `App.tsx:137` for the radiogroup role).
+- The token `__curie` appears in the built `web/dist/assets/*.js` bundle
+  (verified via grep), which is expected because the harness's build run set
+  the flag — Vite then preserves the gated block. A flag-less production
+  build would constant-fold the gate to `false` and tree-shake the
+  assignment.
+
+### Verdict
+
+**PASS (zero findings).**
