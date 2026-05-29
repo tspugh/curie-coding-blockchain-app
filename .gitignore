@@ -7,6 +7,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Dev-only persistent state (per SPEC-0003 §2.2 tx ledger, etc.)
+.tmp/
+
 # Env files (keep .env.example tracked)
 .env
 .env.local

@@ -77,6 +77,10 @@ requirements, technical documentation, deliverables, test cases, pass/fail crite
 out of scope, and open questions. Invoke that skill whenever writing or reviewing a
 spec. First spec: [`specs/0001-mvp0-coverage-negotiation.md`](specs/0001-mvp0-coverage-negotiation.md).
 
+Each spec's status (**done** / **to implement** / **draft**) is tracked inline in
+[`specs/README.md`](specs/README.md); keep it current when a spec lands or its
+implementation merges.
+
 ### `docs/research/` — research (what we haven't decided yet)
 
 Information researched regarding what we're going to build, before it has been

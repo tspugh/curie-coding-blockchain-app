@@ -42,6 +42,7 @@ export {
   type CoverageClientOptions,
   type SimulatedAgentOptions,
   type RealBackendOptions,
+  type TxConfirmedDetail,
   SimulatedBackend,
   RealBackend,
   ZERO_HASH,
