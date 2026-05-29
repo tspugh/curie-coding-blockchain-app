@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 25 — UNIT-7a + SPEC-0003 R42–R47 runtime wallet configurability)
+**Last updated:** 2026-05-29 (tick 26 — retrospective strict-review on tick 25 + 4 MEDIUM closures)
 **Current mode:** `impl`
-**Current tick:** 25
-**Last focus:** Closed UNIT-7a (the "auth: not insurer" two-wallet blocker) end-to-end. (a) `web/src/client.ts` rewritten: factored `makeClient(privateKey)`, two concrete clients (providerClient, insurerClient), Proxy-backed `client` export dispatching to whichever is active via module-level pointer, `setActiveClientProfile(id)` flipper. (b) `web/src/App.tsx` calls `setActiveClientProfile` in `onSwitchProfile` BEFORE the React state update so any tx fired same-render uses the right signer. (c) `web/src/views/Create.tsx` drops the synthetic `0x...0002` placeholder for `INSURER_ADDRESS` from the second wallet. (d) Runtime configurability: localStorage override beats .env via `keyOverride()` helper. (e) New "Wallet keys" panel in Settings with two password inputs + Save/Clear/Generate buttons + Reload-now nudge. (f) SPEC-0003 §2.9 added with R42–R47 documenting the requirement (UI-configurable keys, localStorage>env, reload-to-apply, profile-switch flips signer, INSURER_ADDRESS export, browser-verify acceptance test). (g) Fresh insurer wallet generated in worktree .env — user funded externally.
-**Last commit:** `<this tick>` (tick 25 — UNIT-7a + SPEC-0003 R42–R47)
+**Current tick:** 26
+**Last focus:** Ran retrospective strict-review on tick 25's `9319c42` (which had landed without the gate). Surfaced 4 MEDIUMs, 6 LOWs, 4 NITs. All 4 MEDIUMs closed inline this tick: (1) Simulated-mode profile switch losing state — `insurerClient` now aliases `providerClient` in simulated mode (single shared backend); (2) Real-mode missing-key throw bricking React before Settings is reachable — falls back to simulated + exposes `walletSetupRequired` flag for App to render onboarding; (3) "SPEC-0003 R30" mis-citations in client.ts/styles.css/Settings.tsx (R30 is actually submit-amount gating) — replaced with R42; (4) R42 said "per-row Generate" plural but only insurer had one — added Generate to provider row for symmetry. LOWs + NITs deferred.
+**Last commit:** `<this tick>` (tick 26 — 4 MEDIUM closures)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)

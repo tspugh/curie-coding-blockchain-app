@@ -145,7 +145,7 @@ export function Settings({
         </dl>
       </div>
 
-      {/* ── Wallet keys (SPEC-0003 R30 runtime configurability) ── */}
+      {/* ── Wallet keys (SPEC-0003 §2.9 R42 — runtime configurability) ── */}
       <WalletKeysPanel />
     </section>
   );
@@ -234,6 +234,14 @@ function WalletKeysPanel() {
           onChange={(e) => setProviderKey(e.target.value.trim())}
           aria-invalid={!providerValid}
         />
+        <button
+          type="button"
+          className="key-generate"
+          onClick={() => setProviderKey(generateHexKey())}
+          title="Generate a fresh random key (you'll need to fund the address)"
+        >
+          Generate
+        </button>
         {!providerValid && (
           <span className="key-error">Must be 0x + 64 hex chars</span>
         )}

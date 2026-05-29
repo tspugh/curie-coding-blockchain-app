@@ -114,9 +114,30 @@ function makeClient(privateKey: string | undefined): CurieClient {
   };
   if (IS_REAL) {
     if (!privateKey) {
-      throw new Error(
-        "Real mode requires a private key — set VITE_PRIVATE_KEY (provider) and VITE_PRIVATE_KEY_INSURER (insurer) in .env.",
-      );
+      // Don't throw at module-init: that bricks React before the user can
+      // reach the Settings panel that exists precisely to fix this case
+      // (MEDIUM 2, tick 25 strict-review). Fall back to a simulated backend
+      // and let `walletSetupRequired` flag the App to render an onboarding
+      // banner pointing to Settings → Wallet keys.
+      walletSetupRequired = true;
+      return createClient({
+        wallet: { mode: "simulated" },
+        profiles: profileConfig,
+        contract: {
+          simulated: {
+            autoResolveMs: 1200,
+            decision: () => nextDecision,
+            costPlusUnitPrice: (n: Negotiation) =>
+              nextCostPlusUnitPrice ??
+              (n.quantity > 0n
+                ? (n.requestedAmount + n.quantity - 1n) / n.quantity
+                : n.requestedAmount),
+            nadacUnitPrice: () => nextNadacUnitPrice ?? 0n,
+            clauseRef: CLAUSE_REF,
+            standardRef: STANDARD_REF,
+          },
+        },
+      });
     }
     return createClient({
       wallet: {
@@ -161,7 +182,14 @@ function makeClient(privateKey: string | undefined): CurieClient {
 // set, `insurerClient` falls back to the provider key so the app still runs
 // (the engage path will revert "auth: not insurer" as it did pre-UNIT-7a).
 /**
- * Read a private-key env var with a localStorage override (SPEC-0003 R30 —
+ * True when real mode is selected but no usable private key was found in
+ * either localStorage or .env — the app falls back to simulated and the UI
+ * renders an onboarding banner pointing to Settings → Wallet keys.
+ */
+export let walletSetupRequired = false;
+
+/**
+ * Read a private-key env var with a localStorage override (SPEC-0003 R42 —
  * runtime wallet configurability). The Settings UI writes overrides under the
  * `curie:VITE_PRIVATE_KEY*` keys. localStorage wins so the user's UI edit
  * survives across page loads without an .env rebuild. Empty strings are
@@ -182,9 +210,15 @@ function keyOverride(envName: "VITE_PRIVATE_KEY" | "VITE_PRIVATE_KEY_INSURER"): 
 }
 
 const providerClient = makeClient(keyOverride("VITE_PRIVATE_KEY"));
-const insurerClient = makeClient(
-  keyOverride("VITE_PRIVATE_KEY_INSURER") ?? keyOverride("VITE_PRIVATE_KEY"),
-);
+// In simulated mode the two backends would be independent in-memory state
+// machines — profile-switch would lose the negotiation list (MEDIUM 1, tick 25
+// strict-review). Share the same instance so the simulated demo survives
+// profile flips. Real mode keeps two distinct clients with distinct signers.
+const insurerClient: CurieClient = IS_REAL
+  ? makeClient(
+      keyOverride("VITE_PRIVATE_KEY_INSURER") ?? keyOverride("VITE_PRIVATE_KEY"),
+    )
+  : providerClient;
 
 // Module-level "which client should `client.*` dispatch to" pointer. App.tsx
 // flips this whenever the user switches profile in the UI.

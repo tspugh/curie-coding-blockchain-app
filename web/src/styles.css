@@ -1831,7 +1831,7 @@ tr.row-link:hover td:first-child {
   }
 }
 
-/* ─── Wallet keys panel (SPEC-0003 R30) ───────────────────────────────── */
+/* ─── Wallet keys panel (SPEC-0003 §2.9 R42) ──────────────────────────── */
 .key-row {
   display: flex;
   align-items: center;

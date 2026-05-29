@@ -4363,3 +4363,497 @@ label.
 
 ### Final tick-22 verdict: FAIL (0 HIGH; 1 MEDIUM; 2 LOWs; 7 NITs)
 
+---
+
+# Strict-review findings — tick 25 (UNIT-7a + SPEC-0003 §2.9 R42–R47)
+
+**Date:** 2026-05-29
+**Commit audited:** `9319c42` (retrospective; commit landed without a strict-review gate
+because the same session also produced the wallet-configurability UI under user
+pressure).
+**Diff base:** `9319c42^`
+**Files in diff (7):**
+- `web/src/client.ts` (+95 / -55)
+- `web/src/App.tsx` (+5 / -1)
+- `web/src/views/Create.tsx` (+6 / -13)
+- `web/src/views/Settings.tsx` (+145 / 0)
+- `web/src/styles.css` (+49 / 0)
+- `docs/specs/0003-token-flow-visibility.md` (+55 / 0)
+- `docs/progress/loop-state.md` (+5 / -3)
+
+R-citations the unit claims to satisfy: SPEC-0003 §2.9 R42 (UI-configurable keys),
+R43 (`localStorage` > env), R44 (reload-to-apply, hot-swap OOS), R45
+(`setActiveClientProfile` flips signer), R46 (`INSURER_ADDRESS` export), R47
+(browser-verify acceptance test).
+
+## Gates (all pass)
+
+- `npx tsc -p tsconfig.json` — clean (root tsc, 0 errors; emitted to `dist/`).
+- `npx tsc -p web/tsconfig.json --noEmit` — clean (0 errors).
+- `node --import tsx --test "src/**/*.test.ts"` — 63/63 pass, duration ≈2.7 s.
+- `npx vite build` — succeeds; `dist/assets/index-BHnn5XwR.js` 564.66 kB
+  (gzip 198.61 kB); the only warning is the pre-existing 500 kB chunk-size
+  notice, unchanged by this commit.
+
+## Required reads — actual evidence
+
+### `web/src/client.ts` (the centerpiece)
+
+The pre-state had a single top-level `client` built by inlining the
+real-vs-simulated config branch into one `createClient(...)` call, with a
+`__curie` window-handle for debugging and a single `wireTxLogger(client.negotiation)`
+hook. The new state factors that into a `makeClient(privateKey)` helper, builds
+**two** concrete `providerClient` / `insurerClient` instances, exposes a
+Proxy-backed `client` that dispatches every `get` to whichever concrete client
+the module-level `activeClient` pointer names, and exports both
+`setActiveClientProfile(id)` and a stable `INSURER_ADDRESS`.
+
+Key invariants confirmed against `src/index.ts:146–180`:
+
+- `CurieClient` is a **plain object literal** (not a class instance) returned
+  from `createClient` — fields are `wallet`, `profiles`, `content`,
+  `negotiation`, `close()`. No prototype methods need `this` to be the original
+  `CurieClient` instance. The Proxy's `get(_, prop) => activeClient[prop]` returns
+  the nested object as-is; its own methods retain their own `this` via the
+  factory's lexical closures. **No this-binding hazard.**
+- `wireTxLogger` is idempotent via a module-level `WeakSet<RealBackend>` (see
+  `web/src/txLogger.ts`) and type-guards on `RealBackend`, so:
+  - In simulated mode (both backends are `SimulatedBackend` instances) both
+    `wireTxLogger` calls are no-ops.
+  - In real mode each `RealBackend` has its **own** `txEvents` EventTarget
+    (`src/contract/real.ts:173`) and only dispatches on its own emitter for
+    txs it itself fired. The JSONL sink and the in-UI store therefore see
+    each tx **exactly once** regardless of which signer fired it. **No
+    double-firing.**
+- `keyOverride()` validates `^0x[0-9a-fA-F]{64}$` before trusting localStorage,
+  rejects uppercase `0X`, rejects any leading/trailing whitespace
+  (anchors + 64 hex exactly), and silently falls back to env on any failure
+  including SSR / private-mode localStorage exceptions.
+- The real-mode throw `"Real mode requires a private key …"` lives inside
+  `makeClient`, which runs at **module import time**. `web/src/client.ts` is
+  imported by `web/src/App.tsx` (and others) at the bundle entry, so a missing
+  `VITE_PRIVATE_KEY` in real-mode causes the **entire React tree to fail to
+  mount**, replaced by a generic Vite error overlay or a blank page. The user
+  cannot reach Settings to set the missing key via the new UI. (See finding
+  MEDIUM 2 below.)
+- In simulated mode (`IS_REAL === false`) the helper ignores `privateKey`
+  entirely; both `providerClient` and `insurerClient` are built via the same
+  config block, but each `createClient(...)` call instantiates a **distinct
+  `SimulatedBackend`** with disjoint in-memory state (verified at
+  `src/contract/simulated.ts:161` — `class SimulatedBackend` holds its own
+  per-instance maps). Two simulated backends do NOT share event state. (See
+  finding MEDIUM 1 below.)
+- The `__curie` debug export now exposes BOTH concrete clients
+  (`{ provider, insurer }`). For testnet-only dev wallets this is on the same
+  threat level as before, but the surface area for someone-with-DevTools
+  doubled. (See finding NIT 1 below.)
+
+### `web/src/App.tsx`
+
+The diff is minimal and correct: `setActiveClientProfile(id)` is called BEFORE
+`client.profiles.setActiveProfile(id)` and BEFORE the React state update. The
+ordering claim in the commit message holds.
+
+**Walk-through of profile-switch → engage same-render:**
+1. User clicks profile dropdown → React calls `onSwitchProfile("insurer")`
+   synchronously.
+2. `setActiveClientProfile("insurer")` flips the module-level `activeClient`
+   pointer to `insurerClient` (synchronous, immediate).
+3. `client.profiles.setActiveProfile("insurer")` goes through the Proxy → reads
+   `activeClient.profiles` (now `insurerClient.profiles`) → sets its active
+   profile to "insurer". (Note: `providerClient.profiles` still has whatever
+   active it had; the two registries are independent.)
+4. `setActiveProfileId("insurer")` schedules React re-render.
+5. If anywhere downstream a tx fires *synchronously in this same render* before
+   the React commit, it dispatches through `client.negotiation.<tx>()` → Proxy
+   `get` → `activeClient.negotiation.<tx>()` → **insurer-signed**. Correct.
+6. After re-render, all `client.*` reads still dispatch to insurerClient.
+   Correct.
+
+**Subscription invariant:** App.tsx's `useEffect([])` subscribes via
+`client.negotiation.subscribe(...)` at mount. The Proxy `get` returns
+`providerClient.negotiation` (the activeClient at boot). The unsubscribe handle
+also belongs to providerClient. After a profile flip, the subscription remains
+on providerClient's emitter. In **real mode** this is fine — both
+RealBackends share the same on-chain contract address, so events emitted by an
+insurer-signed tx still arrive at providerClient's contract-event filter via
+the RPC subscription. In **simulated mode** insurer-fired events go to
+insurerClient's EventTarget and the App **never sees them** (the subscription
+is on providerClient). (See finding MEDIUM 1 below.)
+
+### `web/src/views/Create.tsx`
+
+The synthetic `SYNTHETIC_INSURER_ADDR = "0x0000000000000000000000000000000000000002"`
+constant is deleted; `insurerAddr` is now sourced from `INSURER_ADDRESS`. The
+code comment correctly references `UNIT-7a` and removes the stale "UNIT-7"
+reference. Cross-repo grep confirms `0x…02` is no longer referenced anywhere in
+live code (the only remaining hits are inside `docs/progress/security-findings.md`
+notes, which are historical).
+
+**Module-load semantics:** `INSURER_ADDRESS` is captured at `web/src/client.ts`
+module-eval, which is the first load. If the user pastes a new insurer key via
+Settings and reloads the page, the new module-load picks up the new key from
+localStorage (`keyOverride` runs first) → `insurerClient` is rebuilt with the new
+key → `INSURER_ADDRESS` reflects the new address. Confirmed.
+
+### `web/src/views/Settings.tsx`
+
+`WalletKeysPanel` is a **local function component** (not exported). For a panel
+this self-contained (~120 LOC) that's defensible scope, but the file's role is
+to be the Settings view, and the panel reads/writes localStorage entirely on
+its own — extraction to `web/src/views/settings/WalletKeysPanel.tsx` would help
+testability. Borderline NIT.
+
+The `useState` initializers `() => readStoredKey("VITE_PRIVATE_KEY")` are lazy,
+which is correct for an SSR/non-browser environment.
+
+`isValidHexKey` / `generateHexKey` are pure helpers with the same regex as
+`keyOverride`. `generateHexKey` correctly uses `crypto.getRandomValues` over
+a `Uint8Array(32)` (256 bits of CSPRNG entropy). No `Math.random` anywhere.
+
+`aria-invalid` is derived from `providerValid` / `insurerValid`, which are
+re-evaluated on every keystroke (state-derived booleans). The instant the user
+types a 65th char or fixes the prefix, `aria-invalid` flips back. **Clears
+correctly.**
+
+The Save button is disabled while either field is invalid (line 272). Good
+defense.
+
+The Clear-all handler resets both local React state AND removes the localStorage
+keys. After reload, the form re-mounts with empty inputs (since
+`readStoredKey` returns `""`). Consistent.
+
+### `web/src/styles.css`
+
+Five new class rules: `.key-row`, `.key-row label`, `.key-row input[type="password"]`,
+`.key-row .key-error`, `.key-generate`, `.key-actions`, `.link-button`,
+`.link-button:hover`. Grep for prior definitions returns zero hits → no
+collisions with earlier rules. Uses project tokens (`--text-2`, `--danger`,
+`--accent`, `--accent-dk`); zero raw hex.
+
+### `docs/specs/0003-token-flow-visibility.md`
+
+The added §2.9 (lines 341–393 of the post-state) follows the spec-author
+voice (MUST / SHOULD per R; rationale leading each section; "Decision 9 — UNIT-7a"
+header consistent with §2.5's "Decision 5" pattern). R47's browser-verify path
+matches the implementation (Settings wallet-keys panel → Save → Reload → Role
+switcher → wallet chip flips → balance refetches against new signer).
+
+Cross-references are correct: R25 (line 196) and R26 (line 205) are indeed the
+"production wallet-connect path" requirements §2.9 defers to.
+
+The security-posture closing paragraph is honest ("testnet-only, plaintext
+per-origin, never paste a real-funds key") and doesn't oversell.
+
+## Findings
+
+### HIGH — none.
+
+### MEDIUM 1 — Simulated-mode profile switch loses event state; the two SimulatedBackends are independent
+
+- `web/src/client.ts:148–156` — in simulated mode, `makeClient` is called twice
+  (line 154–156) with `privateKey` undefined; each call hits the `IS_REAL ===
+  false` branch and instantiates a fresh `SimulatedBackend` via `createClient`
+  → `createCoverageClient` → `new SimulatedBackend(...)`.
+- `src/contract/simulated.ts:161` — `SimulatedBackend` is a **class with
+  per-instance state**: its negotiations map, its event listeners, its decision
+  callbacks all live on the instance. Two instances ⇒ two universes.
+- Concrete failure mode in simulated mode:
+  1. User starts as Provider, creates Negotiation #1, fires `requestAdjudication`.
+     The tx hits `providerClient.negotiation`; events flow to
+     `providerClient`'s EventTarget; App.tsx's subscription (attached to
+     `providerClient.negotiation` at boot) receives them; UI shows the row.
+  2. User switches profile to "Insurer". `setActiveClientProfile("insurer")`
+     flips the pointer to `insurerClient`.
+  3. User clicks Overview → `client.negotiation.count()` → Proxy → returns
+     `insurerClient.negotiation.count()` → **0**. Negotiation #1 is invisible.
+  4. User clicks Detail on the (cached-in-React) reqId 1 →
+     `client.negotiation.getNegotiationView(1n)` → insurerClient → throws or
+     returns undefined.
+- Severity: MEDIUM because (a) the commit message says the live demo is real-mode
+  (where the on-chain contract is the shared source of truth and this problem
+  doesn't exist), and (b) simulated mode is primarily for CI / lib testing.
+  But the user-facing app DOES run in simulated mode whenever
+  `IS_REAL === false` (no real config), and any Tester / reviewer who exercises
+  profile-switching in simulated mode will see negotiations disappear and
+  reasonably conclude "the app is broken." It is a real bug in a real
+  user-reachable path.
+- Spec drift: SPEC-0003 §2.9 R45 ("the web client exposes two concrete clients
+  … plus a Proxy-backed `client` export that dispatches…") does not flag this
+  limitation. R44 carves out hot-swap for v0 but does not carve out
+  cross-profile state visibility in simulated mode.
+- Suggested mitigations (next-tick work, not this audit's job):
+  (a) In simulated mode, build `insurerClient = providerClient` (share the same
+      backend). The wallet still differs only in label/address; the negotiation
+      state is unified. The fall-back already does this when
+      `VITE_PRIVATE_KEY_INSURER` is unset in real mode (line 155 — `?? keyOverride("VITE_PRIVATE_KEY")`)
+      — extend the same pattern unconditionally for simulated. OR
+  (b) Document the limitation in §2.9 / R45 explicitly and gate profile-switch
+      to "real mode only" in the UI.
+
+### MEDIUM 2 — Real-mode missing private key throws at module init, bricks app before user can reach the new UI
+
+- `web/src/client.ts:115–119` — `makeClient` throws `"Real mode requires a
+  private key — set VITE_PRIVATE_KEY (provider) and VITE_PRIVATE_KEY_INSURER
+  (insurer) in .env."` if `privateKey` is `undefined`.
+- `makeClient` runs at module eval (lines 154–156). `web/src/client.ts` is
+  imported transitively by every view via `App.tsx`. A throw at module eval
+  surfaces as either a Vite error overlay (dev) or a blank page + console
+  exception (prod), with **no React tree mounted**.
+- Therefore the new "paste your key in Settings" UI is unreachable in the
+  exact onboarding scenario it's most relevant for — a fresh tunnel URL with
+  no `.env`. The user has to know to drop a placeholder key into `.env`,
+  rebuild, then reload to see the Settings panel.
+- This contradicts the spirit of R42 ("UI-configurable private keys") and R43
+  ("localStorage > env") — if the env is missing entirely, the UI's
+  configurability is moot.
+- Severity: MEDIUM. Real-mode dev is uncommon in CI but is exactly the demo
+  path the commit was racing to unblock; if the demo VM ever loses `.env`,
+  the user is stuck.
+- Suggested mitigations (not this audit's job):
+  (a) Detect missing key at `keyOverride` time, return a placeholder, and
+      render an onboarding screen in App.tsx pointing the user to Settings.
+  (b) OR fall back to simulated mode with a banner explaining why.
+
+### MEDIUM 3 — Code comments cite "SPEC-0003 R30" for runtime wallet configurability; the correct citation is R42
+
+- Three call sites cite the wrong R-number:
+  - `web/src/client.ts:164` — JSDoc on `keyOverride`: "(SPEC-0003 R30 — runtime
+    wallet configurability)".
+  - `web/src/views/Settings.tsx:148` — block comment: "Wallet keys (SPEC-0003
+    R30 runtime configurability)".
+  - `web/src/styles.css:1834` — section header: "Wallet keys panel (SPEC-0003
+    R30)".
+- The actual R30 in SPEC-0003 is §2.6 line 229: "Create-form submit blocked
+  when `requestedAmount > balance`." It is the submit-amount-gating
+  requirement and has nothing to do with key configurability.
+- The correct citation for runtime wallet configurability is §2.9 R42 (or
+  R42–R47 as a span).
+- Severity: MEDIUM. This is the *purpose* of inline R-citations — they pin
+  code to the spec requirement that justifies it. A wrong citation defeats the
+  pin and (when grepped) routes a future reader to an unrelated section.
+- Spec drift: code → spec citation is wrong; the spec is internally
+  consistent.
+
+### MEDIUM 4 — R42 promises "per-row Generate affordances" (plural); only the insurer row has a Generate button
+
+- SPEC-0003 §2.9 R42 (line 350): "*Save*, *Clear all*, and **per-row
+  *Generate* affordances**."
+- `web/src/views/Settings.tsx:254–261` — Generate button exists only inside
+  the insurer-key `key-row`. Provider row (lines 225–240) has no Generate
+  button.
+- Two interpretations:
+  - The asymmetry is **intentional** (provider key is the dev's funded
+    wallet from `.env`, never auto-generated; only the insurer wallet is
+    spun fresh per-session). In that case R42's wording should be tightened
+    to "an insurer-row *Generate* affordance" or similar, AND the rationale
+    documented inline in the spec.
+  - The asymmetry is a **bug** (the panel was authored for symmetric Generate
+    but the provider-row Generate was forgotten). In that case the code
+    needs a matching `<button>` block on the provider row.
+- Severity: MEDIUM because it's a verbatim mismatch between R42 (which is
+  MUST) and the implementation. Pick one resolution.
+
+### LOW 1 — `savedAt` indicator does not clear when the user re-edits the form
+
+- `web/src/views/Settings.tsx:196` — `savedAt` state is set by `handleSave` /
+  `handleClearAll` and never cleared by input edits.
+- Concrete UX bug:
+  1. User types provider key, clicks Save → "Saved. Reload to apply." appears.
+  2. User then types a new insurer key (now the form has unsaved changes).
+  3. The "Saved. Reload to apply." message **still shows**, falsely implying
+     the new insurer-key edit is already persisted.
+- Fix sketch (next tick): clear `savedAt` in both `onChange` handlers, OR
+  derive a "dirty" state and hide the saved-toast when dirty.
+- Severity: LOW because the user is one click away from the truth (Save
+  again), but for a security-relevant input ("did I actually save my key?")
+  the staleness is misleading.
+
+### LOW 2 — Reload-now button doesn't warn about lost form state elsewhere in the app
+
+- `web/src/views/Settings.tsx:285` — `window.location.reload()` is called
+  with no confirm.
+- The Create.tsx form holds user-entered drug / clinical-justification / price
+  state in `useState`. If the user has a half-filled Create form open in
+  another tab — or even just navigates back to the Create view in the same
+  session and has unsaved input — the reload destroys it.
+- Severity: LOW. The reload-prompt could be a soft "Reload now" → `confirm("…
+  unsaved form state in other tabs will be lost. Continue?")` or simply
+  rely on browser's beforeunload (which we don't currently wire). Not
+  blocking.
+
+### LOW 3 — `localStorage` quota / availability errors are swallowed silently in `writeStoredKey`
+
+- `web/src/views/Settings.tsx:174–180` — `writeStoredKey` wraps its
+  setItem/removeItem in `try { … } catch { /* localStorage unavailable */ }`.
+- The user clicks Save, sees "Saved. Reload to apply.", reloads, and finds
+  the key was never persisted (quota exceeded, private mode, etc.). The UI
+  reports success.
+- Severity: LOW because the failure mode is rare on real desktop browsers,
+  and `localStorage` quota is enormous relative to a 66-char key. But for a
+  defensive try/catch around a security-relevant write, surfacing failure
+  ("Couldn't persist — check browser settings") would be the strict pattern.
+
+### LOW 4 — `useWalletBalance` doesn't re-fire its refresh on profile switch; the chip stays on the old balance until the next 30 s tick or tx-confirm
+
+- `web/src/hooks/useWalletBalance.ts:38` — `useEffect(..., [])` runs once on
+  mount. After `setActiveClientProfile(...)` flips activeClient, the hook does
+  NOT re-run; only the next 30 s interval tick or the next confirmed tx
+  refreshes the balance.
+- R47's acceptance test ("observe that the Network 'active rulings' + wallet
+  balance recompute against the new signer") will appear to pass *eventually*
+  but with a delay of up to 30 s. Tester might wait, lose patience, and
+  conclude the balance is stuck.
+- Within the closure, `refresh()` reads `client.wallet.address` lazily via the
+  Proxy → it DOES use the new address when it eventually fires. The bug is
+  the latency, not the address.
+- Fix sketch (next tick): export the active-profile id from a React-subscribable
+  store (currently lives in App.tsx state only), pass it into `useWalletBalance`
+  as a dep, and trigger immediate refresh on change. OR add an exported event
+  from `setActiveClientProfile` that `useWalletBalance` listens to.
+- Severity: LOW. R47 is a SHOULD, not a MUST; the test passes with a delay.
+
+### LOW 5 — `__curie` window-handle now exposes BOTH private-key-holding clients to anyone with DevTools
+
+- `web/src/client.ts:222–225` — `window.__curie = { provider, insurer }`.
+- Both `providerClient.wallet` and `insurerClient.wallet` hold their respective
+  signers; in real mode the signer's `privateKey` field is readable
+  (depending on the wallet abstraction). Anyone with the Cloudflare tunnel URL
+  and DevTools can fetch both keys.
+- The commit message acknowledges this ("Acceptable only because these are
+  no-funds dev wallets (testnet / simulated)"). For testnet keys this is
+  consistent posture. But the surface doubled vs pre-state, and the audit
+  surface for "what dev affordances must never ship to prod" should also
+  double.
+- Severity: LOW (existing posture, slightly worsened). The hard fix is to
+  gate `__curie` behind `import.meta.env.DEV`.
+
+### LOW 6 — Spec hygiene: R44 inlines an out-of-scope claim ("hot-swap without reload is explicitly out of scope for v0") instead of placing it in §7 Out of Scope
+
+- SPEC-0003 §2.9 R44 (line 365–367) declares hot-swap OOS inline.
+- The spec-author skill places OOS claims in a dedicated `## X. Out of scope`
+  section (here §7, line 544). The new inline OOS is invisible to a reader
+  scanning only the OOS section.
+- A secondary, slightly worse hygiene issue: §7 line 548 currently reads
+  "Wallet management (rotation, multi-account) — single signer per build, as
+  today." This is now **stale**: §2.9 explicitly adds a second signer +
+  UI-pasted rotation. The OOS section now contradicts §2.9.
+- Severity: LOW (documentation, not code). Fix next tick by (a) moving the
+  hot-swap OOS claim to §7 and (b) updating the stale single-signer claim
+  in §7.
+
+### NIT 1 — `WalletKeysPanel` is defined in-file in Settings.tsx; extraction would help testability
+
+- Single use, ~120 LOC, mostly self-contained. Borderline. Not blocking.
+
+### NIT 2 — `KEY_STORAGE_PREFIX` is duplicated as a string-prefix in `keyOverride` (client.ts) and as the `KEY_STORAGE_PREFIX` constant (Settings.tsx)
+
+- `web/src/client.ts:173` — `localStorage.getItem(\`curie:${envName}\`)`.
+- `web/src/views/Settings.tsx:167` — `const KEY_STORAGE_PREFIX = "curie:"`.
+- Two strings, same constant. If one drifts the override silently breaks.
+  Extract to `client.ts` and import it into Settings. Not blocking.
+
+### NIT 3 — `keyOverride()` and `isValidHexKey()` duplicate the same regex (`/^0x[0-9a-fA-F]{64}$/`)
+
+- `web/src/client.ts:173` and `web/src/views/Settings.tsx:182`.
+- Extracting to a shared `web/src/keys.ts` would DRY this up and pin
+  validation in one place. Not blocking.
+
+### NIT 4 — Each concrete client has its own `ProfileRegistry` instance; they're synchronized only by App.tsx's two-step `setActive…` calls
+
+- Architectural smell: two registries holding the same logical state, kept
+  in sync by code convention rather than a single source of truth.
+- If a future code path ever calls `client.profiles.setActiveProfile(...)` without
+  first calling `setActiveClientProfile(...)`, the two registries diverge and
+  `activeProfile.partyId` (read from one) won't match the signer (read from
+  the other), causing R6 wallet-gating mismatches.
+- Defensible for v0; worth a SPEC-0003 followup or a `// invariant:` comment.
+
+### Non-findings (briefing items checked, no issue)
+
+- **Reflect.has / Reflect.ownKeys** — grep across `web/src/` and `src/`
+  returns zero hits on the Proxy-backed `client` object. The Proxy's bare
+  `get` trap is sufficient.
+- **Object.keys(client) / for…in client** — grep returns zero hits.
+- **Class-method `this` binding** — `CurieClient` is an object literal, not a
+  class instance. `client.profiles.foo()` resolves through the Proxy's `get`
+  to `activeClient.profiles` (a real `ProfileRegistry` class instance), and
+  the subsequent `.foo()` call uses that real instance as `this`. No
+  unbinding.
+- **Double wireTxLogger** — idempotent via `WeakSet<RealBackend>`; the
+  `if (insurerClient !== providerClient)` guard further short-circuits when
+  the fallback collapses the two clients. **No double-firing.**
+- **Race conditions in `setActiveClientProfile`** — synchronous pointer flip;
+  any tx fired in the same render-path uses the new active. Async work
+  spawned BEFORE the flip races, but no such async work exists in the diff.
+- **Hex regex edge cases** — `0X` (uppercase X) is rejected; leading/trailing
+  whitespace is rejected (regex anchors); Settings input also `.trim()`s on
+  every keystroke. Defense-in-depth.
+- **`INSURER_ADDRESS` freshness across reloads** — module-eval-time capture;
+  reload re-evaluates module → picks up new localStorage value via
+  `keyOverride` → `INSURER_ADDRESS` reflects the new key. Correct per R44.
+- **Synthetic `0x...0002` residue** — grep finds only references in
+  `docs/progress/security-findings.md` (historical notes). Zero live code
+  references.
+- **CSS class collisions** — `.key-row`, `.key-actions`, `.link-button`,
+  `.key-error`, `.key-generate` each defined exactly once; no prior rules.
+- **CSS raw hex** — none in the new block; all colors via `var(--…)` tokens.
+- **R47 acceptance match** — implementation supports the described browser
+  walkthrough (paste → Save → Reload → Role-switch → wallet chip flips →
+  `useActiveRulings`/`useWalletBalance` refetch eventually). LOW 4 caveats
+  the balance-refresh latency.
+- **R-citations in §2.9 to R25/R26** — verified at lines 196, 205. Correct.
+
+## Cross-references
+
+- Tick 22 (`9319c42`'s great-grandparent commit) flagged the Settings
+  screen's general structure (1 MEDIUM, 2 LOWs, 7 NITs). The new
+  `WalletKeysPanel` lives inside Settings.tsx but is independent of the
+  prior findings; it neither closes nor reopens any of them.
+- The SPEC-0003 §2.9 addition is the first new requirements block since
+  §2.8 (loop detection) and is the first to materially modify the "single
+  signer per build" assumption embedded across the spec — LOW 6 above
+  flags the resulting internal contradiction in §7.
+
+## Tick-25 verdict
+
+This commit delivers a genuinely useful capability (runtime two-wallet config
+without a rebuild) and the proxy-based dispatch model is elegantly minimal —
+plain-object `CurieClient` makes the Proxy safe with no this-binding
+surprises, `wireTxLogger`'s WeakSet idempotency and per-instance EventTarget
+mean there's no double-firing concern in real mode, and the `keyOverride`
+validator + Settings.trim() pair gives sound defense-in-depth on the
+localStorage path. The hex regex, `crypto.getRandomValues` for Generate, the
+`aria-invalid` derivation, and the disabled-while-invalid Save button are all
+correct.
+
+However the audit found four MEDIUM findings: (1) simulated-mode profile
+switch loses negotiation state because the two SimulatedBackend instances
+have disjoint in-memory state (a real user-reachable bug in the
+simulated-mode demo path); (2) real-mode missing private key throws at
+module eval and bricks the React tree before the user can reach the new
+key-paste UI — the exact onboarding case the UI exists for; (3) three code
+comments cite "SPEC-0003 R30" for runtime wallet configurability when the
+correct citation is R42 (R30 is unrelated submit-amount gating); and
+(4) R42 promises "per-row Generate affordances" (plural) but only the
+insurer row has one — verbatim spec-to-code mismatch needing either a
+provider-row Generate or a tightening of R42. There are also six LOWs
+(saved-state staleness, reload-without-confirm, swallowed localStorage
+errors, balance-refresh latency on profile switch, doubled `__curie`
+exposure surface, and the OOS hygiene + §7 internal contradiction) and
+four NITs (panel extraction, duplicated prefix constant, duplicated
+regex, dual ProfileRegistry instances). Gates all pass (root tsc, web
+tsc, 63/63 tests, vite build).
+
+For a retrospective audit on a tick that didn't get a gate at the time,
+this is a healthy yield — the structural choices are sound, but four MUST-
+or near-MUST-level discrepancies between the spec and the code (or
+between the code and reachable user paths) want fixing before the next
+demo cycle. None of these are runtime crashers in the real-mode happy path
+the commit was racing to unblock, which is consistent with the user
+having shipped successfully — but they would surface for any
+simulated-mode reviewer, any fresh-`.env` reviewer, and any future
+reader following R-citations to the wrong spec section.
+
+### Final tick-25 verdict: FAIL (0 HIGH; 4 MEDIUM; 6 LOWs; 4 NITs)
+
