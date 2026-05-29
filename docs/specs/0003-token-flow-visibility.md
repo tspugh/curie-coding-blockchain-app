@@ -177,7 +177,104 @@ inline; it inherits no layout discipline and pushes other elements off the page.
   clipped or overflowing its container; no horizontal scroll; the action affordance
   matches the on-chain state (R13); semantic confirmation card present after the most
   recent successful action (R18); error card (when applicable) contained per R21.
-  Failures get a labelled screenshot in the PR description.
+  Failures get a labelled screenshot in the PR description. **Baseline before
+  polish:** [`../progress/2026-05-29-baseline/`](../progress/2026-05-29-baseline/)
+  + the inventory in its README.
+
+### 2.5 (2026-05-29) Wallet connection & onboarding (Decision 5 — folded from SPEC-0005)
+
+Production posture decision. SPEC-0005 was started as a separate doc; per the
+2026-05-29 conversation, folded into SPEC-0003 because every decision here lands at
+the UI surface (landing page, header chrome, profile picker) and SPEC-0003 is the
+design-decisions log for that surface. **Privy is not a v0 dependency.**
+
+- **R24 (MUST) Landing page split.** First visit lands on a page with two clearly
+  distinct CTAs: **"Sign in to my organisation"** (production path) and **"Try the
+  demo"** (current ephemeral flow). Visual treatment makes accidental cross-over
+  unlikely. The demo path labels every screen as *Demo — synthetic data only* per
+  SPEC-0004 §2.1.
+- **R25 (MUST) Native wallet is the primary production path; embedded wallet is
+  opt-in.** Production v0 connects via **MetaMask / WalletConnect** as the default,
+  signing a SIWE challenge (EIP-4361) for session. An **embedded-wallet path** via
+  Privy (or equivalent) is **opt-in** — for users who don't have a wallet — but is
+  **not required** for v0 production: anyone who has MetaMask should be able to use
+  the app without ever seeing the embedded-wallet onboarding. This trades a higher
+  bar for crypto-native users (none — they already have MetaMask) against a higher
+  bar for non-crypto users (they need to install MetaMask first time, OR opt in to
+  embedded onboarding when we add it).
+- **R26 (SHOULD) Privy is the embedded provider when we add it.** Free tier (1k MAU
+  is enough for closed-beta-scale evaluation); SSO-first; white-labellable; EVM-
+  native. Not committed for v0; captured here so when the embedded path is added we
+  don't re-litigate.
+- **R27 (MUST) Profile = role within an organisation in production.** The
+  Provider / Insurer / Observer dropdown is a **demo affordance only**. In production,
+  the chrome shows the user's *assigned role* for the org they're signed into; the
+  picker is hidden (or restricted to actually-assigned roles for users in multiple
+  orgs). This is the workflow-team framing from
+  [VISION.md](../VISION.md) — a real provider PA-team operator is *only* a Provider.
+- **R28 (SHOULD) Wallet is one-per-(user, org).** A user belonging to two orgs gets
+  two addresses; switching org switches wallet and re-issues SIWE. Mechanics for
+  org-membership lookup (on-chain registry vs off-chain SIWE-only) deferred to a
+  contract-side spec.
+- **R29 (SHOULD) Demo wallet hardening before any public demo URL.** The dev wallet
+  PK in `.env` is OK for this EC2 box. A public demo deploy needs a per-session
+  ephemeral wallet, faucet-funded and idle-expired. Not blocking v0 work; captured so
+  the "ship the demo to the public" task knows the dependency.
+- **Out of scope** for SPEC-0003: patient-side wallets (read-only status only),
+  KYB / org provisioning (Curie-ops process), treasury / multisig for escrow,
+  mobile / native wallets, ERC-4337 mechanics.
+
+### 2.6 (2026-05-29) Submit-amount gating by wallet balance (Decision 6)
+
+- **R30 (MUST) Create-form submit blocked when `requestedAmount > balance`.** The
+  Create form's `requestedAmount` field is validated against the active wallet's
+  current STT balance from the SPEC-0003 §2.1 R1 hook. Above-balance values:
+  - Disable the Submit button.
+  - Render an inline error per SPEC-0003 §2.4 R21: *"Requested amount exceeds your
+    wallet balance (X STT). Lower the amount or top up the wallet."*
+  - Surface the current balance + the shortfall.
+- **R31 (MUST) Tx-cost preview folded into the same check.** The total the user
+  must hold is `requestedAmount + estimatedGasFor(createContract) + agentFeeReserve`
+  (the latter for the next-step `requestAdjudication` so the user can finish the
+  loop). The block is on the sum, not just on `requestedAmount` alone.
+- **R32 (SHOULD) Live-update the block.** The block tightens or relaxes as the
+  balance changes (e.g., the user funds the wallet mid-form) without requiring a
+  re-render — drives off the same `useWalletBalance` hook from §2.1.
+
+### 2.7 (2026-05-29) AI reasoning + agent-receipt visibility (Decision 7)
+
+The current Detail view exposes the *result* of an AI ruling — the new covered
+amount, the decision badge — but not the *reasoning*. Once the on-chain agent issues
+its callback (the agent-receipt that satisfies SPEC-0001 R6 / SPEC-0004 §2.3 R11),
+the UI should let a viewer **explore the agent's reasoning** — cited references,
+decision text, on-chain receipt — not just see the new state badge.
+
+- **R33 (MUST) Agent-receipt explorer on Detail.** When state is `UnderReview` or
+  the request has been ruled at least once, the Detail view exposes an "AI Reasoning"
+  panel (or affordance) that, per round, surfaces:
+  - The on-chain **receipt id** (from the `Ruled` event) + a Somnia-explorer link.
+  - The agent's **decision** (Approve / Deny / NeedMoreEvidence / PolicyInvalid) +
+    the covered amount on approve.
+  - The cited **reference indices** the ruling relied on (per SPEC-0004 §2.3 R11) —
+    each rendered with its source label (FDA, Part D formulary 2026-MM, NICE, NADAC).
+  - The agent's **rationale string** (decoded from the callback's `rationaleHash` +
+    the off-chain rationale body).
+- **R34 (MUST) During `UnderReview`, expose what was asked.** Between
+  `requestAdjudication` and `Ruled`, the panel shows: the **packet Merkle root**
+  (SPEC-0004 §2.3 R10) and the list of references *submitted to* the agent. This
+  is the "what is the agent seeing right now" view that closes the audit loop
+  before the ruling lands.
+- **R35 (SHOULD) Reasoning chip in the timeline.** Each `Ruled` row in the live
+  timeline (SPEC-0002 R1) carries a chip linking to the per-round reasoning view
+  per R33, so the user can audit any prior round at a glance.
+- **R36 (SHOULD) Plain-language summary of the reasoning.** Above the technical
+  rationale + cited-references list, a one-sentence summary: *"Approved at $5,200
+  because the FDA label cites moderate-to-severe plaque psoriasis as an indication;
+  the payer's clause does not override."* The technical artefacts are below.
+- **Data dependencies.** R33–R36 depend on the agent callback carrying the
+  `usedReferenceIndices` + `rationaleHash` from SPEC-0004 §2.3 R11; the off-chain
+  rationale body lives wherever the off-chain agent stores it (content-addressed,
+  same as the note + packet). Track this dependency on SPEC-0004's deliverable.
 
 ## 3. Technical documentation
 

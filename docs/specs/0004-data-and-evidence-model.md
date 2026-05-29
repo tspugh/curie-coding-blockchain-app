@@ -122,6 +122,26 @@ Status: Draft · Owner: tspugh · Date: 2026-05-29 · Builds on: [SPEC-0001](000
   appealRound)`, predicate sketches, and the ladder-table SoT proposal live in
   [`../technical-design/appeal-ladder-enforcement.md`](../technical-design/appeal-ladder-enforcement.md).
 
+### 2.5b (2026-05-29) UI considerations (cross-link)
+
+The functional/data decisions in §2.1–§2.4 imply UI surfaces that are owned by
+[SPEC-0003](0003-token-flow-visibility.md):
+
+- **Scenario picker** (R2/R3): UI affordance owned by SPEC-0003 polish work.
+- **Stage picker walking real named stages** (R3): renders from the static
+  `(payerLine, appealRound) → stage name` table in R15; SPEC-0003 owns the chrome.
+- **Formulary version chip** (R8): renders the pinned Part D release date so a
+  viewer sees *which* formulary they're being judged against; SPEC-0003 §2.1 R4
+  (attribution) is the right slot.
+- **Provenance chip in timeline** (R12): each cited reference rendered with its
+  source label, not a bare hash. Owned by SPEC-0003 §2.7 R33 (agent-receipt
+  explorer).
+- **AI reasoning explorer**: the *data* shape (rationale, used-reference indices,
+  receipt id) is owned here in R11; the *UI surface* that displays it is
+  [SPEC-0003 §2.7 R33–R36](0003-token-flow-visibility.md#27-2026-05-29-ai-reasoning--agent-receipt-visibility-decision-7).
+- **Submit-amount gating by wallet balance**: orthogonal to the data model, owned
+  by [SPEC-0003 §2.6](0003-token-flow-visibility.md#26-2026-05-29-submit-amount-gating-by-wallet-balance-decision-6).
+
 ### 2.5 (2026-05-29) Medicaid MCO ladder (Decision 5)
 
 Medicaid is added as a third `payerLine` per the §2.4 hybrid model. The Medicaid
