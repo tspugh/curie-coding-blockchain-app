@@ -1,8 +1,16 @@
 # Appeal-ladder enforcement
 
-How the contract enforces the Part D and commercial appeal ladders without baking either
-jurisdiction's vocabulary into the schema. Reference for implementing
-[SPEC-0004 §2.4 R13–R16](../specs/0004-data-and-evidence-model.md#24-2026-05-29-appeal-stage-labels-hybrid--ladder-named-on-chain-stage-named-in-ui).
+> **v0 scope (2026-05-29):** Per [SPEC-0004 §2.4 R14a/R14b](../specs/0004-data-and-evidence-model.md),
+> v0 ships only the sequencing predicate (R14a) — the contract refuses
+> `requestAdjudication(round=N)` unless `round=N-1` was actually ruled `Deny`. The
+> **filing-window math, AIC-threshold gates, and terminal-round caps documented
+> below are deferred to V1.5**. The `LADDERS` table's `description` and `citation`
+> columns ship in v0 for R21 (in-UI context); its `window` and `threshold` columns
+> are documented-only.
+
+How the contract enforces the Part D, commercial, and Medicaid appeal ladders without
+baking any jurisdiction's vocabulary into the schema. Reference for implementing
+[SPEC-0004 §2.4 R13–R16, R21](../specs/0004-data-and-evidence-model.md#24-2026-05-29-appeal-stage-labels-hybrid--ladder-named-on-chain-stage-named-in-ui).
 
 Domain grounding lives in [`../domain/coverage-exception-process.md`](../domain/coverage-exception-process.md)
 (Finding 4 = Part D ladder; Finding 5 = commercial ladder). This doc covers the *how* —
