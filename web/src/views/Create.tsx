@@ -5,7 +5,7 @@
 import { useMemo, useState } from "react";
 import { ZERO_HASH, hashContent, PayerLine, type Profile } from "@lib";
 import { client, INSURER_ADDRESS } from "../client.js";
-import { parseAmount } from "../shared.js";
+import { parseAmount, shortHex } from "../shared.js";
 import { SAMPLE_CASE } from "../sampleCase.js";
 
 interface CreateProps {
@@ -21,9 +21,18 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
   const [amount, setAmount] = useState("");
   const [quantity, setQuantity] = useState("");
   const [daysSupply, setDaysSupply] = useState("");
+  const [payerLine, setPayerLine] = useState<PayerLine>(PayerLine.PartD);
   const [committedHash, setCommittedHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Live preview of the hash that WILL be committed on-chain (R4 — justification
+  // text stays off-chain; only this keccak256 lands on the ledger). Updates as
+  // the user types so they see exactly what gets recorded.
+  const justificationHashPreview = useMemo(
+    () => (justification ? hashContent(justification) : null),
+    [justification],
+  );
 
   const insurerProfile = useMemo<Profile>(() => {
     const all = client.profiles.listProfiles();
@@ -75,7 +84,7 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
         // the insurer profile's signer is hot-swapped via setActiveClientProfile
         // so engage() can later be called by that wallet.
         insurerAddr: INSURER_ADDRESS,
-        payerLine: PayerLine.PartD,
+        payerLine,
         drugRef: hashContent(drug),
         requestedAmount,
         quantity: quantityVal,
@@ -120,7 +129,8 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
 
       <form className="form" onSubmit={onSubmit}>
         <label>
-          Why is this medication needed?
+          Why is this medication needed?{" "}
+          <span className="label-hint">· stays off-chain</span>
           <textarea
             data-testid="create-note"
             rows={4}
@@ -129,6 +139,16 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
             placeholder="Describe the clinical justification — this stays private (off-chain). Only a secure hash is recorded on the blockchain."
           />
         </label>
+        {justificationHashPreview && (
+          <div className="hash-preview" data-testid="hash-preview">
+            <span className="hash-preview-chars">
+              {justification.length} chars · stays in your wallet / agent
+            </span>
+            <code className="hash-preview-hash" title={justificationHashPreview}>
+              hash {shortHex(justificationHashPreview)}
+            </code>
+          </div>
+        )}
 
         <label>
           Medication Name
@@ -187,6 +207,25 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
             onChange={(e) => setEvidence(e.target.value)}
             placeholder="Link to FDA label, clinical guideline, or study (optional)"
           />
+        </label>
+
+        <label>
+          Payer line <span className="label-hint">· sets the appeal ladder</span>
+          <select
+            data-testid="create-payer-line"
+            value={payerLine}
+            onChange={(e) => setPayerLine(Number(e.target.value) as PayerLine)}
+          >
+            <option value={PayerLine.Commercial}>
+              Commercial — Internal Appeal → External Review
+            </option>
+            <option value={PayerLine.PartD}>
+              Medicare Part D — Redetermination → IRE → ALJ
+            </option>
+            <option value={PayerLine.Medicaid}>
+              Medicaid (MCO) — Plan Appeal → External / Fair Hearing
+            </option>
+          </select>
         </label>
 
         <div className="parties">

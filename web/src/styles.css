@@ -2088,3 +2088,32 @@ tr.row-link:hover td:first-child {
   text-transform: lowercase;
   letter-spacing: 0.02em;
 }
+
+/* SPEC-0003 Create — payer-line label hint + hash preview (tick 36) */
+.label-hint {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12.5px;
+}
+.hash-preview {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 6px;
+  padding: 0 2px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hash-preview-chars {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.hash-preview-hash {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  background: var(--panel-2);
+  border: 1px solid var(--border-lt);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  color: var(--accent-dk);
+}

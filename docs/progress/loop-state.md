@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 35 — design-conformance refresh: 82% → 89%)
+**Last updated:** 2026-05-29 (tick 36 — UNIT-Create-payer-selector)
 **Current mode:** `impl`
-**Current tick:** 35
-**Last focus:** Re-measured design-conformance after the three tick-32/33/34 closures. **82% → 89% (+7pp)**. Per-surface: Detail 72→87 (+15), TopBar 72→83 (+11), Overview 88, Create 73, Network 85, Settings 90 unchanged. **1pp short of the 90% steady-state threshold.** Highest-leverage remaining gap is Create's payer-line selector + live hash preview (`screens.jsx:469-473, 492-499`) — queued as UNIT-Create-payer-selector. Closing it should push over 90% (Create gets a 15-20pp bump). Other remaining gaps: Network right panel (Contract-state-live key-value grid + on/off-chain boundary diagram); Detail event-log cost/STT column (deliberately deferred tick 34).
-**Last commit:** `<this tick>` (tick 35 — conformance refresh)
+**Current tick:** 36
+**Last focus:** Closed tick-35 gap #1 — Create now has a payer-line selector (Commercial / Part D / Medicaid with statutory-ladder summaries per option, matching `screens.jsx:492-499`) wired to the createContract call (replaces the hardcoded `PayerLine.PartD`). Added a live hash preview below the justification textarea (shown when textarea non-empty) — `{charCount} chars · stays in your wallet / agent` on the left, `hash 0x...` chip on the right using the REAL keccak256 from `hashContent` (more honest than the prototype's fake `hashStr`). The selector now means the created Negotiation actually lands in the user's chosen ladder (Commercial / Part D / Medicaid) instead of always PartD — visible immediately on the new AppealLadder card in Detail. Expected to push Create surface 73% → ~90% and overall ≥ 90% — remeasurement next tick will confirm.
+**Last commit:** `<this tick>` (tick 36 — UNIT-Create-payer-selector)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)
