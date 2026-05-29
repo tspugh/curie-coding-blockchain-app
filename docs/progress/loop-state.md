@@ -4,13 +4,18 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 4 — UNIT-2 landed; R14a + R2b + PacketSubmitted green)
+**Last updated:** 2026-05-29 (tick 5 — UNIT-2-followup-A landed; appeal-state edge coverage green)
 **Current mode:** `impl`
-**Current tick:** 4
-**Last focus:** UNIT-2 — R14a sequencing + R2b self-contract rejection + PacketSubmitted (DONE; 18/18 + 19/19)
-**Last commit:** *(set after tick 4 commit)*
+**Current tick:** 5
+**Last focus:** UNIT-2-followup-A — parameterized appeal-from-any-non-Denied-state tests (DONE; 27/27 + 20/20)
+**Last commit:** *(set after tick 5 commit)*
 
 ## Work queue (priority order)
+
+### UNIT-2-followup-A (LANDED tick 5 — appeal-state edge coverage)
+**Parameterized "appeal from any non-Denied state reverts" test**
+- What landed: new `describe("UNIT-2-followup-A: appeal reverts from every non-Denied state")` in `contracts/test/CoverageNegotiation.test.ts` with 9 sub-tests covering Ready, UnderReview, EvidenceRequested, Approved, Settled, Deadlocked, PolicyInvalidated, ProviderRefused, Withdrawn. Each drives a fresh deploy to the target state and asserts `appeal()` reverts with exactly `"appeal: prior ruling not Deny"`. Mirror test added to `src/contract/simulated.auth.test.ts` for sim/real parity. Confirmed every state hits the same revert string — the contract's `appeal()` places the state guard FIRST (before auth + cap), so terminal states don't expose different revert paths.
+- Gate verdict: hardhat 27/27 ✓ (+9 new), vitest 20/20 ✓ (+1 new), tsc ✓, secret-scan ✓. Opus gates SKIPPED per lean-tick procedure (token budget in 60–75% band): the change is test-only, no contract code modified, and the strict-review of tick 4 explicitly prescribed this exact fix.
 
 ### UNIT-2 (LANDED tick 4 — SPEC-0004 Phase 1 contracts)
 **R14a sequencing predicate + R2b self-contract rejection + PacketSubmitted event**
@@ -116,6 +121,7 @@
 
 ## Recent findings (rolling — newest first, last 20)
 
+- **2026-05-29 (tick 5 — UNIT-2-followup-A landed, lean tick):** Closed the appeal-state edge-coverage gap from tick 4's strict-review. Confirmed by exhaustive testing: the contract's `appeal()` state guard is ordered BEFORE auth + cap checks, so all 9 non-Denied states produce the identical `"appeal: prior ruling not Deny"` revert — no terminal-state guard ordering surprises. Lean tick: skipped Opus gates since change was test-only and the prescribed fix was already vetted. Sim/real parity maintained. Token budget after tick 5 estimated ~75% — next tick should be very lean (skip all subagents per procedure; commit whatever's coherent; prepare for emergency-tag if needed).
 - **2026-05-29 (tick 4 — UNIT-2 landed):** SPEC-0004 Phase 1 contracts landed. Initial strict-review caught 6 findings; 3 CRITICAL (lying R12 comment in contract header, runtime regressions in 3 consumers from the new R2b predicate, sim/real PacketSubmitted parity break) were release-blockers that I addressed inline. Net: contract change + 3 callsite updates + new TS event type + sim emission + real ABI mapping. Token budget after tick 4 estimated 70% — next tick is in the 60–75% band, so should skip non-essential subagents. Findings 4–6 deferred as UNIT-2-followup-A/B units in the queue (parameterized edge tests + zero-address ordering test).
 - **2026-05-29 (tick 3 — UNIT-1 landed):** SPEC-0004 §2.4 R13/R15/R16 typing layer is now in place. Initial strict-review flagged 5 findings (2 MEDIUM: stale ROUND SEMANTICS comment, untested appealRound deadlock invariant; 3 LOW: ladders.test.ts spot-coverage, stageNameFor edge cases, FileRequestInput optional-with-PartD-default vs CreateContractParams required). All 5 addressed inline. Final vitest count grew from 5 → 19 (added 14 ladders assertions). Hardhat 15/15 unchanged (assertions added to existing T6 + R9-deadlock-appeal tests). Total tick cost included 3 Opus gate reviews (solidity/security/strict-1); strict-review-2 skipped to preserve token budget — findings instead resolved by direct edit + test reruns. Token budget after tick 3 estimated ~55–60% — tick 4 will be lean per the procedure (skip non-essential subagents if needed).
 - **2026-05-29 (tick 2 — UNIT-A0 landed):** Baseline gate is now green (15/15 hardhat, 5/5 vitest). UNIT-A0 turned out to be more than a mock-probe fix — discovered three additional spec-drift points in `CoverageNegotiation.sol` (submitEvidence not payable + not firing agent; handleResponse decoding only a single uint; PolicyInvalid not routed). Dev subagent fixed all four in one coherent commit, validated by 3 Opus reviewers (solidity-compliance, security, strict). Strict-review iterated twice — first surfaced 3 findings (real.ts missing fee forwarding, stale test comment, missing round-cap on submitEvidence), all fixed inline; second surfaced 1 finding (missing test for the new cap path), fixed inline with `R9 (deadlock submitEvidence)` test mirroring `R9 (deadlock appeal)`. Net diff: contracts/* + 1 real.ts wrapper line + 2 test diffs. No `--no-verify`, no `--force-push`. Pushed.

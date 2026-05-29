@@ -148,3 +148,114 @@ test("ANY_CALLER wildcard preserves back-compat (no gating)", async () => {
   await b.requestAdjudication(reqId);
   assert.equal(await b.stateOf(reqId), State.UnderReview);
 });
+
+// -----------------------------------------------------------------------
+// UNIT-2-followup-A (simulated parity): appeal() reverts from every
+// non-Denied state with "appeal: prior ruling not Deny".
+//
+// Mirrors the hardhat parameterized suite in CoverageNegotiation.test.ts.
+// Uses ANY_CALLER (wildcard) so auth gates don't mask the state-guard check.
+// -----------------------------------------------------------------------
+test("UNIT-2-followup-A (sim): appeal reverts from every non-Denied state", async () => {
+  // Helper: fresh backend with autoResolve OFF (wildcard caller for state-guard isolation).
+  function fresh() {
+    return new SimulatedBackend({ autoResolve: false });
+  }
+
+  // Helper: create → engage → adjudicate (leaves negotiation UnderReview).
+  async function cea(b: SimulatedBackend) {
+    const reqId = await b.createContract(params());
+    await b.insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+    await b.requestAdjudication(reqId);
+    return reqId;
+  }
+
+  const assertReverts = async (fn: () => Promise<unknown>) =>
+    rejects(fn, "appeal: prior ruling not Deny");
+
+  // Ready
+  {
+    const b = fresh();
+    const reqId = await b.createContract(params());
+    await b.insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+    assert.equal(await b.stateOf(reqId), State.Ready);
+    await assertReverts(() => b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH));
+  }
+
+  // UnderReview
+  {
+    const b = fresh();
+    const reqId = await cea(b);
+    assert.equal(await b.stateOf(reqId), State.UnderReview);
+    await assertReverts(() => b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH));
+  }
+
+  // EvidenceRequested
+  {
+    const b = fresh();
+    const reqId = await cea(b);
+    b.resolve(reqId, Decision.NeedMoreEvidence);
+    assert.equal(await b.stateOf(reqId), State.EvidenceRequested);
+    await assertReverts(() => b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH));
+  }
+
+  // Approved
+  {
+    const b = fresh();
+    const reqId = await cea(b);
+    b.resolve(reqId, Decision.Approve);
+    assert.equal(await b.stateOf(reqId), State.Approved);
+    await assertReverts(() => b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH));
+  }
+
+  // Settled (Approved → both accept → settle)
+  {
+    const b = fresh();
+    const reqId = await cea(b);
+    b.resolve(reqId, Decision.Approve);
+    await b.accept(reqId, PROVIDER_ID);
+    await b.accept(reqId, INSURER_ID);
+    await b.settle(reqId);
+    assert.equal(await b.stateOf(reqId), State.Settled);
+    await assertReverts(() => b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH));
+  }
+
+  // Deadlocked (maxRounds=1: first Deny → appeal cap-deadlocks → second appeal from Deadlocked)
+  {
+    const b = new SimulatedBackend({ autoResolve: false, maxRounds: 1n });
+    const reqId = await cea(b);
+    b.resolve(reqId, Decision.Deny);
+    // First appeal at round == maxRounds transitions to Deadlocked (no agent fire).
+    await b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH);
+    assert.equal(await b.stateOf(reqId), State.Deadlocked);
+    await assertReverts(() => b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH));
+  }
+
+  // PolicyInvalidated
+  {
+    const b = fresh();
+    const reqId = await cea(b);
+    b.resolve(reqId, Decision.PolicyInvalid);
+    assert.equal(await b.stateOf(reqId), State.PolicyInvalidated);
+    await assertReverts(() => b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH));
+  }
+
+  // ProviderRefused (create → engage → provider refuses)
+  {
+    const b = fresh();
+    const reqId = await b.createContract(params());
+    await b.insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+    await b.refuse(reqId, REASON_HASH);
+    assert.equal(await b.stateOf(reqId), State.ProviderRefused);
+    await assertReverts(() => b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH));
+  }
+
+  // Withdrawn (create → withdraw before any engage)
+  {
+    const b = fresh();
+    const reqId = await b.createContract(params());
+    await b.withdraw(reqId);
+    assert.equal(await b.stateOf(reqId), State.Withdrawn);
+    await assertReverts(() => b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH));
+  }
+});

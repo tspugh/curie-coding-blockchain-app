@@ -836,4 +836,148 @@ describe("CoverageNegotiation", () => {
       .withArgs(owner.address, bal);
     expect(await ethers.provider.getBalance(target)).to.equal(0n);
   });
+
+  // -----------------------------------------------------------------------
+  // UNIT-2-followup-A: appeal() reverts from every non-Denied state.
+  //
+  // The contract checks `require(n.state == State.Denied, "appeal: prior ruling
+  // not Deny")` as its FIRST guard — before auth — so ALL nine non-Denied states
+  // produce exactly that revert string.  `Open` is already covered by T10
+  // (~line 757 above); `Denied` is the only state from which appeal succeeds
+  // (T6 R6c).  This suite drives a FRESH deploy for each target state and
+  // asserts the unanimous revert.
+  // -----------------------------------------------------------------------
+  describe("UNIT-2-followup-A: appeal reverts from every non-Denied state", () => {
+    /**
+     * Drive a fresh deploy to the named state, then assert that calling
+     * appeal() reverts with "appeal: prior ruling not Deny".
+     *
+     * State-driving notes:
+     *  - Ready           : createAs + insurerEngage
+     *  - UnderReview     : createEngageAdjudicate (agent in flight, no ruling yet)
+     *  - EvidenceRequested: createEngageAdjudicate + triggerRuling(NeedMoreEvidence)
+     *  - Approved        : createEngageAdjudicate + triggerRuling(Approve)
+     *  - Settled         : Approved + both accept + settle
+     *  - Deadlocked      : setMaxRounds(1) + createEngageAdjudicate + triggerRuling(Deny)
+     *                      + appeal() deadlocks at cap → second appeal attempt from Deadlocked
+     *  - PolicyInvalidated: createEngageAdjudicate + triggerRuling(PolicyInvalid)
+     *  - ProviderRefused : createAs + insurerEngage + provider.refuse(reqId, reasonHash)
+     *  - Withdrawn       : createAs + provider.withdraw(reqId)
+     */
+
+    it("Ready: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+      expect(await contract.stateOf(reqId)).to.equal(State.Ready);
+      await expect(
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+
+    it("UnderReview: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const { reqId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+      expect(await contract.stateOf(reqId)).to.equal(State.UnderReview);
+      await expect(
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+
+    it("EvidenceRequested: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+      await platform.triggerRuling(target, requestId, ruling(Decision.NeedMoreEvidence, 0n));
+      expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested);
+      await expect(
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+
+    it("Approved: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+      await platform.triggerRuling(target, requestId, ruling(Decision.Approve, 150n));
+      expect(await contract.stateOf(reqId)).to.equal(State.Approved);
+      await expect(
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+
+    it("Settled: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
+      await platform.triggerRuling(target, requestId, ruling(Decision.Approve, 120n));
+      await contract.connect(provider).accept(reqId, PROVIDER_ID);
+      await contract.connect(insurer).accept(reqId, INSURER_ID);
+      await contract.connect(insurer).settle(reqId);
+      expect(await contract.stateOf(reqId)).to.equal(State.Settled);
+      // Settled is terminal; the state guard fires before any other check.
+      await expect(
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+
+    it("Deadlocked: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      // setMaxRounds(1) so the first appeal immediately deadlocks.
+      await contract.setMaxRounds(1n);
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+      await platform.triggerRuling(target, requestId, ruling(Decision.Deny, 0n));
+      // This appeal at round == maxRounds transitions to Deadlocked (no second fire).
+      await contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE });
+      expect(await contract.stateOf(reqId)).to.equal(State.Deadlocked);
+      // Now attempt a second appeal from Deadlocked.
+      await expect(
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+
+    it("PolicyInvalidated: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+      await platform.triggerRuling(target, requestId, ruling(Decision.PolicyInvalid, 0n));
+      expect(await contract.stateOf(reqId)).to.equal(State.PolicyInvalidated);
+      await expect(
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+
+    it("ProviderRefused: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+      await contract.connect(provider).refuse(reqId, REASON_HASH);
+      expect(await contract.stateOf(reqId)).to.equal(State.ProviderRefused);
+      // appeal() checks state first (before auth), so even this terminal state
+      // reverts with the state guard message.
+      await expect(
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+
+    it("Withdrawn: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(provider).withdraw(reqId);
+      expect(await contract.stateOf(reqId)).to.equal(State.Withdrawn);
+      await expect(
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+  });
 });
