@@ -4,22 +4,21 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 1 — bootstrap + baseline-broken pivot)
+**Last updated:** 2026-05-29 (tick 2 — UNIT-A0 landed; baseline gate green)
 **Current mode:** `impl`
-**Current tick:** 1
-**Last focus:** Bootstrap planning queue + surface UNIT-A0 (baseline test failures are blocking the gate)
-**Last commit:** *(set after tick 1 work commits)*
+**Current tick:** 2
+**Last focus:** UNIT-A0 — fix baseline Hardhat failures (DONE; 15/15 passing)
+**Last commit:** *(set after tick 2 commit)*
 
 ## Work queue (priority order)
 
-### UNIT-A0 (SELECTED for tick 2 — blocker; tick 1 surfaced this as the gate)
-**Fix the 12 baseline Hardhat test failures so the loop's "100% tests pass" gate can ever be satisfied**
-- Files: `contracts/contracts/mocks/MockAgentPlatform.sol` (rewrite `observedStateDuringCreate` probe), possibly `contracts/contracts/CoverageNegotiation.sol` (expose a `currentlyFiringReqId()` view to support a correct probe), affected tests if assertion semantics need to adapt.
-- Root cause (confirmed in tick 1): `MockAgentPlatform.createRequest` uses `assembly { reqIdFromPayload := calldataload(payload.offset) }` assuming `payload`'s first word is `reqId`. The production payload is `abi.encodeWithSelector(IParseWebsiteAgent.ExtractANumber.selector, ...)` whose first word is an ABI offset (32), not `reqId`. The probe therefore calls `stateOf(32)` which reverts with `'unknown contract'`, cascading 10+ test failures (the ones traversing `_fireAgent`) plus 2 unrelated revert-message changes (`'evidence: wrong state'` no longer matches).
-- R-citations: SPEC-0001 R6/R9/R16 (test fidelity); SPEC-0001 §3.5 CEI (the probe asserts state==UnderReview AT TIME of platform.createRequest — the security invariant).
-- Acceptance criterion: `cd contracts && npx hardhat test` reports `14 passing / 0 failing` on the unmodified `e78b51f` test set; the CEI assertion (`observedStateDuringCreate == 2`) still proves state==UnderReview at platform-callback time (the security invariant cannot be silently dropped); no test is silenced or weakened.
+### UNIT-A0 (LANDED tick 2 — baseline gate now green)
+**Fixed the 12 baseline Hardhat test failures + restored spec-aligned semantics**
+- What landed: (1) `currentlyFiringReqId` storage hook on `CoverageNegotiation` + mock rewrite using it. (2) `submitEvidence` made `payable nonReentrant`, fires the agent directly (spec R6c), with `maxRounds` cap mirroring `appeal`. (3) `handleResponse` decodes the full arbiter tuple (decision, costPlusUnitPrice, nadacUnitPrice, rationaleHash, clauseRef, standardRef, receiptId) + branches PolicyInvalid → `PolicyInvalidated` + applies R6a deterministic cap on Approve. (4) `src/contract/real.ts` `submitEvidence` wrapper now forwards `agentFeeValue`. (5) Test T10 stale `{ value: FEE }` removed; new test `R9 (deadlock submitEvidence)` added.
+- Gate verdict: hardhat 15/15 ✓, vitest 5/5 ✓, tsc ✓, secret-scan ✓, Opus solidity-compliance PASS, Opus security-review PASS, Opus strict-review PASS (after 2 review iterations addressing 4 findings).
+- R-citations satisfied: SPEC-0001 R6a, R6b, R6c, R9 (fee model), R11 (party auth).
 
-### UNIT-1 (re-queued — was tick 1's target; blocked by UNIT-A0)
+### UNIT-1 (SELECTED for tick 3 — was tick 1's target; UNIT-A0 unblocks it)
 **SPEC-0004 Phase 2: `LADDERS` typed constant + `payerLine`/`appealRound` on `Negotiation` type**
 - Files: `src/protocol/ladders.ts` (new), `src/contract/types.ts` (extend `Negotiation`), `src/types/coverage.types.ts` (mirror `PayerLine` enum), `contracts/contracts/CoverageNegotiation.sol` (add `PayerLine` enum + struct fields)
 - R-citations: SPEC-0004 §2.4 R13, R15, R16; §2.5 R17
@@ -93,6 +92,7 @@
 
 ## Recent findings (rolling — newest first, last 20)
 
+- **2026-05-29 (tick 2 — UNIT-A0 landed):** Baseline gate is now green (15/15 hardhat, 5/5 vitest). UNIT-A0 turned out to be more than a mock-probe fix — discovered three additional spec-drift points in `CoverageNegotiation.sol` (submitEvidence not payable + not firing agent; handleResponse decoding only a single uint; PolicyInvalid not routed). Dev subagent fixed all four in one coherent commit, validated by 3 Opus reviewers (solidity-compliance, security, strict). Strict-review iterated twice — first surfaced 3 findings (real.ts missing fee forwarding, stale test comment, missing round-cap on submitEvidence), all fixed inline; second surfaced 1 finding (missing test for the new cap path), fixed inline with `R9 (deadlock submitEvidence)` test mirroring `R9 (deadlock appeal)`. Net diff: contracts/* + 1 real.ts wrapper line + 2 test diffs. No `--no-verify`, no `--force-push`. Pushed.
 - **2026-05-29 (tick 1 — BASELINE-BROKEN PIVOT):** `cd contracts && npx hardhat test` reports **2 passing / 12 failing** on the unmodified `e78b51f` baseline (verified by running tests with and without UNIT-1 source — same 12 failures both ways). Root cause: `MockAgentPlatform.sol` line 71–73 — the assembly probe `calldataload(payload.offset)` was written assuming `_fireAgent` passes `(reqId, ...)` as the payload, but production `_fireAgent` now passes `abi.encodeWithSelector(IParseWebsiteAgent.ExtractANumber.selector, ...)` whose first word is an ABI offset. The probe calls `stateOf(32)` → `'unknown contract'` revert → cascades through 10 tests. Two additional tests (T10 guards, one CEI test) fail for related-but-not-identical reasons. The loop's "100% tests pass" gate cannot be satisfied while this baseline is broken, so UNIT-1 (typing-only) was demoted and UNIT-A0 (fix baseline) inserted as new top priority. UNIT-1 source changes were reverted clean — only the loop-state.md update lands this tick. This is exactly the kind of finding the loop should surface: a gate-blocking bug that pre-existed the loop's first commit.
 - **2026-05-29 (tick 1 bootstrap — planning):** Gap analysis complete. The contract (`CoverageNegotiation.sol`) and TS types (`src/contract/types.ts`) have no `payerLine`/`appealRound` fields — the entire SPEC-0004 §2.4 ladder model is absent from the chain layer. `src/protocol/` does not exist — no `ladders.ts`, `packet.ts`, `formulary.ts`. `demo-data/scenarios/` does not exist — zero curated cases. SPEC-0003 Phase A/B work (R13–R22: in-flight guards, re-derive from on-chain state, `ErrorCard`, `revertReasonMap`, layout fixes) is entirely absent. The prototype's appeal-ladder section in Overview + Detail (stage name column, payer-line chip, `LADDERS` table) is not wired in the React app. SPEC-0002 R1 timeline backfill is broken (Detail shows "No events yet" for pre-existing requests). SPEC-0003 §2.1 R1/R3/R4/R7–R10 are implemented (`useWalletBalance`, `TxMonitor`, `txLogger`, JSONL sink). SPEC-0001 core flow (contract, sim/real backends, events, 11-state machine, agent fee model) is implemented and tested. SPEC-0002 R2/R3/R5/R6 are implemented (profile picker, gotcha path, price gauge). CDS-Hooks seam (SPEC-0002 R7) is implemented in `src/integrations/cds-hooks/`.
 

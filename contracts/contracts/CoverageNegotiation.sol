@@ -152,6 +152,14 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     string public agentEvidenceUrl =
         "https://medlineplus.gov/druginfo/meds/a603010.html";
 
+    /// @notice The reqId currently being fired at the agent platform. Set inside
+    ///         `_fireAgent` before `platform.createRequest`, cleared after. Lets a
+    ///         mock platform (or an off-chain probe / future indexer) read exactly which
+    ///         negotiation is mid-fire without decoding the agent payload. Zero outside
+    ///         an active fire. Because state is set to `UnderReview` before this is
+    ///         written, the CEI invariant is fully preserved.
+    uint256 public currentlyFiringReqId;
+
     /// @dev Auto-incrementing request id.
     uint256 private _nextId = 1;
 
@@ -337,21 +345,37 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     }
 
     /// @notice Provider submits more public evidence of necessity from
-    ///         `EvidenceRequested` → moves back to `Ready` so either party can
-    ///         re-request adjudication. The caller does NOT need to fund an agent
-    ///         fee here; the fee is paid on the subsequent `requestAdjudication`.
+    ///         `EvidenceRequested` → fires the agent directly (round++) → `UnderReview`
+    ///         (R6/R9). Payable so the caller funds the per-request fee, identical fee
+    ///         model to `requestAdjudication` and `appeal`. At the round cap, routes
+    ///         to terminal `Deadlocked` without firing — mirroring `appeal`'s behavior
+    ///         so a NeedMoreEvidence ↔ submitEvidence cycle can't loop indefinitely.
     /// @dev Provider-only (R11). Records only the opaque evidence ref (R3/R4).
-    function submitEvidence(uint256 reqId, bytes32 evidenceUri) external {
+    function submitEvidence(uint256 reqId, bytes32 evidenceUri) external payable nonReentrant {
         Negotiation storage n = _get(reqId);
         require(n.state == State.EvidenceRequested, "evidence: wrong state");
         require(msg.sender == n.providerAddr, "auth: not provider");
         require(evidenceUri != bytes32(0), "evidence: empty");
 
+        // Bounded to N rounds: at the cap, the submission deadlocks instead of re-firing.
+        // No agent fires → refund the caller's full `msg.value` (R9: never silently retain
+        // caller ETH). Mirrors `appeal`'s cap logic; the function's `nonReentrant` modifier
+        // guards the refund (CEI: terminal state set first).
+        if (n.round >= maxRounds) {
+            _clearRequest(n);
+            n.state = State.Deadlocked;
+            emit Deadlocked(reqId, n.round);
+            if (msg.value > 0) {
+                (bool ok, ) = payable(msg.sender).call{value: msg.value}("");
+                require(ok, "fee: refund failed");
+            }
+            return;
+        }
+
         n.evidenceUri = evidenceUri;
         n.round += 1;
-        n.state = State.Ready;
         emit EvidenceSubmitted(reqId, evidenceUri);
-        emit ContractReady(reqId);
+        _fireAgent(reqId, n, msg.sender);
     }
 
     /// @notice Appeal a ruling with NEW public evidence of necessity (R6c). From
@@ -526,35 +550,68 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
             return;
         }
 
-        // Decode the Somnia LLM Parse Website agent's ExtractANumber response.
-        // The agent returns 1=APPROVE or 0=DENY based on the drug's FDA indications.
-        uint256 approvedVal = abi.decode(responses[0].result, (uint256));
-        Decision decision = approvedVal >= 1 ? Decision.Approve : Decision.Deny;
+        // Decode the arbiter tuple: (decision, costPlusUnitPrice, nadacUnitPrice,
+        // rationaleHash, clauseRef, standardRef, receiptId). This matches the encoding
+        // produced by MockAgentPlatform.triggerRuling and the real Somnia agent.
+        (
+            uint8 decisionRaw,
+            uint256 costPlusUnitPrice,
+            uint256 nadacUnitPrice,
+            bytes32 rationaleHash,
+            bytes32 clauseRef,
+            bytes32 standardRef,
+            uint256 receiptId
+        ) = abi.decode(
+            responses[0].result,
+            (uint8, uint256, uint256, bytes32, bytes32, bytes32, uint256)
+        );
+        Decision decision = Decision(decisionRaw);
 
+        // `NeedMoreEvidence`: agent requests additional public evidence before ruling.
+        // Route to the retriable `EvidenceRequested` state (R6/R9).
+        if (decision == Decision.NeedMoreEvidence) {
+            n.state = State.EvidenceRequested;
+            emit EvidenceRequested(reqId);
+            return;
+        }
+
+        // Store agent-supplied lookup data for all other decisions.
         n.lastDecision = decision;
         n.hasRuling = true;
-        // Price fields are not returned by the LLM base agent — zeroed out.
-        // The covered amount is the full requested amount when approved (no benchmark cap
-        // without per-unit pricing from the agent).
-        n.costPlusUnitPrice = 0;
-        n.nadacUnitPrice = 0;
-        n.rationaleHash = bytes32(0);
-        n.clauseRef = bytes32(0);
-        n.standardRef = bytes32(0);
+        n.costPlusUnitPrice = costPlusUnitPrice;
+        n.nadacUnitPrice = nadacUnitPrice;
+        n.rationaleHash = rationaleHash;
+        n.clauseRef = clauseRef;
+        n.standardRef = standardRef;
         // A fresh ruling resets prior acceptances — parties accept THIS ruling.
         n.providerAccepted = false;
         n.insurerAccepted = false;
 
+        if (decision == Decision.PolicyInvalid) {
+            // R6b: relied-on clause contradicts a public standard — void the contract.
+            emit PolicyFlagged(reqId, clauseRef, standardRef);
+            n.coveredAmount = 0;
+            n.state = State.PolicyInvalidated;
+            emit Ruled(reqId, requestId, decision, 0, rationaleHash, clauseRef, receiptId);
+            emit PolicyInvalidated(reqId, clauseRef, standardRef);
+            return;
+        }
+
         if (decision == Decision.Approve) {
-            // Approved: cover the full requested amount (LLM agent confirms FDA necessity).
-            n.coveredAmount = n.requestedAmount;
+            // R6a: deterministic cap = min(requestedAmount, costPlusUnitPrice × quantity).
+            // The agent supplies only public price lookups; the CONTRACT computes the amount.
+            uint256 benchmarkCap = _benchmarkCap(costPlusUnitPrice, n.quantity);
+            uint256 covered = benchmarkCap > 0 && benchmarkCap < n.requestedAmount
+                ? benchmarkCap
+                : n.requestedAmount;
+            n.coveredAmount = covered;
             n.state = State.Approved;
-            emit Ruled(reqId, requestId, decision, n.requestedAmount, bytes32(0), bytes32(0), 0);
+            emit Ruled(reqId, requestId, decision, covered, rationaleHash, clauseRef, receiptId);
         } else {
             // Denied: agent found no clear medical necessity for coverage.
             n.coveredAmount = 0;
             n.state = State.Denied;
-            emit Ruled(reqId, requestId, decision, 0, bytes32(0), bytes32(0), 0);
+            emit Ruled(reqId, requestId, decision, 0, rationaleHash, clauseRef, receiptId);
         }
     }
 
@@ -668,6 +725,12 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         n.rulingDeadline = block.timestamp + rulingTimeout;
         n.state = State.UnderReview;
 
+        // Expose the reqId for transparent probing during the external call (mock
+        // platforms in tests, reentrancy guards, off-chain indexers). The slot is set
+        // AFTER all state effects are committed (UnderReview is already written) so the
+        // CEI invariant is preserved. Cleared immediately after the call returns.
+        currentlyFiringReqId = reqId;
+
         // Interaction: fire the native Somnia agent, forwarding EXACTLY the per-request fee.
         uint256 requestId = platform.createRequest{value: fee}(
             agentId,
@@ -675,6 +738,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
             this.handleResponse.selector,
             payload
         );
+
+        currentlyFiringReqId = 0;
 
         n.pendingRequestId = requestId;
         _requestToNegotiation[requestId] = reqId;

@@ -666,6 +666,30 @@ describe("CoverageNegotiation", () => {
     expect(await ethers.provider.getBalance(target)).to.equal(0n);
   });
 
+  it("R9 (deadlock submitEvidence): submitEvidence at the round cap deadlocks and refunds the full msg.value (no agent fires)", async () => {
+    const { platform, contract } = await deploy();
+    const [provider, insurer] = await ethers.getSigners();
+    const target = await contract.getAddress();
+    await contract.setMaxRounds(1n); // first ruling already at the cap
+
+    const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+    // NeedMoreEvidence ruling routes to EvidenceRequested with round == maxRounds.
+    await platform.triggerRuling(target, requestId, ruling(Decision.NeedMoreEvidence, 0n));
+    expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested);
+    expect(await contract.roundOf(reqId)).to.equal(1n); // round == maxRounds
+
+    const value = ethers.parseEther("0.02");
+    const balBefore = await ethers.provider.getBalance(provider.address);
+    const tx = await contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI_2, { value });
+    const rc = await tx.wait();
+    const gas = rc!.gasUsed * rc!.gasPrice;
+    const balAfter = await ethers.provider.getBalance(provider.address);
+    // Deadlocked: no fee charged, full value refunded → net cost is just gas.
+    expect(balBefore - balAfter).to.equal(gas);
+    expect(await contract.stateOf(reqId)).to.equal(State.Deadlocked);
+    expect(await ethers.provider.getBalance(target)).to.equal(0n);
+  });
+
   it("T10 (guards): invalid transitions revert; handleResponse rejects non-platform caller; unknown id reverts", async () => {
     const { platform, contract } = await deploy();
     const [provider, insurer, attacker] = await ethers.getSigners();
@@ -680,8 +704,9 @@ describe("CoverageNegotiation", () => {
     await expect(
       contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
     ).to.be.revertedWith("appeal: not ruled");
+    // submitEvidence reverts on the state guard before the fee check — no value needed here.
     await expect(
-      contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI, { value: FEE })
+      contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI)
     ).to.be.revertedWith("evidence: wrong state");
 
     // Non-platform caller cannot invoke the callback. Encode the new arbiter tuple.

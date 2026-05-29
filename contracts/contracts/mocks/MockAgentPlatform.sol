@@ -10,9 +10,13 @@ import {
     ConsensusType
 } from "../ISomniaAgent.sol";
 
-/// @dev Minimal view used to probe the requesting contract's state mid-`createRequest`.
-interface IStateProbe {
+/// @dev Probe interface for verifying the requesting contract's state mid-`createRequest`.
+///      `currentlyFiringReqId` exposes which negotiation is in-flight; `stateOf` reads
+///      that negotiation's state. Together they confirm the CEI invariant (UnderReview
+///      is set before the external platform call) without needing to decode the payload.
+interface IFiringProbe {
     function stateOf(uint256 reqId) external view returns (uint8);
+    function currentlyFiringReqId() external view returns (uint256);
 }
 
 /// @title MockAgentPlatform
@@ -65,13 +69,11 @@ contract MockAgentPlatform is IAgentRequester {
         lastRequestId = requestId;
         createRequestCalls += 1;
 
-        // Probe the requester's state mid-call (reqId is the first word of payload).
-        // A view call — no state change — so it is safe for every test.
-        uint256 reqIdFromPayload;
-        assembly {
-            reqIdFromPayload := calldataload(payload.offset)
-        }
-        observedStateDuringCreate = IStateProbe(callbackAddress).stateOf(reqIdFromPayload);
+        // Probe the requester's state mid-call using the transparency slot.
+        // `currentlyFiringReqId()` returns exactly which negotiation is being fired,
+        // eliminating any payload-decoding assumptions. A view call — no state change.
+        uint256 reqId = IFiringProbe(callbackAddress).currentlyFiringReqId();
+        observedStateDuringCreate = IFiringProbe(callbackAddress).stateOf(reqId);
     }
 
     /// @dev The arbiter ruling fields the contract decodes from `responses[0].result`.
