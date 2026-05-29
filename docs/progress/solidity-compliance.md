@@ -258,3 +258,151 @@ no loops introduced, all three terminal `emit Ruled` callsites updated,
 intact. The two OPEN items are deployment-coordination flags for the operator
 (re-deploy address + Somnia agent encode parity) — neither indicates a defect
 in the tick-49 Solidity source.
+
+---
+
+## Tick 50 solidity-compliance
+
+**Scope:** SPEC-0004 §3.5 R11 ruling-citation replay anchors. `Ruled` event
+extended from 8 → 10 args by appending `uint16[] usedReferenceIndices` and
+`bytes32[] usedLeafHashes`. `abi.decode` tuple in `handleResponse` grew 8 → 10.
+All three terminal emit callsites updated. `MockAgentPlatform.Ruling` struct +
+`abi.encode` mirrors the additions. Test helper `ruling()` extended with two
+new defaulted params; 5 existing `.withArgs` got `[], []` appended; new R11
+test pins `usedReferenceIndices=[0] + usedLeafHashes=[0x11…]` end-to-end.
+viaIR remains on from tick 49. Emit-only change — no Negotiation struct field,
+no new state, no new entry points.
+
+### Diff scope (verified from `git diff 9873887`)
+
+- `CoverageNegotiation.sol`: event sig (+2 lines), decode comment (+1 line),
+  3 new local memory vars in the destructure, abi.decode type tuple +2 type
+  entries, 3 emit-callsite updates (Approve / Deny / PolicyInvalid). No
+  function body re-ordered, no new function added, no modifier touched.
+- `MockAgentPlatform.sol`: Ruling struct +2 fields, abi.encode +2 args. Dev/
+  test scaffold; not deployed to production.
+- `CoverageNegotiation.test.ts`: helper signature +2 params (defaulted to `[]`,
+  preserving call-site backward compatibility), 5 `.withArgs` updates, 1 new
+  R11 test.
+
+### Hard-scrutiny points
+
+1. **Reentrancy (CLOSED).** Zero new external calls. The diff is a strict
+   superset of the previous decode-and-emit shape: two more memory variables
+   destructured, two more type tokens in the abi.decode tuple, two more
+   argument slots in three `emit Ruled` callsites. `emit` is a log opcode
+   (`LOG0..LOG4`), not a call. No `.call`, `.transfer`, `.send`, no new
+   interface invocation. CEI ordering inside `handleResponse` is preserved:
+   state transitions (`n.state = State.{Approved,Denied,PolicyInvalidated}`
+   and `n.coveredAmount = …`) all complete **before** the trailing `emit Ruled`
+   on every branch. The PolicyInvalid branch still does `emit PolicyFlagged`
+   → state write → `emit Ruled` → `emit PolicyInvalidated` → `return`, with
+   the storage writes between the two policy-flag/invalidated event pair, so
+   no observer can see a half-committed state. No CEI regression.
+
+2. **Access control (CLOSED).** `handleResponse`'s platform gate (line 577,
+   `require(msg.sender == address(platform), "callback: not platform");`) is
+   byte-for-byte unchanged. The `require(n.state == State.UnderReview, …)`
+   round-state gate (line 583) is unchanged. No new public/external function
+   was added. No modifier was widened. The `Ownable` admin posture and the
+   `nonReentrant` modifiers on the four party entry points
+   (`requestAdjudication`, `submitEvidence`, `appeal`, `withdrawFunds`) are
+   untouched. Zero new entry surface.
+
+3. **Integer over/underflow (CLOSED).** Two new dynamic arrays:
+   `uint16[] usedReferenceIndices` and `bytes32[] usedLeafHashes`. `uint16`
+   carries the same overflow posture as the tick-49 `policyVoidedClauseIndices`
+   — `abi.decode` reverts cleanly if any element exceeds 65535 (solc 0.8.24
+   enforces this at decode time, no manual check needed). `bytes32` has no
+   numeric over/underflow surface (fixed-width opaque value). Array length is
+   bounded by the EVM calldata size limit and by gas (the platform-side
+   payload is fee-gated by the platform contract). No new arithmetic was
+   introduced — the new arrays are pass-through values from decode to log.
+
+4. **Unbounded loops (CLOSED).** No `for` / `while` was added. The new arrays
+   are never iterated in-contract; they are decoded, held in memory, and
+   passed verbatim to the log opcode. Indexing happens only off-chain
+   (consumers reading the event topic stream). The decode itself is a single
+   `abi.decode` call which is O(payload-size) — same complexity class as
+   tick 49 — not a Solidity loop. Zero new loop surface.
+
+5. **Missing event emits (CLOSED).** The diff verifies all THREE terminal
+   `emit Ruled` callsites carry the 10-arg shape:
+   - PolicyInvalid branch — line 649 — `…policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes);`
+   - Approve branch — line 663 — `…policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes);`
+   - Deny branch — line 668 — `…policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes);`
+
+   The `NeedMoreEvidence` branch (line 626–630) emits `EvidenceRequested`
+   instead of `Ruled` — correctly omitted, same posture as tick 49.
+   No callsite was missed.
+
+6. **Storage-layout invariant (CLOSED).** The `Negotiation` struct
+   (lines 100–148) is BYTE-FOR-BYTE unchanged across tick 50 — verified by
+   the diff containing no edits in that range. The two new arrays
+   (`usedReferenceIndices`, `usedLeafHashes`) are callback-local `memory`
+   variables; they never reach storage. The new fields on
+   `MockAgentPlatform.Ruling` are calldata struct fields on a dev-only
+   contract with no production storage implication. No existing slot
+   re-ordered, no new slot added. Storage layout safe.
+
+7. **Gas / stack pressure (CLOSED with operator-noted caveat).** The decode
+   now has 10 local memory variables (was 8 at tick 49). `viaIR: true`
+   remains on from tick 49's `contracts/hardhat.config.ts`, which routes the
+   compile through Yul IR codegen and handles arbitrary stack depths in
+   `handleResponse`. Verified by clean rebuild: `rm -rf artifacts cache &&
+   npx hardhat compile` succeeds (`Compiled 7 Solidity files successfully`)
+   with no stack-too-deep warning. Test suite: `npx hardhat test` → **30
+   passing** (29 prior + the new R11 test), including the existing 8-arg R23
+   test that was preserved as-is via the helper's `[], []` defaults. Gas:
+   two extra LOGn-data words per ruling emit (the two array lengths +
+   contents); no storage-write growth. Marginal cost; acceptable.
+
+8. **OZ-pattern adherence (CLOSED).** `Ownable` admin posture and
+   `ReentrancyGuard` modifier usage are untouched. The `nonReentrant` modifier
+   on the agent-firing entry points and CEI ordering in `_fireAgent` are all
+   unchanged. No OZ pattern bypassed or weakened.
+
+### OPEN — deployment-coordination items (NOT in-contract findings)
+
+These are NOT solidity findings — the source itself is compliant — but they
+extend the tick-49 OPEN items because the redeploy now needs to land the
+**10-arg** ABI, not the 8-arg one.
+
+- **OPEN (medium, OPERATOR) — supersedes tick-49 OPEN-1.** The currently-
+  deployed contract at `0x1dC5bA6771A7f4426ABE5BB808a7d51BdEA33E1A` (Somnia
+  testnet, tick 37) still carries the original 7-arg `Ruled` ABI. Tick 49
+  bumped the source to 8 args; tick 50 has now bumped it to 10 args. The
+  redeploy that was already required after tick 49 MUST now ship the
+  tick-50 source (10-arg `Ruled`), not the tick-49 source (8-arg `Ruled`).
+  Required coordination: (a) re-deploy `CoverageNegotiation` with the
+  **tick-50 source** + `viaIR: true`; (b) update `COVERAGE_CONTRACT_ADDRESS` /
+  `VITE_CONTRACT_ADDRESS` env vars; (c) ensure `web/src/contract/abi.ts`
+  ships the 10-arg `Ruled` ABI (web-layer concern, not contracts). The
+  `loop-state.md` operator-notes entry currently dated "tick 49" needs an
+  addendum or restatement covering the tick-50 extension so the operator
+  doesn't redeploy the intermediate 8-arg shape by mistake.
+
+- **OPEN (medium, OPERATOR) — supersedes tick-49 OPEN-2.** The in-contract
+  decode now expects 10 elements; the live Somnia agent platform must encode
+  the 9th (`uint16[] usedReferenceIndices`) and 10th (`bytes32[]
+  usedLeafHashes`) in `responses[0].result` or `handleResponse` will revert
+  at `abi.decode`. The mock has been updated, but the real Somnia-side agent
+  template needs the matching 10-tuple encode in lockstep with the contract
+  redeploy. If the off-chain agent returns the 8-tuple (tick 49 shape) or
+  the 7-tuple (legacy shape), every ruling will revert into the retriable
+  timeout path (clean revert, no fund loss, no observable ruling).
+  Coordination: confirm the off-chain agent payload builder is bumped to the
+  10-tuple BEFORE the contract redeploy goes live, or roll both in the same
+  release.
+
+### Verdict: PASS (zero in-source findings)
+
+All eight scrutiny points close cleanly in the source: no reentrancy
+regression, no new access-control surface, decode reverts cleanly on
+`uint16` overflow (carried over from tick 49), no loops introduced, all
+three terminal `emit Ruled` callsites updated to 10-arg shape, `Negotiation`
+storage layout unchanged, viaIR (already on) absorbs the 10-element decode
+with no stack-too-deep, OZ patterns intact. Clean rebuild + 30/30 hardhat
+tests green confirm. The two OPEN items are tick-49 OPEN flags re-asserted
+at the tick-50 ABI shape — they describe a deployment-coordination concern
+the operator already owns, not a defect in the tick-50 source.

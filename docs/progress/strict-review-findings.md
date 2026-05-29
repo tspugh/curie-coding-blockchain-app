@@ -6678,3 +6678,400 @@ not shallow:
 - The `viaIR` comment is six lines of substantive justification, not a TODO.
 
 Tick 49 strict-review gate: **PASS**.
+
+## Tick 50 strict-review
+
+SPEC-0004 §3.5 R11 ruling-citation decode: `uint16[] usedReferenceIndices` and
+`bytes32[] usedLeafHashes` appended as the 9th and 10th elements of the arbiter
+tuple, decoded in `CoverageNegotiation.handleResponse`, emitted on the `Ruled`
+event (8 → 10 args), mirrored in MockAgentPlatform, the sim backend, ABI, and
+decoded by `RealBackend.parseEvent`. New R11 test, 5 existing `.withArgs`
+extended. Diff: 7 files / +149 / −15.
+
+### 1. Spec drift (SPEC-0004 §3.5 R11 verbatim) — CLOSED with evidence
+
+SPEC-0004 §3.5 R11 (lines 218-221): "Every ruling cites which packet entries it
+relied on by `(referenceIndex, leafHash)`, so a third party can replay the
+ruling against the same Merkle root and verify it. The ruling payload carries
+`usedReferenceIndices: number[]` and `usedLeafHashes: bytes32[]`."
+
+- Field names match verbatim across the diff: contract event arg names
+  (`CoverageNegotiation.sol:232-233`), MockAgentPlatform struct field names
+  (`MockAgentPlatform.sol:90-91`), TS type (`coverage.types.ts:278-280`), ABI
+  string (`abi.ts:44`), sim config + module vars + setters (`simulated.ts`
+  multiple sites), `RealBackend.parseEvent` (`real.ts:512-513`).
+- Solidity types: `uint16[]` for indices (matches `number[]` semantics — `uint16`
+  caps at 65535, well above any plausible packet entry count), `bytes32[]` for
+  leaf hashes (exact match to spec's `bytes32[]`).
+- TS `readonly` modifier on the event interface (`coverage.types.ts:278-280`):
+  immutable view for consumers; ethers v6 returns mutable arrays, so the
+  read-only view is a typescript-only constraint that doesn't affect ABI
+  round-trip. Honest.
+- TS literal `\`0x${string}\``: ethers v6 ABI codec produces `string[]` for
+  `bytes32[]` where each element is a 0x-prefixed 66-char hex. The cast at
+  `real.ts:513` is structurally honest (no runtime validation but ethers'
+  output IS 0x-prefixed). Acceptable.
+- The cast `(a[9] as \`0x${string}\`[] | undefined)` rather than `(a[9] as
+  string[] | undefined)` is a *tightening*, not a lie — every element really
+  does start with `0x`.
+
+No spec drift.
+
+### 2. Test rigor + order-swap distinguishability — CLOSED with evidence
+
+`contracts/test/CoverageNegotiation.test.ts:1041-1062` adds the R11 describe
+block. The test:
+
+- Calls `triggerRuling(target, requestId, ruling(Decision.Approve, 150n, NADAC_UNIT, [], [0], [leafHash]))`
+  with `leafHash = "0x" + "11".repeat(32)` (a properly-sized 32-byte hex).
+- Asserts `.withArgs(reqId, requestId, Decision.Approve, 1500n, RATIONALE_HASH,
+  CLAUSE_REF, RECEIPT_ID, [], [0n], [leafHash])` — position 8 = `[]` (empty
+  policyVoidedClauseIndices), position 9 = `[0n]` (uint16 → bigint as ethers
+  v6 convention), position 10 = `[leafHash]`.
+
+**Could the test pass with a wrong decode order (indices ↔ hashes swapped)?**
+NO. The two new array types differ at the ABI level: `uint16[]` and `bytes32[]`
+have different ABI encodings (head/tail offsets, element widths). A
+contract-side swap of the decode tuple positions
+`(..., uint16[], bytes32[])` ↔ `(..., bytes32[], uint16[])` would cause
+`abi.decode` to either revert or produce garbage that Chai's deep-equality
+check on `[0n]` vs `[leafHash]` would fail. The test is order-strict by
+construction. Strong assertion.
+
+The five existing `.withArgs(...)` updates (lines 334, 388, 406, 453, 475) all
+correctly append `[], []` for the two new args, matching the sim/contract
+default-empty behavior.
+
+Empirically verified: `npx hardhat test` → **30 passing (3s)** including both
+the new R11 describe block and the prior R23 block. `npm run test:lib` →
+**84/84 pass**. Gates green.
+
+### 3. JSDoc honesty (no "Mirrors existing setNext… patterns" lie) — CLOSED with evidence
+
+The tick-49 strict review caught a JSDoc lying that the policyVoided setter
+"Mirrors the existing `setNext…` patterns on the backend" — patterns that did
+not exist in `src/`. Tick 50 adds two more setters
+(`setNextUsedReferenceIndices`, `setNextUsedLeafHashes`).
+
+Reviewed JSDoc at `simulated.ts:200-205` and `simulated.ts:217-222`. Neither
+claims a backend pattern. Both correctly state: "The web layer's own
+`setNext…` helpers live in `web/src/client.ts` and target their own backend
+wrapper." This cross-reference was independently verified in tick 49 iter-2
+(`web/src/client.ts:68/78/88` contains `setNextDecision`,
+`setNextCostPlusUnitPrice`, `setNextNadacUnitPrice`); still present.
+
+The lie is not repeated.
+
+### 4. Unused-setter disposition — OPEN with LOW severity (advisory)
+
+The new `setNextUsedReferenceIndices` and `setNextUsedLeafHashes` are exported
+but **never imported or called anywhere** in `src/`, `web/`, or tests (grep
+confirmed, full repo). Same disposition as the tick-49 setter at its first
+landing.
+
+Tick 49's iter-2 disposition added the phrase "Used by future browser-verify
+scenarios that drive the R23 Approve-with-voided-clauses path" to the
+policyVoided setter's JSDoc, explicitly labelling it forward-staged
+scaffolding with a named consumer class. The tick-50 setters' JSDoc
+(`simulated.ts:201-205` and `218-222`) does **NOT** carry the parallel
+forward-staging label — it just cross-references the web setter. The
+forward-staging is implicit (sibling to the tick-49 setter, same module, same
+purpose) but not stated.
+
+**Why advisory only, not gate-blocking:** the omission is a documentation
+mirroring nit, not a correctness defect. The tick-49 iter-2 review allowed
+"documented as forward scaffolding OR exempt as TEST-API" — the tick-50 setters
+are obviously sibling scaffolding to the tick-49 setter that already passed.
+The cleanup window (2 ticks per tick-49 iter-1) is inherited.
+
+**Suggested polish (not gating):** add "Used by future browser-verify
+scenarios that drive the R11 citation-bearing ruling path" to both setters'
+JSDoc, mirroring tick 49.
+
+### 5. Operator-note coordination (8 → 10 arg redeploy) — OPEN with MEDIUM severity
+
+`docs/progress/loop-state.md:327` operator note (Operator notes section,
+OPEN tick 49 entry) STILL reads:
+
+> Tick 49 extended `CoverageNegotiation`'s `Ruled` event from 7 args to 8
+> (added `uint16[] policyVoidedClauseIndices` per SPEC-0004 R23 / amendment
+> 0005). [...] (c) ensure the live Somnia agent's payload builder encodes the
+> **8th tuple element** (`uint16[]`) or every ruling will revert in
+> `handleResponse`.
+
+Tick 50 extends 8 → 10 args. The operator note is now stale on two material
+operational details:
+
+- Step (c) names only the 8th tuple element. The Somnia agent now needs to
+  encode the **9th** (`uint16[] usedReferenceIndices`) **and 10th**
+  (`bytes32[] usedLeafHashes`) tuple elements OR every ruling will revert in
+  `handleResponse` — same failure mode as the 8th, repeated twice.
+- The arg-count description (7 → 8) understates the divergence (now 7 → 10
+  from the deployed contract at `0x1dC5bA67...3E1A`). An operator reading the
+  note today will not know that two more fields were added on top.
+
+The strict-review prompt for this tick explicitly asked: "Is the note updated
+to reflect both, OR clearly scoped to 'extended again — still needs the same
+redeploy'?" It is **neither**. This is the same coordination-flag class of
+finding as tick 49 #10 — operator-facing divergence not acknowledged.
+
+**Why MEDIUM not HIGH:** sim-mode tests and lib tests are unaffected; the
+divergence only bites at the next real-mode browser-verify run, which is
+already blocked on the tick-49 redeploy. So this is a pre-existing OPEN
+operator item that needs to be amended, not a freshly-broken path. But it is
+unambiguously stale and must be updated before next browser-verify-on-testnet
+or the operator will encode 8 elements (per the current note) and the contract
+will revert on `abi.decode(..., 10 types)`.
+
+**Required follow-up before next browser-verify-on-testnet:** amend the tick-49
+operator note to call out 7 → 10 total (or add a tick-50 sub-bullet "extended
+again to 10 — same redeploy still pending, agent must now encode 9th + 10th
+elements per SPEC-0004 §3.5 R11"). At minimum: a new tick-50 entry in
+loop-state.md must acknowledge the second extension.
+
+### 6. Operator-note adjacency: viaIR comment text — OPEN with LOW severity (advisory)
+
+`contracts/hardhat.config.ts:21-26` still reads "the **8-element** abi.decode
+tuple in CoverageNegotiation.handleResponse (including the new uint16[]
+policyVoidedClauseIndices field per SPEC-0004 R23 / amendment 0005)". Tick 50
+makes this a 10-element tuple (added `uint16[] usedReferenceIndices` and
+`bytes32[] usedLeafHashes`). The comment is now numerically stale.
+
+**Why advisory only:** the substantive claim (viaIR is required, stack-too-deep
+avoidance, MUST match across environments for Blockscout verification) is
+unchanged and remains correct — a 10-element tuple has even more stack
+pressure than 8. The comment doesn't lie, it just under-reports the count.
+This is documentation drift, not a correctness defect; gates pass.
+
+**Suggested polish:** update "8-element" → "10-element" and mention
+"SPEC-0004 R11 also extended this in tick 50." 1-line edit.
+
+### 7. Sim/real parity (consumer semantics) — CLOSED with evidence
+
+- **Real backend** (`real.ts:511-513`): three array fields decoded with the
+  same `(a[i] as T[] | undefined) ?? []` fallback shape — `a[7]` →
+  `policyVoidedClauseIndices` (`bigint[]` → `.map(Number)`), `a[8]` →
+  `usedReferenceIndices` (same), `a[9]` → `usedLeafHashes` (`\`0x${string}\`[]`,
+  no `.map`). Consistent fallback pattern; defensive against the 7-arg
+  deployed contract (event-topic-hash divergence will still prevent reaching
+  this code path on the deployed contract, but if the new event ever arrives
+  with missing tail elements the fallback prevents undefined-blowup).
+- **Sim backend** (`simulated.ts:660-678`): two new resolve blocks for the new
+  fields, each with the same shape as the tick-49 R23 resolve block (one-shot
+  consume → reset → fallback to agent config → `[]`). Four emit sites
+  (PolicyInvalid line 685, Approve line 697, Deny line 701, NeedMoreEvidence
+  line 705) all unconditionally pass all three arrays. Decode shape on the real
+  side matches emit shape on the sim side: both produce `number[]` for the
+  index arrays and `string[]` (or `\`0x${string}\`[]`) for the leaf hash array.
+- The one-shot module-level state for both new vars (`_nextUsedReferenceIndices`,
+  `_nextUsedLeafHashes`) is reset after consumption (lines 665, 675), matching
+  the tick-49 pattern. Module-scoped sharing across SimulatedBackend
+  instances is intentional and documented in the JSDoc; same disposition as
+  tick 49.
+
+Semantic equivalence for consumers: an empty `[]` from sim and from real both
+mean "no R11 citation" — fine for the artificial sim default but is a
+semantic compression of "production-mode R11 must be populated" (see #8).
+Consumers can't distinguish "this ruling actually cited nothing" from "this
+ruling came from a default sim config" — but neither the sim default nor the
+fallback claim to be authoritative production data.
+
+No sim/real parity defect.
+
+### 8. R11-mandatory-in-production vs sim-`[]`-default — CLOSED with reservation
+
+The strict-review prompt flagged that R11 is mandatory in production but the
+sim default `[]` is convenient — could the empty-default mask a regression on
+Approve paths where R11 should always carry SOME indices?
+
+- **Test surface**: the 5 existing `.withArgs(...)` updates assert `[], []`
+  for the new fields. These tests are contract-level (Hardhat) and pre-date
+  R11; they exercise the sim/mock path with the default-empty config. They
+  are not asserting "production R11 is populated" — they are asserting
+  "decode + emit + event signature is correct, regardless of payload contents."
+  This is the right level for unit tests; production-validity is a separate
+  concern (see SPEC-0004 §3.5 R11's "MUST" — that's a production semantic, not
+  a unit-test gate).
+- **Could a regression slip through?** If a future tick accidentally
+  hardcoded `usedReferenceIndices = []` in the contract emit (e.g. broke the
+  decode→emit wiring), the new R11 test (line 1054) would catch it because it
+  passes `[0]` and asserts the populated values flow through. The default-`[]`
+  tests cover the empty-input case; the new R11 test covers the populated case.
+  Both branches are pinned.
+
+The artificial empty-default is acknowledged in the prompt and is not a
+regression risk for unit tests. Production validity (every Approve in
+prod-mode actually carries citations) is enforced upstream at the agent
+encode-time, not in the contract — which only decodes-and-emits. This
+matches the spec's R11 location (it's an agent-payload requirement, not a
+contract-side invariant).
+
+CLOSED with the noted reservation that any future "R11-mandatory" assertion
+that lives in the contract (e.g. revert if both arrays are empty on Approve)
+would need new tests.
+
+### 9. Comment quality (paraphrase / lie / no-info) — CLOSED with evidence
+
+Reviewed all new/modified comments in the diff:
+
+- `CoverageNegotiation.sol:602-606`: updated decode comment correctly names
+  the 10-element tuple AND cross-references both R23 (8th element) and R11
+  (9th + 10th). Accurate, adds information.
+- `MockAgentPlatform.sol:90-91`: NatSpec on the two new struct fields cites
+  SPEC-0004 §3.5 R11 and explains "packet entry indices the ruling relied
+  on" / "leaf hashes for cited references (replay-verification anchor)" —
+  adds context beyond a field-name restate. Accurate.
+- `MockAgentPlatform.sol:95-97`: updated docstring lists the new fields in
+  the tuple description. Accurate.
+- `simulated.ts:103-114`: JSDoc on the two new config fields cites the spec
+  and names the emit position (9th, 10th). Accurate.
+- `simulated.ts:193-225`: JSDoc on the new module-level state and setters.
+  No lie (see #3). Forward-staging label missing (see #4).
+- `simulated.ts:660-678`: inline comments explain the one-shot semantics.
+  Useful, mirror the tick-49 R23 block.
+- `real.ts:512-513`: no new comment; the code is self-documenting at this
+  density given the prior `a[7]` line establishes the pattern. OK.
+- `coverage.types.ts:277-280`: JSDoc on the two new fields cites SPEC-0004
+  §3.5 R11. Useful.
+
+No lies, no paraphrase-of-the-name comments, no information-free comments.
+
+### 10. R-citation correctness (SPEC-0004 §3.5 R11) — CLOSED with evidence
+
+R11 lives in SPEC-0004 §3.5 (lines 218-221 confirmed). All new citations in
+the diff use "SPEC-0004 §3.5 R11" or "SPEC-0004 R11" — internally consistent.
+
+- `CoverageNegotiation.sol:606`: "SPEC-0004 R11" — section-less but R-number
+  unambiguous.
+- `MockAgentPlatform.sol:90-91`, `simulated.ts:107, 113, 195, 212, 660, 670`,
+  `coverage.types.ts:277, 279`: "SPEC-0004 §3.5 R11" — full cite.
+
+R11 has no amendment associated (unlike R23 which amendment 0005 introduced) —
+it has been in SPEC-0004 since its initial authoring. No amendment-citation
+required.
+
+No R-citation drift.
+
+### 11. viaIR re-confirmation (10-element decode compiles) — CLOSED with evidence
+
+Hardhat `npx hardhat test` ran clean: contracts compiled (1 contract recompiled
+implied by the modified `Ruled` event sig + the new struct field), 30 tests
+passing. The 10-element `abi.decode` in `handleResponse` did not trigger
+stack-too-deep. Tick-49's `viaIR: true` flip remains sufficient at 10
+elements. The hardhat.config.ts comment numerical staleness is a separate
+finding (see #6) but the technical claim still holds.
+
+### Verdict
+
+**FAIL.** Two OPEN findings:
+
+- **MEDIUM (#5):** Operator-note coordination — `loop-state.md:327` tick-49
+  OPEN entry is stale. Still says "7 args to 8" and step (c) says encode the
+  8th element; tick 50 made this 7 → 10 with the 9th and 10th elements both
+  needing agent-side encoding. An operator following the current note will
+  under-encode and the contract will revert. The strict-review prompt
+  explicitly asked the note be updated to reflect both extensions OR clearly
+  scoped to "extended again — still needs the same redeploy" — it is neither.
+- **LOW (#4):** New setters (`setNextUsedReferenceIndices`,
+  `setNextUsedLeafHashes`) are forward-staged scaffolding (no call sites in
+  `src/`, `web/`, or tests) but their JSDoc omits the explicit forward-staging
+  label that the tick-49 iter-2 setter carries ("Used by future browser-verify
+  scenarios that drive the … path"). Mirror nit; not a defect.
+
+One ADVISORY item (not gate-blocking):
+
+- **#6:** `contracts/hardhat.config.ts:21` viaIR comment says "8-element
+  abi.decode tuple" — now 10-element. Numerically stale but the substantive
+  justification (stack-too-deep avoidance, must-match-across-environments for
+  Blockscout) still holds. 1-line polish.
+
+All other scrutiny points (1, 2, 3, 7, 8, 9, 10, 11) CLOSED with evidence. The
+core SPEC-0004 §3.5 R11 decode work is correct, well-tested, order-swap-safe,
+sim/real-parity-clean, and consistent with the spec's verbatim field names
+and types. 30/30 hardhat, 84/84 lib gates green.
+
+The FAIL is on coordination (#5) — same class of finding as tick 49 #10, on
+the same operator note that needs amendment now that tick 50 has stacked on
+top.
+
+Tick 50 strict-review gate: **FAIL** (1 MEDIUM + 1 LOW open).
+
+## Tick 50 strict-review iteration 2
+
+Re-verification of the three iter-1 findings after the inline-closure fix
+subagent ran. All three checked at source against the prompt's expected fix.
+
+### MEDIUM #5 — Operator-note coordination — CLOSED with evidence
+
+`docs/progress/loop-state.md:327` (the OPEN redeploy entry under `## Operator
+notes`) now reads:
+
+> **OPEN (ticks 49 + 50): Redeploy the contract.** Tick 49 extended
+> `CoverageNegotiation`'s `Ruled` event from 7 args to 8 (added `uint16[]
+> policyVoidedClauseIndices` per SPEC-0004 R23 / amendment 0005). **Tick 50
+> extended it further from 8 to 10** (added `uint16[] usedReferenceIndices`
+> and `bytes32[] usedLeafHashes` per SPEC-0004 §3.5 R11).
+
+The 7→8→10 progression is named explicitly. Step (c) now reads:
+
+> ensure the live Somnia agent's payload builder encodes the **8th, 9th, AND
+> 10th** tuple elements (`uint16[] policyVoidedClauseIndices, uint16[]
+> usedReferenceIndices, bytes32[] usedLeafHashes`) or every ruling will revert
+> in `handleResponse`
+
+All three positions named (8th/9th/10th) and all three field names + types
+listed verbatim. The note also adds the explicit "Do not deploy the
+intermediate 8-arg shape from tick 49 — it would be wrong on arrival." warning
+the operator would otherwise need to infer. The "Tracked also in
+solidity-compliance.md ticks 49+50 OPEN items" cross-ref is preserved.
+
+An operator following this note will encode all three trailing arrays
+correctly. Fix is substantive, not shallow.
+
+### LOW #4 — Forward-staging JSDoc omission — CLOSED with evidence
+
+`src/contract/simulated.ts:200-209` and `218-227`. Both new setters now
+carry the forward-staging label that mirrors the tick-49 R23 setter:
+
+- `setNextUsedReferenceIndices` (lines 200-209):
+
+  > Used by future browser-verify scenarios that drive the R11
+  > ruling-citation-replay path; the web layer's own `setNext…` helpers live
+  > in `web/src/client.ts` and target their own backend wrapper.
+
+- `setNextUsedLeafHashes` (lines 218-227): identical forward-staging label.
+
+The label is consistent across both new setters and matches the tick-49 R23
+precedent. No JSDoc lie remains.
+
+### Advisory #6 — viaIR comment stale — CLOSED with evidence
+
+`contracts/hardhat.config.ts:21-27` now reads:
+
+> viaIR is required since tick 49 — the abi.decode tuple in
+> CoverageNegotiation.handleResponse grew from 7 → 8 (tick 49, R23
+> `policyVoidedClauseIndices`) and now → 10 (tick 50, R11
+> `usedReferenceIndices` + `usedLeafHashes`), pushing the standard codegen
+> past the EVM stack limit. The Yul IR pipeline manages stack pressure for
+> us. Note for redeployment + Blockscout verification: this flag MUST match
+> across all environments.
+
+The 7→8→10 progression is named, both ticks (49 and 50) cited, both R-IDs
+listed (R23, R11) with their associated field names. Blockscout
+verification rule preserved. A future reader sees the full history.
+
+### Regression gates
+
+- `cd contracts && npx hardhat test | tail -3` → `30 passing (3s)`. New R11
+  test "Approve ruling with usedReferenceIndices=[0] and
+  usedLeafHashes=[0x1111...] propagates both as the 9th and 10th Ruled args"
+  green at 55ms.
+- `npm run test:lib | tail -3` → `# tests 84 / # pass 84 / # fail 0`.
+
+No regressions.
+
+### Verdict
+
+**PASS (zero findings).** All three iter-1 findings closed with substantive
+fixes verified at source; no new findings surfaced on re-read. Gates
+regression-free (30/30 hardhat, 84/84 lib).

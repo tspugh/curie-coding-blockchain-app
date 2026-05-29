@@ -274,6 +274,10 @@ export interface RuledEvent extends BaseEvent {
   readonly receiptId: bigint;
   // SPEC-0004 §3.5 R23: clause indices voided per R23's on-label-policy-void path (amendment 0005).
   readonly policyVoidedClauseIndices: readonly number[];
+  /** SPEC-0004 §3.5 R11: packet-entry indices the ruling relied on. */
+  readonly usedReferenceIndices: readonly number[];
+  /** SPEC-0004 §3.5 R11: leaf hashes for the cited references (replay-verification anchor). */
+  readonly usedLeafHashes: readonly `0x${string}`[];
 }
 
 export interface PolicyFlaggedEvent extends BaseEvent {

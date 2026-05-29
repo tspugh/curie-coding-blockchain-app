@@ -107,6 +107,16 @@ export interface SimulatedAgentOptions {
    */
   readonly policyVoidedClauseIndices?: number[];
   /**
+   * SPEC-0004 §3.5 R11: packet-entry indices the ruling relied on.
+   * Emitted as the 9th arg of the `Ruled` event. Default: [].
+   */
+  readonly usedReferenceIndices?: number[];
+  /**
+   * SPEC-0004 §3.5 R11: leaf hashes for the cited references (replay-verification anchor).
+   * Emitted as the 10th arg of the `Ruled` event. Default: [].
+   */
+  readonly usedLeafHashes?: `0x${string}`[];
+  /**
    * Auto-resolve delay in ms after the agent fires. `0` (default) means the
    * ruling is delivered on the next macrotask; set higher to mimic latency. Set
    * `autoResolve: false` to require the explicit {@link SimulatedBackend.resolve}.
@@ -178,6 +188,42 @@ let _nextPolicyVoidedClauseIndices: number[] = [];
  */
 export function setNextPolicyVoidedClauseIndices(arr: number[]): void {
   _nextPolicyVoidedClauseIndices = arr;
+}
+
+/**
+ * Module-level mutable for the next `usedReferenceIndices` value to emit in the
+ * simulated `Ruled` event (SPEC-0004 §3.5 R11). Reset to `[]` after each use.
+ * Use {@link setNextUsedReferenceIndices} to prime a one-shot populated value.
+ */
+let _nextUsedReferenceIndices: number[] = [];
+
+/**
+ * Set the `usedReferenceIndices` array that will be emitted in the NEXT `Ruled`
+ * event from any {@link SimulatedBackend} instance. Consumed once then reset to
+ * `[]`. Used by future browser-verify scenarios that drive the R11
+ * ruling-citation-replay path; the web layer's own `setNext…` helpers live in
+ * `web/src/client.ts` and target their own backend wrapper.
+ */
+export function setNextUsedReferenceIndices(arr: number[]): void {
+  _nextUsedReferenceIndices = arr;
+}
+
+/**
+ * Module-level mutable for the next `usedLeafHashes` value to emit in the
+ * simulated `Ruled` event (SPEC-0004 §3.5 R11). Reset to `[]` after each use.
+ * Use {@link setNextUsedLeafHashes} to prime a one-shot populated value.
+ */
+let _nextUsedLeafHashes: `0x${string}`[] = [];
+
+/**
+ * Set the `usedLeafHashes` array that will be emitted in the NEXT `Ruled` event
+ * from any {@link SimulatedBackend} instance. Consumed once then reset to `[]`.
+ * Used by future browser-verify scenarios that drive the R11
+ * ruling-citation-replay path; the web layer's own `setNext…` helpers live in
+ * `web/src/client.ts` and target their own backend wrapper.
+ */
+export function setNextUsedLeafHashes(arr: `0x${string}`[]): void {
+  _nextUsedLeafHashes = arr;
 }
 
 /** In-memory backend behind the shared client interface. */
@@ -613,12 +659,32 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       policyVoidedClauseIndices = this.agent.policyVoidedClauseIndices ?? [];
     }
 
+    // SPEC-0004 §3.5 R11: consume the next one-shot usedReferenceIndices if set,
+    // otherwise fall back to the agent config, then [].
+    let usedReferenceIndices: number[];
+    if (_nextUsedReferenceIndices.length > 0) {
+      usedReferenceIndices = _nextUsedReferenceIndices;
+      _nextUsedReferenceIndices = [];
+    } else {
+      usedReferenceIndices = this.agent.usedReferenceIndices ?? [];
+    }
+
+    // SPEC-0004 §3.5 R11: consume the next one-shot usedLeafHashes if set,
+    // otherwise fall back to the agent config, then [].
+    let usedLeafHashes: `0x${string}`[];
+    if (_nextUsedLeafHashes.length > 0) {
+      usedLeafHashes = _nextUsedLeafHashes;
+      _nextUsedLeafHashes = [];
+    } else {
+      usedLeafHashes = this.agent.usedLeafHashes ?? [];
+    }
+
     if (decision === Decision.PolicyInvalid) {
       // R6b: a relied-on clause contradicts a public standard — void the contract.
       n.coveredAmount = 0n;
       n.state = State.PolicyInvalidated;
       this.emit({ name: "PolicyFlagged", reqId, clauseRef, standardRef });
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices });
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes });
       this.emit({ name: "PolicyInvalidated", reqId, clauseRef, standardRef });
       return;
     }
@@ -630,15 +696,15 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       const covered = n.requestedAmount < cap ? n.requestedAmount : cap;
       n.coveredAmount = covered;
       n.state = State.Approved;
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: covered, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices });
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: covered, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes });
     } else if (decision === Decision.Deny) {
       n.coveredAmount = 0n;
       n.state = State.Denied;
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices });
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes });
     } else {
       // NeedMoreEvidence
       n.state = State.EvidenceRequested;
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices });
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes });
       this.emit({ name: "EvidenceRequested", reqId });
     }
   }
