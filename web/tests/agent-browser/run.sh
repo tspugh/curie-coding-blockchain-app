@@ -251,6 +251,12 @@ scenario_policy_invalidated() {
   eval_click engage-noncompliant-toggle
   eval_click engage-submit
   ab wait 300 >/dev/null
+  # SPEC-0004 §3.5 R23: prime a populated `policyVoidedClauseIndices` so the
+  # ruling-meta panel surfaces the new "Voided clauses" row (tick 51 UI).
+  # SPEC-0004 §3.5 R11: prime ruling-citation indices too so the "Cited
+  # references" row also renders.
+  ev "window.__curie.setNextPolicyVoidedClauseIndices([2]); 1" >/dev/null
+  ev "window.__curie.setNextUsedReferenceIndices([0, 3]); 1" >/dev/null
   eval_click decision-void   # 3 = Decision.PolicyInvalid
   eval_click adjudicate-submit
   ab wait 1800 >/dev/null
@@ -268,6 +274,13 @@ scenario_policy_invalidated() {
     *psoriasis*) echo "  ✓ FDA indication citation shown"; PASS=$((PASS + 1));;
     *) echo "  ✗ FDA indication citation not shown"; FAIL=$((FAIL + 1));;
   esac
+
+  # SPEC-0004 §3.5 R11 + R23: the tick-51 ruling-meta rows surface the
+  # primed sim values once the Ruled event is decoded.
+  assert_eq "ruling-meta surfaces R23 voided clauses" "[2]" \
+    "$(ab get text "[data-testid=ruling-voided-clauses]" | tail -1)"
+  assert_eq "ruling-meta surfaces R11 cited references" "[0, 3]" \
+    "$(ab get text "[data-testid=ruling-used-refs]" | tail -1)"
 }
 
 # ===========================================================================

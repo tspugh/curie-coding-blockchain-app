@@ -48,6 +48,12 @@ export {
   ZERO_HASH,
   COVERAGE_NEGOTIATION_ABI,
   createCoverageClient,
+  // SPEC-0004 §3.5 R11/R23 sim-arbiter one-shot prime helpers — used by
+  // future browser-verify scenarios that drive the populated ruling-citation
+  // and policy-void paths.
+  setNextPolicyVoidedClauseIndices,
+  setNextUsedReferenceIndices,
+  setNextUsedLeafHashes,
 } from "./contract/index.js";
 
 export {

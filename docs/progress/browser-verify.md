@@ -1,6 +1,19 @@
 # Browser-verify
 
-Last run: tick 46 — 2026-05-29 — **🎉 35/35 pass = 100%** (was 9/35 at tick 39)
+Last run: tick 52 — 2026-05-29 — **🎉 37/37 pass = 100%** (was 9/35 at tick 39; 35/35 since tick 46)
+
+## Tick 52 update — 37/37 (Scenario C2 grew +2)
+
+Closed the deferred work from tick 51: wired the sim setters
+`setNextPolicyVoidedClauseIndices`, `setNextUsedReferenceIndices`, and
+`setNextUsedLeafHashes` through `@lib` and onto `window.__curie` under the
+existing `VITE_EXPOSE_TEST_API=1` gate. Extended Scenario C2 (PolicyInvalid
+path) to prime `[2]` and `[0, 3]` respectively and assert the new
+`ruling-voided-clauses` and `ruling-used-refs` testids render the primed
+values. Both assertions pass — the tick 49/50 contract decode + tick 51 UI
+surfacing now verifies end-to-end against the populated R11/R23 paths.
+
+## Tick 46 update — 35/35 (all green)
 
 ## Tick 46 update — 35/35 (all green)
 

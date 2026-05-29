@@ -21,6 +21,9 @@ import {
   Decision,
   hashContent,
   DEFAULT_PROFILES,
+  setNextPolicyVoidedClauseIndices,
+  setNextUsedReferenceIndices,
+  setNextUsedLeafHashes,
   type CurieClient,
   type Negotiation,
 } from "@lib";
@@ -310,6 +313,13 @@ if (import.meta.env.DEV || import.meta.env.VITE_EXPOSE_TEST_API === "1") {
       setNextDecision: typeof setNextDecision;
       setNextCostPlusUnitPrice: typeof setNextCostPlusUnitPrice;
       setNextNadacUnitPrice: typeof setNextNadacUnitPrice;
+      // SPEC-0004 §3.5 R11/R23 sim-arbiter one-shot prime helpers — let the
+      // e2e harness drive the populated `usedReferenceIndices` /
+      // `usedLeafHashes` / `policyVoidedClauseIndices` paths the Detail
+      // ruling-meta panel now surfaces (tick 51).
+      setNextPolicyVoidedClauseIndices: typeof setNextPolicyVoidedClauseIndices;
+      setNextUsedReferenceIndices: typeof setNextUsedReferenceIndices;
+      setNextUsedLeafHashes: typeof setNextUsedLeafHashes;
     };
   }).__curie = {
     provider: providerClient,
@@ -321,6 +331,9 @@ if (import.meta.env.DEV || import.meta.env.VITE_EXPOSE_TEST_API === "1") {
     setNextDecision,
     setNextCostPlusUnitPrice,
     setNextNadacUnitPrice,
+    setNextPolicyVoidedClauseIndices,
+    setNextUsedReferenceIndices,
+    setNextUsedLeafHashes,
   };
 }
 

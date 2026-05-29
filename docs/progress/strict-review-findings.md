@@ -7075,3 +7075,148 @@ No regressions.
 **PASS (zero findings).** All three iter-1 findings closed with substantive
 fixes verified at source; no new findings surfaced on re-read. Gates
 regression-free (30/30 hardhat, 84/84 lib).
+
+## Tick 52 strict-review
+
+Scope: 5-file diff vs `41a119a` — re-exports `setNextPolicyVoidedClauseIndices`
+/ `setNextUsedReferenceIndices` / `setNextUsedLeafHashes` through
+`src/contract/index.ts` and `src/index.ts`, exposes them on `window.__curie`
+under the `VITE_EXPOSE_TEST_API` gate in `web/src/client.ts`, and grows
+Scenario C2 in `web/tests/agent-browser/run.sh` from 4 → 6 assertions
+(two new `ruling-voided-clauses` / `ruling-used-refs` testid checks).
+
+### Security gate — `window.__curie` exposure
+
+CLOSED. All three new entries sit inside the single
+`if (import.meta.env.DEV || import.meta.env.VITE_EXPOSE_TEST_API === "1")`
+block in `web/src/client.ts` (lines 299-338): the type-asserted shape
+(lines 316-322) and the object literal (lines 334-336) both add the three
+new keys and nothing else. No second injection site was introduced. The
+gate's two-track guarantee — DEV server OR explicit opt-in flag — is
+unchanged; production bundles built without `VITE_EXPOSE_TEST_API=1` will
+tree-shake the whole `__curie` assignment (the empirically-proven path from
+tick 47 for the existing setters; the new three are in the same compile-time
+conditional so they share the guarantee). The harness explicitly builds the
+preview bundle with `VITE_EXPOSE_TEST_API=1` (run.sh line 108); a normal
+production build does not.
+
+### Re-export honesty (src/index.ts)
+
+CLOSED. The block comment at `src/index.ts:51-53` reads "Used by future
+browser-verify scenarios that drive the populated ruling-citation and
+policy-void paths." The word "future" is mildly stale now that Scenario C2
+actively drives both R11 (`setNextUsedReferenceIndices([0, 3])`) and R23
+(`setNextPolicyVoidedClauseIndices([2])`) at run.sh:258-259. However, two
+of the three setters (`setNextUsedLeafHashes` plus the
+`policyVoidedClauseIndices` setter's eventual use in additional Approve-
+with-voided-clauses scenarios) genuinely remain "future" — only one of the
+three is in current use. The wording is acceptable rather than dishonest:
+the populated paths the comment describes are still the targets, and the
+setters are still gateway helpers for them. Non-blocking; no change needed.
+
+### Type cast on window.__curie
+
+CLOSED. The asserted shape (client.ts:316-322) uses
+`typeof setNextPolicyVoidedClauseIndices` / `…UsedReferenceIndices` /
+`…UsedLeafHashes`, which resolve to the exact signatures
+`(arr: number[]) => void`, `(arr: number[]) => void`, and
+`(arr: \`0x${string}\`[]) => void` from `src/contract/simulated.ts:189`,
+`207`, `225`. The assigned object literal at lines 334-336 passes the same
+three imports directly, so the runtime shape matches the asserted type
+identically — no field renaming, no transformation, no narrowing. `tsc`
+clean (per task brief, both root + web).
+
+### Harness assertion strength — distinguishability
+
+CLOSED. The two primed arrays are deliberately differently-shaped:
+`[2]` (length 1, single value `2`) vs `[0, 3]` (length 2, distinct values
+`0, 3`). The Detail.tsx renderer at lines 484-500 prints
+`[${arr.join(", ")}]`, so the two testids produce literally distinct
+strings `"[2]"` and `"[0, 3]"`. A testid-swap would surface immediately:
+`ruling-voided-clauses` rendering `"[0, 3]"` would fail the equality check,
+and likewise `ruling-used-refs` rendering `"[2]"` would fail. The
+conditional render guards (`length > 0`) also guarantee the row is absent
+unless the corresponding mutable was primed — so a no-prime regression
+would yield empty string, not a false match. Distinguishable.
+
+### Scenario isolation — module-mutable leak risk
+
+CLOSED. Two layers of protection:
+
+1. **Same-scenario consumption.** Scenario C2 primes the two mutables
+   immediately before `eval_click adjudicate-submit` (run.sh:258-261) and
+   waits 1800 ms for the Ruled emission. The simulated arbiter's `_resolve`
+   path (simulated.ts:655-678) reads the mutables, copies into local
+   variables, and resets each to `[]` inline — consumed within the same
+   wait window. No mutable survives past Scenario C2's end.
+2. **Fresh page per scenario.** `open_app` (run.sh:51) calls
+   `agent-browser open $URL` on every scenario entry, which is a fresh page
+   load → fresh JS module evaluation → all module-level mutables
+   re-initialise to `[]`. Even if step 1 leaked, the next scenario starts
+   from `[]`.
+
+Scenario H (`scenario_cds_prefill`, run.sh:317-333) doesn't adjudicate at
+all (only Create-form prefill), so the mutables are irrelevant to it. The
+JSDoc claim "Consumed once then reset to `[]`" is faithful to the
+simulated.ts implementation.
+
+### Comment honesty
+
+CLOSED. All new comments verified against code:
+
+- `src/index.ts:48-50` "SPEC-0004 §3.5 R11/R23 sim-arbiter one-shot prime
+  helpers — used by future browser-verify scenarios…" — R11/R23 citations
+  match the spec; "future" mildly stale but accurate for the leaf-hash
+  setter (see "Re-export honesty" above).
+- `web/src/client.ts:316-319` "SPEC-0004 §3.5 R11/R23 sim-arbiter one-shot
+  prime helpers — let the e2e harness drive the populated
+  `usedReferenceIndices` / `usedLeafHashes` / `policyVoidedClauseIndices`
+  paths the Detail ruling-meta panel now surfaces (tick 51)." — tick-51
+  attribution checks out (Detail.tsx:478-501 added the ruling-meta panel
+  with both testids); the three field names match Negotiation/Ruled types.
+- `run.sh:254-257` "SPEC-0004 §3.5 R23: prime a populated
+  `policyVoidedClauseIndices` so the ruling-meta panel surfaces the new
+  'Voided clauses' row (tick 51 UI). SPEC-0004 §3.5 R11: prime
+  ruling-citation indices too so the 'Cited references' row also renders."
+  — Detail.tsx row labels are literally "Voided clauses" (line 495) and
+  "Cited references" (line 486). Match.
+- `run.sh:278-279` "SPEC-0004 §3.5 R11 + R23: the tick-51 ruling-meta rows
+  surface the primed sim values once the Ruled event is decoded." — correct.
+
+### R-citation correctness vs SPEC-0004 §3.5
+
+CLOSED. Confirmed at `docs/specs/0004-data-and-evidence-model.md:218`
+("R11 (MUST) Source attribution in the ruling") and `:365` ("R23 (MUST)
+On-label policy-void rule"). The `usedReferenceIndices` / `usedLeafHashes`
+fields are R11 (spec line 488-489) and `policyVoidedClauseIndices` is R23
+(spec line 490). All five comment citations route to the right rule.
+
+### Sim/real parity
+
+CLOSED. These setters live in `src/contract/simulated.ts` and write to
+module-level mutables only read inside `SimulatedBackend`'s `_resolve`
+path. The real backend (`src/contract/real.ts`) never references them.
+The harness builds with default `VITE_WALLET_MODE` (omitted), and
+`web/src/client.ts:35` (`const IS_REAL = import.meta.env.VITE_WALLET_MODE
+=== "real"`) yields `false` → simulated client active. Real-mode scenarios
+do not depend on these setters; the contract emits the real
+`usedReferenceIndices` / `usedLeafHashes` / `policyVoidedClauseIndices`
+fields itself (per tick-49/50 abi-decode expansion 7→8→10 noted in tick 51
+strict-review).
+
+### Regression gates
+
+Per task brief: harness 37/37 PASS (was 35/35), hardhat 30/30, lib 84/84,
+tsc clean both root + web. No regressions; +2 new Scenario C2 asserts
+green.
+
+### Verdict
+
+**PASS (zero findings).** Five-file diff is minimal, gated, and honest. The
+two new harness asserts use deliberately distinguishable primed arrays and
+hit dedicated testids the tick-51 Detail.tsx panel introduced. Module-level
+mutables are one-shot-consumed within the same scenario AND reset by the
+fresh-page-per-scenario pattern. No security-gate regression: all three new
+`window.__curie` entries share the single `import.meta.env.DEV ||
+VITE_EXPOSE_TEST_API === "1"` conditional that tree-shakes the entire
+assignment out of unflagged production bundles.
