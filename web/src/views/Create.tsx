@@ -3,7 +3,14 @@
  * Clinical justification stays off-chain; only its hash is committed on-chain (R4).
  */
 import { useMemo, useState } from "react";
-import { ZERO_HASH, hashContent, PayerLine, type Profile } from "@lib";
+import {
+  ZERO_HASH,
+  hashContent,
+  PayerLine,
+  SAMPLE_ORDER_SIGN_REQUEST,
+  orderSignToDraft,
+  type Profile,
+} from "@lib";
 import { client, INSURER_ADDRESS } from "../client.js";
 import { parseAmount, shortHex } from "../shared.js";
 import { SAMPLE_CASE } from "../sampleCase.js";
@@ -25,6 +32,10 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
   const [committedHash, setCommittedHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Set when the form is hydrated from a CDS-Hooks `order-sign` payload
+  // (SPEC-0002 R7). Drives a provenance banner so users see the form
+  // wasn't hand-typed.
+  const [cdsProvenance, setCdsProvenance] = useState<string | null>(null);
 
   // Live preview of the hash that WILL be committed on-chain (R4 — justification
   // text stays off-chain; only this keccak256 lands on the ledger). Updates as
@@ -50,6 +61,22 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
     setAmount(SAMPLE_CASE.requestedAmount);
     setQuantity(SAMPLE_CASE.quantity);
     setDaysSupply(SAMPLE_CASE.daysSupply);
+    setCdsProvenance(null);
+    setError(null);
+  }
+
+  // SPEC-0002 R7 — hydrate the form from a mock CDS Hooks `order-sign`
+  // payload, mirroring the EHR-integrated flow where a clinician triggers
+  // coverage from inside their order-entry workflow.
+  function loadCdsOrder() {
+    const draft = orderSignToDraft(SAMPLE_ORDER_SIGN_REQUEST);
+    setJustification(draft.justification);
+    setDrug(draft.drug);
+    setEvidence(SAMPLE_CASE.evidenceRef);
+    setAmount(draft.requestedAmount ? draft.requestedAmount.toString() : SAMPLE_CASE.requestedAmount);
+    setQuantity(draft.quantity.toString());
+    setDaysSupply(draft.daysSupply.toString());
+    setCdsProvenance(`CDS Hooks order-sign · hook ${SAMPLE_ORDER_SIGN_REQUEST.hook}`);
     setError(null);
   }
 
@@ -125,7 +152,22 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
         >
           Load Demo Case →
         </button>
+        <button
+          type="button"
+          className="secondary"
+          data-testid="cds-prefill"
+          onClick={loadCdsOrder}
+        >
+          Load from EHR (CDS Hooks) →
+        </button>
       </div>
+
+      {cdsProvenance && (
+        <div className="cds-provenance" data-testid="cds-provenance">
+          <strong>Imported from EHR</strong>
+          <span>{cdsProvenance}</span>
+        </div>
+      )}
 
       <form className="form" onSubmit={onSubmit}>
         <label>

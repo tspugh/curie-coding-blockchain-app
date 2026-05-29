@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 45 — Scenario A closed; 30/35 = 86%)
-**Current mode:** `impl`
-**Current tick:** 45
-**Last focus:** UNIT-scenario-A-badge-cap — two coordinated fixes: (a) exposed `setNextDecision` / `setNextCostPlusUnitPrice` / `setNextNadacUnitPrice` on `window.__curie` (under same `VITE_EXPOSE_TEST_API=1` gate) so the harness can poke the SimulatedBackend's arbiter mutables directly — the redesigned UI has no cost-pegging inputs (sim-runtime concern, not user-facing per SPEC-0001 R16); (b) relaxed badge assertion from exact "Ready" to a `*Ready*` case-pattern matching the actual UI text "Policy Attached — Ready for AI" (the original harness assertion matched neither the prototype's "Policy attached" nor the redesign — it was wrong; state-machine truth is asserted on the prior line via state_of). Harness 28/35 → **30/35 = 86%**. Scenario A 5/7 → 7/7 PASS. Strict-review PASS 0 findings (8 scrutiny points; production-build leak gate verified via Vite constant-fold + DCE).
-**Last commit:** `<this tick>` (tick 45 — Scenario A closed)
+**Last updated:** 2026-05-29 (tick 46 — Scenarios G + H closed; 🎉 35/35 = 100% simulated harness)
+**Current mode:** `impl` (T2b-2/3/4 still blocked on operator wallet funding — see Operator notes)
+**Current tick:** 46
+**Last focus:** UNIT-scenario-G-H-cds — two fixes: (a) Scenario G's `nonparty-attempt` UI button (never existed) replaced with a direct `window.__curie.negotiation.insurerEngage(...)` eval call. Observer profile shares providerClient → sim caller = providerAddr → `onlyInsurer` throws "auth: not insurer" (genuine R11 gate, verified state-check passes first so the rejection is real, not a side-effect). (b) Scenario H: added a "Load from EHR (CDS Hooks)" button to Create.tsx that wires the already-existing `SAMPLE_ORDER_SIGN_REQUEST` + `orderSignToDraft` from `@lib` (data-layer seam was already implemented in `src/integrations/cds-hooks/`). Six form fields populated + a `data-testid="cds-provenance"` banner. SPEC-0002 R7 satisfied end-to-end. Harness 30/35 → **35/35 = 🎉 100%**. Strict-review + security-review PASS 0 findings.
+**Last commit:** `<this tick>` (tick 46 — 100% simulated harness)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)
@@ -271,19 +271,22 @@
 - R-citations: SPEC-0004 §2.4 R15, R21; prototype `screens.jsx` `AppealLadder` / `RequestRow` "Appeal stage" column
 - Acceptance criterion: the Detail view shows an "Appeal ladder" section that reads `(payerLine, appealRound)` from `Negotiation` and renders the stage name from the `LADDERS` constant (UNIT-1); the Overview table "Appeal stage" column shows the stage name (not just the round number); both render `"—"` / `"Initial Determination"` for `appealRound=0`; the prototype's `LADDERS[payerLine][i].name` strings match exactly.
 
-## Steady-state criteria — current verdict
+## Steady-state criteria — current verdict (tick 46)
 
-- [ ] 100% R-numbered requirements (specs 0001–0004) have ≥ 1 passing test
-- [ ] Tests: 100% pass (`npx hardhat test`, `pnpm test`, web E2E)
-- [ ] Coverage ≥ 85% line + branch across `src/`, `contracts/`, `web/src/`
-- [ ] Solidity-compliance: NO findings (Opus stickler)
-- [ ] Security-review: NO findings (Opus stickler)
-- [ ] Strict-review: NO findings (Opus gatekeeper)
-- [ ] Browser-verify: all R2 (3 curated cases) + R2a (custom) + R2b T2b-1..6 (multi-wallet) green
-- [ ] Design-conformance: ≥ 90% vs `docs/reference/ui-prototype-handoff/project/`
+- [x] 100% R-numbered requirements (specs 0001–0004) have ≥ 1 passing test (per tick-46 strict-review point 7)
+- [x] Tests: 100% pass — 84/84 lib + 28/28 hardhat + **35/35 web E2E**
+- [~] Coverage ≥ 85% line + branch — packet.ts 100% (tick 38); full-tree measurement pending
+- [x] Solidity-compliance: NO findings (last green tick 38; no contracts diff since)
+- [x] Security-review: NO findings (tick 46)
+- [x] Strict-review: NO findings (tick 46)
+- [~] Browser-verify: R2 + R2a + T2b-1 + T2b-5 green (testnet); T2b-2/3/4 blocked on operator action (fund insurer wallet); T2b-6 not reachable through current UI but contract-tested
+- [x] Design-conformance: ≥ 90% (92% last measurement; no UI structural change since)
+
+**Not yet steady-state**: T2b-2/3/4 are operator-blocked. Loop staying in `impl` mode.
 
 ## Recent findings (rolling — newest first, last 20)
 
+- **2026-05-29 (tick 46 — Scenarios G + H closed; 🎉 35/35 = 100% simulated harness):** Major milestone — every E2E scenario in the simulated harness now passes. Scenario G's `nonparty-attempt` UI button never existed; rewrote the harness assertion to call `insurerEngage` directly via eval and confirm the R11 reject. Scenario H needed a real UI feature: the CDS-Hooks seam at the data layer was already implemented in `src/integrations/cds-hooks/` (mapper, fixture, types, index) but nothing wired it into the Create form. Added a "Load from EHR (CDS Hooks)" button that calls `orderSignToDraft(SAMPLE_ORDER_SIGN_REQUEST)`, fills the six form fields, and shows a `cds-provenance` banner — SPEC-0002 R7 now exercised end-to-end. Net: +27 lines in Create.tsx, +6 in run.sh. Strict-review PASS 0 (7 scrutiny points; one CSS-class polish gap noted as inline-closed LOW). Security-review PASS 0 (no PHI in fixture; mapper is defensive; banner is React-text-escaped). Harness progression total: 9→12→13→19→23→28→30→**35** across 8 ticks. T2b-2/3/4 remain blocked on operator wallet funding; steady-state not declared yet.
 - **2026-05-29 (tick 45 — Scenario A closed; 30/35 = 86%):** Two bugs found in Scenario A and both confirmed to be in the *harness*, not the SUT. (1) The badge assertion expected exact "Ready" but the UI renders "Policy Attached — Ready for AI" — and the *prototype* `data.jsx:10` rendered "Policy attached" — so the original harness was wrong for both old and new UIs; relaxed to substring `*Ready*` scoped to the state-badge element while keeping the authoritative `state_of(1) == 1` check on the prior line. (2) The cost-pegging inputs (`costplus-unit-price`, `nadac-unit-price`) don't exist in the redesigned UI — they were always sim-runtime concerns, not user-facing per SPEC-0001 R16/R6a. Exposed `setNext{Decision,CostPlusUnitPrice,NadacUnitPrice}` on `window.__curie` under the same `VITE_EXPOSE_TEST_API=1` gate; harness pokes the mutables directly. Strict-review PASS 0 (8 scrutiny points; verified Vite tree-shakes the entire `__curie` block when the flag is unset). Harness 28/35 → **30/35 = 86%**. Remaining 5 are pure feature gaps (G's `nonparty-attempt`, H's CDS prefill button).
 - **2026-05-29 (tick 44 — Scenarios B + F closed; 28/35 = 80%):** Two scenarios had been failing silently for a different reason than the structural bugs I'd been hunting: the harness's create-step in B and F was just **missing required form fields** (quantity, days-supply, evidence). Without them, Create.tsx's validation short-circuits with setError and the request is never created — downstream assertions return empty strings. Added the missing fills (mirroring Scenario A's complete fill set). Scenario F additionally needed (a) `data-testid="proof-toggle"` on the "View blockchain proof" button (the verify-note panel lives inside `{showProof && ...}`); (b) `eval_click verify-note-submit` for consistency; (c) bash-case capitalization fix (UI renders "✓ Matches the committed hash" / "✗ Does not match" — harness was matching `*matches*` lowercase). Harness 23/35 → **28/35 = 80%**. Strict-review PASS 0 findings (8 scrutiny points; the capitalization fix justified by UI being source-of-truth). Remaining 7 failures: A (UI badge text, coveredAmount cap), G (`nonparty-attempt` testid missing), H (CDS prefill not implemented).
 - **2026-05-29 (tick 43 — Scenario C2 R6b PolicyInvalidated closed):** Same testid-migration pattern as tick 25's pill-button conversion: when the UI shifted the `<select data-testid="decision-select">` to a row of pill buttons, harness's `ab select` call broke silently. Fix: 1-line addition of `data-testid={\`decision-${cls}\`}` in Detail.tsx (`approve|deny|evidence|void`); 2 run.sh callsites rewritten to `eval_click decision-approve|decision-void`. Harness 19/35 → **23/35**. C2's full PolicyInvalidated path now works end-to-end: state lands at 8, gotcha panel renders with struck-through clause + FDA citation. Strict-review PASS 0 findings (7 scrutiny points all closed; cls→testid mapping verified collision-free). Remaining 12 harness failures across A (2), B (3), F (2), G (1), H (4) — each a smaller individual bug; H is feature-gap (CDS-Hooks prefill button).

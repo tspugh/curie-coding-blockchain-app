@@ -1236,3 +1236,88 @@ Out-of-scope confirmations: no new external calls beyond the existing
 slots; no new modifiers; no new external entry points; no ABI changes
 (PacketSubmitted is additive — does not alter existing event signatures).
 The diff is minimally invasive, exactly UNIT-2 scope.
+
+## Tick 46 security-review
+
+Scope: tick-46 diff vs `b88261d` — two files changed.
+
+- `web/src/views/Create.tsx` (+27 lines): adds a `Load from EHR (CDS Hooks)`
+  button (`data-testid="cds-prefill"`) that calls `orderSignToDraft` on the
+  compile-time `SAMPLE_ORDER_SIGN_REQUEST` fixture, populates form state, and
+  sets a `cdsProvenance` banner string.
+- `web/tests/agent-browser/run.sh` (Scenario G, ~6 lines): replaces the UI
+  button click with a direct `window.__curie.negotiation.insurerEngage` eval
+  so the contract-side R11 gating is exercised regardless of UI affordances.
+
+### Per-concern verdict
+
+1. **PHI / sensitive-data leak in `SAMPLE_ORDER_SIGN_REQUEST`.** PASS. The
+   fixture at `src/integrations/cds-hooks/fixture.ts` is fully synthetic per
+   SPEC-0004 R1. Identifiers are clearly marked: `Practitioner/synthetic-dr-001`,
+   `Patient/synthetic-pt-001`, `Encounter/synthetic-enc-001`, `medreq-synthetic-001`,
+   `hookInstance` is a random UUIDv4. No SSN / DOB / MRN / real-name patterns;
+   subject display is literally `"Synthetic Patient (demo)"`. The drug
+   (adalimumab / RxNorm 1366724, NDC 00074-3799-02) and diagnosis (ICD-10 L40.0,
+   "Psoriasis vulgaris") are public code-system entries, not patient data. The
+   fixture header explicitly states `NO PHI: every identifier and value here is
+   SYNTHETIC` and matches `demo-data/sample-case.md`. No real patient data.
+
+2. **Untrusted-input handling in `orderSignToDraft`.** PASS. The mapper's only
+   call site in this diff is the compile-time constant
+   `SAMPLE_ORDER_SIGN_REQUEST` — there is no external-input surface at the UI
+   today. For completeness, the mapper itself defends correctly: optional-chain
+   on `req.context?.draftOrders?.entry` rejects missing bundles with a thrown
+   `Error`; `entries.find(e => e.resource?.resourceType === "MedicationRequest")`
+   filters before unwrap; `toBigInt()` rejects NaN / non-finite / negative
+   values; `quantity <= 0n` is rejected (SPEC-0001 R2/R6a). No path traversal —
+   the mapper performs no I/O and no filesystem access. No prototype-pollution
+   vector — fields are read via dotted property access (no `Object.assign`,
+   no spread of attacker-controlled keys, no dynamic `[key]` writes from
+   payload data); the returned `draft` is a fresh object literal. The
+   composed `justification` string is built from diagnosis + drug + numeric
+   quantity/daysSupply only; patient identifiers (`patientId`, `subject`) are
+   intentionally NOT propagated (mapper header comment + observed behavior).
+
+3. **XSS in `cdsProvenance` banner.** PASS. The banner at Create.tsx:165-170
+   renders the string inside `<span>{cdsProvenance}</span>` — React's default
+   JSX-child interpolation auto-escapes. No `dangerouslySetInnerHTML`, no
+   `innerHTML`, no `eval`. The banner content is composed in `loadCdsOrder()`
+   as `` `CDS Hooks order-sign · hook ${SAMPLE_ORDER_SIGN_REQUEST.hook}` ``,
+   where `hook` is the compile-time literal `"order-sign"` from the fixture —
+   the value cannot carry user-controlled markup in this build. Even if the
+   fixture were swapped for live EHR payload tomorrow, the JSX text-child
+   escaping is the second layer of defense. No XSS surface.
+
+4. **Test-API surface on `window.__curie`.** PASS. Tick 46 did not modify
+   `web/src/client.ts`. The Scenario G change calls
+   `window.__curie.negotiation.insurerEngage(1n, zeroBytes32, zeroBytes32)` —
+   this is the regular pre-existing client method (already exposed before
+   tick 46), not a test-only setter. The tick-45 `setNextDecision` /
+   `setNextCostPlusUnitPrice` / `setNextNadacUnitPrice` setters are
+   unchanged. No new exposure surface added in tick 46.
+
+5. **Type-cast soundness — `requestedAmount` falsy on 0n.** PASS (informational).
+   The form-prefill line
+   `draft.requestedAmount ? draft.requestedAmount.toString() : SAMPLE_CASE.requestedAmount`
+   would indeed treat `0n` as falsy and fall back to the sample-case default
+   amount. This is not a security concern: (a) the v0 fixture does not set
+   `requestedAmount` at all, so the branch is exercised only via the
+   `undefined` path today; (b) even if a future payload supplied `0n`, the
+   downstream SPEC-0001 R2/R6a quantity-cap check and the create-flow
+   amount validation would handle it; (c) the form is a UI prefill, not a
+   trust boundary — the on-chain commit hashes whatever the user submits.
+   No information-disclosure or auth-bypass implication. Worth a follow-up
+   `=== undefined` tightening in a future tick for correctness, but not a
+   security finding.
+
+### Notes
+
+- The Scenario G eval uses a zero-bytes32 evidence ref and zero policy hash
+  (`'0x' + '00'.repeat(32)`); these are public sentinels, not secrets.
+- The provenance banner exists to reduce the social-engineering risk that a
+  form filled by a synthetic EHR-mock could be mistaken for clinician-typed
+  content — modestly defensive UX, not a regression.
+- No new external network calls, no new persisted state, no new contract
+  call paths in this diff.
+
+### Verdict: PASS (zero findings)

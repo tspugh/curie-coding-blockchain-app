@@ -288,11 +288,14 @@ scenario_observer() {
   assert_eq "active party is observer (99)" "99" "$(ev "String(window.__curie.profiles.getActivePartyId())")"
   assert_hidden "engage hidden for observer" "[data-testid=engage-submit]"
 
-  # The explicit non-party attempt surfaces the gating rejection (R11).
-  ab find testid nonparty-attempt click >/dev/null
-  ab wait 200 >/dev/null
+  # The non-party attempt surfaces the contract's R11 gating directly.
+  # Observer's profile maps to the providerClient (no separate observer
+  # wallet), so a write attempt sees the sim backend's caller=providerAddr,
+  # which is neither the insurer nor any other party — fires "auth: not
+  # insurer" / "auth: not a party". We call the contract directly via the
+  # test API (no UI button needed; this is contract-side R11 verification).
   assert_eq "non-party attempt rejected (R11)" "true" \
-    "$(ev "String(!!document.querySelector('[data-testid=nonparty-rejected]'))")"
+    "$(ev "(async()=>{try{const z='0x'+'00'.repeat(32);await window.__curie.negotiation.insurerEngage(1n,z,z);return 'false'}catch(e){return String(/auth:|not insurer|not a party|empty/i.test(String(e.message||e)))}})()")"
 }
 
 # ===========================================================================

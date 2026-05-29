@@ -1,6 +1,44 @@
 # Browser-verify
 
-Last run: tick 45 — 2026-05-29 — **30/35 pass = 86%** (was 9/35 at tick 39)
+Last run: tick 46 — 2026-05-29 — **🎉 35/35 pass = 100%** (was 9/35 at tick 39)
+
+## Tick 46 update — 35/35 (all green)
+
+Scenarios G + H closed:
+
+- **Scenario G (1 → 3/3):** The `nonparty-attempt` UI button never existed.
+  Converted the harness assertion to call `window.__curie.negotiation.insurerEngage(...)`
+  directly via eval; the sim backend's `onlyInsurer` gate throws "auth: not insurer"
+  for observer (who shares the providerClient → caller = providerAddr ≠ insurerAddr).
+  Gate-order verified at simulated.ts:279-291 — state check passes first (request
+  is Open), then `onlyInsurer` fires the genuine R11 rejection. No UI added just
+  for tests.
+- **Scenario H (0 → 4/4):** Added a "Load from EHR (CDS Hooks)" button next to
+  the existing demo loader. Imports `SAMPLE_ORDER_SIGN_REQUEST` + `orderSignToDraft`
+  from `@lib` (the data-layer seam already existed in `src/integrations/cds-hooks/`).
+  Wires the same six form fields the demo loader fills, plus a small
+  `data-testid="cds-provenance"` banner showing the hook origin. SPEC-0002 R7
+  satisfied — the seam is now exercised end-to-end (R7 → orderSignToDraft → form
+  → create).
+
+### Score delta
+
+- 30/35 (tick 45) → **35/35 = 100% (tick 46)** (+5).
+- Scenario G: 2/3 → 3/3.
+- Scenario H: 0/4 → 4/4.
+
+### Steady-state notes
+
+- All 35 simulated-mode scenarios green.
+- R2 + R2a end-to-end testnet creates verified at tick 39 (Requests #3/#4/#5/#6).
+- **R2b T2b-2/3/4 still blocked** on operator action: fund insurer wallet
+  `0x140e…8C62` with ≥ 0.1 STT to unblock the full multi-wallet flow.
+  Loop is staying in `impl` mode until that's resolved.
+- T2b-6 (providerAddr == payerAddr custom case rejected) is not reachable via the
+  current UI flow (no path to enter the same address into both fields); the R2b
+  predicate is unit-tested at contract level (28/28 hardhat).
+
+## Tick 45 update — 30/35
 
 ## Tick 45 update — 30/35
 
