@@ -11,6 +11,7 @@ import { test } from "node:test";
 
 import {
   REVERT_REASON_MAP,
+  extractRevertReason,
   mapRevertReason,
 } from "./revertReasonMap.js";
 
@@ -139,4 +140,57 @@ test("No baseline entry headline equals the raw contract revert string verbatim"
       `${key}: headline must not be the raw revert string — write plain English instead`,
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// extractRevertReason — probe order + edge cases
+// ---------------------------------------------------------------------------
+
+test("extractRevertReason: ethers v6 `.reason` wins over `.shortMessage` and `.message`", () => {
+  const err = {
+    reason: "auth: not insurer",
+    shortMessage: 'execution reverted: "auth: not insurer"',
+    message: "Error: execution reverted: noisy stack trace",
+  };
+  assert.equal(extractRevertReason(err), "auth: not insurer");
+});
+
+test("extractRevertReason: viem/wagmi `.shortMessage` wins over `.message` when no `.reason`", () => {
+  const err = {
+    shortMessage: "User rejected the request.",
+    message: "noisy wrapped message",
+  };
+  assert.equal(extractRevertReason(err), "User rejected the request.");
+});
+
+test("extractRevertReason: falls back to `.message` when neither `.reason` nor `.shortMessage`", () => {
+  const err = { message: "generic Error.message" };
+  assert.equal(extractRevertReason(err), "generic Error.message");
+});
+
+test("extractRevertReason: empty-string `.reason` falls through to the next probe", () => {
+  const err = { reason: "", shortMessage: "clean copy" };
+  assert.equal(extractRevertReason(err), "clean copy");
+});
+
+test("extractRevertReason: returns undefined for null/undefined/primitive", () => {
+  assert.equal(extractRevertReason(null), undefined);
+  assert.equal(extractRevertReason(undefined), undefined);
+  assert.equal(extractRevertReason("string error"), undefined);
+  assert.equal(extractRevertReason(42), undefined);
+});
+
+test("extractRevertReason: returns undefined when no probe field is a string", () => {
+  const err = { reason: 123, shortMessage: false, message: null };
+  assert.equal(extractRevertReason(err), undefined);
+});
+
+test("extractRevertReason + mapRevertReason: end-to-end on a typical ethers v6 error shape", () => {
+  const err = {
+    reason: "auth: not insurer",
+    message: 'execution reverted: "auth: not insurer" (action="estimateGas", ...)',
+  };
+  const entry = mapRevertReason(extractRevertReason(err));
+  assert.equal(entry.headline, "Only the insurer can attach a policy");
+  assert.ok(entry.details.length > 0);
 });

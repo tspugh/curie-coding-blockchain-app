@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 18 — UNIT-4c-narrow: wire mapRevertReason into Detail's action panel)
+**Last updated:** 2026-05-29 (tick 19 — UNIT-error-display-cleanup: extract shared probe helper)
 **Current mode:** `impl`
-**Current tick:** 18
-**Last focus:** SPEC-0003 R16 wire-up. `Detail.tsx:run()` now extracts the bare contract revert string via probe order `.reason → .shortMessage → .message → String(err)` (same as `useAction.ts`'s extractRevertReason) and routes through `mapRevertReason()` to produce a plain-English `headline + "\n\n" + details` set on the error display. Strict-review caught the rendering MEDIUM: the `\n\n` was collapsing because `.error` CSS lacked `white-space: pre-line` — fixed inline. The user's reported "auth: not insurer" now surfaces as "Only the insurer can attach a policy. Your connected wallet is not the insurer address on this contract. Switch to the insurer wallet and try again." LOWs deferred: shared probe logic with useAction.ts (4-line dup → future helper extraction), mixed setError shapes (plain-string client-validation vs struct-flattened-string revert) — both queued as `UNIT-error-display-cleanup`.
-**Last commit:** `<this tick>` (tick 18 — UNIT-4c-narrow)
+**Current tick:** 19
+**Last focus:** Closed tick 18's LOW 1 (DRY violation between useAction.ts's local `extractRevertReason` and Detail.tsx's inline probe). Lifted `extractRevertReason` to `src/protocol/revertReasonMap.ts` as a named export; both useAction.ts and Detail.tsx now import the shared helper. Detail.tsx run() helper collapsed from 9 lines to 4. 7 new node:test cases for `extractRevertReason` pin probe order (.reason wins, .shortMessage second, .message last), empty-string fall-through, null/undefined/primitive handling, and an end-to-end test routing a typical ethers-v6 error through to mapRevertReason → "Only the insurer can attach a policy". Net: lib test count 53 → 60 (+7).
+**Last commit:** `<this tick>` (tick 19 — UNIT-error-display-cleanup)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)

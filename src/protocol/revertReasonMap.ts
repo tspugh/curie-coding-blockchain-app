@@ -283,3 +283,24 @@ export function mapRevertReason(reasonRaw: string | undefined): RevertReasonEntr
     }`,
   };
 }
+
+/**
+ * Extract the most informative revert-reason string from an unknown thrown
+ * value. Probe order (cleanest copy wins):
+ *  1. `.reason` — ethers v6 `CallExceptionError`, already-decoded `Error(string)`.
+ *  2. `.shortMessage` — viem/wagmi, cleaner than `.message`.
+ *  3. `.message` — last-resort, carries raw stack noise.
+ * Returns `undefined` when nothing extractable is present.
+ *
+ * Pair with {@link mapRevertReason} to get a {@link RevertReasonEntry}.
+ */
+export function extractRevertReason(err: unknown): string | undefined {
+  if (err == null || typeof err !== "object") return undefined;
+  const e = err as Record<string, unknown>;
+
+  if (typeof e["reason"] === "string" && e["reason"]) return e["reason"];
+  if (typeof e["shortMessage"] === "string" && e["shortMessage"]) return e["shortMessage"];
+  if (typeof e["message"] === "string" && e["message"]) return e["message"];
+
+  return undefined;
+}

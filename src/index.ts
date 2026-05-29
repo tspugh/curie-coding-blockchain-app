@@ -110,7 +110,11 @@ export {
 export { LADDERS, stageNameFor } from "./protocol/ladders.js";
 
 // --- Re-exports: revert-reason mapping (UNIT-4c — Detail wire-up) ---
-export { mapRevertReason, REVERT_REASON_MAP } from "./protocol/revertReasonMap.js";
+export {
+  extractRevertReason,
+  mapRevertReason,
+  REVERT_REASON_MAP,
+} from "./protocol/revertReasonMap.js";
 export type { RevertReason, RevertReasonEntry } from "./protocol/revertReasonMap.js";
 
 import {

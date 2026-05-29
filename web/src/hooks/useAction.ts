@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import {
+  extractRevertReason,
   mapRevertReason,
   type RevertReasonEntry,
 } from "../../../src/protocol/revertReasonMap.js";
@@ -64,29 +65,3 @@ export function useAction<T>(
   return { pending, error, run };
 }
 
-/**
- * Extract the most informative revert-reason string from an unknown thrown value.
- *
- * Ethers v6 errors expose `.reason` for decoded `Error(string)` reverts and
- * `.message` for everything else. We probe a set of well-known shapes and fall
- * back to `undefined` when nothing is extractable.
- */
-function extractRevertReason(err: unknown): string | undefined {
-  if (err == null || typeof err !== "object") return undefined;
-  const e = err as Record<string, unknown>;
-
-  // Ethers v6: `ContractCallResult` / `CallExceptionError` carry `.reason` —
-  // the cleanest, already-decoded `Error(string)` payload.
-  if (typeof e["reason"] === "string" && e["reason"]) return e["reason"];
-
-  // Viem / wagmi style errors nest a `shortMessage` that is cleaner than
-  // `.message` (which usually duplicates `.shortMessage` plus stack noise).
-  // Probed BEFORE `.message` so the clean copy wins.
-  if (typeof e["shortMessage"] === "string" && e["shortMessage"])
-    return e["shortMessage"];
-
-  // Generic Error.message — last-resort fallback; carries the raw stringy noise.
-  if (typeof e["message"] === "string" && e["message"]) return e["message"];
-
-  return undefined;
-}
