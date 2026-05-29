@@ -4,14 +4,48 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 38 — UNIT-9 packet.ts + Merkle helpers landed)
+**Last updated:** 2026-05-29 (tick 39 — first end-to-end browser-verify on Somnia testnet)
 **Current mode:** `impl`
-**Current tick:** 38
-**Last focus:** UNIT-9 (SPEC-0004 §2.3 R9/R10/R11 + §3.4) — `src/protocol/packet.ts` (`EvidenceReference`, `Packet`, `sliceHash`, `merkleLeaf`, `merkleRoot`) + `packet.test.ts`. Hash formulas: `sliceHash = keccak256(utf8(JSON.stringify(slice)))`; `merkleLeaf = keccak256(abi.encode([string,bytes32,bytes32],[url,contentHash,sliceHash]))`; `merkleRoot` = sorted-pair tree, duplicate-last on odd levels (Bitcoin convention for tree shape; sorted pairs match OZ `MerkleProof.verify` for forward-compat). Empty packet → `bytes32(0)`. Strict-review iter-1 surfaced 2 MEDIUM + 4 LOW + 2 NITs (M1: lying "OZ convention" JSDoc; M2: tests self-pinning); all closed inline iter-2 (JSDoc rewrite + 5 frozen literal-pin tests + edge cases + 4-leaf cross-pair test + JSON key-order regression). 84 lib tests pass (+9 from 75); 100% line/branch/function coverage on packet.ts. **Pre-tick hygiene commit `b514cca`** landed first (SPEC-0001 R19 doc + ISomniaAgent.sol header + vite dev-host allow).
-**Last commit:** `<this tick>` (tick 38 — UNIT-9 packet module)
+**Current tick:** 39
+**Last focus:** BROWSER-VERIFY-39 — first end-to-end agent-browser run against the live UI on Somnia testnet. R2 partd-approvable / commercial-policy-void / medicaid-denied-then-appealed and R2a custom-case **all PASS** as real on-chain creates (Requests #3/#4/#5/#6, tx hashes recorded in `docs/progress/browser-verify.md`). T2b-1 (distinct EOAs per profile) and T2b-5 (chip updates on switch) PASS. **T2b-2/3/4 blocked** by unfunded insurer wallet `0x140e…8C62` (operator action: send ≥ 0.1 STT). T2b-6 not reachable through current UI (no providerAddr==payerAddr path). General E2E harness reports 9/35 pass — root cause: `window.__curie` shape mismatch between run.sh assumptions and client.ts (which exports `{provider, insurer}`, not `.negotiation`/`.content`/`.wallet`/`.profiles`). Also: agent-browser `click` doesn't reliably trigger React's `onSubmit` (workaround: focus+Enter); `cds-prefill` testid not implemented. No code change this tick — verify-only.
+**Last commit:** `<this tick>` (tick 39 — browser-verify-only)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)
+
+### BROWSER-VERIFY-39 (LANDED tick 39 — first live end-to-end run)
+**First agent-browser run against the deployed Somnia testnet contract**
+- What landed: `docs/progress/browser-verify.md` documenting the live state. R2 partd-approvable / commercial-policy-void / medicaid-denied-then-appealed and R2a custom-case all PASS as real on-chain creates. T2b-1 + T2b-5 PASS.
+- Real blockers surfaced (queued below as top-priority units):
+  1. **OPS-fund-insurer-wallet** — unfunded `0x140e…8C62` blocks T2b-2/3/4.
+  2. **UNIT-fix-e2e-harness-api-shape** — `run.sh` expects `window.__curie.{negotiation,content,wallet,profiles}` but `client.ts` only exposes `{provider, insurer}` and ONLY under `import.meta.env.DEV`; harness drops to 9/35 because of this mismatch.
+  3. **UNIT-fix-react-submit-click-workaround** — agent-browser `find testid X click` doesn't trigger React's form onSubmit; harness silently fails the Create step. Workaround in scenarios: focus + Enter.
+  4. **UNIT-cds-prefill-or-deprecate-scenario-H** — `data-testid=cds-prefill` not present; Scenario H expectations vs reality must be reconciled.
+- Verdict: tick 39 is **verify-only**. Browser-verify gate is now partially green (R2/R2a end-to-end on testnet); next ticks should close the new queue items above before another browser-verify run.
+
+### UNIT-OPS-fund-insurer-wallet (NEW — tick 39 finding, operator action)
+**Fund `0x140e…8C62` with ≥ 0.1 STT to unblock T2b-2/3/4**
+- Files: none (operator-only)
+- R-citations: SPEC-0001 R2b (multi-wallet), tick 39 browser-verify
+- Acceptance criterion: balance of `0x140e…8C62` ≥ 0.1 STT confirmed via `https://shannon-explorer.somnia.network/address/0x140e8C62…`. Operator note added to loop-state.md `Operator notes` section.
+
+### UNIT-fix-e2e-harness-api-shape (NEW — tick 39 finding)
+**Reconcile `window.__curie.*` shape between `web/tests/agent-browser/run.sh` and `web/src/client.ts`**
+- Files: `web/src/client.ts` (add DEV-only re-export in expected shape), OR `web/tests/agent-browser/run.sh` (rewrite assertions for actual shape)
+- R-citations: SPEC-0001 R17 (observable), browser-verify tick 39
+- Acceptance criterion: `npm run test:e2e` against a fresh `vite preview` of a `VITE_WALLET_MODE=simulated` build passes ≥ 26 / 35 scenarios (i.e. fixes the 26 currently-failing on the shape mismatch). Path (a) — re-export shape: `client.ts` exposes `window.__curie = { negotiation: { stateOf, ... }, content: { verify, ... }, wallet: { address }, profiles: { getActivePartyId } }` under `import.meta.env.DEV` AND under preview mode (or gated by `VITE_EXPOSE_TEST_API=1`). Path (b) — rewrite assertions: harness queries the actual `{provider, insurer}` shape directly. Pick (a) — keeps the harness API stable.
+
+### UNIT-fix-react-submit-click-workaround (NEW — tick 39 finding)
+**Either patch agent-browser `click` to honor React onSubmit, or rewrite the run.sh "Create" step to focus+Enter**
+- Files: `web/tests/agent-browser/run.sh` (replace `click create-submit` with focus+Enter sequence)
+- R-citations: SPEC-0001 R16 (Create view), browser-verify tick 39
+- Acceptance criterion: Scenario A (`run.sh`) reaches the post-create state at least to the `Awaiting Insurer` step against a `VITE_WALLET_MODE=simulated` preview build. Easier path: rewrite the run.sh step; documenting in the harness README.
+
+### UNIT-cds-prefill-or-deprecate-scenario-H (NEW — tick 39 finding)
+**Reconcile Scenario H expectations (`data-testid=cds-prefill`) vs current UI (button not implemented)**
+- Files: `web/tests/agent-browser/run.sh` (Scenario H), OR `web/src/views/Create.tsx` (add the button if it's spec'd)
+- R-citations: SPEC-0002 R7 (CDS-Hooks seam) — check if R7 requires the prefill button or just the seam
+- Acceptance criterion: either (a) the button is added with the same testid and the prefill fires real fields onto Create, OR (b) Scenario H is removed from `run.sh` with a comment citing that R7 only requires the CDS-Hooks seam at the data layer, not a Create-form button.
 
 ### UNIT-9 (LANDED tick 38 — packet.ts + Merkle helpers)
 **`src/protocol/packet.ts` — SPEC-0004 §2.3 R9/R10/R11 + §3.4 evidence-packet types + Merkle-root helpers**
@@ -246,6 +280,7 @@
 
 ## Recent findings (rolling — newest first, last 20)
 
+- **2026-05-29 (tick 39 — first live end-to-end browser-verify on Somnia testnet):** The user explicitly requested `agent-browser` verification this run. The harness wasn't on PATH; installed via `npm i -g agent-browser` (`0.27.0`) and `npx playwright install chromium`. Drove the live web app at `http://localhost:4173/` against the deployed contract `0x1dC5bA6771A7f4426ABE5BB808a7d51BdEA33E1A`. **Four real on-chain contracts created** (Requests #3/#4/#5/#6 — all three R2 curated cases + R2a custom-case) — confirms payer-line routing + appeal-ladder display + autofill+edit are working end-to-end. **Three real, actionable findings surfaced** that the prior fully-offline test runs couldn't have caught: (1) insurer wallet `0x140e…8C62` is **unfunded** (0 STT), blocking T2b-2/3/4 — operator action queued; (2) the `run.sh` E2E harness uses a `window.__curie.{negotiation,content,wallet,profiles}` API shape that **was never implemented** — client.ts exposes `{provider, insurer}` under `import.meta.env.DEV` only — causing 26/35 scenarios to fail silently on empty-string state reads; (3) agent-browser's `click` doesn't reliably fire React's `onSubmit` — the run.sh Create step silently fails — workaround: focus+Enter. Scenario H expects a `cds-prefill` testid the UI doesn't have. Net: no code change this tick (verify-only), but four new top-priority queue items landed in loop-state.md to be picked up by next ticks. Browser-verify gate now partially green for the first time (R2 + R2a end-to-end on testnet).
 - **2026-05-29 (tick 38 — UNIT-9 packet.ts; first SPEC-0004 §2.3 evidence-model work):** First tick to ship the SPEC-0004 evidence-packet primitives — `EvidenceReference`, `Packet`, `sliceHash`, `merkleLeaf`, `merkleRoot`. Strict-review iter-1 was a useful gauntlet: M1 caught a JSDoc lie (impl says "OpenZeppelin MerkleProof convention" for duplicate-last, but OZ's `StandardMerkleTree` does NOT duplicate — that's the Bitcoin convention; the sorted-pair half IS OZ-compatible for `MerkleProof.verify`); M2 caught test self-pinning (test helpers reused the same ethers primitives in the same order as the impl, so an impl+helper drift-together bug would have passed). Both fixed inline: JSDoc honestly attributes each design choice; 5 frozen literal-pin hex anchors added so a future drift-together is caught by the literal staying the same. Iter-2 strict-review PASS with zero findings. The Merkle convention choice (duplicate-last vs promote) is now documented as a load-bearing decision that a future on-chain verifier MUST match; tracked forward for SPEC-0004 Phase 5. Net: 2 new files, 84 lib tests (+9), 100% line/branch/function coverage on packet.ts. Browser-verify + design-conformance + solidity-compliance NOT RUN (no UI/contract surface change this tick). **Pre-tick hygiene commit `b514cca`** landed SPEC-0001 R19 (Somnia agent-interface mirror posture) + matching `ISomniaAgent.sol` header + vite dev-host allow for cloudflare-tunnel — three coherent loose-end items that had been left uncommitted.
 - **2026-05-29 (tick 12 — UNIT-4-narrow; first substantive web/ work):** First tick to touch React-land. The dev subagent's `revertReasonMap.ts` discovered 27 unique contract revert strings — far more than the 5 the loop-state acceptance criterion listed — and mapped them all. Useful side-effect: tsc surfaced a UNIT-2-era bug in `web/src/shared.ts` (missing `PacketSubmitted` switch case from when the event was added in tick 4); fix bundled in this commit, defensible because it gated the web tsc gate. Strict-review PASS first-pass with 4 NITs; NIT 2 (extractRevertReason probe order bypasses `.shortMessage`) was closed inline because it had a real R16-coverage impact. Repo has no React testing infra (no vitest, no RTL); `useAction` correctness rests on tsc + a future browser-verify. Two follow-up targets: (a) test 3 reference-equality tightening (deferred NIT 3); (b) UNIT-4b (useNegotiation + Detail.tsx wire-up) for tick 13.
 - **2026-05-29 (tick 11 — UNIT-3-refactor + R6b prose-update; longest gate run yet clean):** Paired bookkeeping tick — DRY extraction of scenario-test helpers + amendment 0005 application to SPEC-0001 R6b. The dev subagent delivered a 123-line helper with 4 named exports; the three scenario test files each shed ~80 lines and now import from the helper. Strict-review PASS first pass — 0 actionable findings (rare; the refactor preserved all 44 test names, all scenario-distinct assertions, all PHI regex bytes). Security flagged a path-traversal academic concern on `loadScenarioFile(slug, filename)` — both gates agree it's not actionable because every call site uses a hardcoded slug constant; recorded as advisory hardening. The R6b prose now correctly says PolicyFlagged is an annotation event alongside Approve (per amendment 0005), and §3.5 Ruled event payload gained `policyVoidedClauseIndices`. Net diff: 1 new TS module + 3 test refactors + 1 spec edit. Net LOC: -117. **First explicit "future contract-implementation gap" surfaced**: queued as `SPEC-0004 Phase 1 contract decode for policyVoidedClauseIndices` since the contract's handleResponse decode hasn't caught up to the spec yet.
@@ -272,5 +307,6 @@
 ## Operator notes
 
 - Wallet refill at https://testnet.somnia.network/ when balance < 5 STT.
+- **OPEN (tick 39): Fund the insurer wallet `0x140e…8C62` with ≥ 0.1 STT to unblock T2b-2/3/4.** The `VITE_PRIVATE_KEY_INSURER` key is set in `.env` but the wallet has 0 STT and every insurer tx is dropped at gas estimation. Check at https://shannon-explorer.somnia.network/address/0x140e8C62...
 - If the loop emergency-tags, restart after refill + a quick check of the latest `strict-review-findings.md`.
 - If the strict reviewer's bar feels unreachable, relax it via spec edit (not via prompt edit) — the loop reads specs as truth.
