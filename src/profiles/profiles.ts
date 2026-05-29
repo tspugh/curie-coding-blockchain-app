@@ -22,6 +22,12 @@ export interface Profile {
   readonly label: string;
   /** On-chain party id used for `appeal` / `accept` / `createContract` etc. */
   readonly partyId: bigint;
+  /**
+   * Short one-line summary of what this role does in the demo. Surfaced in the
+   * Settings profile picker (`web/src/views/Settings.tsx`) as the sub-line.
+   * Optional so legacy callers passing custom profiles don't break.
+   */
+  readonly description?: string;
 }
 
 /** Options for {@link ProfileRegistry}. */
@@ -34,8 +40,18 @@ export interface ProfileRegistryOptions {
 
 /** Two sensible default identities for the demo loop (provider + insurer). */
 export const DEFAULT_PROFILES: readonly Profile[] = [
-  { id: "provider", label: "Provider", partyId: 1n },
-  { id: "insurer", label: "Insurer", partyId: 2n },
+  {
+    id: "provider",
+    label: "Provider",
+    partyId: 1n,
+    description: "Files coverage-exception requests with attached clinical evidence.",
+  },
+  {
+    id: "insurer",
+    label: "Insurer",
+    partyId: 2n,
+    description: "Attaches the coverage policy and accepts or appeals the arbiter ruling.",
+  },
 ];
 
 /**

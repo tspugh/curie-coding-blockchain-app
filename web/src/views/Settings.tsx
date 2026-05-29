@@ -80,7 +80,7 @@ export function Settings({
                   party {p.partyId.toString()}
                 </span>
               </div>
-              <div className="profile-card-sub">{p.id}</div>
+              <div className="profile-card-sub">{p.description ?? p.id}</div>
             </button>
           ))}
         </div>

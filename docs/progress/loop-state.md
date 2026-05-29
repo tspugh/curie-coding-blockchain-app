@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 22 — UNIT-SettingsScreen-narrow: profile picker + wallet panel)
+**Last updated:** 2026-05-29 (tick 23 — UNIT-profile-descriptions: close tick-22 NIT 4)
 **Current mode:** `impl`
-**Current tick:** 22
-**Last focus:** New Settings view with profile picker (3 cards, real `client.profiles.listProfiles()`) + wallet info panel (address, mode, balance, agent fee, chain id, RPC — all real sources). Agent registry table EXCLUDED (prototype's hardcoded "agent-7B" + fake addresses); non-functional toolbar buttons EXCLUDED. Strict-review caught 1 MEDIUM (`<WalletBalance />` reused in dt/dd context rendered its own `<span class="label">Balance</span>` causing visual stutter) + 2 LOWs (missing aria-pressed, unused events prop). All 3 closed inline by extracting `formatStt`/`formatSttCompact` to new `web/src/format.ts`, using `useWalletBalance` directly in Settings, adding `aria-pressed` to profile cards, dropping unused events prop. Nav now has all 4 tabs matching prototype: Dashboard / Create / Network / Settings.
-**Last commit:** `<this tick>` (tick 22 — UNIT-SettingsScreen-narrow)
+**Current tick:** 23
+**Last focus:** Added `description?: string` field to the `Profile` interface and populated it on `DEFAULT_PROFILES` (provider: "Files coverage-exception requests with attached clinical evidence."; insurer: "Attaches the coverage policy and accepts or appeals the arbiter ruling."). Settings.tsx profile cards now render `p.description ?? p.id` so the sub-line is genuinely informative instead of just "provider"/"insurer". Added `src/profiles/profiles.test.ts` with 3 node:test cases pinning the baseline shape + description-present invariant. Lib test count 60 → 63 (+3). Closes tick-22 NIT 4.
+**Last commit:** `<this tick>` (tick 23 — UNIT-profile-descriptions)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)
