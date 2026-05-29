@@ -975,3 +975,231 @@ deferred to the queued UNIT-3-refactor unit and the sentinel-convention
 follow-up respectively.
 
 ### Final tick-10 verdict: PASS (0 findings remain)
+
+---
+
+# Tick 11 — strict review
+
+**Reviewer:** strict-review subagent, tick 11, gatekeeper.
+**Scope:** UNIT-3-refactor (shared scenario-test helper extraction) +
+SPEC-0001 R6b prose-update applying amendment 0005.
+
+## What changed this tick
+
+1. **New file:** `src/protocol/scenarioFixtures.test-helpers.ts` (123 lines,
+   4 named exports — `assertNoPHI`, `loadScenarioFile`, `assertPacketShape`,
+   `assertRequestedDrugShape`). No default export, no `node:test` import, no
+   top-level test registrations.
+2. **Refactored:** three scenario test files
+   (`scenarios.{partd-approvable,commercial-policy-void,medicaid-denied-then-appealed}.test.ts`)
+   import from the helper. Scenario-distinct assertions (PartD planId
+   discriminant; Commercial carrier/product/revision + R23 dual-slice +
+   header-line `Approve`/no-`PolicyInvalidated` + `policyVoidedClauseIndices`;
+   Medicaid state/mco/revision + `0x...0003` sentinel-address exact-equality
+   + Deny-before-Approve R14a ordering) stay INLINE in each test.
+3. **`docs/specs/0001-mvp0-coverage-negotiation.md`** R6b prose rewritten to
+   apply amendment 0005: `PolicyFlagged` becomes an annotation event alongside
+   `Ruled` on Approve, NOT a route to terminal `PolicyInvalidated`; the
+   `PolicyInvalidated` state is retained but narrowed to the meta-policy
+   edge case. §3.5 `Ruled` event payload signature gains
+   `policyVoidedClauseIndices`. §3.6 state-machine table row narrowed to
+   "every policy clause consulted is non-compliant; meta-policy failure".
+
+## R-citations and source-of-truth
+
+- Strict-review tick 9 NIT 2 (DRY: 3× copy of `assertNoPHI`) — CLOSED this tick.
+- Strict-review tick 10 NIT 2 (same DRY deferral) — CLOSED this tick.
+- Amendment 0005 (`docs/amendments/0005-policy-void-r23-supersedes-r6b.md`)
+  lines 86-89 — the "A future tick should: Update SPEC-0001 §3 R6b prose…
+  Add `policyVoidedClauseIndices` to the `Ruled` event payload in §3.5" items
+  are BOTH applied this tick.
+
+## Required-read pass
+
+1. **Helper module purity (CLEAN).** `grep -n 'node:test\|^test('` returns
+   nothing; only `node:assert/strict`, `node:fs`, `node:path`, `node:url` are
+   imported. Four named exports, zero default exports. Module has no
+   side-effects at import time.
+2. **PHI regex byte-equivalence (CLEAN).** Diffed the helper's seven
+   `assert.equal(/.../, false, "…")` lines against the originals in
+   `git show HEAD:src/protocol/scenarios.partd-approvable.test.ts` lines
+   40-60. Every regex is byte-identical:
+   - `/\bSSN\b\s*[:#]?\s*\d{3}/i`
+   - `/\d{3}-\d{2}-\d{4}/`
+   - `/\b\d{2}\/\d{2}\/\d{4}\b/`
+   - `/[A-Z]{2}\d{6,}/`
+   - `/\b(?:\(\d{3}\)\s?|\d{3}[-.])\d{3}[-.\s]?\d{4}\b/`
+   - `/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/`
+   - `/\bMRN\s*[:#]?\s*\d{7,}\b/i`
+   The HTML-comment strip (`.replace(/<!--[\s\S]*?-->/g, "")`) is preserved.
+3. **`assertPacketShape` matches §3.4 (CLEAN).** Enforces `references[]`
+   non-empty, `references[0].url` non-empty string, `references[0].contentHash`
+   keccak256 hex (0x + 64 hex), `submittedAt` positive finite number,
+   `submittedBy` 0x + 40 hex. Matches what the original partd test asserted
+   at lines 119-145 of the pre-refactor file.
+4. **`assertRequestedDrugShape` matches R4 (CLEAN).** Five string fields
+   (`ndc`, `rxnormCui`, `name`, `dose`, `requestedFor`) + numeric-or-numeric-string
+   `quantity`. Matches the original partd R4 test at lines 104-115.
+5. **Sentinel-address asymmetry preserved (CLEAN).** Only the medicaid test
+   pins `submittedBy === "0x0000000000000000000000000000000000000003"`
+   (lines 102-106 of the refactored file). The partd and commercial tests
+   do NOT pin a sentinel — same as before the refactor. Confirmed by
+   grepping `0x000` in the original `git show HEAD:...commercial-policy-void.test.ts`
+   — no exact-equality pin there.
+6. **R23 dual-slice block preserved INLINE in commercial test (CLEAN).**
+   Lines 101-136 of the refactored commercial test contain the
+   `fda-label-indication` + `guideline-recommendation` co-presence check and
+   the closed-enum invariant — byte-for-byte the same as the original
+   `git show HEAD:...commercial-policy-void.test.ts` lines 180-215.
+7. **Spec edit faithfulness (CLEAN).**
+   - R6b cites `[docs/amendments/0005-policy-void-r23-supersedes-r6b.md]`
+     explicitly in the leading parenthetical.
+   - R6b says `PolicyFlagged` IS emitted "as an annotation event alongside
+     the `Ruled` event (not a separate state route)" — matches amendment
+     0005 line 56-58 verbatim in intent ("REPURPOSED as an annotation event
+     emitted alongside `Ruled(... decision=Approve ...)`").
+   - §3.5 `Ruled` event signature gains `policyVoidedClauseIndices` as the
+     8th positional field — matches amendment line 87.
+   - §3.6 state-machine row for the `PolicyInvalidated` transition narrowed
+     to "every policy clause consulted is non-compliant; meta-policy
+     failure" — matches amendment lines 59-63.
+   - R6, R6a, R6c are untouched (confirmed by `git diff HEAD`).
+8. **Test count (CLEAN): 44.** `node --import tsx --test "src/**/*.test.ts"`
+   returns `# tests 44 / # pass 44 / # fail 0`. Per-file counts: partd 7,
+   commercial 8, medicaid 8 — identical to pre-refactor.
+9. **tsc (CLEAN).** `npx tsc -p tsconfig.json --noEmit` exits 0 with no
+   output. No type drift introduced.
+
+## Findings
+
+### NIT 1 — `loadScenarioFile` does not validate slug/filename against path traversal
+
+**File:** `src/protocol/scenarioFixtures.test-helpers.ts:58-61`
+
+```ts
+export function loadScenarioFile(slug: string, filename: string): string {
+  const filePath = path.resolve(REPO_ROOT, "demo-data", "scenarios", slug, filename);
+  return fs.readFileSync(filePath, "utf-8");
+}
+```
+
+`path.resolve` does NOT enforce that the resolved path stays under
+`REPO_ROOT/demo-data/scenarios/`. A caller passing `slug = "../../etc"` or
+`filename = "../../../etc/passwd"` would escape the fixture root. For a TEST
+helper called exclusively from in-repo test files with hardcoded
+`SLUG = "partd-approvable" | "commercial-policy-void" | "medicaid-denied-then-appealed"`
+constants, this is academic — the attack surface is zero. But a strict
+reviewer flags it because:
+
+1. The function takes `slug: string` and `filename: string` (open-ended
+   types), not a constrained string-literal union.
+2. The doc comment on lines 53-57 promises files from
+   `demo-data/scenarios/<slug>/<filename>` without saying "trusted callers
+   only."
+
+**Suggested fix (optional):** narrow the parameter types to the three
+fixture slugs and a fixed filename union, OR after `path.resolve` assert
+`filePath.startsWith(path.resolve(REPO_ROOT, "demo-data", "scenarios") + path.sep)`.
+The latter is one line. Either is defensible to defer if the helper stays
+test-only and grep-pinned. Severity: NIT (academic for test code).
+
+### NIT 2 — spec §3.5 event-list edit doesn't flag the contract decode gap
+
+**File:** `docs/specs/0001-mvp0-coverage-negotiation.md:116`
+
+The §3.5 `Ruled` event signature now includes `policyVoidedClauseIndices`
+as the 8th positional field. Amendment 0005 lines 76-89 are clear that the
+contract's `handleResponse` decode path does NOT yet read this field — that
+work is deferred to "SPEC-0004 Phase 1 contract work." But the spec line
+itself does not carry a "not yet decoded by contract; future tick" marker;
+a reader looking only at §3.5 would assume the event already carries the
+field on-wire.
+
+The R6b paragraph at line 54 links to amendment 0005 (which spells out the
+deferral), so a careful reader can reach the gap. The amendment itself is
+explicit. This is a minor wording-completeness NIT, not a contradiction.
+Severity: NIT (documentation gap, not a correctness gap).
+
+**Suggested fix (optional):** add a trailing parenthetical to the §3.5
+signature: `…receiptId, policyVoidedClauseIndices)` *(field added by
+amendment 0005; contract decode lands in SPEC-0004 Phase 1)*. One line.
+
+## Symmetry / regression checks (no findings)
+
+- **Test names: unchanged.** All 23 scenario-test names in TAP output are
+  byte-identical to pre-refactor. The harness's "no rename" guarantee holds.
+- **`scenarioFile()` local helper retained in each test file.** All three
+  files keep a 3-line `scenarioFile = (name) => path.resolve(...)` for
+  `fs.existsSync` checks before reading. Not duplicated against the helper
+  — `loadScenarioFile` is for *reading*, `scenarioFile` is for *path
+  construction* (existsSync). Clean separation.
+- **No unused imports.** Each of the three test files imports exactly the
+  helper exports it uses: partd uses all four; commercial uses all four;
+  medicaid uses all four. `fs`, `path`, `assert`, `test`, `PayerLine` all
+  still used inline.
+- **`REPO_ROOT` resolution in helper.** Uses
+  `path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")`
+  from `src/protocol/scenarioFixtures.test-helpers.ts`, which lands at the
+  repo root. Same two-`..`-step convention the per-file `scenarioFile`
+  helpers use. Consistent.
+- **Comments in the helper are descriptive, not load-bearing.** The JSDoc
+  on each export accurately states what it asserts. No lying comments. No
+  dead code.
+- **§3.4 closed-enum slice.kind check** still asserted in commercial (lines
+  129-134) and medicaid (lines 122-129); the refactor did not centralize
+  this into the helper because each scenario has a slightly different
+  treatment (commercial demands BOTH `fda-label-indication` AND
+  `guideline-recommendation` presence; medicaid only asserts the enum
+  membership). Leaving it inline is correct — generalizing would have
+  required a flag-parameter, which adds rather than removes complexity.
+- **`scenarioFixtures.test-helpers.ts` filename convention.** The
+  `.test-helpers.ts` suffix is a convention; the test-runner glob
+  `"src/**/*.test.ts"` does NOT pick this file up (verified: only 44 tests
+  ran, no spurious helper-as-test execution). The naming choice is correct
+  and the glob-exclusion is implicit-but-load-bearing.
+- **Amendment 0005 `PolicyInvalidated` narrowing.** The spec's §3.6 row
+  description ("every policy clause consulted is non-compliant; meta-policy
+  failure") matches amendment line 61-62 ("the agent cannot find any valid
+  ruling because every policy clause it consulted is non-compliant (a
+  meta-policy failure, not a per-request void)") in substance. The
+  state-machine routing itself is unchanged (the row still exists; only
+  its semantic scope is narrowed) — consistent with amendment line 77-83
+  ("non-code-changing... No state-machine change required").
+
+## Tick-11 verdict
+
+**OVERALL: PASS — 0 actionable findings, 2 NITs**
+
+Severity breakdown:
+- **HIGH:** 0 open.
+- **MEDIUM:** 0 open.
+- **LOW:** 0 open.
+- **NIT:** 2 (Finding 1: `loadScenarioFile` path-traversal — academic for
+  test helper; Finding 2: §3.5 event-signature line could carry a
+  contract-decode-deferred parenthetical for completeness).
+
+The refactor is structurally clean. All four helper exports are named,
+no `node:test` import, no top-level test registrations. The PHI regex set
+is byte-equivalent to the originals. The §3.4 packet-shape and R4
+requested-drug-shape assertions are preserved exactly. The three
+scenario-distinct assertions (PartD planId; Commercial R23 dual-slice +
+header-line Approve + `policyVoidedClauseIndices`; Medicaid `0x...0003`
+sentinel + R14a Deny-before-Approve) all remain INLINE in their respective
+test files. The pre-refactor sentinel-pin asymmetry (only medicaid pins
+exact equality) is preserved — the refactor did NOT accidentally promote
+or regress it. Test count is 44/44 green. Tsc is clean.
+
+The spec edit faithfully applies amendment 0005: R6b cites the amendment
+explicitly, the `Approve` + `PolicyFlagged`-as-annotation routing is
+correctly described, `policyVoidedClauseIndices` is added to the §3.5
+`Ruled` event signature, and the §3.6 `PolicyInvalidated` row is narrowed
+to the meta-policy edge case. R6, R6a, R6c are untouched as required. The
+contract-decode gap is implicit-via-amendment-link rather than explicit at
+§3.5 (NIT 2), but the amendment itself is unambiguous and the gap is
+correctly deferred to SPEC-0004 Phase 1 work.
+
+Strict-review tick 9 NIT 2 and tick 10 NIT 2 (DRY: 3× `assertNoPHI` copy)
+are CLOSED. The two new NITs are flagged for record-keeping; neither
+blocks landing.
+
+### Final tick-11 verdict: PASS (0 actionable findings; 2 NITs documented)

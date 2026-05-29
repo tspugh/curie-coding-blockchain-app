@@ -1,12 +1,34 @@
 # Coverage — spec-4-implementation branch
 
-**Date:** 2026-05-29 · **Tick:** 10 (UNIT-3c medicaid-denied-then-appealed fixtures + scenario test)
+**Date:** 2026-05-29 · **Tick:** 11 (UNIT-3-refactor + R6b spec-prose update)
 **Branch:** `spec-4-implementation`
 **Last known test counts:** hardhat 28/28 ✓ · lib (node --test) 44/44 ✓
 
 ---
 
-## What landed this tick
+## Tick-11 entry (UNIT-3-refactor + R6b spec-prose update)
+
+**What landed:** New test-helper module `src/protocol/scenarioFixtures.test-helpers.ts`
+(123 lines, 4 named exports: `assertNoPHI`, `assertPacketShape`, `assertRequestedDrugShape`,
+`loadScenarioFile`) and refactored scenario test files
+(`scenarios.partd-approvable.test.ts`, `scenarios.commercial-policy-void.test.ts`,
+`scenarios.medicaid-denied-then-appealed.test.ts`) to import that helper — net removal
+of ~240 lines across the three files. Net source LOC delta: **−117 lines** (240 removed
+− 123 added). Spec edit: `docs/specs/0001-mvp0-coverage-negotiation.md` R6b prose narrowed
+per amendment 0005; §3.5 `Ruled` event payload documents `policyVoidedClauseIndices`.
+**No contract changes, no web app changes.**
+
+**Coverage verdict:** No new R-citations gain coverage; no R-citations regress. The R6b
+spec-prose change is informational — actual contract-side implementation of
+`policyVoidedClauseIndices` in `handleResponse` is a future unit. Test counts held
+exactly: lib 44/44, hardhat 28/28.
+
+**Tick-11 verdict: PASS-for-this-tick.** Refactor improved maintainability (−117 net
+source LOC) without coverage loss.
+
+---
+
+## What landed tick 10
 
 Five static fixture files under `demo-data/scenarios/medicaid-denied-then-appealed/`
 (`note.md`, `packet.json`, `payer-profile.json`, `requested-drug.json`,

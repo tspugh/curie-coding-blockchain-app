@@ -1,3 +1,157 @@
+# Security findings — 2026-05-29 tick 11 (scenarioFixtures.test-helpers extraction + R6b prose narrowing)
+
+**Verdict:** PASS (0 findings)
+
+## Diff scope
+
+1. **NEW** `src/protocol/scenarioFixtures.test-helpers.ts` (123 lines) —
+   four named exports (`assertNoPHI`, `loadScenarioFile`, `assertPacketShape`,
+   `assertRequestedDrugShape`) consolidating the per-test inline checks from
+   the three UNIT-3 scenario test files.
+2. Refactor of `src/protocol/scenarios.partd-approvable.test.ts`,
+   `scenarios.commercial-policy-void.test.ts`, and
+   `scenarios.medicaid-denied-then-appealed.test.ts` to import the four
+   helpers in lieu of duplicated inline regex / shape assertions. Test
+   semantics, fixture inputs, and assertion failure modes unchanged.
+3. `docs/specs/0001-mvp0-coverage-negotiation.md` — R6b prose narrowed to
+   reflect amendment 0005 (R6b now defers to SPEC-0004 §2.6 R23 for the
+   on-label policy-void rule). `Ruled` event signature gains
+   `policyVoidedClauseIndices` field, and the §3.4 state-transition table
+   row for `PolicyInvalidated` narrows the entry condition. No executable
+   change to contract or simulated backend.
+
+## Per-concern verdict
+
+### 1. Path traversal in `loadScenarioFile(slug, filename)` — PASS
+
+The helper resolves the fixture path with
+`path.resolve(REPO_ROOT, "demo-data", "scenarios", slug, filename)` (line
+59). Because `path.resolve` accepts and follows `..` segments,
+`slug = "../.."` or `filename = "../../package.json"` would let a caller
+escape the `demo-data/scenarios/` subtree and read any file under
+`REPO_ROOT` (or above, since `REPO_ROOT` is computed by walking two parents
+up from the source file at line 6 and resolves into the project root).
+
+**Why this is acceptable in tick 11:** the helper is a `.test-helpers.ts`
+file imported only by the three UNIT-3 `*.test.ts` files in
+`src/protocol/`. Every call site in this tick passes a hardcoded literal
+slug (`"partd-approvable"`, `"commercial-policy-void"`,
+`"medicaid-denied-then-appealed"`) and a hardcoded literal filename
+(`"note.md"`, `"packet.json"`, etc.) — no test-runtime, network, or
+filesystem-derived value reaches the helper. Verified by grepping the
+three refactored files: the `SLUG` constant in each is a string literal,
+and the second arg to every `loadScenarioFile(...)` call is a string
+literal. The helper is wired into Node's test runner only
+(`node --import tsx --test "src/**/*.test.ts"`) — there is no HTTP
+endpoint, RPC handler, on-chain interface, or build-time consumer that
+funnels untrusted input into the helper. Severity is therefore **low (no
+exploitable vector in the shipped surface)**.
+
+**Recommended hardening (tracked but NOT a tick-11 blocker):** before
+this helper grows a non-test consumer (or before any future scenario
+ingestion path accepts user-controlled slugs), add a slug allowlist
+(reject `slug` if it does not match `/^[a-z0-9-]+$/` or if `filename`
+contains `..`) and assert
+`resolvedPath.startsWith(path.resolve(REPO_ROOT, "demo-data", "scenarios"))`.
+For tick 11 the missing guard is a contract-level documentation gap, not
+a security finding. Recording as advisory only.
+
+### 2. `assertNoPHI` regex-set parity with the inlined originals — PASS
+
+Diffed the helper's seven assertions (lines 14-51) against the inline
+regex blocks removed from each of the three refactored test files. All
+seven patterns match exactly, character-for-character, in the same order
+and with the same flags:
+
+| # | Pattern | Helper line | Original inline location |
+|---|---------|-------------|--------------------------|
+| 1 | `/\bSSN\b\s*[:#]?\s*\d{3}/i` | 17 | partd line 38 / void line 38 / medicaid line 38 |
+| 2 | `/\d{3}-\d{2}-\d{4}/` | 22 | partd line 39 / void line 39 / medicaid line 39 |
+| 3 | `/\b\d{2}\/\d{2}\/\d{4}\b/` | 27 | partd line 40 / void line 40 / medicaid line 40 |
+| 4 | `/[A-Z]{2}\d{6,}/` | 32 | partd line 41 / void line 41 / medicaid line 41 |
+| 5 | `/\b(?:\(\d{3}\)\s?\|\d{3}[-.])\d{3}[-.\s]?\d{4}\b/` | 37 | partd lines 43-47 / void / medicaid |
+| 6 | `/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/` | 42 | partd lines 48-52 / void / medicaid |
+| 7 | `/\bMRN\s*[:#]?\s*\d{7,}\b/i` | 47 | partd lines 53-58 / void / medicaid |
+
+The HTML-comment stripping (`content.replace(/<!--[\s\S]*?-->/g, "")`,
+line 15) also matches the original inline `stripped =
+content.replace(/<!--[\s\S]*?-->/g, "")` pattern in every test. No regex
+drift; no semantic drift. The original per-test `fileLabel` strings
+(`"note.md"`, `"expected-outcome.md"`) are now passed in by the caller
+rather than inlined into the failure-message templates, but the resulting
+assertion messages are equivalent. R1 coverage is preserved.
+
+### 3. Hardcoded secrets / sensitive constants in helper — PASS
+
+Grep across `scenarioFixtures.test-helpers.ts`:
+- Zero matches for `0x[0-9a-fA-F]{40,}` literal strings (the `0x + 64
+  hex` and `0x + 40 hex` patterns appear only inside regex character
+  classes at lines 87 and 99, used for **validating** packet
+  `contentHash` and `submittedBy` shape — neither is a hardcoded value).
+- Zero matches (case-insensitive) for `api_key`, `apikey`, `secret`,
+  `token`, `password`, `bearer`, `private`, `mnemonic`, or `seed`.
+- No `.env` reads, no `process.env` accesses, no network calls, no
+  dynamic `require`/`import`.
+
+The helper's only filesystem entry point is the `readFileSync` at line
+60 (covered under concern 1); the only I/O is reading the named scenario
+fixture file as UTF-8. Nothing in the helper writes to disk, opens
+sockets, spawns child processes, or evaluates dynamic code.
+
+### 4. R6b prose change — security claim audit — PASS
+
+The R6b narrowing in `docs/specs/0001-mvp0-coverage-negotiation.md` is a
+prose-only documentation edit. It cross-references amendment
+`docs/amendments/0005-policy-void-r23-supersedes-r6b.md` (which was
+landed in tick 9) and aligns the §2 requirement text with the §3.4
+state-transition row and the `Ruled` event signature. The edit:
+- Adds a `policyVoidedClauseIndices: number[]` field to the documented
+  `Ruled(reqId, requestId, decision, coveredAmount, rationaleHash,
+  clauseRef, receiptId, policyVoidedClauseIndices)` event signature
+  (line 116 of the spec). No matching change in
+  `contracts/contracts/CoverageNegotiation.sol` is made in this tick —
+  the contract still emits the pre-amendment `Ruled` event signature.
+  This is a **known spec/code drift recorded by amendment 0005**, not a
+  security claim about runtime behaviour, and the spec's amendment
+  callout flags it explicitly ("Narrowed by amendment …; SPEC-0004 §2.6
+  R23 is now the canonical on-label policy-void rule"). The drift is
+  scheduled to be closed in a later UNIT once the contract is regenerated
+  to emit the extended event.
+- Narrows the state-transition row for `PolicyInvalidated` from "any
+  relied-on clause non-compliant" to "every policy clause consulted is
+  non-compliant; meta-policy failure" (line 130). This is a tightening
+  of when the terminal state fires; it cannot expand attacker surface,
+  only contract it.
+- Does NOT assert any new contract-enforced security property. There is
+  no "the contract enforces X" claim in the new prose that lacks contract
+  backing — the prose explicitly states the narrowed `PolicyInvalidated`
+  is **retained but rare in v0** and **may be removed in v1**, and that
+  the canonical on-label rule lives in SPEC-0004 §2.6 R23. No
+  security-relevant integrity claim hangs on the edit.
+
+R1 (no clinical data on-chain) is untouched. R6a (deterministic covered
+amount = `min(requested, benchmarkCap)`) is untouched. R6c (bounded N
+rounds appeal) is untouched. R11 (party-action gating) is untouched.
+The amendment-aware narrowing leaves every security invariant in the
+spec intact.
+
+## Notes
+
+- No new dependencies, no new external calls, no new ABI changes, no
+  new on-chain disclosure surface.
+- `src/contract/` is unmodified in tick 11 — the spec narrowing is a
+  prose-only forward reference to amendment 0005, with the implementation
+  change deferred per the existing amendment plan.
+- The three refactored test files retain their pre-refactor `scenarioFile()`
+  local helper for `fs.existsSync` probes; this preserves the
+  test-failure messages that quote the full filesystem path on missing
+  fixtures. No regression in error reporting.
+- Recommended (advisory, not blocking): when this helper is reused
+  outside the test surface, add the slug-allowlist + prefix-startsWith
+  guard described under concern 1.
+
+---
+
 # Security findings — 2026-05-29 tick 10 (UNIT-3c medicaid-denied-then-appealed fixtures)
 
 **Verdict:** PASS (0 findings)

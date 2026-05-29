@@ -12,55 +12,14 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { PayerLine } from "./ladders.js";
+import { assertNoPHI, assertPacketShape, assertRequestedDrugShape, loadScenarioFile } from "./scenarioFixtures.test-helpers.js";
 
-const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const SCENARIO_DIR = path.join(PROJECT_ROOT, "demo-data", "scenarios", "medicaid-denied-then-appealed");
-
-const scenarioFile = (name: string) => path.join(SCENARIO_DIR, name);
-
-// PHI regex set — applied to any synthetic narrative file in the scenario.
-// Slips synthetic patterns ("MRN 000-MED-003": <7 digits before dash; NDC 5-4-2: not 3-3-4 phone).
-function assertNoPHI(content: string, fileLabel: string): void {
-  const stripped = content.replace(/<!--[\s\S]*?-->/g, "");
-  assert.equal(
-    /\bSSN\b\s*[:#]?\s*\d{3}/i.test(stripped),
-    false,
-    `${fileLabel}: must not contain SSN marker patterns`,
-  );
-  assert.equal(
-    /\d{3}-\d{2}-\d{4}/.test(stripped),
-    false,
-    `${fileLabel}: must not contain SSN-format digit strings`,
-  );
-  assert.equal(
-    /\b\d{2}\/\d{2}\/\d{4}\b/.test(stripped),
-    false,
-    `${fileLabel}: must not contain MM/DD/YYYY DOB`,
-  );
-  assert.equal(
-    /[A-Z]{2}\d{6,}/.test(stripped),
-    false,
-    `${fileLabel}: must not contain driver-license-shaped identifiers`,
-  );
-  assert.equal(
-    /\b(?:\(\d{3}\)\s?|\d{3}[-.])\d{3}[-.\s]?\d{4}\b/.test(stripped),
-    false,
-    `${fileLabel}: must not contain phone-number shapes`,
-  );
-  assert.equal(
-    /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/.test(stripped),
-    false,
-    `${fileLabel}: must not contain email addresses`,
-  );
-  assert.equal(
-    /\bMRN\s*[:#]?\s*\d{7,}\b/i.test(stripped),
-    false,
-    `${fileLabel}: must not contain real-shaped MRNs (7+ contiguous digits)`,
-  );
-}
+const SLUG = "medicaid-denied-then-appealed";
+const scenarioFile = (name: string) => path.resolve(
+  path.dirname(new URL(import.meta.url).pathname), "..", "..", "demo-data", "scenarios", SLUG, name
+);
 
 test("UNIT-3c medicaid-denied-then-appealed R4 — all five required files exist", () => {
   for (const file of ["note.md", "packet.json", "payer-profile.json", "requested-drug.json", "expected-outcome.md"]) {
@@ -73,7 +32,7 @@ test("UNIT-3c medicaid-denied-then-appealed R1 — note.md is synthetic, non-emp
   const notePath = scenarioFile("note.md");
   assert.equal(fs.existsSync(notePath), true, `note.md must exist at ${notePath}`);
 
-  const content = fs.readFileSync(notePath, "utf-8");
+  const content = loadScenarioFile(SLUG, "note.md");
   assert.ok(content.length > 500, `note.md must be >500 bytes (got ${content.length})`);
 
   assertNoPHI(content, "note.md");
@@ -86,8 +45,7 @@ test("UNIT-3c medicaid-denied-then-appealed R1 — note.md is synthetic, non-emp
 });
 
 test("UNIT-3c medicaid-denied-then-appealed R1 — expected-outcome.md contains no PHI markers", () => {
-  const outcomePath = scenarioFile("expected-outcome.md");
-  const content = fs.readFileSync(outcomePath, "utf-8");
+  const content = loadScenarioFile(SLUG, "expected-outcome.md");
   // R1 applies to ALL curated content, not just note.md. expected-outcome.md is
   // synthetic narrative authored alongside the note and shares the same exposure.
   assertNoPHI(content, "expected-outcome.md");
@@ -97,8 +55,7 @@ test('UNIT-3c medicaid-denied-then-appealed R4 — payer-profile.json has payerL
   const profilePath = scenarioFile("payer-profile.json");
   assert.equal(fs.existsSync(profilePath), true, `payer-profile.json must exist at ${profilePath}`);
 
-  const raw = fs.readFileSync(profilePath, "utf-8");
-  const profile = JSON.parse(raw) as Record<string, unknown>;
+  const profile = JSON.parse(loadScenarioFile(SLUG, "payer-profile.json")) as Record<string, unknown>;
 
   assert.equal(profile["payerLine"], "Medicaid", 'payer-profile.json must have payerLine === "Medicaid"');
   assert.equal(PayerLine.Medicaid, 2, "guard: PayerLine.Medicaid enum value drift");
@@ -128,55 +85,20 @@ test("UNIT-3c medicaid-denied-then-appealed R4 — requested-drug.json has all s
   const drugPath = scenarioFile("requested-drug.json");
   assert.equal(fs.existsSync(drugPath), true, `requested-drug.json must exist at ${drugPath}`);
 
-  const drug = JSON.parse(fs.readFileSync(drugPath, "utf-8")) as Record<string, unknown>;
-
-  for (const field of ["ndc", "rxnormCui", "name", "dose", "requestedFor"]) {
-    const val = drug[field];
-    assert.ok(
-      typeof val === "string" && val.length > 0,
-      `requested-drug.json.${field} must be a non-empty string`,
-    );
-  }
-  const qty = drug["quantity"];
-  const qtyOk =
-    (typeof qty === "number" && Number.isFinite(qty)) ||
-    (typeof qty === "string" && qty.length > 0 && Number.isFinite(Number(qty)));
-  assert.ok(qtyOk, 'requested-drug.json.quantity must be a number or numeric string');
+  const drug = JSON.parse(loadScenarioFile(SLUG, "requested-drug.json")) as Record<string, unknown>;
+  assertRequestedDrugShape(drug);
 });
 
 test("UNIT-3c medicaid-denied-then-appealed §3.4 — packet.json has references[], submittedAt: number, submittedBy: 0x+40hex, sentinel address 0x0000000000000000000000000000000000000003", () => {
   const packetPath = scenarioFile("packet.json");
   assert.equal(fs.existsSync(packetPath), true, `packet.json must exist at ${packetPath}`);
 
-  const packet = JSON.parse(fs.readFileSync(packetPath, "utf-8")) as Record<string, unknown>;
+  const packet = JSON.parse(loadScenarioFile(SLUG, "packet.json")) as Record<string, unknown>;
 
-  const references = packet["references"];
-  assert.ok(Array.isArray(references), "packet.json must have a top-level `references` array (SPEC-0004 §3.4)");
-  assert.ok((references as unknown[]).length >= 1, "packet.json must contain at least one EvidenceReference");
-
-  const first = (references as Record<string, unknown>[])[0] as Record<string, unknown>;
-  const url = first["url"];
-  assert.ok(typeof url === "string" && url.length > 0, "EvidenceReference[0].url must be a non-empty string");
-
-  const ch = first["contentHash"];
-  assert.ok(
-    typeof ch === "string" && /^0x[0-9a-fA-F]{64}$/.test(ch),
-    `EvidenceReference[0].contentHash must be a keccak256 hex string (0x + 64 hex); got ${String(ch)}`,
-  );
-
-  const submittedAt = packet["submittedAt"];
-  assert.ok(
-    typeof submittedAt === "number" && Number.isFinite(submittedAt) && submittedAt > 0,
-    `packet.submittedAt must be a positive number (unix seconds per §3.4); got ${typeof submittedAt}`,
-  );
-
-  const submittedBy = packet["submittedBy"];
-  assert.ok(
-    typeof submittedBy === "string" && /^0x[0-9a-fA-F]{40}$/.test(submittedBy),
-    `packet.submittedBy must be a 20-byte hex address (0x + 40 hex); got ${String(submittedBy)}`,
-  );
+  assertPacketShape(packet);
 
   // Lock in the per-scenario sentinel address for this scenario (distinct from commercial=0x...002).
+  const submittedBy = packet["submittedBy"];
   assert.equal(
     submittedBy,
     "0x0000000000000000000000000000000000000003",
@@ -185,7 +107,7 @@ test("UNIT-3c medicaid-denied-then-appealed §3.4 — packet.json has references
 });
 
 test("UNIT-3c medicaid-denied-then-appealed §3.4 — packet.json closed-enum invariant: all slice.kind values are in the SPEC-0004 §3.4 closed enum", () => {
-  const packet = JSON.parse(fs.readFileSync(scenarioFile("packet.json"), "utf-8")) as Record<string, unknown>;
+  const packet = JSON.parse(loadScenarioFile(SLUG, "packet.json")) as Record<string, unknown>;
   const references = packet["references"] as Record<string, unknown>[];
 
   const sliceKindOf = (ref: Record<string, unknown>): string | undefined => {
@@ -211,7 +133,7 @@ test("UNIT-3c medicaid-denied-then-appealed R6c + R14a — expected-outcome.md h
   // R6c (appeal loop): the Medicaid scenario exercises the denied-then-appealed arc —
   // initial PA-criteria denial at (Medicaid, 0), appeal at (Medicaid, 1) flips to Approve.
   // R14a (sequencing): the expected-outcome must document both rulings in order.
-  const content = fs.readFileSync(scenarioFile("expected-outcome.md"), "utf-8");
+  const content = loadScenarioFile(SLUG, "expected-outcome.md");
   assert.ok(content.length > 200, `expected-outcome.md must be >200 bytes (got ${content.length})`);
 
   // Both ruling words must appear in the document (round-0 Deny AND round-1 Approve).

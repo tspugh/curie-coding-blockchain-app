@@ -1,27 +1,37 @@
-# Solidity compliance — tick 10
+# Solidity compliance — tick 11
 
 **Date:** 2026-05-29
 **Scope:** no `contracts/` diff this tick — audit deferred to next contract-touching tick
 **Verdict:** PASS (no contracts/ diff → no new findings)
 
-## This tick's diff scope (UNIT-3c)
+## This tick's diff scope
 
-Verified via `git diff --name-only HEAD~1..HEAD -- contracts/` (empty result) plus
-`git status` against `contracts/` (clean — no staged, unstaged, or untracked
-changes). UNIT-3c is currently uncommitted/untracked, and consists of:
+Verified via `git diff --name-only HEAD~1..HEAD -- contracts/` (empty result). This
+tick's diff consists of:
 
-- New this tick:
-  - `demo-data/scenarios/medicaid-denied-then-appealed/` (5 fixture files:
-    `expected-outcome.md`, `note.md`, `packet.json`, `payer-profile.json`,
-    `requested-drug.json`)
-  - `src/protocol/scenarios.medicaid-denied-then-appealed.test.ts`
-- No changes to `contracts/contracts/CoverageNegotiation.sol`,
-  `contracts/contracts/mocks/MockAgentPlatform.sol`, or
-  `contracts/test/CoverageNegotiation.test.ts`.
+- Refactor of 3 scenario test files under `src/protocol/`
+- New TS helper module under `src/protocol/`
+- Prose-only edit to `docs/specs/0001-mvp0-coverage-negotiation.md`
+- Progress-file updates under `docs/progress/`
+
+No changes to `contracts/contracts/CoverageNegotiation.sol`,
+`contracts/contracts/mocks/MockAgentPlatform.sol`, or
+`contracts/test/CoverageNegotiation.test.ts`.
 
 Because no Solidity source or contract-level test was touched this tick, no new
 audit pass is warranted. The next contract-touching tick should re-trigger a
 full focused review.
+
+## Spec-side note — R6b prose update (future contract work)
+
+The R6b prose update in `docs/specs/0001-mvp0-coverage-negotiation.md` mentions a
+future `policyVoidedClauseIndices` field on the `Ruled` event. This is a **spec
+change, not yet a contract change** — the on-chain `Ruled` event signature in
+`CoverageNegotiation.sol` is unchanged this tick. Flagging for the next
+contract-touching tick: when implemented, the event-signature audit checks
+(ABI width, indexed-vs-non-indexed positioning, gas cost of additional
+dynamic-array parameter, and event-emission CEI placement) will need to run
+fresh against the new field.
 
 ## Carry-forward — prior open findings
 
@@ -35,11 +45,12 @@ From tick 4 (UNIT-2):
   `uint8 indexed round` width gap was explicitly noted as forward-compatible
   and accepted, not an open finding.
 
-Ticks 8 (UNIT-3a, partd-approvable fixtures + scenario test) and 9 (UNIT-3b,
-commercial-policy-void fixtures + scenario test + amendment 0005) also touched
+Ticks 8 (UNIT-3a), 9 (UNIT-3b), 10 (UNIT-3c), and 11 (this tick) also touched
 no `contracts/` files and added no new findings.
 
-No unresolved compliance items carry into tick 10.
+No unresolved compliance items carry into tick 11. One spec-side carry-forward
+flag (R6b `policyVoidedClauseIndices`) is noted above for the next
+contract-touching tick.
 
 ## Tick 4 (UNIT-2) audit — preserved for reference
 
