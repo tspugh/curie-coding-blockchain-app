@@ -236,10 +236,23 @@ export function setActiveClientProfile(profileId: string): void {
 
 /**
  * Address of the second-wallet signer. Create.tsx reads this to populate the
- * insurer field of the new negotiation so R2b (provider ≠ insurer) is
- * satisfied and the insurer's engage() can subsequently sign successfully.
+ * insurer field of the new negotiation so SPEC-0004 R2b (provider ≠ insurer)
+ * is satisfied and the insurer's engage() can subsequently sign successfully.
+ *
+ * In real mode this is the genuine `insurerClient.wallet.address` (a second
+ * EOA whose key lives in `VITE_PRIVATE_KEY_INSURER`). In simulated mode the
+ * two clients are the SAME instance so their state-machine survives profile
+ * flips (tick-25 MEDIUM 1 closure) — which means their wallet addresses are
+ * identical, which would trip R2b's `providerAddr == insurerAddr` revert.
+ * The simulated backend doesn't authenticate `msg.sender`, so we hand back a
+ * fixed synthetic counterparty address that's guaranteed distinct from any
+ * real provider address. R2b passes; engage()/accept() in simulated mode
+ * succeed regardless of who actually called them (sim ignores auth).
  */
-export const INSURER_ADDRESS: string = insurerClient.wallet.address;
+const SIMULATED_INSURER_ADDRESS = "0x0000000000000000000000000000000000c0c0c0";
+export const INSURER_ADDRESS: string = IS_REAL
+  ? insurerClient.wallet.address
+  : SIMULATED_INSURER_ADDRESS;
 
 /**
  * The one `client` the UI holds. A Proxy that dispatches every property

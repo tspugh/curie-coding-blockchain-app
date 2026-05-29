@@ -2,6 +2,26 @@
 
 Last run: tick 40 — 2026-05-29 — **12/35 pass** (was 9/35 at tick 39)
 
+## Tick 41 update — 13/35
+
+The "agent-browser click bug" diagnosed in tick 39 was a **misdiagnosis**. The click
+DOES fire React's `onSubmit`; `onSubmit` DOES validate; `onSubmit` DOES call
+`createContract`. The contract was reverting with `"create: self-contract"`
+(SPEC-0004 R2b) because in simulated mode `insurerClient === providerClient` (shared
+state — tick-25 MEDIUM 1 closure) so `INSURER_ADDRESS === providerClient.wallet.address`
+and R2b's `providerAddr == insurerAddr` predicate rejected every create.
+
+Fix: `web/src/client.ts` exports a fixed synthetic distinct counterparty address
+(`0x…c0c0c0`) when `!IS_REAL`. Sim backend doesn't authenticate `msg.sender` so
+this works for engage/accept calls too. Real mode unchanged — still uses the genuine
+second-wallet address.
+
+Score 12/35 → **13/35**. Scenario A's first assertion ("request filed in Open state")
+now passes. Scenario A still fails at "policy attached -> Ready" — a separate
+silent-failure in the engage flow where clicking `engage-load-compliant` doesn't
+make the `engage-submit` button appear (likely a React re-render timing issue or
+an unmet predicate in `canEngage`). Queued as `UNIT-engage-flow-silent-fail`.
+
 ## Tick 40 update
 
 The window.__curie API-shape mismatch from tick 39 is fixed (client.ts now exposes
