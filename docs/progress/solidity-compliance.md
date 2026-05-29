@@ -1,12 +1,40 @@
-# Solidity compliance — tick 4 (UNIT-2)
+# Solidity compliance — tick 8
 
-**Verdict:** PASS (0 findings)
+**Date:** 2026-05-29
+**Scope:** no `contracts/` diff this tick — audit deferred to next contract-touching tick
+**Verdict:** PASS (no contracts/ diff → no new findings)
 
-## Findings
+## This tick's diff scope
 
-None.
+Verified via `git diff --name-only origin/main..HEAD -- contracts/` and `git status`:
 
-## Notes
+- New (untracked) this tick:
+  - `demo-data/scenarios/partd-approvable/` (5 markdown + JSON fixtures)
+  - `src/protocol/scenarios.partd-approvable.test.ts`
+- No new changes to `contracts/contracts/CoverageNegotiation.sol`,
+  `contracts/contracts/mocks/MockAgentPlatform.sol`, or
+  `contracts/test/CoverageNegotiation.test.ts` beyond what was already in the
+  cumulative branch diff at tick 4 (UNIT-2).
+
+Because no Solidity source or contract-level test was touched this tick, no new
+audit pass is warranted. The next contract-touching tick should re-trigger a
+full focused review.
+
+## Carry-forward — prior open findings
+
+From tick 4 (UNIT-2):
+
+- **None.** Tick 4 closed with 0 findings (PASS). All seven focused checks
+  (R14a appeal precondition, R2b createContract placement, PacketSubmitted CEI
+  placement, no new externals/storage/modifiers, event-signature width
+  `uint256 round` vs spec `uint8`, cross-callsite ripple in `_fireAgent`, test
+  coverage delta) passed cleanly. The `uint256 indexed round` vs spec's
+  `uint8 indexed round` width gap was explicitly noted as forward-compatible
+  and accepted, not an open finding.
+
+No unresolved compliance items carry into tick 8.
+
+## Tick 4 (UNIT-2) audit — preserved for reference
 
 Reviewed the uncommitted diff against `contracts/contracts/CoverageNegotiation.sol`
 and `contracts/test/CoverageNegotiation.test.ts`. All seven focused checks pass.

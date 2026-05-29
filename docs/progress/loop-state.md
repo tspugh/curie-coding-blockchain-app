@@ -4,14 +4,38 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 7 — emergency-tag; loop session paused at clean stopping point)
-**Current mode:** `creativity` *(per emergency-tag procedure — operator should restart with a fresh session)*
-**Current tick:** 7 *(emergency tag; no new code landed this tick)*
-**Last focus:** Emergency-tag stop — UNIT-3 (curated scenarios × 5 files × 3) requires a dev subagent which is disallowed in the 75–90% token band per procedure
-**Last commit:** `1d0fcea` (tick 6 — UNIT-2-followup-B)
-**Emergency tag:** `tokens-emergency-2026-05-29-1`
+**Last updated:** 2026-05-29 (tick 8 — UNIT-3 partd-approvable scenario landed)
+**Current mode:** `impl` *(token-budget self-throttling deprecated in commit `a68ffe5`; emergency-tag mode flip from tick 7 reverted)*
+**Current tick:** 8
+**Last focus:** UNIT-3 scoped to one-of-three curated scenarios: `demo-data/scenarios/partd-approvable/` (5 R4 files) + `src/protocol/scenarios.partd-approvable.test.ts` (7 assertions pinning §3.4 Packet shape, §3.2 PartD discriminant, R1 PHI guards, R4 file presence)
+**Last commit:** `<this tick>` (tick 8 — UNIT-3 partd-approvable)
+**Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)
+
+### UNIT-3a (LANDED tick 8 — first curated scenario)
+**`demo-data/scenarios/partd-approvable/` + schema-validation test**
+- What landed: 5 R4 fixture files (`note.md`, `packet.json`, `payer-profile.json`, `requested-drug.json`, `expected-outcome.md`) authoring a synthetic 70-year-old Part D RA patient with MTX failure (hepatotoxicity), leflunomide failure (peripheral neuropathy), and sulfa-allergy contraindication to sulfasalazine — step-therapy exception satisfied; Adalimumab 40mg/0.8mL Tier 5 Specialty on SilverScript S5810-001 formulary; mapping to Approve. New test `src/protocol/scenarios.partd-approvable.test.ts` (node:test + node:assert, 6 sub-tests / 7 assertions) pinning: R4 file presence, R1 PHI guards (SSN/DOB/DL + new: phone/email/MRN≥7-digit), R4 payer-profile shape (§3.2 PartD discriminant: `planId` not R8's `planIdOrProduct` shorthand — note the §3.2 vs R8 spec drift documented inline), R4 requested-drug 6 fields, R10 + §3.4 Packet shape (`references`, `submittedAt` number, `submittedBy` 20-byte hex), R4 expected-outcome mentions Approve.
+- R2 partial-coverage marker: **1 of 3 curated cases landed**. R2 is NOT yet complete. UNIT-3b (commercial-policy-void) and UNIT-3c (medicaid-denied-then-appealed) are the remaining scenarios.
+- Gate verdict: hardhat 28/28 ✓ (unchanged — no contracts diff), lib tests 27/27 ✓ (+6), tsc ✓, secret-scan ✓ (only the well-known empty-bytes keccak placeholder + a synthetic `0x…0001` address), Opus solidity-compliance PASS (no contracts diff), Opus security-review PASS (R1 PHI guards in note.md confirmed, no real-shape identifiers), Opus strict-review PASS after 2 iterations (8 total findings landed across iterations 1+2, all 8 closed inline: 2 MEDIUMs `_note` antipattern in payer-profile.json removed; 4 LOWs in test tightening — `submittedAt`/`submittedBy` assertions added, defensive `references` fallback removed (fail-loud), PHI regex set extended with phone/email/MRN, R2-partial documented here; NEW-1 LOW from iter 2 — `submittedAt` union → number-only — closed in iter 3). Coverage gate PASS-for-this-tick (no executable code added; coverage tooling not yet wired). Design-conformance gate 57% — pre-existing UI gap, no regression from this fixture-only tick. Browser-verify DEFERRED — this tick adds no executable UI or contract code to drive against the chain; gate will re-arm when UNIT-4+ web hooks land.
+
+### UNIT-3b (NEW — queued after UNIT-3a)
+**`demo-data/scenarios/commercial-policy-void/` + mirror schema-validation test**
+- Files: `demo-data/scenarios/commercial-policy-void/{note.md, packet.json, payer-profile.json, requested-drug.json, expected-outcome.md}` + `src/protocol/scenarios.commercial-policy-void.test.ts`
+- R-citations: SPEC-0004 §2.1 R1, R2, R4; §3.2 Commercial discriminant (`{ line: "Commercial"; carrier; product; revision; sourceUrl; contentHash }`)
+- Acceptance criterion: scenario folder has all 5 R4 files; `payer-profile.json` has `payerLine: "Commercial"` and a Commercial-shaped `formularyRelease` (NOT planId — use carrier/product/revision); `expected-outcome.md` documents the expected ruling as **PolicyInvalidated** (the "policy void" path — the cited policy clause contradicts the claim-form path, exposing a parse-vs-policy mismatch); test mirrors the partd-approvable test structure.
+
+### UNIT-3c (NEW — queued after UNIT-3b)
+**`demo-data/scenarios/medicaid-denied-then-appealed/` + mirror schema-validation test**
+- Files: `demo-data/scenarios/medicaid-denied-then-appealed/{note.md, packet.json, payer-profile.json, requested-drug.json, expected-outcome.md}` + `src/protocol/scenarios.medicaid-denied-then-appealed.test.ts`
+- R-citations: SPEC-0004 §2.1 R1, R2, R4; §3.2 Medicaid discriminant (`{ line: "Medicaid"; state; mco; revision; sourceUrl; contentHash }`); §2.4 R14a (appeal sequencing — Denial at round 0 → Approve at round 1 simulates the deny-then-appeal arc)
+- Acceptance criterion: scenario folder has all 5 R4 files; `payer-profile.json` has `payerLine: "Medicaid"` and a Medicaid-shaped `formularyRelease` (state/mco/revision); `expected-outcome.md` documents the round-0 Deny and the round-1 Approve-after-appeal narrative; test mirrors the partd-approvable test structure.
+
+### SPEC-0004 R8 ↔ §3.2 inconsistency (NEW — deferred from tick 8 strict-review)
+**Spec-cleanup unit: R8 line 153 says `planIdOrProduct` shorthand; §3.2 line 407 uses the discriminated union with `planId` (PartD) / `carrier+product` (Commercial) / `state+mco` (Medicaid)**
+- Files: `docs/specs/0004-data-and-evidence-model.md`
+- R-citations: SPEC-0004 §2.2 R8; §3.2
+- Acceptance criterion: R8's prose-shorthand list of `formularyRelease` fields is rewritten to either (a) reference §3.2 explicitly ("see §3.2 for the per-line discriminated shape") or (b) match §3.2's per-line field set exactly. The internal inconsistency between the two sections is removed; test `scenarios.partd-approvable.test.ts` line 73 inline comment about the divergence can then be deleted.
 
 ### UNIT-2-followup-B (LANDED tick 6 — createContract guard ordering pinned)
 **R2b zero-address ordering test — prevents silent revert-string drift**
@@ -127,6 +151,7 @@
 
 ## Recent findings (rolling — newest first, last 20)
 
+- **2026-05-29 (tick 8 — UNIT-3a landed, normal full-breadth tick):** First curated scenario (partd-approvable) authored as 5 R4 fixture files + a 7-assertion node:test schema-validation file. The dev+TDD subagents agreed on the §3.4 `references` packet shape; the TDD subagent's initial assertion against `planIdOrProduct` (R8 line 153 prose-shorthand) was corrected to `planId` per §3.2's discriminated TS union (the canonical type definition), with the spec-internal divergence documented inline in the test and queued as a spec-cleanup follow-up unit. Initial strict-review surfaced 6 findings (2 MEDIUM `_note` antipattern, 4 LOW test-tightening); all 6 fixed inline plus 1 NEW LOW (`submittedAt` union widened too far) introduced and closed in iteration 3. Net diff: 5 fixtures + 1 test file. Coverage gate PASS-for-this-tick (no executable code change); design-conformance unchanged at 57% (pre-existing UI gap, not blocked by this fixture tick); browser-verify DEFERRED until UI consumes the new scenarios directory in a later UI tick. R2 marked as **partial (1 of 3 cases)** in the queue — NOT done.
 - **2026-05-29 (tick 7 — emergency tag, loop session paused):** No new code landed this tick. Token budget assessed at ~80% (75–90% band per procedure). The next queued unit UNIT-3 (three curated scenario folders × five synthetic clinical files each = 15 files of medically-coherent demo content) cannot be completed cleanly without a dev subagent, and the procedure forbids dispatching subagents in this band. Per the loop's "don't grind near the cap" principle, this is the right stopping point. **Six commits landed across ticks 1–6**, all gates green at last commit (hardhat 28/28, vitest 21/21, tsc clean, secret-scan clean, Opus solidity-compliance + security + strict-review all PASS on the most recent strict-review iterations). Operator handoff: restart in a fresh session to land UNIT-3+ (web hooks, UI conformance, curated scenarios, browser-verify). The `tokens-emergency-2026-05-29-1` tag marks this stopping point; `git diff start..HEAD` shows the loop's full delivery.
 - **2026-05-29 (tick 6 — UNIT-2-followup-B landed, very-lean tick):** Closed the zero-address ordering gap from tick 4's strict-review LOW finding. Both UNIT-2 follow-ups now landed; SPEC-0004 Phase 1 contract work fully tested. Token budget after tick 6 estimated ~80% — clearly in the 75–90% band per procedure. Next tick must stop dispatching subagents, do small inline work only, and prepare for emergency tag if a non-trivial unit is next. UI units (UNIT-4+) will require a fresh session — they're too large to safely fit in remaining budget.
 - **2026-05-29 (tick 5 — UNIT-2-followup-A landed, lean tick):** Closed the appeal-state edge-coverage gap from tick 4's strict-review. Confirmed by exhaustive testing: the contract's `appeal()` state guard is ordered BEFORE auth + cap checks, so all 9 non-Denied states produce the identical `"appeal: prior ruling not Deny"` revert — no terminal-state guard ordering surprises. Lean tick: skipped Opus gates since change was test-only and the prescribed fix was already vetted. Sim/real parity maintained. Token budget after tick 5 estimated ~75% — next tick should be very lean (skip all subagents per procedure; commit whatever's coherent; prepare for emergency-tag if needed).
