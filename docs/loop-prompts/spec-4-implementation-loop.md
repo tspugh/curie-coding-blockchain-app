@@ -177,7 +177,7 @@ If all gates green:
 
 ## Where the wallet + chain config live
 
-- Dev wallet address: `0xdD4aa2c38332FB7B7584976aE514A47B86946CEA` (50 STT funded; refill at https://testnet.somnia.network/ or via the Discord faucet).
+- Dev wallet address: `0x204031FA1ad46a2D453b7c54fC28Ff1787Bd9128` (refill at https://testnet.somnia.network/ or via the Discord faucet; check balance at https://shannon-explorer.somnia.network/address/0x204031FA1ad46a2D453b7c54fC28Ff1787Bd9128).
 - Deployed contract: `0x461aeC3384e45CAEC49a2FBf099416d7BED659b4`.
 - Agent fee: `350000000000000000` wei (0.35 STT per ruling).
 - RPC: `https://api.infra.testnet.somnia.network/`. WebSocket: `wss://api.infra.testnet.somnia.network/ws`.
