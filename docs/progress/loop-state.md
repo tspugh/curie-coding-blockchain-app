@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 20 — UNIT-NetworkScreen-narrow: 4-stat panel + nav)
+**Last updated:** 2026-05-29 (tick 21 — UNIT-NetworkScreen-stream: real tx-stream section)
 **Current mode:** `impl`
-**Current tick:** 20
-**Last focus:** New `web/src/views/Network.tsx` view with 4-card stat panel showing REAL on-chain values: latest block (polled every 10s via provider.getBlockNumber), active rulings (count of State.UnderReview from getNegotiationView loop), Curie contract address (VITE_CONTRACT_ADDRESS shortHex'd), arbiter primitive (static "Somnia LLM Parse Website" — protocol primitive name, NOT prototype's fake "agent-7B"). NO live tx stream (deferred — prototype's TxStream is the fake-event setInterval/Math.random generator violet reported). New "Network" nav button in App.tsx. Strict-review PASS first pass, 0 actionable findings, 4 cosmetic NITs.
-**Last commit:** `<this tick>` (tick 20 — UNIT-NetworkScreen-narrow)
+**Current tick:** 21
+**Last focus:** Real live tx-stream section appended below Network's 4-stat panel. Renders the `events` prop (from App.tsx's subscribeTxLog), newest-first, bounded to 50, with explorer-linked tx hashes + describeEvent() summaries. Empty state when no events. Pure CSS `@keyframes live-dot-pulse` animation (zero JS, zero fake events). Strict-review caught 1 MEDIUM real (CSS class collision: my new `.ev-name`/`.ev-tx`/`.ev-desc`/`.ev-reqid` collided with Detail.tsx timeline's pre-existing same-named rules, silently regressing it) + 2 LOWs (missing useMemo, `-${i}` in React key causing remounts on prepend). All 3 closed inline: classes renamed to `.tx-ev-*` prefix, streamRows wrapped in useMemo, key simplified to `txHash-name-reqId`. violet's "fake ticker" bug is now structurally addressed — the live stream uses real on-chain events from the wallet's confirmed txs, empty when nothing's happening.
+**Last commit:** `<this tick>` (tick 21 — UNIT-NetworkScreen-stream)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)

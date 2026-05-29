@@ -1,15 +1,21 @@
 /**
- * Network view: 4-stat panel showing live on-chain state.
+ * Network view: 4-stat panel showing live on-chain state + live tx-stream
+ * section.
  *
- * NO live tx stream. NO fake events. NO setInterval generating events.
+ * NO fake events. NO setInterval generating events. NO Math.random.
  * All values are sourced from real on-chain data or real config (see inline
  * comments). Fake data from the prototype ("12,847,201", "agent-7B") is
  * deliberately omitted per the design-handoff spec.
+ *
+ * The tx-stream section renders the `events` prop (populated by
+ * subscribeTxLog in App.tsx) newest-first, capped at 50 rows.
+ * The only animation is a pure CSS @keyframes pulse on the live-dot — no JS
+ * callback involved.
  */
-import { useEffect, useState } from "react";
-import { type CoverageEvent, type NegotiationView, State } from "@lib";
+import { useEffect, useMemo, useState } from "react";
+import { type CoverageEvent, type NegotiationView, State, txUrl, SOMNIA_TESTNET } from "@lib";
 import { client } from "../client.js";
-import { shortHex } from "../shared.js";
+import { describeEvent, shortHex } from "../shared.js";
 
 // ---------------------------------------------------------------------------
 // Block-number polling helper — mirrors WalletBalance/useWalletBalance pattern.
@@ -112,6 +118,13 @@ export function Network({ events, onBack }: NetworkProps) {
   const contractAddr = resolveContractAddress();
   const hasProvider = getProvider() !== null;
 
+  // Newest-first, bounded. Memoized so the spread+reverse+slice doesn't run
+  // every render — only when `events` changes.
+  const streamRows = useMemo(
+    () => [...events].reverse().slice(0, 50),
+    [events],
+  );
+
   const stats = [
     {
       label: "Latest block",
@@ -173,6 +186,52 @@ export function Network({ events, onBack }: NetworkProps) {
           </div>
         ))}
       </div>
+
+      {/* ── Live tx-stream section ── */}
+      {/* Events flow exclusively from the `events` prop (subscribeTxLog in App.tsx).
+          No setInterval, no Math.random, no fake event injection. */}
+      <section className="tx-stream-panel">
+        <div className="tx-stream-header">
+          <div>
+            <div className="section-label">Live tx stream</div>
+            <div className="tx-stream-title">CoverageNegotiation events</div>
+          </div>
+          <span className="pill live-pill">
+            <span className="live-dot" /> streaming
+          </span>
+        </div>
+
+        {events.length === 0 ? (
+          <div className="tx-stream-empty">
+            <p>No on-chain events yet.</p>
+            <p className="hint">
+              Events will appear here as wallet transactions are confirmed.
+            </p>
+          </div>
+        ) : (
+          <div className="tx-stream-rows">
+            {streamRows.map((e) => (
+              <div
+                key={`${e.txHash ?? "noTx"}-${e.name}-${e.reqId.toString()}`}
+                className="tx-stream-row"
+              >
+                <span className="tx-ev-name">{e.name}</span>
+                <span className="tx-ev-tx">
+                  {e.txHash ? (
+                    <a href={txUrl(SOMNIA_TESTNET, e.txHash)} target="_blank" rel="noreferrer">
+                      {shortHex(e.txHash)}
+                    </a>
+                  ) : (
+                    <span className="dim">—</span>
+                  )}
+                </span>
+                <span className="tx-ev-desc">{describeEvent(e)}</span>
+                <span className="tx-ev-reqid">req #{e.reqId.toString()}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </section>
   );
 }

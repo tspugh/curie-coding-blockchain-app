@@ -3591,3 +3591,398 @@ calling the gate failed for them). The HIGH/MEDIUM/LOW count is
 
 ### Final tick-20 verdict: PASS (0 HIGH; 0 MEDIUM; 0 LOW; 4 NITs)
 
+---
+
+# Strict-review findings — tick 21 (UNIT-NetworkScreen-stream, live tx-stream section)
+
+**Date:** 2026-05-29
+**Reviewer:** strict-review subagent, tick 21, gatekeeper.
+**Briefing:** zero findings required.
+
+## Scope under review
+
+1. `web/src/views/Network.tsx` — new `<section className="tx-stream-panel">`
+   appended below the existing 4-stat panel; renders the `events` prop
+   newest-first, capped at 50; empty state when `events.length === 0`;
+   each row name | tx-hash (linked) | describeEvent | reqId. New imports
+   `txUrl`, `SOMNIA_TESTNET` from `@lib`, `describeEvent` from `../shared.js`.
+2. `web/src/styles.css` lines 1532-1666 — 12 new classes + 1
+   `@keyframes live-dot-pulse`.
+3. The dev report's "fake-data rejection" is the headline invariant:
+   the prototype's `TxStream` at `visuals.jsx:271-298` uses
+   `setInterval`+`makeRandomEvent`+`fakeTx()`+`Date.now()` keys to
+   synthesize events; production REJECTS all of this and consumes the
+   real `events` prop from `App.tsx`'s `subscribeTxLog` wiring.
+
+## Gate status
+
+- `npm run typecheck` (lib tsc): **PASS** (no diagnostics).
+- `npx tsc -p web/tsconfig.json --noEmit` (web tsc): **PASS** (no diagnostics).
+- `npm run web:build` (vite build): **PASS** (214 modules, 557 kB bundle;
+  CSS now 23.86 kB — chunk-size warning unchanged from prior ticks).
+- `npm run test:lib` (node test runner): **PASS** 60/60, 2.38 s.
+
+## Fake-data rejection audit (briefing's headline invariant)
+
+`grep -nE "Math\.|random|setInterval|setTimeout|makeRandom"` on
+`web/src/views/Network.tsx` returns three hits: two in the module
+docstring/jsx comment explicitly denying the pattern ("NO
+setInterval generating events", "No setInterval, no Math.random, no
+fake event injection"), and the **one legitimate** `setInterval` at
+line 51 which is the block-poll interval introduced in tick 20 (not
+new to this tick) — visibility-gated, cleanup-wired, no event
+synthesis. **No `Math.random`. No `Date.now`-based keys. No
+synthesized CoverageEvents.** Briefing's concern #1 is **satisfied**.
+
+The `events` prop is the same `readonly CoverageEvent[]` already
+wired through `App.tsx:23-48` (`subscribe` + `getEvents` history,
+deduped by `txHash:name:reqId` composite key). The tx-stream
+section is a pure view onto this state — no fetching, no timers, no
+state of its own.
+
+## Findings
+
+Severity scale: HIGH (blocker) / MEDIUM (must-fix before merge) /
+LOW (should-fix or document) / NIT (cosmetic).
+
+### MEDIUM 1 — `.ev-name` / `.ev-desc` CSS class collision regresses Detail's timeline rendering
+
+- **File:** `web/src/styles.css:769-780` (preexisting, used by Detail's
+  timeline `<li className="ev-row">`) vs `web/src/styles.css:1626-1659`
+  (new this tick, for Network's tx-stream rows).
+- **Issue:** Both `.ev-name` and `.ev-desc` are now **defined twice**
+  in the same stylesheet with identical specificity. The second
+  definition wins by CSS cascade, silently overriding the first for
+  `Detail.tsx`'s timeline (which mounts `<span className="ev-name">`
+  / `<span className="ev-desc">` at lines 738 and 741). Neither
+  Network's rules nor Detail's rules are scoped (no parent selector
+  like `.timeline .ev-name` or `.tx-stream-rows .ev-name`), so the
+  conflict applies globally.
+- **Concrete regression for Detail.tsx's timeline:**
+  - `.ev-name` font-weight drops 700 → 600.
+  - `.ev-name` color shifts `--accent-dk` (#1d4ed8) → `--accent`
+    (#2563eb) — perceptibly lighter blue.
+  - `.ev-name` gains `white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis` — long event labels in Detail's
+    timeline now truncate where they previously wrapped (Detail's
+    `.timeline li` has `flex-wrap: wrap` at styles.css:749, which is
+    defeated by `white-space: nowrap` on the inner `<span>`).
+  - `.ev-desc` gains the same `nowrap`/`overflow:hidden`/`ellipsis`
+    triplet plus `min-width: 0` — `describeEvent` strings like
+    `"Adjudication requested — firing the necessity arbiter"` or the
+    multi-shortHex `ContractCreated` row (`Filed — provider X →
+    insurer Y, requested Z, drug 0x…`) are now clipped in Detail
+    where they previously wrapped to multiple lines.
+- **Why MEDIUM, not HIGH:** the gates (tsc, vite-build, lib tests)
+  all pass — this is a silent visual regression to a screen that
+  isn't directly under test, not a build or runtime failure. The
+  Detail timeline still functions; events are still listed in
+  order; the dot/border styling is untouched (those rules live on
+  `.timeline li` / `.timeline li::before` and aren't redefined).
+  But it IS a behavior change to a screen NOT in this tick's scope
+  — exactly the cross-screen leakage the design-handoff guidance
+  warns against.
+- **Why not LOW:** the regression is permanent until fixed, hits a
+  shipped screen (Detail), and shows up to anyone opening a
+  long-running negotiation. Visible to the demo audience.
+- **Suggested fix:** rename Network's classes to a tx-stream-specific
+  prefix that cannot collide, e.g. `.tx-ev-name`, `.tx-ev-tx`,
+  `.tx-ev-desc`, `.tx-ev-reqid` (parallel to the existing
+  `.tx-stream-*` namespace), and update the four `className=` usages
+  in `Network.tsx:211-222` to match. Alternative: scope each new rule
+  under `.tx-stream-rows` (e.g. `.tx-stream-rows .ev-name { … }`) so
+  Detail's bare `.ev-name` continues to take precedence in Detail.
+  The rename is cleaner; the scoping is one-line per rule.
+
+### LOW 1 — render-time `[...events].reverse().slice(0, 50)` not memoized
+
+- **File:** `web/src/views/Network.tsx:206`
+- **Issue:** The expression `[...events].reverse().slice(0, 50)` runs
+  on **every** render of `Network`. Each render allocates a new
+  array copy, reverses in place, then slices. For the v0 demo at
+  dozens of events this is harmless; once event history grows into
+  the thousands (which it can in a long-running real-mode session,
+  since `subscribeTxLog` appends without bound and there's no cap on
+  the events prop itself), the reverse cost becomes O(n) per render,
+  not O(50).
+- **Why LOW, not NIT:** the briefing explicitly flagged this
+  (concern #7). It's correct semantics — newest first via
+  spread+reverse on a readonly array — but every parent re-render
+  (e.g. wallet balance refresh, profile change, route flicker)
+  re-runs it. For v0 demo scale, fine. Worth tracking.
+- **Suggested fix:**
+  ```ts
+  const recent = useMemo(
+    () => [...events].slice(-50).reverse(),
+    [events],
+  );
+  ```
+  The `slice(-50).reverse()` form is also O(50) rather than O(n)
+  per render — only the tail 50 are copied, then reversed. The
+  `useMemo` dep on `events` (reference) caches across unrelated
+  re-renders.
+
+### LOW 2 — React `key` includes array index, causing remount cascade on new event
+
+- **File:** `web/src/views/Network.tsx:208`
+- **Issue:** `key={\`${e.txHash ?? "noTx"}-${e.name}-${e.reqId.toString()}-${i}\`}`.
+  The dev report's "the `-${i}` saves it but causes React to flag
+  changes on reorder" is correct. Concretely: when a new event
+  arrives, App.tsx appends to `events`; this view's
+  `[...events].reverse()` puts it at index 0 and shifts every prior
+  event's index by +1. Every row's index `${i}` changes → every
+  row's key changes → React unmounts every row and re-mounts it. On
+  a 50-row stream this is 50 unmount/mount pairs per new event, all
+  triggered by what should be a single insertion. Detail's
+  timeline (`Detail.tsx:737`) uses the same `-${i}` pattern but
+  there it's appended (not prepended), so older rows keep their
+  index — same defect, less impact.
+- **Why LOW, not NIT:** the briefing flagged it (concern #6). The
+  txHash-based prefix IS unique for any row with a real `txHash`
+  (simulated mode emits no txHash so `"noTx"` collides on multiple
+  same-reqId same-name events, which is rare but possible —
+  `EvidenceRequested` can fire repeatedly on the same reqId after
+  successive `EvidenceSubmitted` rounds in simulated mode, all with
+  `txHash === undefined`). Functionally correct (no UI corruption),
+  but DOM-thrashing on every new event in the most active view.
+- **Suggested fix:** if every event in real mode has txHash + name
+  + reqId uniquely identifying it (which it does — the
+  `App.tsx:31` dedupe key already proves this), drop the `${i}`:
+  ```ts
+  key={e.txHash
+    ? `${e.txHash}:${e.name}:${e.reqId.toString()}`
+    : `noTx:${e.name}:${e.reqId.toString()}:${i}`}
+  ```
+  Real-mode rows stop remounting on insert; simulated-mode rows
+  keep the index suffix as a safety net.
+
+### NIT 1 — `box-shadow` uses raw rgba instead of `--shadow-xs` token
+
+- **File:** `web/src/styles.css:1538`
+- **Code:** `box-shadow: 0 1px 2px rgba(0,0,0,0.05);`
+- **Issue:** The design tokens at `styles.css:50-53` define
+  `--shadow-xs: 0 1px 2px rgba(15, 23, 42, .06);` which is
+  functionally what this rule wants. Briefing's CSS audit item #4
+  ("no raw hex colors outside `var(...)` fallbacks") doesn't quite
+  apply (rgba isn't hex) but the spirit of the token system is to
+  reach for `--shadow-xs`.
+- **Why NIT:** cosmetic; renders nearly identical (the token uses
+  slate-900 alpha 0.06 vs raw black alpha 0.05 — visually
+  indistinguishable).
+- **Suggested fix:** `box-shadow: var(--shadow-xs);`.
+
+### NIT 2 — `<span className="pill live-pill">` references a non-existent `.pill` class
+
+- **File:** `web/src/views/Network.tsx:191`
+- **Issue:** The JSX applies two classes — `pill` and `live-pill`.
+  `grep -nE "^\.pill\b" styles.css` returns **no matches**: the
+  stylesheet has `.filter-pill`, `.filter-pill-bar`, etc., but no
+  bare `.pill` rule. The `pill` className is dead — only
+  `.live-pill` (lines 1565-1577) actually applies styling. The
+  prototype's `screens.jsx:563` uses `className="pill no-dot"`
+  because the prototype has a `.pill` base class; the production
+  port doesn't.
+- **Why NIT:** functionally inert — the visible rendering comes
+  entirely from `.live-pill`'s self-contained rules (display,
+  border, padding, font, colors all declared on `.live-pill`
+  directly). Removing the `pill` className would change nothing.
+- **Suggested fix:** drop `pill` → `<span className="live-pill">`.
+  Optionally introduce a `.pill` base class for the future, but
+  that's outside this tick's scope.
+
+### NIT 3 — `.ev-tx` monospace stack diverges from project standard (recurrence of tick-20 NIT 2)
+
+- **File:** `web/src/styles.css:1635`
+- **Code:** `font-family: ui-monospace, 'Cascadia Code', 'Source
+  Code Pro', Menlo, Consolas, monospace;`
+- **Issue:** Same divergence flagged in tick 20 NIT 2 — the project
+  monospace stack is `ui-monospace, 'SF Mono', Menlo, Consolas,
+  monospace` (lines 78, 1035). Network's CSS reuses the
+  `Cascadia Code` / `Source Code Pro` stack from the inline style
+  in `Network.tsx:166`. Spreading the divergent stack across both
+  inline JSX and CSS doubles the surface area where the project's
+  monospace identity drifts.
+- **Why NIT:** identical glyph on most demo machines; tick-20 NIT
+  2 was filed without remediation and re-PASSed. This tick
+  propagates the same divergence into CSS; same cosmetic verdict.
+- **Suggested fix:** align with `ui-monospace, 'SF Mono', Menlo,
+  Consolas, monospace`. Fix would close NIT both here and in the
+  tick-20 inline style.
+
+### NIT 4 — `.tx-stream-row` grid has no responsive handling
+
+- **File:** `web/src/styles.css:1614-1621`
+- **Issue:** `grid-template-columns: 150px 110px 1fr 90px` —
+  150+110+90 = 350 px of fixed-width columns plus the 1fr center
+  plus 3 × 14 px gap = 392 px minimum. The Network page has
+  `max-width: 960px` (line 1528) and the page body has 24 px
+  padding (`.main`), so on a viewport ≥ ~960 px wide the row fits
+  comfortably. Below ~600 px viewport (laptop split-screen, demo
+  iframe), the 1fr column may collapse to ~50 px and `.ev-desc`'s
+  `overflow: hidden; text-overflow: ellipsis` truncates the human
+  description aggressively. No `@media` rule, no `flex-wrap`
+  fallback.
+- **Why NIT:** the v0 demo is presented on a single ≥1280 px
+  desktop (per the prototype's framing in
+  `docs/reference/ui-prototype-handoff/`). Mobile/responsive
+  isn't a v0 deliverable.
+- **Suggested fix:** none required for v0. If responsive becomes a
+  goal: `@media (max-width: 600px) { .tx-stream-row {
+  grid-template-columns: 1fr; gap: 4px; } }` collapses to a
+  stacked layout.
+
+### NIT 5 — `txUrl(SOMNIA_TESTNET, ...)` hardcodes testnet network for explorer links
+
+- **File:** `web/src/views/Network.tsx:214`
+- **Issue:** `SOMNIA_TESTNET` is imported and used unconditionally
+  to build the explorer URL. If the app ever runs against mainnet
+  (`SOMNIA_MAINNET` is exported from `src/config/networks.ts:38`),
+  the row will link real-mode tx-hashes to the **Shannon** (testnet)
+  explorer rather than the mainnet explorer — yielding "no such
+  transaction" pages.
+- **Why NIT:** the production client doesn't switch network in v0
+  — `client.ts` constructs against `SOMNIA_TESTNET` by default
+  (verified at `client.ts:128` from tick-20 audit). No mainnet path
+  exists yet.
+- **Why guarded against simulated mode:** in simulated mode,
+  `simulated.ts`'s `emit()` doesn't set `txHash` (verified by grep
+  — none of the 19 `this.emit({…})` call sites pass `txHash`), so
+  `e.txHash` is `undefined`, the ternary at `Network.tsx:213`
+  takes the `false` branch, and `txUrl` is never called. The "dead
+  URL in simulated mode" concern from the briefing is **not**
+  realized — the simulated rows render `<span className="dim">—</span>`
+  instead. Briefing concern #5 is **resolved** by the existing
+  guard.
+- **Suggested fix:** thread the active network through
+  `client.wallet` or a module-level export instead of importing
+  `SOMNIA_TESTNET` directly. Deferred to a future mainnet-readiness
+  spec.
+
+### NIT 6 — per-event-type color not ported from prototype
+
+- **File:** `web/src/styles.css:1628` (`.ev-name { color:
+  var(--accent); … }`)
+- **Issue:** The prototype's `TxStream` (`visuals.jsx:288`) colors
+  the event name by `EVENT_META[e.kind].color` — semantic colors
+  per event family (approve = green, deny = red, etc.). The
+  production port uses one accent color for all event names.
+- **Why NIT:** the briefing explicitly noted this as "future
+  enhancement, not blocking" (concern #9). The semantic-color
+  mapping would require an `EVENT_META`-equivalent table the port
+  doesn't have, and even the prototype's table is incomplete
+  (covers only a subset of CoverageEvent names). Deferred.
+- **Suggested fix:** none for this tick. Future: extend
+  `shared.ts` with a `getEventColor(e: CoverageEvent): string` that
+  returns CSS-var-token strings (`var(--ok)`, `var(--danger)`,
+  etc.) and reference it inline in Network.tsx.
+
+### Non-findings (briefing items checked, no issue)
+
+- **Briefing #1 (fake-data rejection):** verified by source audit
+  + grep. **CLEAN.**
+- **Briefing #2 (`@keyframes live-dot-pulse` is pure CSS):**
+  confirmed — opacity + transform scale, 2 s ease-in-out infinite.
+  No JS callback, no `requestAnimationFrame`, no setInterval
+  scheduling the animation. Pure compositor-level CSS.
+- **Briefing #3 (newest-first ordering bounded to 50):** correct
+  semantics on a readonly array via spread copy + reverse + slice.
+  See LOW 1 for memoization concern; semantics themselves are
+  right.
+- **Briefing #4 (empty state honesty):** "No on-chain events yet."
+  + "Events will appear here as wallet transactions are
+  confirmed." — does not imply hidden activity, does not lie about
+  pending state, does not animate a fake placeholder row.
+- **Briefing #5 (simulated-mode explorer link):** guarded by the
+  ternary at Network.tsx:213. See NIT 5.
+- **Briefing #8 (`<section>` semantics):** more correct than the
+  prototype's `<div>` — `<section>` is the appropriate landmark
+  for a labelled regional content block. Accessibility win,
+  conformance drift acceptable.
+- **Briefing #10 (`describeEvent` coverage):** verified —
+  `web/src/shared.ts:16-59` has a `switch` over `e.name` covering
+  all 21 CoverageEvent member kinds (ContractCreated through
+  FeedbackPosted, including the PacketSubmitted added in tick 12).
+  The discriminated-union exhaustiveness is enforced by tsc (the
+  function returns `string` with no default arm; tsc would flag a
+  missing case).
+- **Briefing #11 (50-row cap):** appropriate for a streaming view
+  — high enough to show ~10 negotiations' worth of full lifecycle
+  events, low enough that the DOM stays light. Matches the
+  prototype's 16-row cap × ~3 (production shows real history, not
+  just last few synthesized rows).
+- **Briefing #12 (`onBack` prop still used):** confirmed —
+  `Network.tsx:159` renders `<button onClick={onBack}>← Back</button>`
+  in the existing view-head. Not a dead prop.
+- **Per-event animation:** the rows do **not** animate in
+  (`.tx-stream-row` has no `animation:` property and is not under
+  any `@keyframes ev-in`-targeted selector — only Detail's
+  `.timeline li.ev-row` consumes `ev-in` at line 887). Network's
+  rows appear without entrance animation, which is the right call
+  for a streaming view (entrance animations on every new event
+  would feel busy).
+- **No `aria-live` on the streaming region:** the prototype
+  doesn't have it either, and the briefing doesn't require it. A11y
+  enhancement candidate — adding `aria-live="polite"` on
+  `.tx-stream-rows` would surface new events to screen readers
+  without interrupting. Not blocking for v0.
+
+## Tick-21 verdict
+
+The fake-data rejection IS real and complete: zero
+`Math.random`, zero `setInterval` generating events, zero `Date.now`
+keys, zero synthesized CoverageEvents. The `events` prop is
+consumed directly from `App.tsx`'s `subscribeTxLog` wiring. The
+`.live-dot` animation is pure CSS @keyframes. The empty state is
+honest. Explorer links are correctly guarded against simulated mode
+by the txHash ternary. `describeEvent` exhaustively covers the
+discriminated union including the tick-12 PacketSubmitted addition.
+All three gates (lib tsc, web tsc, vite build) pass; all 60 lib
+tests pass.
+
+The blocking finding is **MEDIUM 1: a global CSS class collision
+that silently regresses Detail's timeline.** Both `.ev-name` and
+`.ev-desc` are now defined twice in styles.css with identical
+specificity. The new (Network) rules win by source order and apply
+to **every** consumer including Detail's `<li className="ev-row">`
+timeline rows — dropping font-weight 700→600, color
+`--accent-dk`→`--accent`, and adding nowrap+overflow:hidden that
+defeats Detail's existing `.timeline li { flex-wrap: wrap }` to
+clip long event descriptions. The Detail timeline is in a
+separate, already-shipped screen; this tick was scoped to Network
+only. Cross-screen style leakage of this kind is the failure mode
+namespaced class prefixes exist to prevent.
+
+Two LOWs surface briefing-flagged concerns: the
+`[...events].reverse().slice(0,50)` allocation per render (briefing
+#7) and the `-${i}` suffix in the React key causing full row
+remount on every new event (briefing #6). Both correct semantics,
+both real perf concerns at non-trivial event volumes.
+
+Six NITs cover cosmetic divergences (raw rgba box-shadow, dead
+`pill` class, monospace stack drift, no responsive grid handling,
+hardcoded `SOMNIA_TESTNET`, no per-event-type color).
+
+Briefing required "zero findings." This tick is one MEDIUM, two
+LOWs, six NITs → does not clear the gate. The MEDIUM is fixable in
+~10 LOC (rename four CSS classes + four JSX className references;
+or scope four selectors under `.tx-stream-rows`); the LOWs are
+single-block edits; the NITs are deferrable.
+
+**Recommended remediation summary for next tick:**
+
+1. **MEDIUM 1** — rename `.ev-name`, `.ev-tx`, `.ev-desc`,
+   `.ev-reqid` to `.tx-ev-name`, `.tx-ev-tx`, `.tx-ev-desc`,
+   `.tx-ev-reqid` (or scope each under `.tx-stream-rows`) and
+   update Network.tsx:211-222 to match. **Required.**
+2. **LOW 1** — wrap the reverse+slice in `useMemo([events])`.
+   **Recommended.**
+3. **LOW 2** — drop `-${i}` from the key for rows that have a
+   `txHash`. **Recommended.**
+4. NITs 1-6 — defer or batch into a "design-token-cleanup" tick.
+
+Re-run all three gates after each change. Confirm Detail's
+timeline renders identically before/after the MEDIUM 1 fix
+(visual check, no test).
+
+### Final tick-21 verdict: FAIL (0 HIGH; 1 MEDIUM; 2 LOWs; 6 NITs)
+
