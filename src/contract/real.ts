@@ -508,6 +508,7 @@ export class RealBackend implements CoverageNegotiationClient {
           rationaleHash: a[4] as string,
           clauseRef: a[5] as string,
           receiptId: a[6] as bigint,
+          policyVoidedClauseIndices: ((a[7] as bigint[] | undefined) ?? []).map(Number),
           ...meta,
         };
       case "PolicyFlagged":

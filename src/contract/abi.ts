@@ -41,7 +41,7 @@ export const COVERAGE_NEGOTIATION_ABI = [
   "event AdjudicationRequested(uint256 indexed reqId)",
   "event PacketSubmitted(uint256 indexed reqId, uint256 indexed round, bytes32 packetRoot, bytes32 packetUrl)",
   "event RulingRequested(uint256 indexed reqId, uint256 indexed requestId, uint256 fee)",
-  "event Ruled(uint256 indexed reqId, uint256 indexed requestId, uint8 decision, uint256 coveredAmount, bytes32 rationaleHash, bytes32 clauseRef, uint256 receiptId)",
+  "event Ruled(uint256 indexed reqId, uint256 indexed requestId, uint8 decision, uint256 coveredAmount, bytes32 rationaleHash, bytes32 clauseRef, uint256 receiptId, uint16[] policyVoidedClauseIndices)",
   "event PolicyFlagged(uint256 indexed reqId, bytes32 clauseRef, bytes32 standardRef)",
   "event PolicyInvalidated(uint256 indexed reqId, bytes32 clauseRef, bytes32 standardRef)",
   "event EvidenceRequested(uint256 indexed reqId)",

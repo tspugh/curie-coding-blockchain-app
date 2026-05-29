@@ -6321,3 +6321,360 @@ the harness, and falls under SPEC-0003 §2.3 visual polish — not a gate
 blocker. Steady-state holds: tests 100% / coverage ≥85% / soliditycompliance 0
 / security 0 / strict 0 / browser-verify all green / design-conformance 92%
 / all R covered. Loop can declare steady-state on the next tick.
+
+## Tick 49 strict-review
+
+SPEC-0004 Phase 1 ruling-payload decode: `uint16[] policyVoidedClauseIndices`
+added as the 8th element of the arbiter tuple, decoded in
+`CoverageNegotiation.handleResponse`, emitted on the `Ruled` event, mirrored
+in the sim backend and ABI, decoded by `RealBackend.parseEvent`. Tied to
+amendment 0005 (R23 supersedes R6b for on-label-policy-void). Diff:
+8 files / +79 / −21.
+
+### 1. Spec drift (amendment 0005 + SPEC-0001 §3.5 alignment) — CLOSED
+
+Amendment 0005 lines 87–89 prescribe: "Add `policyVoidedClauseIndices` to the
+`Ruled` event payload in §3.5" and "tighten SPEC-0004 §3.4's ruling type to
+expose `policyVoidedClauseIndices` on the Approved branch."
+
+- SPEC-0001 §3.5 (line 141) now reads
+  `Ruled(reqId, requestId, decision, coveredAmount, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices)`
+  — exact field name and position match the contract event signature in
+  `CoverageNegotiation.sol:227-234` and the ABI string in `abi.ts:44`.
+- Amendment 0005 line 19 calls the field `policyVoidedClauseIndices: number[]`.
+  Solidity type chosen is `uint16[]` (clause indices are small non-negative
+  ints; `uint16` caps at 65535 which is more than enough). TS decode path
+  converts to `number[]` via `.map(Number)` (real.ts:511) and `readonly number[]`
+  in the type (`coverage.types.ts:276`). Type-shape is consistent across the
+  ABI boundary.
+- R6b prose (SPEC-0001 line 54) was narrowed in tick 11 to reference
+  amendment 0005 and call out the R23 path. Consistent.
+
+No spec drift.
+
+### 2. Test rigor (new R23 test exercises end-to-end path) — CLOSED
+
+`contracts/test/CoverageNegotiation.test.ts:1020-1036` adds the new describe
+block. The test:
+
+- Creates engage+adjudicate flow with the standard helper
+  (`createEngageAdjudicate`) — same helper used by the other 28 tests; style
+  parity confirmed.
+- Calls `platform.triggerRuling(target, requestId, ruling(Decision.Approve, 150n, NADAC_UNIT, [2]))`
+  — exercises the full path: MockAgentPlatform encodes the 8-tuple via
+  `abi.encode` (mock line 102–104) → CoverageNegotiation.handleResponse
+  decodes the 8-tuple (CoverageNegotiation.sol:608-615) → emits Ruled with
+  the array (line 657).
+- Asserts `.withArgs(reqId, requestId, Decision.Approve, 1500n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, [2n])`
+  — `[2n]` is correct for ethers v6 (`uint16[]` decodes to `bigint[]`).
+  Chai-matchers' `.withArgs` does deep-equality on the array; this matches a
+  one-element array containing `2n`.
+- Also asserts terminal state is `Approved` — the test isn't just an event
+  assertion; it pins the state transition too.
+
+Empirically verified: `npx hardhat test --grep "R23"` → 1 passing.
+Full suite → 29 passing, 0 failing.
+
+Not a shallow assertion. End-to-end through encode → decode → emit.
+
+### 3. Sim/real parity — CLOSED
+
+- **Real backend** (`real.ts:511`): `((a[7] as bigint[] | undefined) ?? []).map(Number)`.
+  If `a[7]` is undefined (legacy 7-arg event from the not-yet-redeployed
+  testnet contract), the field falls back to `[]`. If present, each `bigint`
+  is coerced to `number` via `.map(Number)` — safe because `uint16` is far
+  below `Number.MAX_SAFE_INTEGER`.
+- **Sim backend** (`simulated.ts:603-612`): four emit sites
+  (PolicyInvalid path line 619, Approve line 631, Deny line 635,
+  NeedMoreEvidence line 639) all receive the same `policyVoidedClauseIndices`
+  array, which falls back to `this.agent.policyVoidedClauseIndices ?? []`
+  when the one-shot module-level var is empty.
+
+Both produce `number[]` (with `readonly` view on the consumer side). Both
+default to `[]`. Decode shape matches emit shape — no sim/real divergence
+the UI could trip on.
+
+The one-shot module-level state (`_nextPolicyVoidedClauseIndices`) is reset
+after consumption so it can't accidentally leak into a subsequent ruling.
+Behavior is consistent across instances of `SimulatedBackend` because the
+variable is module-scoped — note this is intentional per the JSDoc (line 167:
+"any SimulatedBackend instance") but a strict reviewer could flag it as
+shared mutable state. In practice the harness is single-threaded JS and the
+sim emits synchronously after the one-shot is consumed, so there's no race.
+
+### 4. viaIR enable — OPEN with LOW severity (advisory, not a gate blocker)
+
+`hardhat.config.ts:21` flips `viaIR: true` globally. This changes the
+compilation pipeline for ALL contracts in `contracts/contracts/`:
+`CoverageNegotiation.sol`, `MockAgentPlatform.sol`, and `ISomniaAgent.sol`
+(interfaces don't generate bytecode but compile through the new IR).
+
+- The motivation is not stated in the diff (presumably stack-too-deep from
+  the 8-tuple `abi.decode` plus emit args in `handleResponse`). A future
+  reviewer or operator looking at the diff cannot tell why the flag was
+  flipped without re-running the build to see if it was needed.
+- Bytecode WILL change for `CoverageNegotiation` and `MockAgentPlatform`
+  even where source didn't materially change (viaIR uses Yul instead of the
+  legacy EVM pipeline). This means a side effect of this tick is that the
+  next deployment will have a different bytecode hash than tick-37, beyond
+  just the new emit-arg.
+- Functional behavior: all 29 tests pass post-flip, so no behavioral
+  regression detected at the test level. Gas costs may have changed
+  (typically viaIR reduces gas; not measured).
+
+**Why not a gate blocker:** the change is needed (the 8-tuple decode would
+otherwise risk stack-too-deep), it's a standard Solidity production-grade
+flag, and tests pass. The strict-review note is: ADD A ONE-LINE COMMENT
+ABOVE `viaIR: true` explaining why (e.g. `// stack-too-deep avoidance for
+8-tuple decode in handleResponse — SPEC-0004 R23`). This is a polish nit, not
+a correctness finding; recording as advisory.
+
+### 5. Over-engineering / abstraction bloat — OPEN with LOW severity (advisory)
+
+`setNextPolicyVoidedClauseIndices` (simulated.ts:177) is exported but
+**never imported or called anywhere** in `src/`, `web/`, or tests
+(grep confirmed: only definitions, no call sites).
+
+- The contract test passes the array directly through the mock's
+  `triggerRuling(target, requestId, ruling(Decision.Approve, 150n, NADAC_UNIT, [2]))`,
+  not through any sim backend setter — that's the contract test path
+  (Hardhat), not the sim path.
+- The sim backend's existing fallback (`this.agent.policyVoidedClauseIndices ?? []`)
+  on `SimulatedBackend` config covers the static-config case.
+- The one-shot setter is therefore dead code AS OF this tick.
+
+**Why not a gate blocker:** the prompt itself acknowledges "Or is it
+expected for future test ticks?" Browser-verify scenarios (Scenario C2 R6b
+policy-void path mentioned in loop-state.md tick 42) will likely need a
+runtime knob to drive an R23 outcome through the sim. The setter is plausibly
+forward-staged scaffolding for that. Recording as advisory: if no consumer
+lands within 2 ticks, delete the export.
+
+Secondary nit on the JSDoc at line 175: "Mirrors the existing `setNext…`
+patterns on the backend" — **there are no existing `setNext…` patterns** in
+`src/` (grep confirmed). The comment is aspirational at best, false at face
+value. The strict-review prompt explicitly asks to flag "comments that lie."
+This is a 1-line edit that doesn't break the gate; recording as LOW.
+
+### 6. Comments that lie / restate — CLOSED (one open captured in #5)
+
+Reviewed all new JSDoc and inline comments in the diff:
+
+- `CoverageNegotiation.sol:599-601`: updated decode comment names the 8th
+  element and cites SPEC-0004 R23. Adds information; accurate.
+- `MockAgentPlatform.sol:89`: `// SPEC-0004 §3.5 R23: clause indices voided
+  on policy-void path` — adds R-citation; useful.
+- `MockAgentPlatform.sol:94-95`: updated NatSpec tuple description includes
+  the new field. Accurate.
+- `simulated.ts:103-106`: JSDoc on the optional config field names the spec
+  section and the emit position. Accurate.
+- `simulated.ts:165-168` and `172-176`: JSDoc on the module-level state and
+  setter. **Line 175's "Mirrors the existing setNext… patterns" is false
+  (see #5).** Other lines accurate.
+- `simulated.ts:603-604`: inline comment explains the one-shot consume
+  semantics. Useful, not a restate.
+- `coverage.types.ts:275`: cites SPEC-0004 §3.5 R23 and amendment 0005.
+  Useful.
+
+One LIE captured in #5; rest are clean.
+
+### 7. R-citation correctness — CLOSED
+
+- `CoverageNegotiation.sol:601`: "SPEC-0004 R23" — matches amendment 0005
+  line 17 ("SPEC-0004 §2.6 R23"). The §2.6 location specifically is not
+  cited inline but the R-number is unambiguous. Acceptable.
+- `MockAgentPlatform.sol:89`: cites "SPEC-0004 §3.5 R23." This is slightly
+  off — R23 lives in SPEC-0004 §2.6 per amendment 0005 line 16, while
+  §3.5 is the SPEC-0001 location where the event payload is now documented.
+  The combined cite `SPEC-0004 §3.5 R23` conflates the SPEC-0001 §3.5 event
+  location with the SPEC-0004 R23 rule. Not actionable (both ARE relevant;
+  the field flows from R23 into §3.5), but a future-tick polish could split
+  the cite.
+- `simulated.ts:104`, `simulated.ts:603`, `coverage.types.ts:275`: all use
+  "SPEC-0004 §3.5 R23." Same conflation as above; consistent within the
+  diff. Internally coherent.
+
+No actionable R-citation finding — the cites are consistent across the diff
+and unambiguously refer to the right rule and the right event payload
+position. Advisory only: if a polish tick lands, split into
+"SPEC-0004 R23 (§2.6) → SPEC-0001 §3.5 event payload."
+
+### 8. Missing edge cases (default-[] path on non-R23 rulings) — CLOSED
+
+The diff updates 5 existing `.withArgs(...)` calls to append `[]`:
+
+- Line 330: Deny path → `[]`
+- Line 384: Approve (cap-bound) → `[]`
+- Line 402: Approve (requested-bound) → `[]`
+- Line 449: Approve (HUGE saturation) → `[]`
+- Line 471: PolicyInvalid path → `[]`
+
+All five non-R23 paths are now pinned to emit empty `policyVoidedClauseIndices`.
+Plus the new R23 test pins the populated case. Coverage on the default-`[]`
+branch is strong (5 distinct existing tests across 3 decisions exercise it).
+
+### 9. Test parity — CLOSED
+
+New R23 test (line 1020-1036) uses:
+
+- The shared `deploy()` helper — matches the 28 sibling tests.
+- The shared `createEngageAdjudicate(...)` helper — matches sibling tests.
+- The shared `ruling(...)` helper (now extended with a 4th optional arg) —
+  matches sibling tests.
+- Scope = one `describe` block ("R23: policyVoidedClauseIndices propagation")
+  with one `it` — same scope shape as the other targeted-rule describe
+  blocks (e.g. `describe("UNIT-2-followup-A: appeal reverts...")`).
+
+Style and scope are consistent with the rest of the suite. The `ruling(...)`
+helper extension keeps the default `[]` invisible to the 28 existing tests
+that don't pass the 4th arg — backward-compatible signature change.
+
+### 10. Coordination flag (deployed contract divergence) — OPEN with MEDIUM severity
+
+`docs/progress/loop-state.md:298` records that the live testnet deployment is
+`0x1dC5bA6771A7f4426ABE5BB808a7d51BdEA33E1A` (tick 37) and was used for the
+browser-verify run in tick 39 (4 real on-chain contracts created). That
+deployment has the **OLD 7-arg `Ruled` event signature**. After this tick,
+the source has the **NEW 8-arg `Ruled` event signature**.
+
+This means:
+
+- The ABI string in `abi.ts:44` no longer matches the deployed contract's
+  event signature. RealBackend.parseEvent will look for an 8-arg event log
+  topic but the deployed contract emits a 7-arg event with a different
+  event-topic hash (since the event signature contributes to the topic).
+- Any `RealBackend`-mode browser-verify run against the existing deployment
+  WILL FAIL to decode `Ruled` events. The decode in real.ts:511 has a
+  fallback to `[]` for missing `a[7]`, BUT the deeper problem is the
+  event topic hash will not match, so the event log won't even reach
+  parseEvent.
+- The diff acknowledges nothing about this. Neither commit message nor
+  loop-state.md (tick 49 entry doesn't exist yet) flags the redeploy
+  requirement.
+
+**Why MEDIUM not HIGH:** the harness defaults to sim-mode for tests, so
+contract tests + lib tests + sim-path browser-verify scenarios continue to
+pass. The divergence only bites if/when someone next runs RealBackend
+against the existing testnet address. The prompt explicitly asks the strict
+reviewer to flag this and "operator note about needing redeploy."
+
+**Required follow-up before the next browser-verify-on-testnet run:**
+redeploy `CoverageNegotiation.sol` to a fresh address and update the
+client-side address constant. This should be queued as a NEW unit in
+loop-state.md's queue (or the existing `T49` task closure note should call
+it out). At minimum, a tick-49 entry in loop-state.md must acknowledge the
+divergence.
+
+### Verdict
+
+**FAIL.** Two OPEN findings:
+
+- **MEDIUM (#10):** Coordination flag — deployed testnet contract diverges
+  from source post-tick. Redeploy required before next browser-verify-on-
+  testnet; the divergence is not acknowledged in the diff or loop-state.md.
+  This is the specific item the strict-review prompt asked to flag.
+- **LOW (#5 secondary nit):** JSDoc comment at `simulated.ts:175` claims to
+  mirror "existing `setNext…` patterns" that do not exist in `src/`.
+
+Two ADVISORY items (not gate-blocking):
+
+- **#4:** `viaIR: true` flipped without a one-line comment explaining why
+  (stack-too-deep avoidance). Polish nit.
+- **#5 primary:** `setNextPolicyVoidedClauseIndices` is currently dead code
+  (no call sites). Plausibly forward-staged for a future browser-verify
+  scenario; flag for cleanup if no consumer lands within 2 ticks.
+
+All other scrutiny points (1, 2, 3, 6, 7, 8, 9) CLOSED with evidence. The
+core SPEC-0004 Phase 1 decode work is correct, well-tested, sim/real-
+parity-clean, and consistent with amendment 0005 and SPEC-0001 §3.5.
+
+The FAIL is on coordination (#10), not on the code change itself.
+
+## Tick 49 strict-review iteration 2
+
+Re-verification of the four items left open by iteration 1, after the inline-fix
+subagent landed its patch.
+
+### #10 (MEDIUM) — Coordination flag for redeploy — CLOSED with evidence
+
+`docs/progress/loop-state.md:326` now carries an explicit `OPEN (tick 49):
+Redeploy the contract.` entry in the `## Operator notes` section. It names the
+divergence concretely:
+
+- Identifies the currently-deployed address (`0x1dC5bA6771A7f4426ABE5BB808a7d51BdEA33E1A`,
+  tick 37) and that it still carries the 7-arg `Ruled` ABI.
+- States what changed (Ruled extended from 7 → 8 args; new `uint16[]
+  policyVoidedClauseIndices` field per SPEC-0004 R23 / amendment 0005).
+- Names the consequence (event topic hash divergence → real.ts event decoding
+  will not match).
+- Lists the three required operator steps: (a) redeploy with `viaIR: true`,
+  (b) update `VITE_CONTRACT_ADDRESS` + `COVERAGE_CONTRACT_ADDRESS` in `.env`,
+  (c) ensure the live Somnia agent's payload builder encodes the 8th tuple
+  element so rulings don't revert.
+- Cross-references `docs/progress/solidity-compliance.md` tick 49 OPEN items.
+
+This is the exact acknowledgement iteration 1 demanded. CLOSED.
+
+### #5 secondary (LOW) — JSDoc lie on `setNextPolicyVoidedClauseIndices` — CLOSED with evidence
+
+`src/contract/simulated.ts:172-181` JSDoc now reads:
+
+> Set the `policyVoidedClauseIndices` array that will be emitted in the NEXT
+> `Ruled` event from any {@link SimulatedBackend} instance. Consumed once then
+> reset to `[]`. Used by future browser-verify scenarios that drive the R23
+> Approve-with-voided-clauses path; the web layer's own `setNext…` helpers
+> live in `web/src/client.ts` and target their own backend wrapper.
+
+The previous falsely-attributed "Mirrors the existing `setNext…` patterns on
+the backend" claim is gone. The replacement claim — that web/src/client.ts has
+its own `setNext…` helpers — was independently verified: grep finds
+`setNextDecision`, `setNextCostPlusUnitPrice`, `setNextNadacUnitPrice` defined
+at `web/src/client.ts:68/78/88` and re-exported on the `window.__curie`
+debug-only surface at lines 310-323. The JSDoc is now truthful and the cross-
+reference is real. CLOSED.
+
+### #4 (ADVISORY) — `viaIR` justification — CLOSED with evidence
+
+`contracts/hardhat.config.ts:21-27` now carries a six-line block comment
+explaining: required since tick 49 because the 8-element `abi.decode` tuple in
+`CoverageNegotiation.handleResponse` (including the new `uint16[]
+policyVoidedClauseIndices` per SPEC-0004 R23 / amendment 0005) pushes standard
+codegen past the EVM stack limit; Yul IR pipeline resolves it; plus a
+deploy-coordination note that the flag MUST match across all environments for
+Blockscout verification. Substantive justification, not a bare TODO. CLOSED.
+
+### #5 primary (ADVISORY) — unused setter — CLOSED with evidence
+
+The JSDoc rewrite (see #5 secondary above) now explicitly documents the setter
+as forward-staged for "future browser-verify scenarios that drive the R23
+Approve-with-voided-clauses path." This converts the dead-code concern into
+documented forward scaffolding with a named consumer-class. The iteration-1
+disposition allowed "documented as forward scaffolding OR exempt as TEST-API"
+— the docs subagent took option 1. Acceptable. The 2-tick cleanup window from
+iteration 1 still applies if no consumer lands by tick 51, but that is a
+future-tick concern, not a gate-blocker now. CLOSED.
+
+### Gates re-run
+
+- `cd contracts && npx hardhat test` → `29 passing (3s)` including the new
+  `R23: policyVoidedClauseIndices propagation` describe block.
+- `npm run test:lib` → `# tests 84 / # pass 84 / # fail 0`.
+
+Both gates remain green; no test regressions from the doc/comment touch-ups
+(expected, since none of the fixes were behavioural).
+
+### Verdict: PASS (zero findings)
+
+All four items from iteration 1 closed with verifiable evidence. The fixes are
+not shallow:
+
+- The loop-state.md entry is operationally complete (names address, names
+  required steps, cross-references the compliance doc) rather than a one-line
+  hand-wave.
+- The JSDoc rewrite is not just a deletion of the lie — it substitutes a
+  truthful, verified cross-reference (web/src/client.ts:68/78/88 confirmed
+  present), and simultaneously closes the dead-code advisory (#5 primary) by
+  naming the future-consumer class.
+- The `viaIR` comment is six lines of substantive justification, not a TODO.
+
+Tick 49 strict-review gate: **PASS**.

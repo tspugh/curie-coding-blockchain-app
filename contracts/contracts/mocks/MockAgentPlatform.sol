@@ -86,12 +86,13 @@ contract MockAgentPlatform is IAgentRequester {
         bytes32 clauseRef; // policy clause the agent relied on
         bytes32 standardRef; // public standard cited for a policy flag (R6b)
         uint256 receiptId; // off-chain receipt pointer to surface
+        uint16[] policyVoidedClauseIndices; // SPEC-0004 §3.5 R23: clause indices voided on policy-void path
     }
 
     /// @notice Drive a successful necessity ruling back into the target as the
     ///         platform would, encoding the arbiter tuple the contract decodes:
     ///         `(decision, costPlusUnitPrice, nadacUnitPrice, rationaleHash, clauseRef,
-    ///         standardRef, receiptId)`.
+    ///         standardRef, receiptId, policyVoidedClauseIndices)`.
     /// @param target The CoverageNegotiation contract (implements handleResponse).
     /// @param requestId The request to resolve.
     /// @param r The ruling fields (see {@link Ruling}).
@@ -100,7 +101,7 @@ contract MockAgentPlatform is IAgentRequester {
         responses[0] = Response({
             validator: address(this),
             result: abi.encode(
-                r.decision, r.costPlusUnitPrice, r.nadacUnitPrice, r.rationaleHash, r.clauseRef, r.standardRef, r.receiptId
+                r.decision, r.costPlusUnitPrice, r.nadacUnitPrice, r.rationaleHash, r.clauseRef, r.standardRef, r.receiptId, r.policyVoidedClauseIndices
             ),
             status: ResponseStatus.Success,
             receipt: r.receiptId,

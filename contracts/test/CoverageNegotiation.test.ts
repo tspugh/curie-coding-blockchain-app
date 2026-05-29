@@ -52,7 +52,8 @@ const FEE = ethers.parseEther("0.01"); // > mock deposit (0.001 ether)
 function ruling(
   decision: number,
   costPlusUnitPrice: bigint,
-  nadacUnitPrice: bigint = NADAC_UNIT
+  nadacUnitPrice: bigint = NADAC_UNIT,
+  policyVoidedClauseIndices: number[] = []
 ) {
   return {
     decision,
@@ -62,6 +63,7 @@ function ruling(
     clauseRef: CLAUSE_REF,
     standardRef: STANDARD_REF,
     receiptId: RECEIPT_ID,
+    policyVoidedClauseIndices,
   };
 }
 
@@ -325,7 +327,7 @@ describe("CoverageNegotiation", () => {
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
       await expect(platform.triggerRuling(target, requestId, ruling(Decision.Deny, 150n)))
         .to.emit(contract, "Ruled")
-        .withArgs(reqId, requestId, Decision.Deny, 0n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID);
+        .withArgs(reqId, requestId, Decision.Deny, 0n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, []);
       expect(await contract.stateOf(reqId)).to.equal(State.Denied);
       expect(await contract.coveredAmountOf(reqId)).to.equal(0n);
     }
@@ -379,7 +381,7 @@ describe("CoverageNegotiation", () => {
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
       await expect(platform.triggerRuling(target, requestId, ruling(Decision.Approve, 150n)))
         .to.emit(contract, "Ruled")
-        .withArgs(reqId, requestId, Decision.Approve, 1500n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID);
+        .withArgs(reqId, requestId, Decision.Approve, 1500n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, []);
       expect(await contract.coveredAmountOf(reqId)).to.equal(1500n);
       expect((await contract.getNegotiation(reqId)).coveredAmount).to.equal(1500n);
 
@@ -397,7 +399,7 @@ describe("CoverageNegotiation", () => {
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
       await expect(platform.triggerRuling(target, requestId, ruling(Decision.Approve, 500n)))
         .to.emit(contract, "Ruled")
-        .withArgs(reqId, requestId, Decision.Approve, 2000n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID);
+        .withArgs(reqId, requestId, Decision.Approve, 2000n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, []);
       expect(await contract.coveredAmountOf(reqId)).to.equal(2000n);
       const basis = await contract.priceBasisOf(reqId);
       expect(basis.costPlusTotal).to.equal(5000n); // 500 × 10
@@ -444,7 +446,7 @@ describe("CoverageNegotiation", () => {
     const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
     await expect(platform.triggerRuling(target, requestId, ruling(Decision.Approve, HUGE)))
       .to.emit(contract, "Ruled")
-      .withArgs(reqId, requestId, Decision.Approve, 2000n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID);
+      .withArgs(reqId, requestId, Decision.Approve, 2000n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, []);
     expect(await contract.stateOf(reqId)).to.equal(State.Approved);
     expect(await contract.coveredAmountOf(reqId)).to.equal(2000n); // requested binds (cap saturated)
 
@@ -466,7 +468,7 @@ describe("CoverageNegotiation", () => {
       .to.emit(contract, "PolicyFlagged")
       .withArgs(reqId, CLAUSE_REF, STANDARD_REF)
       .and.to.emit(contract, "Ruled")
-      .withArgs(reqId, requestId, Decision.PolicyInvalid, 0n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID)
+      .withArgs(reqId, requestId, Decision.PolicyInvalid, 0n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, [])
       .and.to.emit(contract, "PolicyInvalidated")
       .withArgs(reqId, CLAUSE_REF, STANDARD_REF);
 
@@ -1012,6 +1014,23 @@ describe("CoverageNegotiation", () => {
       await expect(
         contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
       ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+  });
+
+  describe("R23: policyVoidedClauseIndices propagation", () => {
+    it("Approve ruling with policyVoidedClauseIndices=[2] propagates the populated array as the 8th Ruled arg", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
+
+      await expect(
+        platform.triggerRuling(target, requestId, ruling(Decision.Approve, 150n, NADAC_UNIT, [2]))
+      )
+        .to.emit(contract, "Ruled")
+        .withArgs(reqId, requestId, Decision.Approve, 1500n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, [2n]);
+
+      expect(await contract.stateOf(reqId)).to.equal(State.Approved);
     });
   });
 });

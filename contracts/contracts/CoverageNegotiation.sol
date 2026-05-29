@@ -227,7 +227,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         uint256 coveredAmount,
         bytes32 rationaleHash,
         bytes32 clauseRef,
-        uint256 receiptId
+        uint256 receiptId,
+        uint16[] policyVoidedClauseIndices
     );
     event PolicyFlagged(uint256 indexed reqId, bytes32 clauseRef, bytes32 standardRef);
     event PolicyInvalidated(uint256 indexed reqId, bytes32 clauseRef, bytes32 standardRef);
@@ -596,8 +597,9 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         }
 
         // Decode the arbiter tuple: (decision, costPlusUnitPrice, nadacUnitPrice,
-        // rationaleHash, clauseRef, standardRef, receiptId). This matches the encoding
-        // produced by MockAgentPlatform.triggerRuling and the real Somnia agent.
+        // rationaleHash, clauseRef, standardRef, receiptId, policyVoidedClauseIndices).
+        // This matches the encoding produced by MockAgentPlatform.triggerRuling and
+        // the real Somnia agent. policyVoidedClauseIndices is the 8th element (SPEC-0004 R23).
         (
             uint8 decisionRaw,
             uint256 costPlusUnitPrice,
@@ -605,10 +607,11 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
             bytes32 rationaleHash,
             bytes32 clauseRef,
             bytes32 standardRef,
-            uint256 receiptId
+            uint256 receiptId,
+            uint16[] memory policyVoidedClauseIndices
         ) = abi.decode(
             responses[0].result,
-            (uint8, uint256, uint256, bytes32, bytes32, bytes32, uint256)
+            (uint8, uint256, uint256, bytes32, bytes32, bytes32, uint256, uint16[])
         );
         Decision decision = Decision(decisionRaw);
 
@@ -637,7 +640,7 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
             emit PolicyFlagged(reqId, clauseRef, standardRef);
             n.coveredAmount = 0;
             n.state = State.PolicyInvalidated;
-            emit Ruled(reqId, requestId, decision, 0, rationaleHash, clauseRef, receiptId);
+            emit Ruled(reqId, requestId, decision, 0, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices);
             emit PolicyInvalidated(reqId, clauseRef, standardRef);
             return;
         }
@@ -651,12 +654,12 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
                 : n.requestedAmount;
             n.coveredAmount = covered;
             n.state = State.Approved;
-            emit Ruled(reqId, requestId, decision, covered, rationaleHash, clauseRef, receiptId);
+            emit Ruled(reqId, requestId, decision, covered, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices);
         } else {
             // Denied: agent found no clear medical necessity for coverage.
             n.coveredAmount = 0;
             n.state = State.Denied;
-            emit Ruled(reqId, requestId, decision, 0, rationaleHash, clauseRef, receiptId);
+            emit Ruled(reqId, requestId, decision, 0, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices);
         }
     }
 

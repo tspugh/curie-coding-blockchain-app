@@ -102,6 +102,11 @@ export interface SimulatedAgentOptions {
   /** Off-chain receipt pointer to surface in the `Ruled` event. Default: the request id. */
   readonly receiptId?: bigint;
   /**
+   * SPEC-0004 §3.5 R23: clause indices voided per R23's on-label-policy-void path.
+   * Emitted as the 8th arg of the `Ruled` event. Default: [].
+   */
+  readonly policyVoidedClauseIndices?: number[];
+  /**
    * Auto-resolve delay in ms after the agent fires. `0` (default) means the
    * ruling is delivered on the next macrotask; set higher to mimic latency. Set
    * `autoResolve: false` to require the explicit {@link SimulatedBackend.resolve}.
@@ -155,6 +160,24 @@ interface SimNegotiation {
   createdAt: bigint;
   rulingDeadline: bigint;
   exists: boolean;
+}
+
+/**
+ * Module-level mutable for the next `policyVoidedClauseIndices` value to emit
+ * in the simulated `Ruled` event (SPEC-0004 §3.5 R23). Reset to `[]` after each use.
+ * Use {@link setNextPolicyVoidedClauseIndices} to prime a one-shot populated value.
+ */
+let _nextPolicyVoidedClauseIndices: number[] = [];
+
+/**
+ * Set the `policyVoidedClauseIndices` array that will be emitted in the NEXT
+ * `Ruled` event from any {@link SimulatedBackend} instance. Consumed once then
+ * reset to `[]`. Used by future browser-verify scenarios that drive the R23
+ * Approve-with-voided-clauses path; the web layer's own `setNext…` helpers
+ * live in `web/src/client.ts` and target their own backend wrapper.
+ */
+export function setNextPolicyVoidedClauseIndices(arr: number[]): void {
+  _nextPolicyVoidedClauseIndices = arr;
 }
 
 /** In-memory backend behind the shared client interface. */
@@ -580,12 +603,22 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     n.providerAccepted = false;
     n.insurerAccepted = false;
 
+    // SPEC-0004 §3.5 R23: consume the next one-shot policyVoidedClauseIndices if set,
+    // otherwise fall back to the agent config, then [].
+    let policyVoidedClauseIndices: number[];
+    if (_nextPolicyVoidedClauseIndices.length > 0) {
+      policyVoidedClauseIndices = _nextPolicyVoidedClauseIndices;
+      _nextPolicyVoidedClauseIndices = [];
+    } else {
+      policyVoidedClauseIndices = this.agent.policyVoidedClauseIndices ?? [];
+    }
+
     if (decision === Decision.PolicyInvalid) {
       // R6b: a relied-on clause contradicts a public standard — void the contract.
       n.coveredAmount = 0n;
       n.state = State.PolicyInvalidated;
       this.emit({ name: "PolicyFlagged", reqId, clauseRef, standardRef });
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId });
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices });
       this.emit({ name: "PolicyInvalidated", reqId, clauseRef, standardRef });
       return;
     }
@@ -597,15 +630,15 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       const covered = n.requestedAmount < cap ? n.requestedAmount : cap;
       n.coveredAmount = covered;
       n.state = State.Approved;
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: covered, rationaleHash, clauseRef, receiptId });
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: covered, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices });
     } else if (decision === Decision.Deny) {
       n.coveredAmount = 0n;
       n.state = State.Denied;
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId });
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices });
     } else {
       // NeedMoreEvidence
       n.state = State.EvidenceRequested;
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId });
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices });
       this.emit({ name: "EvidenceRequested", reqId });
     }
   }
