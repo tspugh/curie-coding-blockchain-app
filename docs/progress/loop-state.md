@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 16 — UNIT-UI-3: Appeal stage + Round columns)
+**Last updated:** 2026-05-29 (tick 17 — UNIT-ladders-fallback-semantics; JSDoc-only LOW closure)
 **Current mode:** `impl`
-**Current tick:** 16
-**Last focus:** Added the missing "Appeal stage" + "Round" columns to the Overview request table per prototype `screens.jsx:114-152`. Stage cell renders two lines per prototype: stage name (top, from `stageNameFor(payerLine, appealRound)` — typed `LADDERS` lookup, R15/R17) and payer-line caption below it ("Part D" / "Commercial" / "Medicaid"). Round cell right-aligned with tabular-nums. `LADDERS` + `stageNameFor` + `PayerLine` re-exported from `src/index.ts` so `@lib` import works. Strict-review caught 1 MEDIUM (chip wrapper diverged from prototype's two-line plain layout — fixed inline by dropping chip, adding caption) + 1 LOW (`stageNameFor` fallback semantics differ from prototype — queued as separate followup).
-**Last commit:** `<this tick>` (tick 16 — UNIT-UI-3)
+**Current tick:** 17
+**Last focus:** Closed strict-review tick 16 LOW: `stageNameFor` returns `"—"` on out-of-range round / unknown line while prototype's `stageOf` silently clamps + falls back to PartD. Resolution = intentional divergence (production fails loud; out-of-range round means the contract wrote a value beyond `maxRounds` which is a bug worth surfacing, not papering over). Updated JSDoc on `stageNameFor` (`src/protocol/ladders.ts:163-178`) to document the divergence + reasoning. No behavior change — existing 14 ladders tests still green; production is intentionally stricter than the prototype.
+**Last commit:** `<this tick>` (tick 17 — JSDoc closure)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)

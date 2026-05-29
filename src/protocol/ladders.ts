@@ -163,6 +163,17 @@ export const LADDERS: Record<PayerLine, readonly LadderRow[]> = {
  * Return the stage name for a given payer line + appeal round, or `"—"` when
  * the round is out of range or the line is unrecognised.
  *
+ * **Intentional divergence from the prototype's `stageOf` helper** (in
+ * `docs/reference/ui-prototype-handoff/project/data.jsx`): the prototype
+ * silently clamps an out-of-range round to the last ladder stage and falls
+ * back to PartD on an unknown line. Production fails loud instead — an
+ * out-of-range round in a real `Negotiation` indicates the contract wrote
+ * a value beyond `maxRounds`, which is a bug worth surfacing; an unknown
+ * `PayerLine` indicates an enum-vs-LADDERS-map drift that should be caught
+ * at code review, not papered over at render time. The UI consumer is
+ * expected to handle the `"—"` sentinel (e.g. dim the cell) rather than
+ * the upstream silently fabricating a plausible-looking value.
+ *
  * @param line  The payer line governing this negotiation.
  * @param round The appeal round index (0 = Initial Determination).
  */
