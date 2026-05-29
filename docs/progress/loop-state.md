@@ -4,14 +4,27 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 14 — UNIT-UI-1: Overview KPI strip; user-driven refocus on visible UI)
+**Last updated:** 2026-05-29 (tick 15 — UNIT-UI-2: Overview filter pill bar)
 **Current mode:** `impl`
-**Current tick:** 14
-**Last focus:** User noted "the web UI still looks old" — loop refocused on visible UI conformance. Landed 4-card KPI strip above Overview list per prototype `screens.jsx:84-93` (verbatim labels: Total requests / In negotiation / Settled / Capped vs ask; subs verbatim; tone tokens: warn / ok / accent). Counts derived from the same `rows: NegotiationView[]` the table iterates — divergence structurally impossible; no fake data. Design-conformance jumped from 57% → **62%** (+5pp); Overview surface 35% → ~53% (+18pp). Strict-review 1 LOW (raw hex literals for tone colors → fixed inline using existing project tokens `var(--warn|ok|accent)`).
-**Last commit:** `<this tick>` (tick 14 — UNIT-UI-1 Overview KPI strip)
+**Current tick:** 15
+**Last focus:** 5-pill filter bar (All / Open / In negotiation / Settled / Closed) between the KPI strip and the request table. Strict-review caught a real MEDIUM: my prompt incorrectly claimed the prototype overlapped Settled in both Settled+Closed buckets — the prototype's `fmap` actually hand-lists state allowlists per bucket, so every row falls in exactly one bucket and counts sum to rows.length. Fixed inline with explicit `ACTIVE_STATES` and `CLOSED_STATES` sets mirroring `screens.jsx:47-53` verbatim. Denied → Closed (not In negotiation) per prototype's narrative grouping. The lying comment was also removed (LOW closure). User-reported bug "auth: not insurer" on engage queued as UNIT-7a (two-wallet demo).
+**Last commit:** `<this tick>` (tick 15 — UNIT-UI-2 filter pills + d0375f4 trycloudflare host fix)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)
+
+### UNIT-UI-2 (LANDED tick 15 — Overview filter pill bar)
+**5-pill filter bar between KPI strip and table; verbatim prototype labels + partition predicates**
+- What landed: `web/src/views/Overview.tsx` adds a `FilterKey` union, `ACTIVE_STATES` + `CLOSED_STATES` allowlist sets mirroring `screens.jsx:47-53`, `filters` predicate map, `filteredRows` useMemo, and a `.filter-pill-bar` row rendering one pill per key (each shows its count). KPI strip stays pinned to `rows` (full population); pills + table use `filteredRows`. Denied lands in Closed (not In negotiation), matching the prototype's narrative grouping.
+- Strict-review iter 1: 1 MEDIUM (broad `r.terminal` for Closed double-counted Settled, contradicting the prototype's hand-listed `fmap`) + 1 LOW (lying comment "matching prototype exactly" was false). Both closed inline by switching to explicit state-set partitioning + truthful comment.
+- Gate verdict: lib 53/53 ✓, hardhat 28/28 ✓, both tsc ✓, vite build ✓, secret-scan ✓, design-conformance bump expected (filter bar resolves one of the 3 top-priority gaps from tick 14).
+
+### UNIT-7a-two-wallet-demo (NEW — from user bug report "auth: not insurer")
+**Two-wallet support so the insurer profile can sign engage()**
+- Files: `.env.example` (document `VITE_PRIVATE_KEY_INSURER`), `web/src/client.ts` (load both keys, pick signer per active profile), `web/src/views/Create.tsx` (derive insurerAddr from the insurer wallet, not synthetic constant), `web/src/hooks/useWalletBalance.ts` (poll both balances or just the active one)
+- Context: UNIT-2 (tick 4) added R2b `createContract` reject when `providerAddr == insurerAddr`. To get past it, Create.tsx started using a synthetic `SYNTHETIC_INSURER_ADDR` while the user's only wallet stayed as providerAddr. When the user switches to insurer profile in the UI and tries to `engage()`, the contract correctly reverts `"auth: not insurer"` because `msg.sender == providerAddr ≠ insurerAddr`. The "profile switch" worked pre-UNIT-2 (single wallet) but is now broken for chain writes.
+- Acceptance criterion: with `VITE_PRIVATE_KEY` (provider) AND `VITE_PRIVATE_KEY_INSURER` (insurer) both set in `.env`, switching profile in the UI switches the signing key transparently. Create.tsx no longer uses a synthetic insurer address; insurerAddr is the second wallet's actual address. R2b is satisfied (two distinct addresses). Both profiles can engage/accept/refuse as appropriate.
+- Operator prerequisite: a second testnet wallet funded with ≥5 STT (refill at https://testnet.somnia.network/).
 
 ### UNIT-UI-1 (LANDED tick 14 — Overview KPI strip; user-driven UI refocus)
 **4-card KPI strip above Overview list — verbatim prototype labels + real-data counts**

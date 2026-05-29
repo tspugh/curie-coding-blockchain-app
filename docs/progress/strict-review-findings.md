@@ -2260,3 +2260,383 @@ silent theme-drift risk, not a runtime defect — recommended for a
 quick follow-up but not blocking.
 
 ### Final tick-14 verdict: PASS (0 HIGH; 0 MEDIUM; 1 LOW; 3 NITs)
+
+---
+
+# Strict-review findings — tick 15 (UNIT-UI-2, Overview filter pill bar)
+
+**Date:** 2026-05-29
+**Scope:** the 2 files touched this tick:
+- `web/src/views/Overview.tsx` (`FilterKey` typed union, `filters` predicate map, `filterLabels`, `filteredRows` memo, pill-bar JSX, table now renders `filteredRows`)
+- `web/src/styles.css` (added `.filter-pill-bar`, `.filter-pill`, `.filter-pill:hover`, `.filter-pill.is-active`, `.filter-pill-count`, `.filter-pill-spacer`, `.filter-pill-summary`)
+
+R-citations the unit claims to satisfy: none directly — design-conformance
+gate against `docs/reference/ui-prototype-handoff/project/screens.jsx:47-54,
+95-110` (the prototype's `fmap` + `filterLabels` + pill render).
+
+---
+
+### Gate checks (all three pass)
+
+- `node --import tsx --test "src/**/*.test.ts"` → **53 / 53 pass, 0 fail**
+  (duration 2.50 s; identical count and shape to tick 14 — no test
+  added or regressed by this UI-only edit).
+- `npx tsc -p tsconfig.json --noEmit` → **0 errors**.
+- `npx tsc -p web/tsconfig.json --noEmit` → **0 errors**.
+
+### Required-read pass
+
+1. **`web/src/views/Overview.tsx`** — read end-to-end. Structure is
+   clean: the existing `KpiCard` is untouched, the new `FilterKey`
+   type + `filters` map + `filterLabels` map are declared at module
+   scope (above `Overview`), `filterKey` state is added alongside
+   the existing `rows` state, `filteredRows` is `useMemo`-ed on
+   `[rows, filterKey]`, and the pill bar is rendered BETWEEN the
+   KPI strip (`.kpi-strip`) and the table — exactly the placement
+   the briefing prescribes.
+2. **`web/src/styles.css`** — read the new §25c block at lines
+   1130-1176. Tokens used: `var(--accent)`, `var(--border-dk)`,
+   `var(--border)`, `var(--muted)`, `var(--panel)`, `var(--panel-2)`,
+   `var(--shadow-sm)`, `var(--accent-mid)`. Hex literals appear ONLY
+   inside `var(--token, fallback)` fallback arguments (defensive
+   pattern, matches §25b's KPI styling convention).
+3. **`docs/reference/ui-prototype-handoff/project/screens.jsx`**
+   lines 47-54 + 95-110 — read and compared verbatim. See **Finding 1**
+   below for the prototype-vs-implementation semantic divergence.
+4. **`src/types/coverage.types.ts`** — confirmed `State` enum has
+   members `Open=0, Ready=1, UnderReview=2, EvidenceRequested=3,
+   Approved=4, Denied=5, Settled=6, Deadlocked=7, PolicyInvalidated=8,
+   ProviderRefused=9, Withdrawn=10` (lines 26-38). Confirmed
+   `NegotiationView.terminal: boolean` exists (line 175) and is the
+   contract's `_terminal` mirror — `TERMINAL_STATES` set on lines 56-62
+   is `{Settled, Deadlocked, PolicyInvalidated, ProviderRefused,
+   Withdrawn}`. **`Denied` is NOT terminal.**
+5. **`node --import tsx --test`** → 53/53 (above).
+6. **Both tsc projects** → 0 errors (above).
+
+---
+
+### Findings
+
+#### Finding 1 — Filter predicates diverge from prototype semantics for `Denied` AND `Settled` rows — **MEDIUM**
+
+**Prototype** (`screens.jsx:47-54`):
+```js
+const fmap = {
+  all: () => true,
+  open: r => ["Open"].includes(r.state),
+  active: r => ["Ready", "UnderReview", "EvidenceRequested", "Approved"].includes(r.state),
+  settled: r => r.state === "Settled",
+  closed: r => ["Deadlocked", "Withdrawn", "PolicyInvalidated", "ProviderRefused", "Denied"].includes(r.state),
+};
+```
+
+**Implementation** (`Overview.tsx:40-51`):
+```ts
+const filters: Record<FilterKey, (r: NegotiationView) => boolean> = {
+  all:     () => true,
+  open:    r => r.state === State.Open,
+  active:  r => !r.terminal && r.state !== State.Open,
+  settled: r => r.state === State.Settled,
+  closed:  r => r.terminal,
+};
+```
+
+Differences, mapping each state to which pill it lands in:
+
+| State              | Prototype pill | Implementation pill |
+|--------------------|----------------|---------------------|
+| Open               | open           | open                |
+| Ready              | active         | active              |
+| UnderReview        | active         | active              |
+| EvidenceRequested  | active         | active              |
+| Approved           | active         | active              |
+| **Denied**         | **closed**     | **active** ← diverges |
+| **Settled**        | **settled** only | **settled AND closed** ← diverges |
+| Deadlocked         | closed         | closed              |
+| PolicyInvalidated  | closed         | closed              |
+| ProviderRefused    | closed         | closed              |
+| Withdrawn          | closed         | closed              |
+
+Two semantic divergences:
+
+1. **`Denied` rows show under "In negotiation" instead of "Closed".**
+   In the contract, `Denied` is NOT a terminal state (per
+   `TERMINAL_STATES` in `coverage.types.ts:56-62`) — a denied
+   request can still appeal or be withdrawn. The implementation's
+   `!r.terminal && r.state !== State.Open` rule therefore catches
+   Denied. The prototype, in contrast, hand-lists Denied alongside
+   the truly-closed terminals. The prototype's grouping is
+   user-facing-language-centric (a denied claim "looks closed"
+   from a payer dashboard, even if the protocol still permits
+   appeal); the implementation's grouping is protocol-state-centric.
+   Neither is wrong, but they disagree.
+2. **`Settled` rows appear in BOTH "Settled" AND "Closed" in the
+   implementation, but ONLY in "Settled" in the prototype.** The
+   briefing claims the prototype "intentionally has overlap (Settled
+   rows show in both Settled AND Closed pills)" — this is **factually
+   incorrect**. The prototype's `closed` is a literal allowlist of
+   five terminal NON-Settled states (Deadlocked, Withdrawn,
+   PolicyInvalidated, ProviderRefused, Denied), and "Settled" is
+   conspicuously omitted from that list. The implementation's
+   `r.terminal` predicate is a superset that includes Settled, so
+   every Settled row is double-counted in the pill-counts UI (a row
+   in state Settled contributes to BOTH the "Settled" pill's count
+   AND the "Closed" pill's count). The prototype was written so
+   that "Settled" is mutually exclusive from "Closed".
+
+**Severity rationale:** MEDIUM. This is a visible-UI semantic
+divergence from the design-handoff prototype that the briefing
+explicitly invokes as the conformance gate ("compare verbatim").
+The Denied → active grouping is also defensible on protocol grounds
+(Denied isn't `r.terminal`) and arguably MORE truthful than the
+prototype, since a Denied request can still appeal — but it is not
+verbatim. The Settled-double-count is harder to defend: users will
+see "Settled (3)" and "Closed (3)" and wonder why their 3 settled
+requests are also "closed" — the pill counts no longer sum to total.
+
+**Fix (two options):**
+- **(A) Match the prototype verbatim** (the briefing's stated
+  intent): hand-list the predicates the same way as the prototype.
+  ```ts
+  open:    r => r.state === State.Open,
+  active:  r => r.state === State.Ready
+              || r.state === State.UnderReview
+              || r.state === State.EvidenceRequested
+              || r.state === State.Approved,
+  settled: r => r.state === State.Settled,
+  closed:  r => r.state === State.Denied
+              || r.state === State.Deadlocked
+              || r.state === State.Withdrawn
+              || r.state === State.PolicyInvalidated
+              || r.state === State.ProviderRefused,
+  ```
+  Then the five pill counts partition rows perfectly: each row is
+  in exactly one bucket, counts sum to `rows.length`, no double
+  counting.
+- **(B) Keep the protocol-centric semantics** but at minimum stop
+  double-counting Settled — change `closed` to
+  `r => r.terminal && r.state !== State.Settled`. Denied stays in
+  "active" (the existing implementation rationale).
+
+Option A is the briefing's stated intent ("matching the prototype's
+fmap exactly", which the comment at `Overview.tsx:49` claims) and
+removes both divergences. Option B is a partial fix that addresses
+only the double-count.
+
+#### Finding 2 — Comment at `Overview.tsx:49` is factually wrong — **LOW**
+
+The block comment on lines 47-49 says:
+```ts
+// "closed" = any terminal state (Settled, Deadlocked, PolicyInvalidated,
+// ProviderRefused, Withdrawn). Settled is a sub-set so it appears in both
+// "closed" and "settled" — matching the prototype's fmap exactly.
+```
+
+The "matching the prototype's fmap exactly" claim is false:
+prototype `closed` excludes Settled and includes Denied (see
+**Finding 1**). This is a comment that lies — exactly what review
+gate item 9 ("Comments: nothing lying or restating code") guards
+against. The lie originated in the briefing prompt itself and was
+faithfully transcribed into the code's comment.
+
+**Severity rationale:** LOW. Wrong comments are a form of misleading
+documentation that future readers will trust. If Finding 1 is fixed
+by Option A, this comment must be replaced; if Option B is chosen,
+the comment still needs amending to drop the "matching the
+prototype's fmap exactly" claim.
+
+**Fix:** rewrite the comment to honestly describe whatever
+semantics the predicates end up implementing, with no
+prototype-conformance claim unless Option A is taken.
+
+#### Finding 3 — `filter-pill-bar` lacks `flex-wrap`, can overflow at narrow viewports — **NIT**
+
+`styles.css:1132-1137`:
+```css
+.filter-pill-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  align-items: center;
+}
+```
+
+Six children (five pills + the `.filter-pill-spacer`) plus the
+trailing `.filter-pill-summary` are laid out as a single row with
+no `flex-wrap`. At narrow viewports (under ~480 px wide) the
+pills can overflow horizontally. The prototype's inline style at
+`screens.jsx:96` is also missing `flexWrap`, so this is faithful
+to the prototype — but the prototype is a demo, not a responsive
+production surface.
+
+**Severity rationale:** NIT — matches the prototype, not a defect
+for this tick. The KPI strip above (§25b) is a 4-column grid that
+also has no responsive collapse. Both are existing/inherited
+patterns; if the project later adds a small-screen breakpoint,
+both should be revisited together.
+
+**Fix (optional):** add `flex-wrap: wrap;` to `.filter-pill-bar`.
+Single line, no other effect.
+
+#### Finding 4 — `:hover` rule has slightly surprising specificity interaction with `is-active` — **NIT**
+
+`styles.css:1152-1162`:
+```css
+.filter-pill:hover {
+  border-color: var(--accent-mid, var(--accent));
+  background: var(--panel-2, #f8f9fc);
+}
+
+.filter-pill.is-active {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: transparent;
+  ...
+}
+```
+
+Both selectors have specificity 0,1,1 (`.filter-pill:hover`) and
+0,2,0 (`.filter-pill.is-active`) — so `.is-active` wins under
+source order on a tie, which works here since `.is-active` is
+declared AFTER `:hover`. However, hovering the active pill will
+NOT visibly change its appearance (active styles override), which
+is the intended UX. The `:hover` rule alone is fine — but if
+someone later moves `.is-active` ABOVE `:hover` in the file, the
+active pill would lose its blue background on hover. A
+`.filter-pill:hover:not(.is-active)` would be more defensive.
+
+**Severity rationale:** NIT — works correctly at the moment; mild
+fragility risk for future edits.
+
+**Fix (optional):** scope `:hover` to `:not(.is-active)`.
+
+#### Finding 5 — Raw `#ffffff` literal on active pill — **NIT**
+
+`styles.css:1159`: `color: #ffffff;` (active pill text).
+The existing `button.primary` rule at line 261 uses the same raw
+`#ffffff` for the same purpose ("white text on accent background").
+The project tokens don't define a `--text-on-accent` or `--white`
+token, so this is consistent with the project's existing
+convention. Tick 14's Finding 1 covered the more impactful case
+(KPI tone-color literals); this one is the same defensive
+"white-on-accent" pattern used elsewhere in the file.
+
+**Severity rationale:** NIT — consistent with the existing
+codebase, not a regression.
+
+**Fix (optional):** either define `--text-on-accent: #fff;` once
+in §1 design tokens and use it in BOTH places (this rule and
+`button.primary`), OR leave both as-is. Bundling the change across
+both call sites is the right time to act on this.
+
+---
+
+### Regression checks (no findings)
+
+- **KPI strip independence (briefing item 2).** Confirmed:
+  `counts` reducer at `Overview.tsx:105` iterates `rows`, not
+  `filteredRows`. The pill selection has zero effect on the KPI
+  card values. Tick 14's KPI–table separation is intact.
+- **Pill counts are real (briefing item 3).** Confirmed:
+  `Overview.tsx:142` is `const count = rows.filter(filters[k]).length;`
+  — derived from the live `rows` array via the same predicate map
+  the row-filter uses, no `Math.random`, no hard-coded numbers, no
+  derived-from-something-else.
+- **`useMemo` correctness (briefing item 6).** Confirmed:
+  `Overview.tsx:84` is `useMemo(() => rows.filter(filters[filterKey]), [rows, filterKey])`
+  — both `rows` and `filterKey` in the deps array. (`filters` is
+  module-scope-const so it's stable across renders and correctly
+  omitted from deps.)
+- **Verbatim prototype labels (briefing item 7).** Confirmed:
+  `Overview.tsx:53-59` has exactly
+  `{ all: "All", open: "Open", active: "In negotiation", settled: "Settled", closed: "Closed" }`
+  — byte-identical to `screens.jsx:54`.
+- **Pill key order (briefing item 7, follow-on).** Confirmed:
+  `filters` and `filterLabels` are declared with keys in the same
+  order: `all, open, active, settled, closed`. `Object.keys(filters)`
+  iteration order matches the prototype's `Object.keys(fmap)`
+  iteration. Pills render left-to-right in the same sequence as
+  the prototype.
+- **`<button type="button">` for pills (briefing item 5).**
+  Confirmed: `Overview.tsx:146` is
+  `<button key={k} type="button" className={...} onClick={...}>` —
+  `type="button"` prevents accidental form submission, keyboard
+  Tab/Enter/Space activation works via browser default. No custom
+  `:focus-visible` rule, so pills inherit the browser's default
+  focus ring — accessible.
+- **`FilterKey` not exported (briefing item 10).** Confirmed:
+  `grep -n "FilterKey" Overview.tsx` shows declaration on line 38
+  with no `export` keyword. Only `Overview` itself is exported (line
+  81). The type stays local.
+- **CSS leakage (briefing item 8).** New rules are all prefixed
+  `.filter-pill*` and unique to this surface. No collision with
+  any existing class. `grep -c "filter-pill" styles.css` = 13
+  occurrences, all inside §25c; `grep -rn "filter-pill" web/src/`
+  shows only `Overview.tsx` (the producer) using them.
+- **No prior tick's findings re-opened.** Tick 14's LOW finding
+  (`.kpi-value.tone-*` raw hex) is RESOLVED in styles.css:1120-1122
+  (`var(--warn)`, `var(--ok)`, `var(--accent)`) — confirmed clean.
+  Tick 13's MEDIUM (R-citation miscite in `useNegotiation.ts`) is
+  untouched by this tick. Tick 12's `useAction.ts` deferral remains
+  the same. 53/53 tests stable.
+- **Table renders `filteredRows`, not `rows`.** `Overview.tsx:180`
+  is `{filteredRows.map((v) => (...))}` — confirmed. The summary
+  text `{filteredRows.length} of {rows.length}` on line 155 will
+  truthfully read "5 of 12" etc.
+- **Empty-state branch unaffected.** Lines 158-167 gate on
+  `rows.length === 0`. The pill bar always renders (matches
+  prototype), even when there are no rows — and when there are no
+  rows, every pill's count is 0, which is honest.
+
+---
+
+### Tick-15 verdict
+
+**OVERALL: FAIL — 0 HIGH; 1 MEDIUM; 1 LOW; 3 NITs.**
+
+Severity breakdown:
+- **HIGH:** 0.
+- **MEDIUM:** 1 (Finding 1: `active` and `closed` predicates diverge
+  from the prototype — Denied lands in "active" not "closed", AND
+  Settled is double-counted because the implementation's `r.terminal`
+  superset includes Settled while the prototype's hand-list excludes
+  it. The briefing's claim that "Settled rows show in both Settled
+  AND Closed pills" in the prototype is contradicted by the
+  prototype source at `screens.jsx:52`).
+- **LOW:** 1 (Finding 2: the in-file comment at `Overview.tsx:47-49`
+  asserts "matching the prototype's fmap exactly" — that claim is
+  false per Finding 1; a comment that misrepresents what the code
+  does and how it relates to the design source).
+- **NIT:** 3 (Finding 3: no `flex-wrap` on the pill bar — faithful
+  to prototype but non-responsive; Finding 4: `:hover` not scoped
+  with `:not(.is-active)` — fragile but currently correct; Finding 5:
+  raw `#ffffff` literal on the active pill — consistent with
+  `button.primary`, project lacks a `--text-on-accent` token).
+
+The pill-bar landed cleanly on the gate checks (53/53 tests pass,
+both tsc projects clean) and the structural concerns (KPI
+independence, real pill counts, `useMemo` deps, verbatim labels,
+`<button type="button">`, no FilterKey export, no CSS leakage) all
+verify. The MEDIUM finding is a design-conformance miss against
+the prototype the briefing explicitly invokes — the implementation's
+filter predicates are protocol-state-centric (using the
+`NegotiationView.terminal` boolean as the closed/active divider),
+whereas the prototype is dashboard-language-centric (Denied is
+"closed" to a payer's eye, Settled is exclusively its own bucket).
+The two semantic divergences land Denied in the wrong pill and
+make Settled rows double-count in pill totals, breaking the
+pill-counts-sum-to-`rows.length` invariant the prototype enforces.
+
+This is a strict-gatekeeper review and the briefing explicitly says
+"Zero findings required." One MEDIUM design-conformance finding plus
+one LOW lying-comment finding → the tick does not clear the gate.
+
+**Recommended remediation:** Finding 1 Option A (hand-list the
+predicates to mirror `screens.jsx:47-53`) — three lines of code, no
+runtime risk, restores the partition invariant, and concurrently
+fixes Finding 2 (the comment can then truthfully say "matches the
+prototype's fmap"). Re-run the three gates after that change. NITs
+3-5 are at-leisure.
+
+### Final tick-15 verdict: FAIL (0 HIGH; 1 MEDIUM; 1 LOW; 3 NITs)

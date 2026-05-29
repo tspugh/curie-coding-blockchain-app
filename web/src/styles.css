@@ -1127,6 +1127,54 @@ tr.row-link:hover td:first-child {
   color: var(--muted-lt, #9ca3af);
 }
 
+/* ─── 25c. Filter pill bar (Overview — UNIT-UI-2) ───────────────────────── */
+
+.filter-pill-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  align-items: center;
+}
+
+.filter-pill {
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--border-dk, var(--border, #d1d5db));
+  color: var(--muted, #4b5563);
+  background: var(--panel, #ffffff);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.05));
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.filter-pill:hover {
+  border-color: var(--accent-mid, var(--accent));
+  background: var(--panel-2, #f8f9fc);
+}
+
+.filter-pill.is-active {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 1px 4px rgba(37, 99, 235, .28);
+}
+
+.filter-pill-count {
+  opacity: 0.66;
+  margin-left: 3px;
+}
+
+.filter-pill-spacer { flex: 1; }
+
+.filter-pill-summary {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted, #6b7280);
+}
+
 /* ─── 25. Empty state (Overview) ────────────────────────────────────────── */
 
 .empty-state {

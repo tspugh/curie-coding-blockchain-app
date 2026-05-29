@@ -2,7 +2,7 @@
  * Overview: live table of every coverage request with its current status.
  * Re-fetches on every event (R16). Each row opens the request detail view.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { type CoverageEvent, type NegotiationView, Decision, State } from "@lib";
 import { client } from "../client.js";
 import { fmtAmount, shortHex } from "../shared.js";
@@ -31,6 +31,48 @@ function KpiCard({ label, value, sub, tone }: KpiCardProps) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Filter pill bar — UNIT-UI-2
+// ---------------------------------------------------------------------------
+
+type FilterKey = "all" | "open" | "active" | "settled" | "closed";
+
+// Predicates are hand-listed per state, mirroring the prototype's `fmap`
+// (`docs/reference/ui-prototype-handoff/project/screens.jsx:47-53`). Every
+// row falls in exactly one of {Open, In negotiation, Settled, Closed}, so
+// the pill counts sum to rows.length — no double-counting. Denied lands in
+// Closed (not In negotiation) to match the prototype's narrative grouping,
+// even though Denied is non-terminal in `coverage.types.ts`.
+const ACTIVE_STATES = new Set<State>([
+  State.Ready,
+  State.UnderReview,
+  State.EvidenceRequested,
+  State.Approved,
+]);
+const CLOSED_STATES = new Set<State>([
+  State.Denied,
+  State.Deadlocked,
+  State.Withdrawn,
+  State.PolicyInvalidated,
+  State.ProviderRefused,
+]);
+
+const filters: Record<FilterKey, (r: NegotiationView) => boolean> = {
+  all:     () => true,
+  open:    r => r.state === State.Open,
+  active:  r => ACTIVE_STATES.has(r.state),
+  settled: r => r.state === State.Settled,
+  closed:  r => CLOSED_STATES.has(r.state),
+};
+
+const filterLabels: Record<FilterKey, string> = {
+  all:     "All",
+  open:    "Open",
+  active:  "In negotiation",
+  settled: "Settled",
+  closed:  "Closed",
+};
+
 interface OverviewProps {
   readonly events: readonly CoverageEvent[];
   readonly onOpen: (reqId: bigint) => void;
@@ -53,6 +95,8 @@ const FRIENDLY_STATE: Record<State, string> = {
 
 export function Overview({ events, onOpen, onCreate }: OverviewProps) {
   const [rows, setRows] = useState<readonly NegotiationView[]>([]);
+  const [filterKey, setFilterKey] = useState<FilterKey>("all");
+  const filteredRows = useMemo(() => rows.filter(filters[filterKey]), [rows, filterKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -107,6 +151,25 @@ export function Overview({ events, onOpen, onCreate }: OverviewProps) {
         <KpiCard label="Capped vs ask" value={fmtAmount(counts.saved)} sub="requested − covered" tone="accent" />
       </div>
 
+      {/* Filter pill bar — UNIT-UI-2 */}
+      <div className="filter-pill-bar">
+        {(Object.keys(filters) as FilterKey[]).map((k) => {
+          const count = rows.filter(filters[k]).length;
+          return (
+            <button
+              key={k}
+              type="button"
+              className={`filter-pill${filterKey === k ? " is-active" : ""}`}
+              onClick={() => setFilterKey(k)}
+            >
+              {filterLabels[k]} <span className="filter-pill-count">{count}</span>
+            </button>
+          );
+        })}
+        <div className="filter-pill-spacer" />
+        <span className="filter-pill-summary">{filteredRows.length} of {rows.length}</span>
+      </div>
+
       {rows.length === 0 ? (
         <div className="empty-state">
           <p className="empty-icon">📋</p>
@@ -129,7 +192,7 @@ export function Overview({ events, onOpen, onCreate }: OverviewProps) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((v) => (
+            {filteredRows.map((v) => (
               <tr
                 key={v.reqId.toString()}
                 data-testid="contract-row"
