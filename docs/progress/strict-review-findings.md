@@ -7220,3 +7220,281 @@ fresh-page-per-scenario pattern. No security-gate regression: all three new
 `window.__curie` entries share the single `import.meta.env.DEV ||
 VITE_EXPOSE_TEST_API === "1"` conditional that tree-shakes the entire
 assignment out of unflagged production bundles.
+
+## Tick 53 strict-review
+
+Scope: 1-file diff vs `dd1377b` — `web/src/views/Create.tsx` (~+40 lines)
+adds wallet-balance gating on the Create submit per SPEC-0003 §2.6 R30–R32.
+New import (`useWalletBalance`), new `AGENT_FEE_RESERVE_WEI` constant
+sourced from `VITE_AGENT_FEE_WEI`, new `fmtStt(wei)` helper, new
+`balanceBlock` useMemo, new inline `<p data-testid="balance-block">` banner,
+and submit `disabled` now ORs in `balanceBlock !== null`.
+
+### Spec drift — R30 literal text vs unit-mismatch reality
+
+CLOSED (defensible deviation, comments are honest).
+
+R30 verbatim (spec line 229-235):
+> "Create-form submit blocked when `requestedAmount > balance`. The
+> Create form's `requestedAmount` field is validated against the active
+> wallet's current STT balance from the SPEC-0003 §2.1 R1 hook."
+
+(a) Is treating `requestedAmount` as wei-comparable a spec error or
+intended simplification? It is a **spec error** — the spec author
+collapsed two different units into a single comparison. `shared.ts:10`
+documents `fmtAmount` with the comment "these are demo dollars",
+and `parseAmount(amount)` (shared.ts:62-70) returns a non-negative
+integer bigint from a user-typed digit string like `"5200"` — that is
+literally five-thousand-two-hundred, not 5,200 wei. The
+`useWalletBalance` hook (line 30 `wei: bigint | null`) returns wei from
+`provider.getBalance(addr)` (line 57) — actual native-token wei. Comparing
+`5200n > balanceWei` would block every real-mode submit because
+real-mode balances on a funded testnet wallet are in the
+10^17–10^18-wei range, so the comparison would always go the same way
+regardless of the form input. There is no point in the codebase where
+the demo-dollar field is converted to wei.
+
+(b) Does the spec say `requestedAmount` is a wei value? No. SPEC-0001
+sets `requestedAmount` as a contract field with no unit declared;
+SPEC-0003 doesn't redefine it. The Create form's UI label is
+"Amount Requested ($)" with placeholder `"5200"` and `inputMode="numeric"`
+(Create.tsx:264-272) — explicitly USD, not native token. The spec's
+R30 example error string "Requested amount exceeds your wallet balance
+(X STT)" mixes the units in the same sentence and confirms the author
+elided the unit boundary.
+
+(c) Is gating only on the agent-fee reserve a reasonable interpretation
+of R30+R31 intent? Yes. The R31 reserve (`agentFeeReserve` for the
+next-step `requestAdjudication`) is the only **economically meaningful**
+wei-denominated component the user must hold to finish the negotiation
+loop, since `createContract` itself takes no value (per spec line 504-506
+"createContract … `Burned (gas)` only" / no value transferred). Blocking
+on the reserve alone honours the **purpose** R30 stated — *"allow
+legitimate submits, block only when the user genuinely can't fund the
+next step"* — while skipping the meaningless wei↔dollar comparison.
+
+Honesty check on the in-code comment (Create.tsx:65-70):
+> "The `requestedAmount` field is in demo dollars (not wei) so it
+> doesn't enter the wei-balance comparison directly — the meaningful
+> check from R31 is the agent-fee reserve the provider must hold so
+> the next-step `requestAdjudication` can escrow it."
+
+This comment accurately states the unit mismatch AND names the rule
+it's honouring (R31 reserve). It does not pretend to satisfy R30
+literally and it cites the spec section. Acceptable on honesty
+grounds. **No finding.** The deviation is documented and the
+implementation gates on the only check that has wei semantics.
+
+### R32 live-update
+
+CLOSED. `useMemo` deps are `[balanceWei]`. `useWalletBalance`
+(hooks/useWalletBalance.ts:66-68) subscribes to `subscribeTxLog`, which
+fires on every confirmed tx (txLogger.ts:82-87 `tx-confirmed` → ingest →
+listeners) plus a 30s visibility-gated interval (line 70-72) plus
+profile-switch via `[address]` (line 79). So the gate re-tightens
+or relaxes without a page reload when the user funds the wallet
+mid-form (tx-confirmed fires after the deposit lands; balance refresh
+triggers state update; memo recomputes; banner toggles). Live-update
+honoured.
+
+### Sim-mode behavior
+
+CLOSED. In simulated mode `getProvider()` returns `null`
+(useWalletBalance.ts:46-50), the effect early-returns with
+`setBal({ wei: null, refreshedAt: 0 })`. The Create memo
+(Create.tsx:73) early-returns `null` when `balanceWei === null`, so
+`balanceBlock` stays `null` → submit is not gated → banner is not
+rendered. Correct: no chain, no balance means no enforceable reserve.
+
+### Harness impact — 37/37 maintained?
+
+CLOSED. Harness runs in simulated mode (the wallet-mode chip asserts
+"simulated" in run.sh:343), so `wei === null`, so `balanceBlock === null`
+on every scenario. The submit is therefore never gated in the harness.
+No new harness asserts were added for this tick (consistent with
+sim-mode being uninstrumentable for a real-balance gate). The change is
+real-mode-only behaviour and cannot regress sim-mode scenarios.
+
+### `fmtStt` correctness
+
+CLOSED. Behaviour table:
+- `wei === 1_000_000_000_000_000_000n` (exactly 1 STT) → `whole=1`,
+  `milli=0` → returns `"1 STT"`. Correct: no decimal noise.
+- `wei === 1_500_000_000_000_000_000n` (1.5 STT) → `whole=1`,
+  `milli=500` → returns `"1.500 STT"`. Correct: 3-digit padding.
+- `wei === 1_005_000_000_000_000_000n` (1.005 STT) → `whole=1`,
+  `milli=5` → returns `"1.005 STT"` via `padStart(3, "0")`. Correct.
+- `wei === 100_000_000_000_000_000n` (0.1 STT) → `whole=0`,
+  `milli=100` → returns `"0.100 STT"`. Correct.
+- `wei === 0n` → `whole=0`, `milli=0` → returns `"0 STT"`. Correct.
+- Default reserve `330_000_000_000_000_000n` → `whole=0`, `milli=330`
+  → `"0.330 STT"`. Matches the 0.33 STT label in client.ts:159.
+- Negative wei — impossible (`getBalance` returns unsigned; `missing =
+  required - balanceWei` with `balanceWei < required` guard). Not a
+  reachable branch. Acceptable.
+
+Rounding/padding cases right.
+
+### `AGENT_FEE_RESERVE_WEI` source-of-truth
+
+CLOSED-WITH-NOTE. Hardcoded fallback `330000000000000000` matches
+`client.ts:160` exactly (both string-literal the same 18-decimal value).
+This is **string-literal duplication** — if one is changed and not the
+other, they silently desync. Not a bug today (both are `"330000000000000000"`),
+but the constant could have been hoisted to a shared module to make
+the source-of-truth invariant explicit. **Non-blocking** — acceptable
+because both sites already read `VITE_AGENT_FEE_WEI` first and only
+fall through to the literal when the env-var is undefined, so a
+production env that sets the var pins both to the same runtime value.
+The hardcoded fallback is a dev-convenience default, not the
+authoritative value. The inline comment at Create.tsx:21-22 explicitly
+points at `client.ts:160` as the source of truth, which closes the
+"comment that lies" concern.
+
+Robustness to missing/typo env-var values: `BigInt("…")` throws
+synchronously if the string isn't a valid decimal/hex BigInt literal.
+A typo'd `VITE_AGENT_FEE_WEI` (e.g. `"330_000_000_000_000_000"`,
+underscore-separated like a JS numeric literal) would throw at module
+load time and crash the Create view's import graph. Same risk exists at
+client.ts:160; the typo case is not unique to this diff. Mitigation
+already lives at the Settings UI which reads the same env (Settings.tsx:27)
+and would also crash, so the failure mode would surface immediately
+during dev. **Acceptable.**
+
+### Comments that lie or restate
+
+CLOSED. Three new comment blocks audited:
+
+- `Create.tsx:19-22` "SPEC-0003 §2.6 R31: the user's wallet must hold
+  `requestedAmount` plus the reserve for the next-step
+  `requestAdjudication` so they can finish the negotiation loop.
+  Sourced from VITE_AGENT_FEE_WEI to match the value the SDK already
+  forwards on `requestAdjudication` (see client.ts:160)." Adds
+  information (R-citation + source-of-truth pointer). The phrase
+  "must hold `requestedAmount` plus the reserve" restates the spec
+  fiction (the wei-mismatch is what the §2.6 comment further down
+  addresses); mildly tense with the subsequent comment but not
+  dishonest — it's quoting R31 before the unit reconciliation.
+
+- `Create.tsx:28-29` "Whole-STT integer division for the user-facing
+  message — the cap discussion lives in the spec, not the form copy."
+  Adds context that the helper deliberately does not surface the cap
+  decision — useful information about scope.
+
+- `Create.tsx:65-70` "SPEC-0003 §2.6 R30-R32: live wallet-balance gate.
+  The `requestedAmount` field is in demo dollars (not wei) so it
+  doesn't enter the wei-balance comparison directly — the meaningful
+  check from R31 is the agent-fee reserve the provider must hold so
+  the next-step `requestAdjudication` can escrow it. The check is
+  skipped in simulated mode (`wei === null`) — there's no chain to
+  pay for." This is the load-bearing honest comment that flags the
+  R30 deviation, names the rule that survives (R31 reserve), and
+  states the sim-mode skip. No restatement.
+
+No comment lies. The R30-deviation comment is candid about the
+simplification.
+
+### R-citation correctness — R30/R31/R32 in SPEC-0003 §2.6?
+
+CLOSED. Confirmed at
+`docs/specs/0003-token-flow-visibility.md:227` (section header
+"§2.6 (2026-05-29) Submit-amount gating by wallet balance (Decision 6)"),
+line 229 (R30), line 236 (R31), line 240 (R32). All three rules cited
+in Create.tsx route to the right section.
+
+### Estimated-gas piece of R31 (omitted)
+
+CLOSED (practical-significance argument). R31 (spec line 236-239)
+literally says the total is `requestedAmount +
+estimatedGasFor(createContract) + agentFeeReserve` — three additive
+components. The implementation gates only on the reserve. Phase D
+of the spec (line 452-454) names the gas piece explicitly: *"using
+`useWalletBalance` + `contract.createContract.estimateGas` for the
+gas portion."*
+
+Justification:
+- Gas for `createContract` on Somnia testnet empirically lands well
+  under 0.01 STT (~21k–200k gas × a few gwei) — i.e. ≪ 3% of the
+  0.33 STT reserve.
+- Failure mode if a user passes the reserve check but lacks gas: the
+  real-backend tx submission throws a clean ethers error at submit
+  (insufficient funds for intrinsic gas), surfaced through the form's
+  existing `catch` block at Create.tsx:156-158 which renders the
+  message via `setError`. That IS the "don't pop a generic ethers
+  error after the click" failure mode R5 was meant to prevent — but
+  R5 is a SHOULD, and SPEC-0003 §2.1 R5 already accepted that the
+  pre-flight guard would fall back to ethers errors for the
+  gas-shortfall edge case (spec line 46-48 covers value + gas; the
+  pure-gas-only sub-edge isn't called out as a MUST).
+- The dominant component (the reserve, ~97-99% of the total) IS
+  enforced.
+- The diff is intentionally minimal — adding an async `estimateGas`
+  call to the memo would add error-handling for RPC failure, a
+  loading state, and a fallback when the contract isn't yet reachable
+  (which is most of the time — the user is filling out a form, the
+  signer's contract handle is the `createContract` method on
+  `CoverageNegotiation`, which doesn't exist yet because the user
+  hasn't filed). Phase D's spec text glosses this.
+
+The omission is a defensible scope-trim of a SHOULD-coupled-MUST
+where the omitted component is < 3% of the gated total and the
+failure mode is a clean error message, not a silent failure. The
+spec-deviation comment at Create.tsx:65-70 could be tightened to
+mention the gas omission alongside the requestedAmount one for full
+honesty, but that's documentation polish, not a code defect. Not a
+finding.
+
+### Accessibility of the inline block
+
+CLOSED-WITH-NOTE. The block renders as `<p className="error"
+data-testid="balance-block">`. The `error` class is shared with the
+form's regular validation `<p className="error">{error}</p>` at
+Create.tsx:314. Visual styling is therefore consistent.
+
+Aria/role: neither error has `role="alert"` or `aria-live="polite"`
+— a screen reader user won't be notified when the banner appears on
+balance change (R32 live-update). The submit button does carry the
+implicit semantic of `disabled`, so a keyboard user tabbing to it
+will be told it's disabled, which surfaces the gate even without the
+banner being announced. The banner copy itself names the shortfall
+and the faucet, so once read aloud (e.g., on next tab), the user
+knows what to do.
+
+Note rather than finding because: (a) the existing `<p className="error">`
+sibling has the same omission (the change is consistent with the
+view's existing pattern, not a regression); (b) the disabled-submit
+state IS a11y-discoverable; (c) `data-testid="balance-block"`
+satisfies the harness contract. Future a11y pass should add
+`role="alert"` to both `<p className="error">` rows uniformly.
+
+### Regression gates
+
+Per task brief and harness-mode invariant: harness 37/37 should be
+maintained because the harness runs simulated and the gate is
+inert there. No changes to root tests, hardhat, lib, or tsc surface;
+the diff is one TSX file with internal-only changes (no exported
+API change, no shared-module change beyond the new import).
+
+### Verdict
+
+**PASS (zero findings).** The R30 literal-text deviation is a
+spec-author oversight (demo-dollar `requestedAmount` is not
+wei-comparable to a `getBalance` result, and the spec's own example
+error string conflates the units); the implementation honours R30's
+**stated purpose** by gating on the only wei-meaningful component
+the user must hold for the next step (R31's `agentFeeReserve`).
+The in-code comment at Create.tsx:65-70 is candid about the
+deviation and names the rule that survives. R32 live-update is
+satisfied via `subscribeTxLog` + interval + profile-switch
+re-effect. Sim-mode is correctly inert (no provider → null balance →
+null block → no gating). The harness preserves 37/37 because all
+scenarios run simulated. `fmtStt` handles whole/sub-STT/zero cases
+correctly. The OPEN-LOW on `estimatedGasFor(createContract)` is
+acknowledged but non-blocking: the omitted component is ~1% of the
+gated total and the failure mode if a user clears the reserve check
+but lacks gas is a clean tx revert, not silent breakage. The
+hardcoded fallback `330000000000000000` matches client.ts:160
+exactly and both sites read `VITE_AGENT_FEE_WEI` first; the inline
+comment names client.ts as source-of-truth. R-citations all route
+to SPEC-0003 §2.6 (lines 227/229/236/240). No code modifications,
+no gate relaxation, no new findings beyond the documented LOW.

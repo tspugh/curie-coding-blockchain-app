@@ -14,6 +14,23 @@ import {
 import { client, INSURER_ADDRESS } from "../client.js";
 import { parseAmount, shortHex } from "../shared.js";
 import { SAMPLE_CASE } from "../sampleCase.js";
+import { useWalletBalance } from "../hooks/useWalletBalance.js";
+
+// SPEC-0003 §2.6 R31: the user's wallet must hold `requestedAmount` plus the
+// reserve for the next-step `requestAdjudication` so they can finish the
+// negotiation loop. Sourced from VITE_AGENT_FEE_WEI to match the value the
+// SDK already forwards on `requestAdjudication` (see client.ts:160).
+const AGENT_FEE_RESERVE_WEI: bigint = BigInt(
+  import.meta.env.VITE_AGENT_FEE_WEI ?? "330000000000000000",
+);
+
+function fmtStt(wei: bigint): string {
+  // Whole-STT integer division for the user-facing message — the cap
+  // discussion lives in the spec, not the form copy.
+  const whole = wei / 1_000_000_000_000_000_000n;
+  const milli = (wei % 1_000_000_000_000_000_000n) / 1_000_000_000_000_000n;
+  return milli === 0n ? `${whole} STT` : `${whole}.${milli.toString().padStart(3, "0")} STT`;
+}
 
 interface CreateProps {
   readonly activeProfile: Profile;
@@ -44,6 +61,21 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
     () => (justification ? hashContent(justification) : null),
     [justification],
   );
+
+  // SPEC-0003 §2.6 R30-R32: live wallet-balance gate. The `requestedAmount`
+  // field is in demo dollars (not wei) so it doesn't enter the wei-balance
+  // comparison directly — the meaningful check from R31 is the
+  // agent-fee reserve the provider must hold so the next-step
+  // `requestAdjudication` can escrow it. The check is skipped in simulated
+  // mode (`wei === null`) — there's no chain to pay for.
+  const { wei: balanceWei } = useWalletBalance();
+  const balanceBlock = useMemo<{ required: bigint; missing: bigint } | null>(() => {
+    if (balanceWei === null) return null;
+    const required = AGENT_FEE_RESERVE_WEI;
+    return balanceWei < required
+      ? { required, missing: required - balanceWei }
+      : null;
+  }, [balanceWei]);
 
   const insurerProfile = useMemo<Profile>(() => {
     const all = client.profiles.listProfiles();
@@ -280,12 +312,20 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
         </div>
 
         {error && <p className="error">{error}</p>}
+        {balanceBlock && (
+          <p className="error" data-testid="balance-block">
+            Wallet balance is below the agent-fee reserve required for the
+            next-step adjudication. Need {fmtStt(balanceBlock.required)} (short
+            by {fmtStt(balanceBlock.missing)}). Top up the wallet at the Somnia
+            testnet faucet, then try again.
+          </p>
+        )}
 
         <button
           type="submit"
           className="primary"
           data-testid="create-submit"
-          disabled={busy}
+          disabled={busy || balanceBlock !== null}
         >
           {busy ? "Submitting…" : "Submit Request →"}
         </button>
