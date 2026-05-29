@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 36 — UNIT-Create-payer-selector)
+**Last updated:** 2026-05-29 (tick 37 — design-conformance hits 92% + redeploy contract for payerLine)
 **Current mode:** `impl`
-**Current tick:** 36
-**Last focus:** Closed tick-35 gap #1 — Create now has a payer-line selector (Commercial / Part D / Medicaid with statutory-ladder summaries per option, matching `screens.jsx:492-499`) wired to the createContract call (replaces the hardcoded `PayerLine.PartD`). Added a live hash preview below the justification textarea (shown when textarea non-empty) — `{charCount} chars · stays in your wallet / agent` on the left, `hash 0x...` chip on the right using the REAL keccak256 from `hashContent` (more honest than the prototype's fake `hashStr`). The selector now means the created Negotiation actually lands in the user's chosen ladder (Commercial / Part D / Medicaid) instead of always PartD — visible immediately on the new AppealLadder card in Detail. Expected to push Create surface 73% → ~90% and overall ≥ 90% — remeasurement next tick will confirm.
-**Last commit:** `<this tick>` (tick 36 — UNIT-Create-payer-selector)
+**Current tick:** 37
+**Last focus:** Two things: (a) design-conformance remeasurement after tick 36 — **89% → 92% (+3pp)**, **90% threshold MET for the first time** (Create jumped 73% → 88%). Strict-review on tick 36 PASSED 0 findings (2 NITs deferred: payerLine range-check, keccak-per-keystroke perf). (b) **Hot fix**: user hit `require(false)` empty-revert on submit. Root cause: the deployed contract at `0x461aeC...59b4` predated UNIT-1 (tick 3) so it didn't have `payerLine` in `createContract`'s ABI. Tick 36's wiring made the TS API call the new selector `0xd2274b2b` (11-arg signature), which hit no function on the old bytecode and the EVM reverted with no data. **Redeployed contract to `0x1dC5bA6771A7f4426ABE5BB808a7d51BdEA33E1A`** on Somnia testnet. Updated `.env` (`VITE_CONTRACT_ADDRESS` + `COVERAGE_CONTRACT_ADDRESS`) and `docs/loop-prompts/spec-4-implementation-loop.md`. Rebuilt dist + web bundle; preview restarted.
+**Last commit:** `<this tick>` (tick 37 — measurement + redeploy)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)

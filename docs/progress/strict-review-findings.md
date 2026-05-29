@@ -5125,3 +5125,173 @@ reached at the MEDIUM and LOW levels; only NITs remain.
 ### Final tick-30 verdict: PASS (0 HIGH; 0 MEDIUM; 0 LOW; 1 new NIT)
 
 
+---
+
+# Strict-review findings — tick 36 audit (UNIT-Create-payer-selector, retrospective)
+
+**Date:** 2026-05-29 (tick 37 retrospective audit on commit `1e4617b`)
+**Scope:** the two files changed by `1e4617b`:
+- `web/src/views/Create.tsx`
+- `web/src/styles.css`
+
+**R-citations claimed:** SPEC-0004 §2.4 R13/R15 (payerLine must flow through
+`createContract` so the AppealLadder reflects the chosen ladder) and SPEC-0001
+R4 (justification text stays off-chain — only its hash is committed).
+
+This commit landed without a strict-review gate; the audit below is the
+retrospective fill-in.
+
+## Gate results
+
+| Gate | Result |
+|------|--------|
+| `npx tsc -p . --noEmit` (lib) | PASS (no output) |
+| `cd web && npx tsc --noEmit` (web) | PASS (no output) |
+| `npm run test:lib` | PASS — 63/63 tests, 0 fail, 0 skip, 2.42s |
+| `npm run web:build` (vite) | PASS — 217 modules, ~569 KB bundle (3.38s) |
+| Secret-scan on `Create.tsx` + `styles.css` | PASS (no 64-hex / `PRIVATE_KEY=` / `SECRET` matches) |
+
+## R-traceability
+
+| R | Where it lands in the diff | Verified? |
+|---|----------------------------|-----------|
+| SPEC-0004 R13/R15 — payerLine in createContract | `Create.tsx:87` (`payerLine` replaces hardcoded `PayerLine.PartD`); state seeded at `:24`; bound to `<select>` at `:214-228` | YES — typed `PayerLine` round-trips through `client.negotiation.createContract` (verified against `src/contract/simulated.ts:148,244,678` and `src/contract/real.ts:120,250,587`); LADDERS map in `src/protocol/ladders.ts:43-128` indexes all three enum values, so the AppealLadder Detail view will render the chosen ladder. |
+| SPEC-0001 R4 — justification off-chain, hash only | `Create.tsx:75-76,92` (`client.content.put(justification)` then `justificationHash: stored.hash`); preview comment at `:29-31` cites R4 explicitly. | YES — `content.put` is the in-memory content store from `src/content/content.ts:37-48` (keccak256-keyed `Map<string,string>` per the file's "HARD INVARIANT (R4)" docstring). The preview's `hashContent(justification)` is the SAME function the submit handler chains through `put` (verified at `src/content/content.ts:19-21,44-48`), so preview === actual. |
+
+## Prototype-conformance check (verbatim option text)
+
+Prototype `docs/reference/ui-prototype-handoff/project/screens.jsx:492-499`
+defines the three `<option>`s in the order Commercial → PartD → Medicaid with
+the exact text reproduced below. Implementation matches verbatim:
+
+| # | Prototype text (`screens.jsx`) | Implementation text (`Create.tsx:219-227`) | Match |
+|---|--------------------------------|-------------------------------------------|-------|
+| 1 | `Commercial — Internal Appeal → External Review` | `Commercial — Internal Appeal → External Review` | EXACT |
+| 2 | `Medicare Part D — Redetermination → IRE → ALJ` | `Medicare Part D — Redetermination → IRE → ALJ` | EXACT |
+| 3 | `Medicaid (MCO) — Plan Appeal → External / Fair Hearing` | `Medicaid (MCO) — Plan Appeal → External / Fair Hearing` | EXACT |
+
+The label-hint copy `· sets the appeal ladder` (`:213`) also matches the
+prototype hint at `screens.jsx:493` verbatim. The option ordering matches the
+prototype (Commercial first, PartD second, Medicaid third) even though
+PartD remains the default — which is correct behaviour for the demo case (see
+below).
+
+## Targeted-concerns checklist (from the brief)
+
+1. **Real vs fake hash.** Prototype uses `hashStr` (a 32-bit non-cryptographic
+   JS hash) at `screens.jsx:471,530`. Production uses `hashContent` →
+   `ethers.keccak256` (`content.ts:19-21`). Production is intentionally more
+   honest. The header comment at `Create.tsx:29-31` documents the rationale
+   ("Live preview of the hash that WILL be committed on-chain … so they see
+   exactly what gets recorded"), explicitly citing R4. Documented.
+2. **PayerLine enum-cast safety.** `Number(e.target.value) as PayerLine` at
+   `Create.tsx:217`. Because `value={PayerLine.X}` renders the underlying
+   numeric enum (PartD=0, Commercial=1, Medicaid=2 per
+   `src/protocol/ladders.ts:12-16`), every legitimate browser-emitted value
+   round-trips to a valid enum member. DevTools-edited or
+   browser-extension-injected values would bypass this; see NIT-A below.
+3. **Default = PartD.** Correct for the demo. `SAMPLE_CASE` (`sampleCase.ts`)
+   is the Humira/Part D case (per the file docstring "compliant Part D
+   exception-criteria policy snippet … `payerLine: PartD`"), so a fresh form
+   that picks "Load Demo Case" lands consistently. Verified there is no
+   `payerLine` field on `SampleCase` (`sampleCase.ts:14-44`), so `loadDemo()`
+   correctly leaves the state at PartD.
+4. **`useMemo([justification])` dep correctness.** `Create.tsx:32-35`. Returns
+   `null` on empty string (falsy `justification`), recomputes on every
+   keystroke. Pairs with the guarded JSX render at `:142`
+   (`{justificationHashPreview && (...)}`) so the preview block only mounts
+   when there is text. Behaviour matches the brief's expectation.
+5. **`label-hint` reuse.** Single rule at `styles.css:2093-2097` covers both
+   usages (`Create.tsx:133` and `:213`). No duplicate definitions
+   (confirmed via grep — only one `.label-hint` rule in `styles.css`).
+6. **Hash-preview "stays in your wallet / agent" claim.** Verified honest.
+   The submit handler stores via `client.content.put(justification)` at
+   `Create.tsx:75`, and `ContentStore.put` is an in-memory `Map<hash,
+   content>` (`content.ts:37-48`) — i.e. lives only in the browser tab's JS
+   heap. No network egress. Claim does not lie.
+7. **`null` short-circuit on empty.** `Create.tsx:142`. React renders nothing
+   on `null`, correct.
+8. **Accessibility — `<select>` naming.** The `<select>` is wrapped by a
+   `<label>` element (`Create.tsx:212-229`), which provides implicit naming
+   without requiring `htmlFor`/`id`. React preserves this DOM structure, so
+   AT will announce "Payer line, combobox". Same pattern as every other
+   `<label><input/></label>` in the file (`:131,153,165,176,189,201`), so
+   no regression. `aria-label` would be a duplicate.
+9. **`Number(e.target.value)` NaN.** Not exposed by the rendered options
+   (all three render numeric strings "0", "1", "2"), but DevTools / injected
+   options could send non-numeric strings that `Number(...)` would coerce to
+   `NaN`. See NIT-A.
+10. **No tests added.** Acknowledged. `web/` has no React test infrastructure
+    in this repo; correctness rests on tsc + browser-verify. Both gates pass.
+11. **`loadDemo()` w.r.t. payerLine.** Correct. `SAMPLE_CASE` has no
+    `payerLine` field, `loadDemo()` does not touch the `payerLine` state, and
+    the default state is `PayerLine.PartD` — which is exactly the payer line
+    the SAMPLE_CASE scenario targets (Part D Adalimumab/Humira). No drift.
+
+## Style / token audit (`styles.css:2090-2118`)
+
+| Token reference | Defined? | Notes |
+|-----------------|----------|-------|
+| `var(--muted)` | YES (used widely already) | reused at `.label-hint` and `.hash-preview-chars` |
+| `var(--panel-2)` | YES | hash-chip background |
+| `var(--border-lt)` | YES | hash-chip border |
+| `var(--radius-sm)` | YES | hash-chip border-radius |
+| `var(--accent-dk)` | YES | hash-chip text colour |
+
+The monospace font stack at `.hash-preview-hash:2112` is a hardcoded
+`ui-monospace, 'SF Mono', Menlo, Consolas, monospace` fallback. Acceptable
+under the project's "no raw hex outside fallbacks" rule (this is a font
+stack, not a colour). Three small numeric font sizes (12.5/11.5/11 px) are
+inline rather than using a token — minor; the rest of `styles.css` does the
+same in many places, so this is consistent with house style.
+
+No class-name collisions: grep for `label-hint`, `hash-preview`,
+`hash-preview-chars`, `hash-preview-hash` returns exactly one definition
+each (lines 2093/2098/2107/2111 respectively).
+
+## Findings
+
+### NIT-A | No range-check on payerLine in `createContract` (defence-in-depth gap)
+
+- `src/contract/simulated.ts:206-251` and `src/contract/real.ts:235-250`
+  both accept `params.payerLine` verbatim without bounds-checking. The
+  Solidity side stores it as `uint8`, so an out-of-range value would either
+  revert on `enum` decode or silently land as a non-mapped enum value.
+- The UI flow (`Create.tsx:217`) is shielded by typed enum option values, so
+  a normal user cannot trigger this. The only path that could is DevTools /
+  extension tampering with `<option value>`, which is out of scope for v0.
+- Severity rationale: NIT because (a) no demo / browser-verify path reaches
+  it, (b) the on-chain `uint8` decode and the LADDERS map at
+  `src/protocol/ladders.ts:43-128` are the actual enforcement layers
+  downstream, and (c) the TS enum cast in `Create.tsx:217` is sound for the
+  three legitimate inputs the UI produces.
+- Not actionable for tick 36's scope. Flag for a future R2-class hardening
+  pass on the contract layer if SPEC-0004 ever calls for input-validation
+  guards on `createContract`.
+
+### NIT-B | `useMemo` recomputes keccak256 on every keystroke (minor perf)
+
+- `Create.tsx:32-35`. For the demo's short clinical-justification text
+  sizes (a few hundred chars), `ethers.keccak256(ethers.toUtf8Bytes(...))`
+  is sub-millisecond and unobservable. For a multi-megabyte paste it could
+  become noticeable.
+- The brief flagged this as "future concern". Confirmed: not actionable
+  here. If we ever support large-blob justifications, debouncing or
+  computing the preview on blur would be the right move. No action.
+
+## Tick-36 verdict
+
+The change is small, well-scoped, on-spec, and conformant with the
+prototype. R-citations are honest (the comment at `Create.tsx:29-31` cites
+R4 in code, and the wire-through at `:87` satisfies R13/R15). All five
+gates pass cleanly (lib tsc, web tsc, 63/63 lib tests, vite build,
+secret-scan). Verbatim option-text match against the prototype confirmed
+3-for-3. The hash-preview's user-facing claim
+("stays in your wallet / agent") is verified honest against the in-memory
+`ContentStore`. The two NITs (no-range-check on payerLine, keccak-per-
+keystroke) are defence-in-depth / perf-edge concerns and were already
+flagged in the brief; neither is actionable for tick 36's scope.
+
+Steady state holds.
+
+### Final tick-36 verdict: PASS (0 HIGH; 0 MEDIUM; 0 LOW; 2 NITs — both flagged-as-future-only)
