@@ -70,11 +70,15 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
   // `requestAdjudication` can escrow it. The check is skipped in simulated
   // mode (`wei === null`) — there's no chain to pay for.
   const { wei: balanceWei } = useWalletBalance();
-  const balanceBlock = useMemo<{ required: bigint; missing: bigint } | null>(() => {
+  const balanceBlock = useMemo<{
+    current: bigint;
+    required: bigint;
+    missing: bigint;
+  } | null>(() => {
     if (balanceWei === null) return null;
     const required = AGENT_FEE_RESERVE_WEI;
     return balanceWei < required
-      ? { required, missing: required - balanceWei }
+      ? { current: balanceWei, required, missing: required - balanceWei }
       : null;
   }, [balanceWei]);
 
@@ -316,9 +320,10 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
         {balanceBlock && (
           <p className="error" data-testid="balance-block">
             Wallet balance is below the agent-fee reserve required for the
-            next-step adjudication. Need {fmtStt(balanceBlock.required)} (short
-            by {fmtStt(balanceBlock.missing)}). Top up the wallet at the Somnia
-            testnet faucet, then try again.
+            next-step adjudication. You have <strong>{fmtStt(balanceBlock.current)}</strong>;
+            need <strong>{fmtStt(balanceBlock.required)}</strong> (short by
+            {" "}<strong>{fmtStt(balanceBlock.missing)}</strong>). Top up the
+            wallet at the Somnia testnet faucet, then try again.
           </p>
         )}
 
