@@ -229,9 +229,27 @@ let activeClient: CurieClient = providerClient;
  * Tell the proxy which concrete client to dispatch to for chain writes. App
  * calls this on every profile change. "insurer" → insurerClient (signs as the
  * second wallet); anything else → providerClient. Idempotent.
+ *
+ * In simulated mode the two clients share a single SimulatedBackend instance
+ * (tick-25 MEDIUM 1: state survives profile flips). The backend gates auth on
+ * its `caller` field — the simulated `msg.sender` — defaulting to
+ * `wallet.address` at construction. Without flipping `caller` on profile
+ * switch, the insurer-acting branches (insurerEngage, etc.) revert
+ * "auth: not insurer". So in sim mode we tell the backend who's calling now.
+ * Real mode is unaffected: each client has its own wallet + signer.
  */
 export function setActiveClientProfile(profileId: string): void {
   activeClient = profileId === "insurer" ? insurerClient : providerClient;
+  if (!IS_REAL) {
+    const sim = activeClient.negotiation as unknown as {
+      setCaller?: (address: string) => unknown;
+    };
+    sim.setCaller?.(
+      profileId === "insurer"
+        ? SIMULATED_INSURER_ADDRESS
+        : providerClient.wallet.address,
+    );
+  }
 }
 
 /**
@@ -244,10 +262,10 @@ export function setActiveClientProfile(profileId: string): void {
  * two clients are the SAME instance so their state-machine survives profile
  * flips (tick-25 MEDIUM 1 closure) — which means their wallet addresses are
  * identical, which would trip R2b's `providerAddr == insurerAddr` revert.
- * The simulated backend doesn't authenticate `msg.sender`, so we hand back a
- * fixed synthetic counterparty address that's guaranteed distinct from any
- * real provider address. R2b passes; engage()/accept() in simulated mode
- * succeed regardless of who actually called them (sim ignores auth).
+ * Hand back a fixed synthetic distinct counterparty address; the simulated
+ * backend's `caller` is then flipped to match this address on profile switch
+ * (see {@link setActiveClientProfile}), so SPEC-0001 R11 auth gates pass
+ * symmetrically with the real contract's `require(msg.sender == insurerAddr)`.
  */
 const SIMULATED_INSURER_ADDRESS = "0x0000000000000000000000000000000000c0c0c0";
 export const INSURER_ADDRESS: string = IS_REAL

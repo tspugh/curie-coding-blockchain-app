@@ -5678,3 +5678,95 @@ None observed. Spot checks performed:
 ### Verdict
 
 **PASS (zero findings).**
+
+## Tick 42 strict-review
+
+Diff under review (vs `9c45db3`):
+
+- `web/src/client.ts` — `setActiveClientProfile` flips the simulated backend's
+  `caller` on profile switch (sim-only branch, gated by `!IS_REAL`); the
+  `SIMULATED_INSURER_ADDRESS` doc-comment is corrected ("sim ignores auth" was
+  wrong — sim DOES authenticate per R11 parity).
+- `web/tests/agent-browser/run.sh` — new `eval_click <testid>` helper that
+  performs a DOM `.click()` via the existing `ev` (base64) eval channel;
+  19 callsites of `ab find testid X click` for action-submit buttons rewritten
+  to use it.
+
+### Scrutiny
+
+**1. `setCaller` type-cast soundness — CLOSED.**
+The cast `activeClient.negotiation as unknown as { setCaller?: ... }` is honest
+because the public interface (`CoverageNegotiationClient`, `src/contract/types.ts`)
+deliberately does NOT expose `setCaller` — it is a `SimulatedBackend`-only
+method (`src/contract/simulated.ts:197`). The double-`unknown` cast is the
+correct TS pattern to widen across the type boundary without violating the
+interface contract. The optional chaining `sim.setCaller?.(...)` is defensive
+but not strictly required at runtime: `createCoverageClient`
+(`src/contract/index.ts:37-52`) guarantees `wallet.mode !== "real" →
+SimulatedBackend`, and `SimulatedBackend.setCaller` is a regular method (not
+optional). The `!IS_REAL` gate guarantees we only reach this code in
+simulated mode. The optional chaining is harmless belt-and-suspenders that
+also accommodates any future mock backend without `setCaller`. Not a finding.
+
+**2. Comment honesty (`SIMULATED_INSURER_ADDRESS`) — CLOSED.**
+Cross-checked `src/contract/simulated.ts:627-647`: `is()`, `onlyInsurer()`,
+`onlyParty()`, `onlyProvider()` all evaluate `this.caller` against the
+expected wallet (with `ANY_CALLER` sentinel as wildcard). The simulated
+backend DOES enforce R11 gates whenever `caller !== ANY_CALLER`, and
+`createCoverageClient` always seeds `caller = wallet.address` in sim mode
+(`src/contract/index.ts:47-51`). The new comment (lines 265-268) is accurate;
+the old "sim ignores auth" claim was indeed stale. Not a finding.
+
+**3. Real-mode regression risk — CLOSED.**
+The new sim-flip block lives entirely inside `if (!IS_REAL) { ... }`. In real
+mode (`IS_REAL === true`), control flows past the new branch and the function
+behavior is byte-identical to the previous tick's: only `activeClient` is
+reassigned. The proxy `client` (`web/src/client.ts:280`) still dispatches to
+two distinct `RealBackend` instances bound to two distinct wallets/signers.
+No regression vector. Not a finding.
+
+**4. Observer profile caller assignment — CLOSED.**
+For `profileId !== "insurer"` the function sets `caller =
+providerClient.wallet.address`. In simulated mode `insurerClient ===
+providerClient` (web/src/client.ts:222) so the provider's wallet address is
+the only real address either party has. Scenario G (run.sh:266-286) verifies
+only (a) `getActivePartyId() === 99`, (b) `engage-submit` is hidden in the
+DOM, (c) a `nonparty-rejected` marker appears after the non-party-attempt
+button is clicked. None of these issues a write to the simulated backend
+*as observer*, so the caller value during observer-active is irrelevant. The
+provider-default is a benign placeholder. Not a finding.
+
+**5. Test parity with `simulated.auth.test.ts` — CLOSED.**
+The auth test (`src/contract/simulated.auth.test.ts:64-149`) drives the gate
+matrix via the same `setCaller(PROVIDER)` / `setCaller(INSURER)` pattern the
+web client now mirrors at profile-switch time. The web fix uses the
+SimulatedBackend's documented public method; no new API surface. Not a
+finding.
+
+**6. `eval_click` quoting / injection — CLOSED.**
+The helper interpolates `$1` into the JS body `'[data-testid=$1]'` and then
+ships the whole body through `ev`, which base64-encodes before passing to
+`ab eval -b`. All 19 callsites pass plain `[a-z-]+` literal testids:
+`create-submit`, `engage-load-compliant`, `engage-submit`, `adjudicate-submit`,
+`accept-submit`, `settle-submit`, `load-sample`, `engage-noncompliant-toggle`.
+No callsite contains a quote, backslash, whitespace, or template
+substitution. Every testid is confirmed present in `web/src/views/Create.tsx`
+or `web/src/views/Detail.tsx`. No injection surface, no quoting bug. Not a
+finding.
+
+**7. Build-flag drift — CLOSED.**
+`eval_click` is bash-only and lives in the test runner; nothing about it
+crosses into the bundle or Vite build. `setActiveClientProfile`'s `!IS_REAL`
+branch sits behind a `import.meta.env.VITE_WALLET_MODE === "real"` constant
+that Vite constant-folds at build time, so a real-mode production build
+tree-shakes the simulated-flip block entirely. Not a finding.
+
+**8. Empirical verification — CLOSED.**
+Reviewer reports 19/35 (was 13/35) — consistent with the rescued
+Scenario-A/E flows (create + engage-compliant + engage-submit +
+adjudicate-submit + accept-submit ×2 + settle-submit + load-sample). Hardhat
+28/28, lib 84/84, tsc clean. No regression evidence. Not a finding.
+
+### Verdict
+
+**PASS (zero findings).**

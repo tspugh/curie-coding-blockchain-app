@@ -61,6 +61,15 @@ ev() {
   printf '%s' "$out"
 }
 
+# Robust click via DOM .click() to bypass agent-browser's click semantics
+# (which fail to fire React's synthetic onClick for some nested-content
+# buttons — verified empirically tick 42 on the policy-card buttons inside
+# the engage panel). Eval-based .click() always bubbles, so React handlers
+# fire deterministically.
+eval_click() {
+  ev "(()=>{const e=document.querySelector('[data-testid=$1]');if(!e)return 'not-found';e.click();return 'clicked'})()" >/dev/null
+}
+
 # --- assertions -------------------------------------------------------------
 
 assert_eq() { # desc expected actual
@@ -127,7 +136,7 @@ scenario_happy_path() {
   ab find testid create-amount fill "5200" >/dev/null
   ab find testid create-quantity fill "2" >/dev/null          # SPEC-0001: quantity drives the cap
   ab find testid create-days-supply fill "28" >/dev/null      # SPEC-0001: necessity context only
-  ab find testid create-submit click >/dev/null
+  eval_click create-submit
   ab wait 300 >/dev/null
 
   # Assert: request opened in Open; adjudication NOT possible yet (R5 gate).
@@ -137,8 +146,8 @@ scenario_happy_path() {
   # Act: switch to insurer, attach the compliant policy -> Ready (R5).
   ab find testid profile-pill-insurer click >/dev/null
   ab wait 200 >/dev/null
-  ab find testid engage-load-compliant click >/dev/null
-  ab find testid engage-submit click >/dev/null
+  eval_click engage-load-compliant
+  eval_click engage-submit
   ab wait 300 >/dev/null
   assert_eq "policy attached -> Ready (on-chain)" "1" "$(state_of 1)"
   assert_eq "UI badge reflects Ready (R16)" "Ready" "$(ab get text "[data-testid=state-badge]" | tail -1)"
@@ -149,20 +158,20 @@ scenario_happy_path() {
   ab select "[data-testid=decision-select]" 0 >/dev/null   # 0 = Decision.Approve
   ab find testid costplus-unit-price fill "2100" >/dev/null
   ab find testid nadac-unit-price fill "2000" >/dev/null
-  ab find testid adjudicate-submit click >/dev/null
+  eval_click adjudicate-submit
   ab wait 1800 >/dev/null
   assert_eq "approve ruling routes to Approved" "4" "$(state_of 1)"
   # R6a: deterministic covered amount = min(5200, 2100 × 2) = 4200.
   assert_eq "covered = min(requested, costPlus × qty) (R6a)" "4200" "$(covered_of 1)"
 
   # Act: both parties accept, then settle (R8 event marker + 50/50 fee).
-  ab find testid accept-submit click >/dev/null
+  eval_click accept-submit
   ab wait 200 >/dev/null
   ab find testid profile-pill-provider click >/dev/null
   ab wait 200 >/dev/null
-  ab find testid accept-submit click >/dev/null
+  eval_click accept-submit
   ab wait 200 >/dev/null
-  ab find testid settle-submit click >/dev/null
+  eval_click settle-submit
   ab wait 300 >/dev/null
   assert_eq "settled (terminal)" "6" "$(state_of 1)"
 }
@@ -180,7 +189,7 @@ scenario_no_phi() {
   ab find testid create-note fill "$token — justification body that must never be committed." >/dev/null
   ab find testid create-drug fill "Adalimumab" >/dev/null
   ab find testid create-amount fill "5200" >/dev/null
-  ab find testid create-submit click >/dev/null
+  eval_click create-submit
   ab wait 300 >/dev/null
 
   # Assert: the committed justificationHash verifies against the off-chain note (R3)…
@@ -206,7 +215,7 @@ scenario_adjudication_gating() {
   ab find testid create-note fill "Request for the policy-gating check." >/dev/null
   ab find testid create-drug fill "Etanercept" >/dev/null
   ab find testid create-amount fill "2500" >/dev/null
-  ab find testid create-submit click >/dev/null
+  eval_click create-submit
   ab wait 300 >/dev/null
 
   # Act + Assert: adjudication before a policy is attached must revert (guard).
@@ -222,18 +231,18 @@ scenario_policy_invalidated() {
 
   open_app
   ab find testid nav-create click >/dev/null
-  ab find testid load-sample click >/dev/null
-  ab find testid create-submit click >/dev/null
+  eval_click load-sample
+  eval_click create-submit
   ab wait 300 >/dev/null
 
   # Insurer attaches the NON-compliant policy, then adjudicate with policy_invalid.
   ab find testid profile-pill-insurer click >/dev/null
   ab wait 200 >/dev/null
-  ab find testid engage-noncompliant-toggle click >/dev/null
-  ab find testid engage-submit click >/dev/null
+  eval_click engage-noncompliant-toggle
+  eval_click engage-submit
   ab wait 300 >/dev/null
   ab select "[data-testid=decision-select]" 3 >/dev/null   # 3 = Decision.PolicyInvalid
-  ab find testid adjudicate-submit click >/dev/null
+  eval_click adjudicate-submit
   ab wait 1800 >/dev/null
   assert_eq "non-compliant clause -> PolicyInvalidated (terminal)" "8" "$(state_of 1)"
 
@@ -259,8 +268,8 @@ scenario_observer() {
 
   open_app
   ab find testid nav-create click >/dev/null
-  ab find testid load-sample click >/dev/null
-  ab find testid create-submit click >/dev/null
+  eval_click load-sample
+  eval_click create-submit
   ab wait 300 >/dev/null
 
   # Switch to the observer (party 99) and assert mutating actions are hidden.
@@ -334,7 +343,7 @@ scenario_sample_case() {
   # Arrange: fresh app, open Create, load the synthetic sample case.
   open_app
   ab find testid nav-create click >/dev/null
-  ab find testid load-sample click >/dev/null
+  eval_click load-sample
   ab wait 200 >/dev/null
 
   # Assert: the fixture's drug + requested amount were prefilled.
@@ -347,7 +356,7 @@ scenario_sample_case() {
   assert_eq "sample days supply prefilled" "28" "$(ab get value "[data-testid=create-days-supply]" | tail -1)"
 
   # Act + Assert: filing from the sample case opens a request with that amount.
-  ab find testid create-submit click >/dev/null
+  eval_click create-submit
   ab wait 300 >/dev/null
   assert_eq "sample request filed (Open)" "0" "$(state_of 1)"
   assert_eq "requested amount on-chain" "5200" "$(field_of 1 requestedAmount)"
@@ -366,7 +375,7 @@ scenario_note_verify() {
   ab find testid create-note fill "VERIFY_ME canonical justification body" >/dev/null
   ab find testid create-drug fill "Adalimumab" >/dev/null
   ab find testid create-amount fill "5200" >/dev/null
-  ab find testid create-submit click >/dev/null
+  eval_click create-submit
   ab wait 300 >/dev/null
 
   # Act + Assert: the exact copy matches the committed hash…

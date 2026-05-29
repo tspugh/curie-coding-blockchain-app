@@ -1,6 +1,30 @@
 # Browser-verify
 
-Last run: tick 40 — 2026-05-29 — **12/35 pass** (was 9/35 at tick 39)
+Last run: tick 42 — 2026-05-29 — **19/35 pass** (was 9/35 at tick 39)
+
+## Tick 42 update — 19/35
+
+Closed `UNIT-engage-flow-silent-fail`. Two root causes uncovered, both fixed:
+
+1. **agent-browser's standard click doesn't fire React onClick for some nested-content buttons** (e.g. policy-card with `<span>`/`<strong>`/`<p>` children). Verified empirically: same button responds correctly to `document.querySelector(sel).click()` via eval. Fix: added `eval_click` helper in run.sh; rewrote 19× `ab find testid X click` → `eval_click X` for action-submit buttons.
+2. **Simulated backend's `caller` not flipped on profile switch.** In sim mode `insurerClient === providerClient` (tick-25 closure); `createCoverageClient` defaults `caller: wallet.address` (provider's address). On profile switch the caller stayed at providerAddr, so `insurerEngage`'s `onlyInsurer()` check threw `auth: not insurer`. Fix: `setActiveClientProfile` now calls `client.negotiation.setCaller(addr)` in sim mode.
+
+### Score delta
+
+- 12/35 (tick 40) → 13/35 (tick 41) → **19/35 (tick 42)**.
+- Scenario A: 5/7 pass (was 2/7) — create + engage + adjudicate + settle all green. Remaining 2: UI badge text divergence ("Ready" vs "Policy Attached — Ready for AI"), coveredAmount cap not propagating (5200 instead of 4200).
+- Scenario E: 7/7 PASS (was 4/7).
+
+Still failing:
+- Scenario B (PHI/note verify): 0/3 — different bug (Scenario B's reads return empty).
+- Scenario C2 (R6b non-compliant): 0/4 — state lands at 3 not 8.
+- Scenario F (note verify): 0/2.
+- Scenario G "non-party rejected": expected true, got false.
+- Scenario H (CDS): 0/4 — `cds-prefill` button not implemented (queued).
+
+## Tick 41 update — 13/35
+
+The "agent-browser click bug" diagnosed in tick 39 was a **misdiagnosis**. The click
 
 ## Tick 41 update — 13/35
 
