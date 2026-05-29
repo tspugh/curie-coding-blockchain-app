@@ -8,6 +8,8 @@ import { shortHex } from "./shared.js";
 import { Overview } from "./views/Overview.js";
 import { Create } from "./views/Create.js";
 import { Detail } from "./views/Detail.js";
+import { WalletBalance } from "./components/WalletBalance.js";
+import { TxMonitor } from "./components/TxMonitor.js";
 
 type View =
   | { kind: "overview" }
@@ -100,6 +102,9 @@ export function App() {
             </span>
           </span>
           <span className="wallet-line">
+            <WalletBalance />
+          </span>
+          <span className="wallet-line">
             <span className="label">Role</span>
             <select
               data-testid="profile-switcher"
@@ -136,6 +141,8 @@ export function App() {
           />
         )}
       </main>
+
+      <TxMonitor />
     </div>
   );
 }

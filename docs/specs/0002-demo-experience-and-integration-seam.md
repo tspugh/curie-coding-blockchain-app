@@ -104,3 +104,70 @@ explain; any secret/PHI ships in the static bundle.
 1. Somnia explorer URL format for a tx/receipt deep link (confirm via Context7 / docs). — priority: medium
 2. FDA-indication fixture source (openFDA label JSON snippet vs. a hand-authored indication line). — priority: medium
 3. How much animation is "flashy enough" without becoming a maintenance/perf cost in v0. — priority: low
+
+## Implementation plan (auxiliary)
+
+> Non-normative. Added 2026-05-29 retrospectively — captures what was built vs.
+> what's still owed against R1–R7 so future polish work knows the current state.
+> Update as items land.
+
+### Built (status: done — on main, verified via 2026-05-29 baseline screenshots)
+
+- **R1 (live evolving negotiation view)** — `web/src/views/Detail.tsx` renders the
+  timeline + per-round amount/rationale; subscribes to `client.negotiation.subscribe`.
+  Visible at all four Detail screenshots in
+  [`docs/progress/2026-05-29-baseline/`](../progress/2026-05-29-baseline/).
+- **R2 (interactive drive)** — Provider/Insurer/Observer profile picker in the
+  chrome (`web/src/App.tsx`); each profile's action affordance renders in
+  `Detail.tsx`. Caveat: SPEC-0003 §2.3 R13 polish + §2.5 R27 production lockdown
+  still owed.
+- **R3 (FDA-label gotcha)** — "Non-Compliant Policy (Demo)" path in the engage
+  flow uses `demo-data/policy-noncompliant.md` + the FDA fixture; triggers
+  `PolicyInvalidated`.
+- **R5 (price gauge)** — visible in baseline screenshot #4 / #5 as the
+  requested-vs-covered bar.
+- **R6 (wallet-gating demo)** — Observer profile registered (party 99);
+  SPEC-0001 R11 contract gating enforces. UI side could surface "third wallet
+  rejected" more clearly — falls under SPEC-0003 §2.3 R18 polish.
+
+### Known gaps against R1–R7
+
+- **R1 — live timeline doesn't backfill historical events.** Baseline issue
+  #13 in the fresh-screenshots inventory: Detail of a request that pre-dates
+  the current page session shows "No events yet." Either subscribe-from-block-0
+  on Detail mount or call `getEvents(reqId)` before live subscription kicks in.
+  Owns this fix: **SPEC-0002 cleanup PR** (small, self-contained).
+- **R4 (verifiability) — explorer deep-links not yet wired.** Pending an
+  answer to §8 Q1 (Somnia explorer URL format). Once known, build the link
+  builder per SPEC-0003 §2.7's `web/src/lib/explorerLinks.ts` so both the
+  SPEC-0002 timeline and SPEC-0003 §2.7 R33 reasoning explorer share one
+  source.
+- **R7 (CDS-Hooks mock + typed seam) — fixture + types not present.** Discrete
+  chunk; can land independently of any other in-flight work.
+
+### Plan for remaining gaps
+
+Sequenced as small follow-up PRs against `main` (SPEC-0002 is **done** in the
+index; these are owed-against-spec items, not new scope):
+
+1. **SPEC-0002 cleanup PR — timeline backfill (R1).** `Detail.tsx`'s `useEffect`
+   already references `client.negotiation.getEvents()`; verify it's actually
+   firing and filtering by `reqId`. The baseline shows it isn't populating
+   for historical requests — root cause TBD (subscription racing the historical
+   fetch, or `getEvents` not being reqId-filtered). Smallest of the three.
+2. **Shared `explorerLinks.ts` PR.** Builds the URL builder once both
+   SPEC-0002 R4 and SPEC-0003 §2.7 R33 need it; lands behind the answer to
+   §8 Q1.
+3. **SPEC-0002 R7 PR — CDS-Hooks fixture + types.** Self-contained; no chain
+   changes. Lands the typed interfaces + the mock JSON for the entry-point
+   demo.
+
+### Test approach
+
+- Agent-browser regression test for R1: open Detail for a pre-existing
+  `reqId`; assert the timeline shows the historical events (Filed, Engaged,
+  …) without requiring a new on-chain tx during the test session.
+- The CDS-Hooks types compile against the published CDS Hooks 2.0 wire
+  shape — `tsc` type-check is the test.
+- R4 explorer-link test: a click on a `Ruled` row in the timeline navigates
+  to the expected Somnia explorer URL.

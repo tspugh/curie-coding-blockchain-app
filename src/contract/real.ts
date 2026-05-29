@@ -140,8 +140,33 @@ interface CoverageContract extends ethers.BaseContract {
   count(): Promise<bigint>;
 }
 
+/**
+ * SPEC-0003 §2.2 R8. Shape dispatched on `txEvents` after each `tx.wait()`.
+ * Strings are used for the bigint fields (`value`, `gasUsed`, `gasPrice`) so
+ * the same shape can be serialized to the JSONL ledger via the dev-server
+ * sink without JSON-stringify blowing up on bigints.
+ */
+export interface TxConfirmedDetail {
+  method: string;
+  hash: string;
+  from: string;
+  to: string | null;
+  value: string;
+  gasUsed: string;
+  gasPrice: string;
+  blockNumber: number;
+  ts: number;
+}
+
 export class RealBackend implements CoverageNegotiationClient {
   readonly mode = "real" as const;
+
+  /**
+   * SPEC-0003 §2.2 R8. Dispatches `tx-confirmed` (`CustomEvent<TxConfirmedDetail>`)
+   * after every write method's `tx.wait()`. Subscribed to by the web client's
+   * `txLogger` (POST → /__log/tx) and the in-UI TxMonitor.
+   */
+  readonly txEvents = new EventTarget();
 
   private readonly contract: CoverageContract & ethers.Contract;
   private readonly provider: ethers.Provider;
@@ -173,23 +198,56 @@ export class RealBackend implements CoverageNegotiationClient {
   // Writes
   // ---------------------------------------------------------------------
 
-  async createContract(params: CreateContractParams): Promise<bigint> {
-    const tx = await this.contract.createContract(
-      params.providerId,
-      params.insurerId,
-      params.providerAddr,
-      params.insurerAddr,
-      params.drugRef,
-      params.requestedAmount,
-      params.quantity,
-      params.daysSupply,
-      params.justificationHash,
-      params.evidenceUri,
-    );
+  /**
+   * SPEC-0003 §2.2 R8. Awaits the tx, then the receipt, dispatches a
+   * `tx-confirmed` event carrying the gas + value + hash for the UI / dev
+   * ledger, and returns the receipt for callers that need it (e.g.
+   * `createContract` reads the `ContractCreated` event off it).
+   */
+  private async _send(
+    method: string,
+    value: bigint,
+    txPromise: Promise<ethers.ContractTransactionResponse>,
+  ): Promise<ethers.ContractTransactionReceipt | null> {
+    const tx = await txPromise;
     const receipt = await tx.wait();
+    if (receipt) {
+      const detail: TxConfirmedDetail = {
+        method,
+        hash: receipt.hash,
+        from: receipt.from,
+        to: receipt.to,
+        value: value.toString(),
+        gasUsed: receipt.gasUsed.toString(),
+        gasPrice: receipt.gasPrice.toString(),
+        blockNumber: receipt.blockNumber,
+        ts: Date.now(),
+      };
+      this.txEvents.dispatchEvent(new CustomEvent("tx-confirmed", { detail }));
+    }
+    return receipt;
+  }
+
+  async createContract(params: CreateContractParams): Promise<bigint> {
+    const receipt = await this._send(
+      "createContract",
+      0n,
+      this.contract.createContract(
+        params.providerId,
+        params.insurerId,
+        params.providerAddr,
+        params.insurerAddr,
+        params.drugRef,
+        params.requestedAmount,
+        params.quantity,
+        params.daysSupply,
+        params.justificationHash,
+        params.evidenceUri,
+      ),
+    );
     // Recover reqId from the ContractCreated event (return values aren't
     // available from a mined tx; the event's first topic carries reqId).
-    const reqId = this.extractReqIdFromReceipt(receipt);
+    const reqId = receipt ? this.extractReqIdFromReceipt(receipt) : undefined;
     if (reqId === undefined) {
       // Fall back to count() if the event couldn't be parsed.
       return this.count();
@@ -198,18 +256,19 @@ export class RealBackend implements CoverageNegotiationClient {
   }
 
   async insurerEngage(reqId: bigint, policyHash: string, policyUri: string): Promise<void> {
-    const tx = await this.contract.insurerEngage(reqId, policyHash, policyUri);
-    await tx.wait();
+    await this._send("insurerEngage", 0n, this.contract.insurerEngage(reqId, policyHash, policyUri));
   }
 
   async requestAdjudication(reqId: bigint): Promise<void> {
-    const tx = await this.contract.requestAdjudication(reqId, { value: this.agentFeeValue });
-    await tx.wait();
+    await this._send(
+      "requestAdjudication",
+      this.agentFeeValue,
+      this.contract.requestAdjudication(reqId, { value: this.agentFeeValue }),
+    );
   }
 
   async submitEvidence(reqId: bigint, evidenceUri: string): Promise<void> {
-    const tx = await this.contract.submitEvidence(reqId, evidenceUri);
-    await tx.wait();
+    await this._send("submitEvidence", 0n, this.contract.submitEvidence(reqId, evidenceUri));
   }
 
   async appeal(
@@ -218,40 +277,37 @@ export class RealBackend implements CoverageNegotiationClient {
     evidenceUri: string,
     reasonHash: string,
   ): Promise<void> {
-    const tx = await this.contract.appeal(reqId, partyId, evidenceUri, reasonHash, {
-      value: this.agentFeeValue,
-    });
-    await tx.wait();
+    await this._send(
+      "appeal",
+      this.agentFeeValue,
+      this.contract.appeal(reqId, partyId, evidenceUri, reasonHash, {
+        value: this.agentFeeValue,
+      }),
+    );
   }
 
   async accept(reqId: bigint, partyId: bigint): Promise<void> {
-    const tx = await this.contract.accept(reqId, partyId);
-    await tx.wait();
+    await this._send("accept", 0n, this.contract.accept(reqId, partyId));
   }
 
   async settle(reqId: bigint): Promise<void> {
-    const tx = await this.contract.settle(reqId);
-    await tx.wait();
+    await this._send("settle", 0n, this.contract.settle(reqId));
   }
 
   async refuse(reqId: bigint, reasonHash: string): Promise<void> {
-    const tx = await this.contract.refuse(reqId, reasonHash);
-    await tx.wait();
+    await this._send("refuse", 0n, this.contract.refuse(reqId, reasonHash));
   }
 
   async withdraw(reqId: bigint): Promise<void> {
-    const tx = await this.contract.withdraw(reqId);
-    await tx.wait();
+    await this._send("withdraw", 0n, this.contract.withdraw(reqId));
   }
 
   async onRulingTimeout(reqId: bigint): Promise<void> {
-    const tx = await this.contract.onRulingTimeout(reqId);
-    await tx.wait();
+    await this._send("onRulingTimeout", 0n, this.contract.onRulingTimeout(reqId));
   }
 
   async postFeedback(reqId: bigint, msgHash: string, uri: string): Promise<void> {
-    const tx = await this.contract.postFeedback(reqId, msgHash, uri);
-    await tx.wait();
+    await this._send("postFeedback", 0n, this.contract.postFeedback(reqId, msgHash, uri));
   }
 
   // ---------------------------------------------------------------------
