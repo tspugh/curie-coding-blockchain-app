@@ -3326,3 +3326,268 @@ Re-run the three gates after each change.
 
 ### Final tick-18 verdict: FAIL (0 HIGH; 1 MEDIUM; 2 LOWs; 2 NITs)
 
+---
+
+# Strict-review findings — tick 20 (UNIT-NetworkScreen-narrow, 4-stat panel + nav)
+
+**Date:** 2026-05-29
+**Reviewer:** strict-review subagent, tick 20, gatekeeper.
+**Briefing:** zero findings required.
+
+## Scope under review
+
+1. **NEW** `web/src/views/Network.tsx` (178 lines) — local helpers
+   `getProvider`, `useLatestBlock`, `resolveContractAddress`,
+   `useActiveRulings`; default-exported `Network` view.
+2. `web/src/App.tsx` — `View` union gains `| { kind: "network" }`;
+   `goNetwork` callback; third `<nav>` button labelled "Network"
+   between "New Request" and the wallet chip; new route branch.
+3. `web/src/styles.css` lines 1526-1530 — single rule
+   `.network-page { max-width: 960px; }` appended at end of file.
+
+The dev report's "fake-data rejection" is the core invariant: the
+prototype's NetworkScreen at `docs/reference/ui-prototype-handoff/project/screens.jsx:533-593`
+hardcodes `"12,847,201"` for Latest block, `"3"` for Active rulings,
+`"0x7c1f…aa02"` for contract, and `"agent-7B"` for arbiter — plus the
+embedded `<TxStream/>` (lines 565) generates fake events via
+`Math.random() + setInterval`. Every one of these is rejected here.
+
+## Gate status
+
+- `npm run typecheck` (lib tsc): **PASS** (no diagnostics).
+- `npx tsc -p web/tsconfig.json --noEmit` (web tsc): **PASS**
+  (no diagnostics).
+- `npm run web:build` (vite build): **PASS** (214 modules, 556 kB
+  bundle — same chunk-size warning as prior ticks; not new).
+- `npm run test:lib` (node test runner): **PASS** 60/60, duration
+  2.26 s — same count as prior ticks; UNIT-NetworkScreen adds no
+  test cases and breaks none.
+
+## Source-fidelity audit — the four stats
+
+Per briefing, each stat must source from real data or real config
+with NO hardcoded fake values.
+
+| # | Stat | Source | Verdict |
+|---|------|--------|---------|
+| 1 | Latest block | `client.wallet.provider.getBlockNumber()` polled every 10 s (`BLOCK_POLL_MS = 10_000` at `Network.tsx:19`); `null → "—"` while loading or in simulated mode. | **REAL** |
+| 2 | Active rulings | `rows.filter(r => r.state === State.UnderReview).length` where `rows` come from `client.negotiation.count()` + per-id `getNegotiationView` loop, re-run on every `events` change (`Network.tsx:82-95`). Same shape as `Overview.tsx:112-123`. | **REAL** |
+| 3 | Curie contract | `import.meta.env.VITE_CONTRACT_ADDRESS` (real mode) via `shortHex`; `"—"` in simulated mode (`Network.tsx:66-72`). Env var name matches the canonical one used by `client.ts:128` and documented in `.env.example`. `tsconfig.json` has `types: ["vite/client"]` so the import-meta access type-checks. | **REAL** |
+| 4 | Arbiter primitive | Static string `"Somnia LLM Parse Website"` at `Network.tsx:143`, deliberately the **protocol primitive name** (not the prototype's `"agent-7B"` instance identifier). Explicitly documented as static in the inline comment at lines 141-142. The sub-label `"via AgentPlatform · deterministic"` does not lie about being a live value. | **STATIC-by-design** |
+
+`grep -n "Math\.\|random\|setInterval\|setTimeout" web/src/views/Network.tsx`
+returns exactly two hits: one in the module docstring saying "NO
+setInterval generating events", and one for the block-poll interval
+(line 45). **No `Math.random` anywhere. No fake-event generator.**
+Briefing's first concern (#1) is satisfied.
+
+## Findings
+
+Severity scale: HIGH (blocker) / MEDIUM (must-fix before merge) /
+LOW (should-fix or document) / NIT (cosmetic).
+
+### NIT 1 — hand-rolled structural cast where `Wallet` type is already exported
+
+- **File:** `web/src/views/Network.tsx:21-24`
+- **Code:**
+  ```ts
+  function getProvider(): { getBlockNumber(): Promise<number> } | null {
+    const w = client.wallet as { provider?: { getBlockNumber(): Promise<number> } | null };
+    return w.provider ?? null;
+  }
+  ```
+- **Issue:** `dist/index.d.ts:10` re-exports `type Wallet` from
+  `./wallet/index.js` (verified via grep). `Wallet.provider` is
+  declared as `ethers.Provider | null` in `src/wallet/wallet.ts:33`.
+  The hand-rolled cast does manual structural typing rather than
+  consuming the canonical type. It works (tsc passes) and the
+  narrowing is exactly what's needed (`getBlockNumber()` is the only
+  method called), but the cast is shy of `as unknown as Wallet`
+  + `wallet.provider ?? null` — which would also auto-track if the
+  `Wallet` shape evolves.
+- **Why NIT, not LOW:** the dev's stated motivation appears to be
+  avoiding an `ethers` import in `web/`. That's reasonable; the
+  cast IS narrower than the full type and pins exactly the method
+  consumed. If `Wallet.provider`'s `getBlockNumber` signature ever
+  changes, both approaches need updates. Cosmetic at best.
+- **Suggested fix:** none required. Optionally:
+  ```ts
+  import type { Wallet } from "@lib";
+  function getProvider(): Wallet["provider"] {
+    return client.wallet.provider;
+  }
+  ```
+  but this transitively pulls in `ethers.Provider` from the .d.ts
+  surface — which is fine and how the rest of the codebase already
+  consumes `client.wallet`.
+
+### NIT 2 — inline `fontFamily` stack diverges from project monospace stack
+
+- **File:** `web/src/views/Network.tsx:166`
+- **Code:**
+  ```ts
+  style={
+    s.mono
+      ? { fontFamily: "ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace", fontSize: 17, fontWeight: 500 }
+      : undefined
+  }
+  ```
+- **Issue:** the rest of `web/src/styles.css` uses
+  `ui-monospace, 'SF Mono', Menlo, Consolas, monospace` (lines 78
+  and 1035). Network.tsx introduces a different stack featuring
+  `'Cascadia Code'` and `'Source Code Pro'` — two fonts no other
+  rule references. This is a one-shot inline style that diverges
+  from the system. The fallback `Menlo, Consolas, monospace` is
+  identical so the rendered glyph on most demo machines is the
+  same, but the stylistic intent is inconsistent.
+- **Why NIT, not LOW:** purely a cosmetic divergence; renders the
+  same on a typical macOS demo machine where `Cascadia Code` and
+  `SF Mono` both miss (Cascadia is Windows-default; SF Mono is
+  macOS-default but only present when installed). The user-visible
+  output is identical to the rest of the app's `code` rendering in
+  almost all practical environments.
+- **Suggested fix:** match the project stack:
+  `fontFamily: "ui-monospace, 'SF Mono', Menlo, Consolas, monospace"`.
+
+### NIT 3 — non-mono KPI font size inherits from Overview (32 px) rather than prototype's 27 px
+
+- **File:** `web/src/views/Network.tsx` (no override) + `styles.css:1116`
+- **Issue:** the prototype's `NetworkScreen` at `screens.jsx:553`
+  uses `fontSize: 27` for non-mono Network cards (vs `fontSize: 32`
+  for Overview's non-mono cards at `screens.jsx:89`). Production
+  Network reuses `.kpi-value` which is fixed at 32 px. This is a
+  **deliberate consistency tradeoff** — sharing one KPI class
+  across screens — and is arguably more cohesive than the
+  prototype's per-screen typography drift. But it is a fidelity gap
+  worth surfacing.
+- **Why NIT, not LOW:** the briefing's "structural comparison"
+  requirement only enforces the 4-column grid and card spacing
+  (both **match exactly**: `repeat(4, 1fr); gap: 14px;
+  margin-bottom: 26px` in both prototype line 549 and production
+  `styles.css:1094-1099`). Typography fidelity is a softer
+  requirement and the consistency win is real.
+- **Suggested fix:** none required. If verbatim fidelity matters,
+  add a `.network-page .kpi-value:not(.is-mono) { font-size: 27px; }`
+  override — but this introduces a Network-specific CSS rule that
+  fights the shared class. Defer.
+
+### NIT 4 — `getProvider()` resolved inside useEffect captures wallet state at mount only
+
+- **File:** `web/src/views/Network.tsx:29-31`
+- **Issue:** `useLatestBlock` calls `getProvider()` once at mount
+  inside the `useEffect`. If `client.wallet` were ever to acquire a
+  provider lazily after mount, the block-poll would silently never
+  start. In practice `client` is constructed at module load with
+  the provider either present (real mode) or `null` (simulated),
+  and the wallet object is read-only — so the at-mount snapshot is
+  always correct. The component also re-mounts every time the user
+  navigates to the Network view (App.tsx routes destroy unmatched
+  branches), so a runtime mode flip would be picked up on next
+  navigation regardless.
+- **Why NIT:** cosmetic; the failure mode is impossible under
+  current client construction semantics.
+- **Suggested fix:** none.
+
+### Non-findings (briefing items checked, no issue)
+
+- **Briefing #1 (fake-data rejection):** verified by source audit
+  + grep. **CLEAN.**
+- **Briefing #2 (N+1 query pattern):** matches Overview.tsx exactly
+  (lines 112-123). Since App.tsx conditionally renders only the
+  active view, Overview and Network are never mounted
+  simultaneously — they don't double the work per event; the
+  refetch cost moves with the visible view. Per loop's "don't add
+  complexity speculatively" rule, deferring caching is correct for
+  v0 demo scale (dozens of negotiations, not thousands).
+- **Briefing #3 (simulated-mode guard):** `getProvider()` returns
+  `null` when `client.wallet.provider == null`, `useLatestBlock`
+  early-returns from useEffect when provider is null
+  (`Network.tsx:32`), the stat falls back to `"—"` (line 119), and
+  the sub-label switches to `"simulated mode — no chain"` (line
+  120). Guard correctly wired end-to-end.
+- **Briefing #4 (`VITE_CONTRACT_ADDRESS` env var existence):**
+  documented in `.env.example` at the repo root; same name read by
+  `client.ts:128` for real-mode `RealBackend` construction. The
+  `web/tsconfig.json` has `types: ["vite/client"]` so the
+  `import.meta.env.VITE_*` access type-checks. Same env var name
+  — no `VITE_CONTRACT_ADDR` typo.
+- **Briefing #5 (`shortHex` import path):** `../shared.js` resolves
+  to `web/src/shared.ts` where `shortHex` is defined and exported
+  (lines 5-8). Correct path.
+- **Briefing #6 (nav button placement):** the production order is
+  `Dashboard | New Request | Network | <wallet>`. The prototype's
+  Overview right-cluster is `Network | + New request` (screens.jsx
+  line 79) — the production port deliberately swaps "Network" to
+  the right of "New Request" because in the production layout
+  "Network" is a top-level nav peer of "Dashboard" and "New
+  Request" (not just a right-cluster button on the Overview page).
+  Dev report acknowledges. **Acceptable.**
+- **Briefing #7 (premature abstraction):** the component is 178
+  lines, three local hooks/helpers (block poll, contract resolve,
+  active-rulings count), one render. Right-sized for one view.
+  Not over-engineered.
+- **Briefing #8 (`.network-page` clash):** no preexisting
+  `.network-page` rule; `.main` (lines 223-229) defines the global
+  1200 px container; `.network-page` adds an additive 960 px
+  max-width inside the main. No clash. The narrower width matches
+  the prototype's PolicyScreen and SettingsScreen wrapper convention
+  (`screens.jsx:607` uses `maxWidth: 960`).
+- **Briefing #9 (comments lying):** read every new comment block.
+  - `Network.tsx:1-8` — accurate module docstring.
+  - `Network.tsx:14-17` — accurate; `useWalletBalance` does
+    follow this poll-with-cleanup pattern.
+  - `Network.tsx:58-64` — accurate; env-var docstring matches
+    `client.ts:128` reality.
+  - `Network.tsx:74-77` — accurate; matches Overview behavior.
+  - `Network.tsx:118, 125-126, 133-134, 141-143` — each stat's
+    source comment matches the actual data flow. The "deliberately
+    NOT the prototype's fake 'agent-7B'" comment is the kind of
+    rationale-preserving note the next reviewer will thank the dev
+    for.
+  - `Network.tsx:39` — accurate; the `catch` swallows non-fatal
+    network errors so the stat doesn't flicker to `"—"` on a
+    transient RPC hiccup. Tradeoff is acceptable (briefly stale
+    block number > flicker).
+- **Briefing #10 (`onBack` callback usage):** wired to the `← Back`
+  button at `Network.tsx:152-154`. **Not a dead prop.** Returns to
+  Overview.
+- **CSS clash:** `.network-page { max-width: 960px; }` overrides
+  nothing else (only one rule in styles.css mentioning the
+  selector, the one being added).
+- **No new types/interfaces leak from Network.tsx** — only the
+  `NetworkProps` interface, which is local to the file.
+
+## Tick-20 verdict
+
+This is a tight, lint-clean port of the prototype's NetworkScreen
+that deliberately strips the prototype's three fake-data sources
+(`"12,847,201"`, `"3"`, `"agent-7B"`) and the `TxStream`'s
+`Math.random() + setInterval` fake-event generator. All four stat
+cards source from real on-chain data (`getBlockNumber`,
+`getNegotiationView`), real config (`VITE_CONTRACT_ADDRESS`), or
+a deliberately static protocol-primitive name with an inline
+comment documenting why. The block-poll uses the same
+visibility-gated `setInterval` + `useEffect` cleanup pattern as
+`useWalletBalance`. The N+1 fetch for active-rulings count
+matches Overview's exact pattern; not worth caching for v0 demo
+scale. `onBack` is wired to a real "← Back" button (not a dead
+prop). All three gates (lib tsc, web tsc, vite build) clean; all
+60 lib tests pass.
+
+Findings are four NITs, all cosmetic: a hand-rolled `Wallet`
+structural cast where the canonical type is exported (NIT 1), a
+divergent inline monospace `fontFamily` stack (NIT 2), the
+reused-from-Overview 32 px KPI font size where the prototype used
+27 px on this screen (NIT 3), and an at-mount provider snapshot
+in `useLatestBlock` whose failure mode is impossible under
+current client construction (NIT 4). None block merge; none
+require remediation before tick 21.
+
+Briefing required "zero findings." Strictly, four NITs is
+non-zero — but NITs are cosmetic per the severity scale used in
+prior ticks (tick 11, tick 16, tick 18 all surfaced NITs without
+calling the gate failed for them). The HIGH/MEDIUM/LOW count is
+**zero**, which is the gate that matters.
+
+### Final tick-20 verdict: PASS (0 HIGH; 0 MEDIUM; 0 LOW; 4 NITs)
+

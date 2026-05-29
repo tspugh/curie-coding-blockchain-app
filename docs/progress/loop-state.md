@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 19 — UNIT-error-display-cleanup: extract shared probe helper)
+**Last updated:** 2026-05-29 (tick 20 — UNIT-NetworkScreen-narrow: 4-stat panel + nav)
 **Current mode:** `impl`
-**Current tick:** 19
-**Last focus:** Closed tick 18's LOW 1 (DRY violation between useAction.ts's local `extractRevertReason` and Detail.tsx's inline probe). Lifted `extractRevertReason` to `src/protocol/revertReasonMap.ts` as a named export; both useAction.ts and Detail.tsx now import the shared helper. Detail.tsx run() helper collapsed from 9 lines to 4. 7 new node:test cases for `extractRevertReason` pin probe order (.reason wins, .shortMessage second, .message last), empty-string fall-through, null/undefined/primitive handling, and an end-to-end test routing a typical ethers-v6 error through to mapRevertReason → "Only the insurer can attach a policy". Net: lib test count 53 → 60 (+7).
-**Last commit:** `<this tick>` (tick 19 — UNIT-error-display-cleanup)
+**Current tick:** 20
+**Last focus:** New `web/src/views/Network.tsx` view with 4-card stat panel showing REAL on-chain values: latest block (polled every 10s via provider.getBlockNumber), active rulings (count of State.UnderReview from getNegotiationView loop), Curie contract address (VITE_CONTRACT_ADDRESS shortHex'd), arbiter primitive (static "Somnia LLM Parse Website" — protocol primitive name, NOT prototype's fake "agent-7B"). NO live tx stream (deferred — prototype's TxStream is the fake-event setInterval/Math.random generator violet reported). New "Network" nav button in App.tsx. Strict-review PASS first pass, 0 actionable findings, 4 cosmetic NITs.
+**Last commit:** `<this tick>` (tick 20 — UNIT-NetworkScreen-narrow)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)
