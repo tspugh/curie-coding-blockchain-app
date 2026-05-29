@@ -114,6 +114,9 @@ Status: Draft · Owner: tspugh · Date: 2026-05-29 · Builds on: [SPEC-0001](000
   ladder doesn't use. The UI keeps domain-fluent stage names visible to viewers and payer-
   side operators. New payer lines (Medicaid, military, etc.) extend the `payerLine` enum +
   the static table without re-architecting the state machine.
+- **Implementation reference.** Concrete window / threshold values per `(payerLine,
+  appealRound)`, predicate sketches, and the ladder-table SoT proposal live in
+  [`../technical-design/appeal-ladder-enforcement.md`](../technical-design/appeal-ladder-enforcement.md).
 
 ## 3. Technical documentation
 
