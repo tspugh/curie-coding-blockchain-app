@@ -87,4 +87,9 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
   },
+  preview: {
+    // Allow any *.trycloudflare.com quick-tunnel host so the dev tunnel works
+    // without per-session config edits. Leading-dot = subdomain wildcard.
+    allowedHosts: [".trycloudflare.com"],
+  },
 });
