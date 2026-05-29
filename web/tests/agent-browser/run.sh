@@ -188,7 +188,10 @@ scenario_no_phi() {
   ab find testid nav-create click >/dev/null
   ab find testid create-note fill "$token — justification body that must never be committed." >/dev/null
   ab find testid create-drug fill "Adalimumab" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=HUMIRA" >/dev/null
   ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
   eval_click create-submit
   ab wait 300 >/dev/null
 
@@ -374,25 +377,33 @@ scenario_note_verify() {
   ab find testid nav-create click >/dev/null
   ab find testid create-note fill "VERIFY_ME canonical justification body" >/dev/null
   ab find testid create-drug fill "Adalimumab" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=HUMIRA" >/dev/null
   ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
   eval_click create-submit
   ab wait 300 >/dev/null
 
+  # Reveal the blockchain-proof block (collapsed by default — the verify panel
+  # lives inside it).
+  eval_click proof-toggle
+  ab wait 100 >/dev/null
+
   # Act + Assert: the exact copy matches the committed hash…
   ab find testid verify-note-input fill "VERIFY_ME canonical justification body" >/dev/null
-  ab find testid verify-note-submit click >/dev/null
+  eval_click verify-note-submit
   ab wait 150 >/dev/null
   case "$(ab find testid verify-note-result text | tail -1)" in
-    *matches*) echo "  ✓ matching note verifies against the on-chain hash"; PASS=$((PASS + 1));;
+    *Matches*) echo "  ✓ matching note verifies against the on-chain hash"; PASS=$((PASS + 1));;
     *) echo "  ✗ matching note failed to verify"; FAIL=$((FAIL + 1));;
   esac
 
   # …and a tampered copy does not.
   ab find testid verify-note-input fill "tampered note body" >/dev/null
-  ab find testid verify-note-submit click >/dev/null
+  eval_click verify-note-submit
   ab wait 150 >/dev/null
   case "$(ab find testid verify-note-result text | tail -1)" in
-    *"does not match"*) echo "  ✓ tampered note is rejected"; PASS=$((PASS + 1));;
+    *"Does not match"*) echo "  ✓ tampered note is rejected"; PASS=$((PASS + 1));;
     *) echo "  ✗ tampered note was not rejected"; FAIL=$((FAIL + 1));;
   esac
 }

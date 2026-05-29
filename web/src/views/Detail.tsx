@@ -378,6 +378,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
           <button
             type="button"
             className="proof-toggle"
+            data-testid="proof-toggle"
             onClick={() => setShowProof((v) => !v)}
           >
             {showProof ? "▲ Hide" : "▼ View"} blockchain proof

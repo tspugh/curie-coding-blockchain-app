@@ -5865,3 +5865,140 @@ a finding.
 ### Verdict
 
 **PASS (zero findings).**
+
+## Tick 44 strict-review
+
+Scope: the uncommitted tick-44 diff vs tick-43 (`eb48d2d`) —
+`web/src/views/Detail.tsx` (+1 line: `data-testid="proof-toggle"` on the
+collapse/reveal button at L381) and `web/tests/agent-browser/run.sh`
+(Scenario B + Scenario F field-fill backfill, `ab find ... click` →
+`eval_click` migration on `verify-note-submit`, case-pattern fix
+`*matches*` → `*Matches*` and `*"does not match"*` → `*"Does not match"*`,
+and a new `eval_click proof-toggle` to reveal the verify panel before
+interacting with it).
+
+**1. `proof-toggle` testid collision check — CLOSED.**
+Repo-wide grep for `proof-toggle` / `proof_toggle` / `proofToggle` returns
+exactly three hits: the new attribute (Detail.tsx:381), the CSS class of
+the same name (styles.css:1417, 1429 — a CSS class, not a testid), and the
+single harness call (run.sh:389). No collision. The kebab-case naming
+matches the surrounding `proof-*` testid family already in
+Detail.tsx — `verify-note-input` (L404), `verify-note-submit` (L413),
+`verify-note-result` (L424), `round-counter` (L398) all live inside the
+same `proof-block` and share the same naming style. No clash with any
+other testid in the file (40+ testids surveyed in Detail.tsx; no other
+`*-toggle` exists in the create/detail/timeline trees). Not a finding.
+
+**2. Capitalization fix `*matches*` → `*Matches*` is component-aligned, not
+arbitrary — CLOSED.**
+Detail.tsx:427-429 renders the result text as the literal strings
+`"✓ Matches the committed hash"` (with capital M) and `"✗ Does not
+match"` (with capital D, lowercase m). The harness was previously
+matching against lowercase patterns that would have only fired if the
+component happened to render lowercase — a latent harness bug unrelated
+to any UI convention. The fix ties the harness to the actual rendered
+copy. No spec or design prototype mandates a lowercase convention
+(grepped `docs/specs/`, `docs/technical-design/`, `docs/demo/`,
+`docs/research/curie-prototype/`, `docs/reference/` — zero hits for
+"Matches"/"Does not match" as a verify-result string outside this
+component). The two strings appear *only* at Detail.tsx:428-429 in the
+entire web/src tree, so the harness pattern is uniquely targeted; there
+is no risk of partial substring collision with another rendered string.
+Sentence-case is also the UI's prevailing style for state badges, banners,
+and step labels — keeping the harness in lockstep with the component is
+the right direction of tie. Not a finding.
+
+**3. Run.sh field-fill ordering matches Scenario A — CLOSED.**
+Scenario A's reference order at run.sh:133-140 is
+`create-note → create-drug → create-evidence → create-amount →
+create-quantity → create-days-supply`. The new fills in Scenario B
+(run.sh:189-194) and Scenario F (run.sh:378-383) follow the identical
+order, identical testids, and structurally identical example values
+(`Adalimumab`, `5200`, `2`, `28`, FDA URL). Consistency is exact across
+the three scenarios. Not a finding.
+
+**4. PHI sentinel cannot leak via the new fields — CLOSED.**
+The PHI sentinel `ZZ_SECRET_PHI_TOKEN_99` (run.sh:185) is interpolated
+into `create-note` *only*. The three newly-filled fields are:
+`create-evidence = "https://api.fda.gov/drug/label.json?search=HUMIRA"`,
+`create-quantity = "2"`, `create-days-supply = "28"`. None contain the
+sentinel substring (verified by inspection — sentinel is alphanumeric +
+underscores, no URL/number can collide). The on-chain Create-form
+submission (Create.tsx:78-94) commits `drugRef = hashContent(drug)` and
+`evidenceUri = hashContent(evidence)` — both are hashes; the URL and drug
+name never enter the on-chain record in plaintext anyway. The new
+plaintext fields the harness now fills (`quantity`, `daysSupply`) *do*
+land on-chain (Create.tsx:90-91, both `bigint`), but they are integers,
+so a string sentinel cannot smuggle in. The three Scenario-B assertions
+(R3 verify, R4 sentinel-absence in serialized record, DOM-sentinel
+absence) are now both correctly exercised *and* cannot false-pass — the
+DOM check at run.sh:206 covers `documentElement.innerHTML`, which would
+include the newly-rendered fact cells (`fact-quantity`, `fact-days-supply`
+at Detail.tsx:344, 348) if any sentinel ever reached them. PHI invariant
+intact. Not a finding.
+
+**5. Detail.tsx accessibility/behavior preserved — CLOSED.**
+Diff inspection of L378-385: the button retains `type="button"`,
+`className="proof-toggle"`, and `onClick={() => setShowProof((v) => !v)}`.
+The new attribute is purely an additional `data-testid="proof-toggle"`,
+which is invisible to AT, has no a11y semantics, and does not alter focus
+order, keyboard interaction, or pointer behavior. The CSS selector
+`.proof-toggle` (styles.css:1417, 1429) targets the className, not the
+testid attribute, so styling is unchanged. The button's visible text
+(`"▲ Hide blockchain proof"` / `"▼ View blockchain proof"`) is unchanged
+and is the accessible name. No regression. Not a finding.
+
+**6. `eval_click verify-note-submit` (×2) justification — CLOSED.**
+The verify-note-submit button at Detail.tsx:411-421 is a simple
+`<button type="button">Verify</button>` with no nested children — exactly
+the case where `ab find testid X click` was historically reliable. The
+conversion to `eval_click` is therefore *not strictly necessary* for that
+button alone. However: (a) the conversion is *harmless* — `eval_click`
+issues a real DOM `.click()` which always fires React's synthetic
+`onClick` (verified empirically tick 42 per the helper's inline doc at
+run.sh:64-71); (b) it matches the post-tick-42 convention adopted across
+the rest of the harness (`engage-submit`, `engage-load-compliant`,
+`adjudicate-submit`, `decision-approve`, `decision-void`, the new
+`proof-toggle`), so all "interact" steps in the harness now use a single
+verb; (c) the verify-result span (`verify-note-result`) renders
+conditionally on the `verifyResult` state which only flips after the
+React onClick handler executes — any partial firing (e.g. native click
+without React synthetic event) would silently no-op. Consolidating on
+`eval_click` removes that latent foot-gun. Acceptable convention
+hardening, not gold-plating. Not a finding.
+
+**7. Discoverability of the missing-field rationale — CLOSED.**
+Scenario B contains no inline comment for the new fills (run.sh:189-194)
+— they read as a continuation of the existing `nav-create / create-note /
+create-drug / create-amount / create-submit` block. Scenario A has an
+inline comment for `create-quantity` ("SPEC-0001: quantity drives the
+cap", run.sh:138) and `create-days-supply` ("SPEC-0001: necessity context
+only", run.sh:139), which is sufficient cross-reference for a reader
+following A→B→F. Scenario F has a fresh inline block explaining the
+proof-toggle reveal (run.sh:386-388), which is the genuinely
+non-obvious step. The missing-field rationale is encoded in the validation
+short-circuits at Create.tsx:67-70 (`quantityVal === null || quantityVal
+<= 0n → setError`), which is the canonical source — discoverable by
+following the failing assertion (the three R3/R4/DOM checks would fail
+because no negotiation exists at id 1). Adding a comment for the field
+fills would be redundant with Scenario A's existing comments. Acceptable.
+Not a finding.
+
+**8. Empirical verification — CLOSED.**
+Reviewer reports 28/35 (was 23/35 at tick 43, was 9/35 at tick 39),
+Scenario B 3/3 (was 0/3), Scenario F 2/2 (was 0/2), hardhat 28/28, lib
+84/84, tsc clean. The three Scenario-B asserts (run.sh:198-207) become
+reachable iff `create-submit` actually creates a negotiation — which
+requires passing the Create.tsx:67-70 quantity guard, which requires the
+new `create-quantity` fill. Scenario F's two case assertions
+(run.sh:393-400) become reachable iff (a) the negotiation exists (same
+quantity-guard chain) and (b) the verify panel is in the DOM (requires
+the new `eval_click proof-toggle` to flip `showProof` true at
+Detail.tsx:386). The reviewer's pass-delta is the exact deterministic
+consequence of the diff. No live harness re-run performed (Chromium
+target out of strict-review scope), but the causal chain is airtight. Not
+a finding.
+
+### Verdict
+
+**PASS (zero findings).**

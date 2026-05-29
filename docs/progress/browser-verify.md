@@ -1,6 +1,35 @@
 # Browser-verify
 
-Last run: tick 43 — 2026-05-29 — **23/35 pass** (was 9/35 at tick 39)
+Last run: tick 44 — 2026-05-29 — **28/35 pass = 80%** (was 9/35 at tick 39)
+
+## Tick 44 update — 28/35
+
+Closed Scenarios B (3/3) and F (2/2) — both were silently failing because the
+harness's create-step was missing required form fields (quantity, days-supply,
+evidence). Without these, Create.tsx's onSubmit validation short-circuited and
+no request was ever created; downstream assertions returned empty strings.
+
+For Scenario F additionally:
+- Added `data-testid="proof-toggle"` to the "View blockchain proof" reveal
+  button in Detail.tsx. The verify-note panel lives inside `{showProof && …}`
+  so the harness had to flip it before interacting.
+- Changed `ab find testid verify-note-submit click` → `eval_click verify-note-submit`
+  (consistency with post-tick-42 convention).
+- Fixed case-mismatched bash patterns: `*matches*` → `*Matches*`, `*does not match*`
+  → `*Does not match*` (UI renders with capital M/D).
+
+### Score delta
+
+- 23/35 (tick 43) → **28/35 (tick 44)** (+5).
+- Scenario B: 0/3 → **3/3 PASS**.
+- Scenario F: 0/2 → **2/2 PASS**.
+
+Still failing (7 remaining):
+- Scenario A (2): UI badge text divergence; coveredAmount cap not propagating.
+- Scenario G (1): non-party rejected predicate (`nonparty-attempt` testid not in UI).
+- Scenario H (4): CDS-Hooks prefill button not implemented (queued separately).
+
+## Tick 43 update — 23/35
 
 ## Tick 43 update — 23/35
 
