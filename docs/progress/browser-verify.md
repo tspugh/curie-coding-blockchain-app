@@ -1,6 +1,32 @@
 # Browser-verify
 
-Last run: tick 42 — 2026-05-29 — **19/35 pass** (was 9/35 at tick 39)
+Last run: tick 43 — 2026-05-29 — **23/35 pass** (was 9/35 at tick 39)
+
+## Tick 43 update — 23/35
+
+Scenario C2 (R6b PolicyInvalidated) closed. Root cause: tick-25's UI migration
+replaced the `<select data-testid="decision-select">` with a row of pill buttons,
+but the harness still used `ab select "[data-testid=decision-select]" N`. Fix:
+added `data-testid={\`decision-${cls}\`}` to each decision pill in Detail.tsx;
+rewrote 2× `ab select decision-select` → `eval_click decision-approve|decision-void`.
+
+### Score delta
+
+- 19/35 (tick 42) → **23/35 (tick 43)** (+4).
+- Scenario C2: 0/4 → **4/4 PASS**. Full PolicyInvalidated path works end-to-end:
+  state lands at 8, gotcha panel renders, offending clause struck-through, FDA
+  citation shown.
+
+Still failing (12 remaining):
+- Scenario A (2): UI badge text divergence ("Ready" vs "Policy Attached — Ready for AI"),
+  coveredAmount cap not propagating (5200 vs 4200 — costplus-unit-price input not
+  reaching contract).
+- Scenario B (3): PHI hash verify path.
+- Scenario F (2): note verify.
+- Scenario G (1): non-party rejected.
+- Scenario H (4): CDS-Hooks prefill button not implemented (queued separately).
+
+## Tick 42 update — 19/35
 
 ## Tick 42 update — 19/35
 

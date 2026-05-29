@@ -155,7 +155,7 @@ scenario_happy_path() {
   # Act: pick decision 'approve' + a Cost Plus unit price of 2100 (cap = 2100 ×
   # quantity 2 = 4200 < requested 5200) and request adjudication -> arbiter fires
   # (R6), auto-resolves ~1.2s -> Approved (SPEC-0001 2026-05-27 per-unit cap).
-  ab select "[data-testid=decision-select]" 0 >/dev/null   # 0 = Decision.Approve
+  eval_click decision-approve   # 0 = Decision.Approve
   ab find testid costplus-unit-price fill "2100" >/dev/null
   ab find testid nadac-unit-price fill "2000" >/dev/null
   eval_click adjudicate-submit
@@ -241,7 +241,7 @@ scenario_policy_invalidated() {
   eval_click engage-noncompliant-toggle
   eval_click engage-submit
   ab wait 300 >/dev/null
-  ab select "[data-testid=decision-select]" 3 >/dev/null   # 3 = Decision.PolicyInvalid
+  eval_click decision-void   # 3 = Decision.PolicyInvalid
   eval_click adjudicate-submit
   ab wait 1800 >/dev/null
   assert_eq "non-compliant clause -> PolicyInvalidated (terminal)" "8" "$(state_of 1)"

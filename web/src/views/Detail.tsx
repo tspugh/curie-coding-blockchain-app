@@ -624,6 +624,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                       <button
                         key={d}
                         type="button"
+                        data-testid={`decision-${cls}`}
                         className={`decision-option ${cls}${decision === d ? " selected" : ""}`}
                         onClick={() => setDecision(d)}
                       >

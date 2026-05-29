@@ -5770,3 +5770,98 @@ adjudicate-submit + accept-submit ×2 + settle-submit + load-sample). Hardhat
 ### Verdict
 
 **PASS (zero findings).**
+
+## Tick 43 strict-review
+
+Diff under review (vs `1800e3d`):
+
+- `web/src/views/Detail.tsx:627` — adds `data-testid={`decision-${cls}`}` to
+  each of the four decision-pill buttons rendered by `DECISION_OPTIONS.map`.
+  `cls ∈ {approve, deny, evidence, void}` (Detail.tsx:299-302).
+- `web/tests/agent-browser/run.sh:158, 244` — two `ab select
+  "[data-testid=decision-select]" N` calls rewritten to `eval_click
+  decision-approve` (was N=0) and `eval_click decision-void` (was N=3),
+  matching the tick-40 `eval_click <testid>` helper pattern.
+
+### Scrutiny
+
+**1. Testid naming consistency (`decision-${cls}` vs `decision-${d}`) — CLOSED.**
+The chosen scheme uses the cls string field (`approve|deny|evidence|void`),
+which is the same field already binding CSS variants on the same button
+(`className=`decision-option ${cls}…``, Detail.tsx:628). Tying the testid to
+the same semantic field that controls the visual variant is correct: if the
+enum is ever reshuffled (e.g. inserting a new Decision between Deny and
+NeedMoreEvidence), `cls` remains stable as a human-readable label while
+numeric `Decision` values shift. The harness in run.sh:158/244 now references
+those labels by intent (`decision-approve`, `decision-void`) — far more
+robust than the previous index-based `ab select 0 / 3` which silently broke
+when the `<select>` was replaced with pill buttons. The trailing-comment
+caveat from the reviewer is addressed in finding #2. Not a finding.
+
+**2. Run.sh comment drift (`# 0 = Decision.Approve` / `# 3 =
+Decision.PolicyInvalid`) — CLOSED.**
+The trailing comments preserve the Decision-enum numeric mapping, which is
+genuinely useful context for anyone scanning the test for "which scenario
+exercises which terminal state" — those enum values (0=Approve,
+3=PolicyInvalid) are still the values that flow through
+`requestAdjudication` and end up in event logs / state checks. The comments
+do not claim the harness uses numeric indexes; they annotate the *semantic*
+target of the click. Cross-checked the assert immediately after line 244:
+`"non-compliant clause -> PolicyInvalidated (terminal)" "8"
+"$(state_of 1)"` — the literal "8" is the State.PolicyInvalidated enum
+value, exactly the same kind of numeric-enum annotation, and uncontested.
+The comments are helpful, not misleading. Not a finding.
+
+**3. DOM / accessibility impact — CLOSED.**
+`data-testid` is a standard `data-*` attribute (HTML5 §3.2.6); it has no
+ARIA semantics, no implicit role, no keyboard behavior. The button retains
+`type="button"` (Detail.tsx:626), the implicit `role="button"`, and its
+existing label structure (`<strong>{label}</strong><span>{hint}</span>`,
+lines 631-632). No `aria-label`, `aria-describedby`, or other a11y
+attribute is touched. The CSS selector hook (`className=`decision-option
+${cls}…``) is untouched. Zero accessibility surface change. Not a finding.
+
+**4. Testid naming collision — CLOSED.**
+Repo-wide grep `data-testid="decision-…"` / `data-testid={`decision-…` `
+returns exactly one match: the new line itself (Detail.tsx:627). Grep for
+the bare cls values as standalone testids (`data-testid="approve"`,
+`"deny"`, `"evidence"`, `"void"`) — none exist. The only `evidence-*`
+testids are `evidence-text` (Detail.tsx:734) and `evidence-submit`
+(Detail.tsx:744), which are distinct strings from `decision-evidence` and
+target a different control (the appeal evidence textarea / submit, not the
+decision pill). No collision. Not a finding.
+
+**5. Strict-review gates — CLOSED.**
+Empirically verified in this review session:
+  - `npm run typecheck` → clean, no output, exit 0.
+  - `npm run test:lib` → `# pass 84 / # fail 0`, 84/84.
+  - `cd contracts && npx hardhat test` → `28 passing`, 28/28.
+Reviewer's harness claim (23/35 vs 19/35, Scenario C2 4/4 vs 0/4) is
+plausible given the testid rewire is the exact glue C2 was missing
+(state-8/gotcha-panel path depends on clicking the void pill before
+`adjudicate-submit`). Not independently re-run (harness requires a live
+Chromium target which is out of scope for strict review), but the gate
+suite below the harness is clean. Not a finding.
+
+**6. Cls→testid stability under future Decision reshuffles — CLOSED.**
+The cls strings (`approve|deny|evidence|void`) are declared inline in the
+`DECISION_OPTIONS` array (Detail.tsx:299-302) and never reused for any
+other testid in the codebase. Any future change to the Decision enum (e.g.
+adding `Decision.PartialApproval`) would extend `DECISION_OPTIONS` with a
+new `cls` value (e.g. `"partial"`) → a new `decision-partial` testid would
+appear automatically, with zero risk of clashing with the existing four.
+Removing an entry would correctly fail any harness scenario still
+referencing the removed testid — which is the desired loud failure. The
+naming scheme is reshuffle-safe. Not a finding.
+
+**7. Empirical verification — CLOSED.**
+Reviewer reports 23/35 (was 19/35) and Scenario C2 4/4 (was 0/4) —
+consistent with the testid rewire being the only blocker on the C2 path
+(load-sample + engage-noncompliant-toggle + engage-submit + click void
+decision + adjudicate-submit → state 8 + gotcha panel + struck-through
+clause + FDA citation). All other gates clean. No regression evidence. Not
+a finding.
+
+### Verdict
+
+**PASS (zero findings).**
