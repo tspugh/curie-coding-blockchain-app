@@ -35,14 +35,26 @@ export interface WalletBalance {
 export function useWalletBalance(): WalletBalance {
   const [bal, setBal] = useState<WalletBalance>({ wei: null, refreshedAt: 0 });
 
+  // Track the signer address so profile-switch (UNIT-7a) re-fires this effect
+  // and the chip flips to the new wallet's balance immediately, not after the
+  // next 30s idle poll (closes tick-25 LOW 4).
+  const address = client.wallet.address;
+
   useEffect(() => {
     let cancelled = false;
     const provider = getProvider();
-    if (!provider) return;
+    if (!provider) {
+      // Reset on profile switch into a simulated client (no provider).
+      setBal({ wei: null, refreshedAt: 0 });
+      return;
+    }
+
+    // Clear stale balance from the previous signer while the new one loads.
+    setBal({ wei: null, refreshedAt: 0 });
 
     const refresh = async (): Promise<void> => {
       try {
-        const wei = await provider.getBalance(client.wallet.address);
+        const wei = await provider.getBalance(address);
         if (!cancelled) setBal({ wei, refreshedAt: Date.now() });
       } catch {
         // Non-fatal — keep the last known balance, surface no console noise.
@@ -51,13 +63,10 @@ export function useWalletBalance(): WalletBalance {
 
     void refresh();
 
-    // Refresh after every confirmed tx so the chip is up-to-date before the
-    // user can click the next button.
     const unsub = subscribeTxLog(() => {
       void refresh();
     });
 
-    // Low-frequency idle poll, gated on tab visibility.
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") void refresh();
     }, POLL_MS);
@@ -67,7 +76,7 @@ export function useWalletBalance(): WalletBalance {
       unsub();
       window.clearInterval(interval);
     };
-  }, []);
+  }, [address]);
 
   return bal;
 }

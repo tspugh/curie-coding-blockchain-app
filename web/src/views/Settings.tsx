@@ -21,6 +21,7 @@ import { SOMNIA_TESTNET } from "@lib";
 import { client } from "../client.js";
 import { formatStt, formatSttCompact } from "../format.js";
 import { useWalletBalance } from "../hooks/useWalletBalance.js";
+import { KEY_STORAGE_PREFIX, isValidHexKey } from "../walletKeys.js";
 
 const AGENT_FEE_WEI = BigInt(
   import.meta.env.VITE_AGENT_FEE_WEI ?? "330000000000000000",
@@ -155,7 +156,6 @@ export function Settings({
 // Wallet-keys panel — paste / clear / generate keys at runtime
 // ---------------------------------------------------------------------------
 
-const KEY_STORAGE_PREFIX = "curie:";
 type KeySlot = "VITE_PRIVATE_KEY" | "VITE_PRIVATE_KEY_INSURER";
 
 function readStoredKey(slot: KeySlot): string {
@@ -176,10 +176,6 @@ function writeStoredKey(slot: KeySlot, value: string): void {
   } catch {
     /* localStorage unavailable */
   }
-}
-
-function isValidHexKey(s: string): boolean {
-  return /^0x[0-9a-fA-F]{64}$/.test(s);
 }
 
 /** Generate a random 32-byte private key via the platform CSPRNG. */

@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 27 — onboarding banner + close tick-25 LOW 1)
+**Last updated:** 2026-05-29 (tick 28 — close tick-25 LOWs 4+5 and NITs 2+3)
 **Current mode:** `impl`
-**Current tick:** 27
-**Last focus:** Wired the `walletSetupRequired` flag from tick-26's MEDIUM 2 closure into App.tsx as a visible onboarding banner: when real mode is selected but no key is found in `.env`/localStorage, a warn-styled banner renders above every view directing the user to "Settings → Wallet keys". Closed tick-25 LOW 1 (stale "Saved. Reload to apply." after re-edit) — every onChange/Generate handler now clears `savedAt` so the message only shows immediately after a save. Added `.setup-banner` CSS using project tokens.
-**Last commit:** `<this tick>` (tick 27 — onboarding banner + LOW 1)
+**Current tick:** 28
+**Last focus:** Closed 4 more deferred items from tick 25's strict-review. (a) **LOW 4** (useWalletBalance doesn't re-fire on profile switch): added `client.wallet.address` as a useEffect dep — when profile changes, proxy flips, address changes, effect re-runs, chip flips immediately instead of waiting 30s. Resets balance to null during the transition so the stale provider balance doesn't briefly persist. (b) **LOW 5** (`__curie` exposes both private-key-holding clients to window): now gated behind `import.meta.env.DEV` so production bundles don't ship the leak. (c) **NIT 2 + 3** (`KEY_STORAGE_PREFIX` and hex regex duplicated): extracted to new `web/src/walletKeys.ts` module with `KEY_STORAGE_PREFIX` const, `HEX_KEY_RE` regex, `isValidHexKey()` helper. client.ts and Settings.tsx both import from it now. Remaining deferred: LOW 2 (confirm before reload), LOW 3 (swallowed localStorage write errors), LOW 6 (R44 OOS-claim hygiene), NIT 1 (WalletKeysPanel extraction), NIT 4 (ProfileRegistry sync convention).
+**Last commit:** `<this tick>` (tick 28 — LOWs 4+5 + NITs 2+3)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)

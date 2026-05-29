@@ -24,6 +24,7 @@ import {
   type CurieClient,
   type Negotiation,
 } from "@lib";
+import { KEY_STORAGE_PREFIX, isValidHexKey } from "./walletKeys.js";
 
 // ---------------------------------------------------------------------------
 // Build-time mode detection (Vite exposes VITE_* from the root .env)
@@ -200,8 +201,8 @@ export let walletSetupRequired = false;
  */
 function keyOverride(envName: "VITE_PRIVATE_KEY" | "VITE_PRIVATE_KEY_INSURER"): string | undefined {
   try {
-    const stored = window.localStorage.getItem(`curie:${envName}`);
-    if (stored && /^0x[0-9a-fA-F]{64}$/.test(stored)) return stored;
+    const stored = window.localStorage.getItem(KEY_STORAGE_PREFIX + envName);
+    if (stored && isValidHexKey(stored)) return stored;
   } catch {
     /* localStorage unavailable (private mode, SSR) — fall through to env. */
   }
@@ -251,12 +252,15 @@ export const client: CurieClient = new Proxy({} as CurieClient, {
   },
 });
 
-// Acceptable only because these are no-funds dev wallets (testnet / simulated):
-// expose both concrete clients for debugging and agent-browser tests.
-(window as unknown as { __curie: { provider: CurieClient; insurer: CurieClient } }).__curie = {
-  provider: providerClient,
-  insurer: insurerClient,
-};
+// Dev-build-only window export so the agent-browser tests and DevTools can
+// reach both clients. Gated behind `import.meta.env.DEV` so the production
+// bundle does NOT leak the second signer onto window (tick-25 LOW 5 closure).
+if (import.meta.env.DEV) {
+  (window as unknown as { __curie: { provider: CurieClient; insurer: CurieClient } }).__curie = {
+    provider: providerClient,
+    insurer: insurerClient,
+  };
+}
 
 // SPEC-0003 §2.2. Wire the tx-confirmed event bus on BOTH concrete clients so
 // the in-UI monitor + JSONL sink see events regardless of which signer fired
