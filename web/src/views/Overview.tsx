@@ -3,9 +3,33 @@
  * Re-fetches on every event (R16). Each row opens the request detail view.
  */
 import { useEffect, useState } from "react";
-import { type CoverageEvent, type NegotiationView, State } from "@lib";
+import { type CoverageEvent, type NegotiationView, Decision, State } from "@lib";
 import { client } from "../client.js";
 import { fmtAmount, shortHex } from "../shared.js";
+
+// ---------------------------------------------------------------------------
+// KPI card — local component, not exported (UNIT-UI-1)
+// ---------------------------------------------------------------------------
+
+type KpiTone = "review" | "approved" | "accent" | undefined;
+
+interface KpiCardProps {
+  readonly label: string;
+  readonly value: string | number;
+  readonly sub: string;
+  readonly tone?: KpiTone;
+}
+
+function KpiCard({ label, value, sub, tone }: KpiCardProps) {
+  const valueClass = tone ? `kpi-value tone-${tone}` : "kpi-value";
+  return (
+    <div className="kpi-card">
+      <div className="kpi-label">{label}</div>
+      <div className={valueClass}>{value}</div>
+      <div className="kpi-sub">{sub}</div>
+    </div>
+  );
+}
 
 interface OverviewProps {
   readonly events: readonly CoverageEvent[];
@@ -43,6 +67,29 @@ export function Overview({ events, onOpen, onCreate }: OverviewProps) {
     return () => { cancelled = true; };
   }, [events]);
 
+  // ---------------------------------------------------------------------------
+  // KPI derivation — real data only, no mocks (UNIT-UI-1)
+  // r.terminal          → NegotiationView.terminal (boolean)
+  // r.state             → NegotiationView.state (State enum)
+  // r.negotiation.*     → nested Negotiation record
+  // ---------------------------------------------------------------------------
+  const counts = rows.reduce(
+    (a, r) => {
+      a.total++;
+      if (!r.terminal) a.active++;
+      if (r.state === State.Settled) a.settled++;
+      if (
+        r.negotiation.hasRuling &&
+        r.negotiation.lastDecision === Decision.Approve &&
+        r.negotiation.coveredAmount > 0n
+      ) {
+        a.saved += r.negotiation.requestedAmount - r.negotiation.coveredAmount;
+      }
+      return a;
+    },
+    { total: 0, active: 0, settled: 0, saved: 0n },
+  );
+
   return (
     <section className="view overview">
       <div className="view-head">
@@ -50,6 +97,14 @@ export function Overview({ events, onOpen, onCreate }: OverviewProps) {
         <button type="button" className="primary" onClick={onCreate}>
           + New Request
         </button>
+      </div>
+
+      {/* KPI strip — UNIT-UI-1 */}
+      <div className="kpi-strip">
+        <KpiCard label="Total requests" value={counts.total} sub="across all profiles" />
+        <KpiCard label="In negotiation" value={counts.active} sub="before a terminal state" tone="review" />
+        <KpiCard label="Settled" value={counts.settled} sub="both parties accepted" tone="approved" />
+        <KpiCard label="Capped vs ask" value={fmtAmount(counts.saved)} sub="requested − covered" tone="accent" />
       </div>
 
       {rows.length === 0 ? (

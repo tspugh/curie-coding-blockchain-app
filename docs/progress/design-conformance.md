@@ -3,19 +3,21 @@
 **Date:** 2026-05-29  
 **Branch:** `spec-4-implementation`  
 **Threshold:** ≥ 90 % to pass  
-**This tick's changes:** 5 new fixture files under `demo-data/scenarios/partd-approvable/`; 1 vitest→node:test rewrite under `src/protocol/`. No `web/src/` changes were intentional design work this tick — `web/src/views/Create.tsx` was touched only as a UNIT-2 ripple (R2b self-contract guard) and is not assessed as a deliberate conformance improvement.
+**This tick's changes (tick 14):** KPI strip added to `web/src/views/Overview.tsx` above the request table — 4 cards (Total, In negotiation, Settled, Capped vs ask) with real on-chain derived counts. CSS rules `.kpi-strip`, `.kpi-card`, `.kpi-label`, `.kpi-value`, `.kpi-value.tone-{review,approved,accent}`, `.kpi-sub` added to `web/src/styles.css`.
 
 ---
 
 ## Overall score
 
-**57 % — Does Not Pass (threshold: 90 %)**
+**62 % — Does Not Pass (threshold: 90 %)**
+
+_(Previous tick: 57 %. +5 pp from KPI strip on Overview.)_
 
 ---
 
 ## Headline verdict
 
-The web app faithfully implements the functional contract of the prototype across the three live screens (Overview, Detail, Create), and several new affordances in the web app (PriceGauge, gotcha panel, stepper, policy-choice cards, decision-option cards, demo-hero banner, on-chain verify block) are high-quality work that actually exceed the prototype in depth. However, the prototype's visual language — lavender/accent-violet token system, sticky blurred TopBar, 4-KPI strip, per-row MiniBenchmark sparkline, full navigation set (Requests / Network / Settings), Footer strip, and the floating TweaksPanel — is almost entirely absent from the web app. The two UIs share domain semantics but diverge substantially at the component-tree and information-architecture level.
+The web app faithfully implements the functional contract of the prototype across the three live screens (Overview, Detail, Create), and several new affordances in the web app (PriceGauge, gotcha panel, stepper, policy-choice cards, decision-option cards, demo-hero banner, on-chain verify block) are high-quality work that actually exceed the prototype in depth. The KPI strip — the most prominent missing element from Overview — is now present with matching label text and real data derivation. However, the prototype's visual language — lavender/accent-violet token system, sticky blurred TopBar, filter pill bar, per-row MiniBenchmark sparkline, full navigation set (Requests / Network / Settings), Footer strip, and the floating TweaksPanel — remains mostly absent. The two UIs share domain semantics but still diverge at the component-tree and information-architecture level for the structural gaps.
 
 ---
 
@@ -26,14 +28,16 @@ The web app faithfully implements the functional contract of the prototype acros
 | Element | Prototype | Web app | Status |
 |---|---|---|---|
 | Page header (eyebrow + h1 + sub) | "Coverage-exception requests" / "Negotiations in flight" + subtitle | `<h1>Coverage Requests</h1>` only | Partial |
-| KPI strip (4 panels: Total, In negotiation, Settled, Capped vs ask) | Present — 4-col grid | Absent | Missing |
-| Filter bar (All / Open / In negotiation / Settled / Closed pill buttons) | Present | Absent | Missing |
+| KPI strip (4 panels: Total, In negotiation, Settled, Capped vs ask) | Present — 4-col grid (`screens.jsx:84-93`) | Present — `.kpi-strip` with 4 `KpiCard` components, real on-chain counts, toned values | Match |
+| Filter bar (All / Open / In negotiation / Settled / Closed pill buttons) | Present (`screens.jsx:99-115`) | Absent | Missing |
 | Request table | 8-col grid (Req, Medication, Status, Appeal stage, Requested, Covered, Benchmark, Round) | 6-col HTML table (no Appeal stage, no MiniBenchmark column) | Partial |
 | MiniBenchmark sparkline per row | Present (`visuals.jsx:121-142`) | Absent | Missing |
 | "＋ New request" button | Present, disabled for observer | Present (`+ New Request`) | Match |
 | "Network" nav button in header right | Present | Absent | Missing |
 
-**Surface score: ~35 %**
+**Surface score: ~53 %**
+
+_(Previous tick: ~35 %. KPI strip was the single largest missing element; its addition — 4-panel structure, matching labels, real data — is a strong structural match to `screens.jsx:84-93`. Remaining Overview gaps: filter pills, two missing table columns, MiniBenchmark sparkline, header eyebrow/subtitle, Network nav link.)_
 
 ### 2. Detail screen (prototype: `screens.jsx` RequestDetailScreen, lines 158–281)
 
@@ -105,38 +109,37 @@ Not applicable to the web app — this is a prototyping tool for the design sand
 
 ---
 
-## Top 5 actionable gaps for future ticks
+## Top 3 priority gaps — next ticks
 
 Ranked by demo impact (highest first):
 
-### Gap 1 — KPI strip missing from Overview
-**Prototype:** `screens.jsx:84-93` — 4-panel grid (Total, In negotiation, Settled, Capped vs ask), each with a large figure and caption.  
-**Web:** No KPI strip at all. First thing a viewer sees is the raw table.  
-**Fix:** Add a `<div class="kpi-strip">` above the table in `web/src/views/Overview.tsx` with four derived counts from `rows`.
+### Gap 1 — Overview filter pill bar (`screens.jsx:99-115`)
+**Prototype:** Horizontal row of 5 pill buttons (All / Open / In negotiation / Settled / Closed) above the table, with an active-highlight state.  
+**Web:** No filter bar at all. All rows always shown.  
+**Fix:** Add a `filterState` useState in `Overview.tsx`; render a row of `<button>` pills that set it; filter `rows` before mapping to `<tr>`. CSS needs a `.filter-bar` + `.pill` + `.pill.active` rule set.
 
-### Gap 2 — Navigation incomplete (Network + Settings screens absent)
-**Prototype:** `app.jsx:76-79` — 3 nav links (Requests, Network, Settings). `screens.jsx:533-740` defines both screens.  
-**Web:** `App.tsx` only routes overview / create / detail. No Network or Settings routes exist.  
-**Fix:** Add `| { kind: "network" } | { kind: "settings" }` to the `View` union in `App.tsx`; implement minimal versions of `NetworkScreen` and `SettingsScreen` in `web/src/views/`.
+### Gap 2 — Overview table missing `Appeal stage` and `Round` columns (`screens.jsx:114-116`)
+**Prototype:** Table header row has 8 columns; `Appeal stage` and `Round` are visible per-row alongside Medication, Status, Requested, Covered, Benchmark.  
+**Web:** `Overview.tsx` table has 6 columns (`#`, Medication, Status, Policy, Requested, AI Covered). No appeal-stage or round column.  
+**Fix:** Surface `appealRound` and `payerLine` from `NegotiationView` (or add them if not yet present) and add the two columns to the `<thead>` and each `<tr>` in `Overview.tsx`. A simple text value (`Round {n}`) satisfies conformance; a full sparkline (MiniBenchmark) can follow.
 
-### Gap 3 — Overview table missing MiniBenchmark column + Appeal stage column
-**Prototype:** `screens.jsx:114-116` — table has 8 columns including "Appeal stage" and "Benchmark" (the `MiniBenchmark` sparkline from `visuals.jsx:121-142`).  
-**Web:** `Overview.tsx` table has 6 columns; no benchmark sparkline and no appeal-stage column.  
-**Fix:** Add appeal-round and payer-line fields to `NegotiationView`, surface them in the table header and rows, and implement a simple CSS bar in place of the full SVG sparkline.
+### Gap 3 — Navigation incomplete: Network + Settings screens absent
+**Prototype:** `app.jsx:76-79` — 3 nav links (Requests, Network, Settings). `screens.jsx:533-740` fully defines both screens.  
+**Web:** `App.tsx` routes only overview / create / detail; nav bar shows Dashboard / New Request.  
+**Fix:** Add `| { kind: "network" } | { kind: "settings" }` to the `View` union in `App.tsx`; add nav links in `TopBar`; implement minimal `NetworkScreen` (live tx stream placeholder, contract address facts) and `SettingsScreen` (role/profile cards, wallet facts) in `web/src/views/`.
 
-### Gap 4 — Appeal ladder entirely absent from Detail
-**Prototype:** `screens.jsx:234-265` — full per-payer appeal ladder (Commercial / PartD / Medicaid LADDERS constant), step cards with current-step highlight, window and threshold text.  
-**Web:** `Detail.tsx` has `STEPPER_STEPS` for the flow stepper (5 generic milestones) but no appeal-ladder section at all. The `appealRound` field is not surfaced.  
-**Fix:** Extend `NegotiationView` to carry `payerLine` and `appealRound`; add an `AppealLadder` sub-component in `Detail.tsx` modelled on `screens.jsx:244-265`.
+---
 
-### Gap 5 — Payer line selector absent from Create; live justification hash preview missing
-**Prototype:** `screens.jsx:494-499` — `<select>` with Commercial / PartD / Medicaid options that sets the appeal ladder.  `screens.jsx:470-472` — live hash preview rendered as `0x{hashStr(just)…}`.  
-**Web:** `Create.tsx` hardcodes `PayerLine.PartD` (documented as a UNIT-7 placeholder); no payer selector. No live hash display below the justification textarea.  
-**Fix (part A):** Replace the `PayerLine.PartD` constant with a `<select>` control bound to a `payerLine` state variable; pass it through to `createContract`.  
-**Fix (part B):** Below the justification `<textarea>`, render a `<code>` element showing `hashContent(justification)` using the existing `hashContent` import from `@lib`.
+## Unchanged surfaces this tick
+
+- **Detail** (~68 %): appeal ladder absent, evidence list absent — unchanged.
+- **Create** (~70 %): payer line selector absent, live hash preview absent — unchanged.
+- **TopBar / wallet chip** (~40 %): Network + Settings nav links absent, blur backdrop absent — unchanged.
+- **NetworkScreen**: entirely absent — unchanged.
+- **SettingsScreen**: entirely absent — unchanged.
 
 ---
 
 ## What this tick changed — design impact
 
-The five new fixture files (`demo-data/scenarios/partd-approvable/`) and the `node:test` rewrite of the protocol test file have zero impact on any UI surface. This tick correctly made no deliberate conformance changes; conformance score is unchanged from the pre-tick baseline (first measurement: 57 %).
+Added `.kpi-strip` / `KpiCard` to `web/src/views/Overview.tsx` and corresponding CSS rules to `web/src/styles.css`. The 4-panel KPI strip now structurally matches `screens.jsx:84-93` — correct label text ("Total requests", "In negotiation", "Settled", "Capped vs ask"), real on-chain data derivation, and tone-colored values. This resolves Gap 1 from the prior tick's top-5 list and raises Overview from ~35 % to ~53 %, and overall from 57 % to 62 %.

@@ -4,14 +4,36 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 13 — UNIT-4b-narrow: useNegotiation hook)
+**Last updated:** 2026-05-29 (tick 14 — UNIT-UI-1: Overview KPI strip; user-driven refocus on visible UI)
 **Current mode:** `impl`
-**Current tick:** 13
-**Last focus:** Landed `web/src/hooks/useNegotiation.ts` — React hook extracting the Detail.tsx inline re-fetch pattern. useEffect re-runs on `[reqId, events, refetchTrigger]`; `cancelled` flag prevents stale writes; `prevReqIdRef` clears state on reqId-change so UI doesn't show wrong negotiation while next loads. Strict-review surfaced 1 MEDIUM (R14 ↔ R13 miscitation in the docstring and inline comment — fixed inline by replacing §2.3 R14 with §2.3 R13; behavior unchanged). The hook is exported but not yet consumed; wire-up into Detail.tsx is tick 14. R13 + R16 (tick 12) + R13 re-derive (this tick) are now implementation-complete; tests rest on browser-verify.
-**Last commit:** `<this tick>` (tick 13 — UNIT-4b-narrow useNegotiation)
+**Current tick:** 14
+**Last focus:** User noted "the web UI still looks old" — loop refocused on visible UI conformance. Landed 4-card KPI strip above Overview list per prototype `screens.jsx:84-93` (verbatim labels: Total requests / In negotiation / Settled / Capped vs ask; subs verbatim; tone tokens: warn / ok / accent). Counts derived from the same `rows: NegotiationView[]` the table iterates — divergence structurally impossible; no fake data. Design-conformance jumped from 57% → **62%** (+5pp); Overview surface 35% → ~53% (+18pp). Strict-review 1 LOW (raw hex literals for tone colors → fixed inline using existing project tokens `var(--warn|ok|accent)`).
+**Last commit:** `<this tick>` (tick 14 — UNIT-UI-1 Overview KPI strip)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)
+
+### UNIT-UI-1 (LANDED tick 14 — Overview KPI strip; user-driven UI refocus)
+**4-card KPI strip above Overview list — verbatim prototype labels + real-data counts**
+- What landed: `web/src/views/Overview.tsx` gains a 4-card grid above the request list with verbatim prototype labels ("Total requests" / "In negotiation" / "Settled" / "Capped vs ask") and subs. Real counts via reducer over `rows: NegotiationView[]`: total = rows.length; active = !r.terminal; settled = r.state === State.Settled; saved = sum of (requested - covered) for r.negotiation.{hasRuling, lastDecision === Approve, coveredAmount > 0n}. CSS additions: .kpi-strip / .kpi-card / .kpi-label / .kpi-value / .kpi-value.tone-{review,approved,accent} / .kpi-sub. Tone tokens use existing project palette (var(--warn|ok|accent)).
+- Gate verdict: lib 53/53 ✓, hardhat 28/28 ✓, root tsc ✓, web tsc ✓, vite build ✓, secret-scan ✓, Opus solidity-compliance PASS, Opus security-review PASS, Opus design-conformance **62% (was 57%) — +5pp**, Opus strict-review PASS (1 LOW closed inline: raw hex → project tokens).
+
+### UNIT-NetworkScreen (NEW — from violet bug report tick 14; high-visual-impact)
+**Port NetworkScreen WITHOUT the fake event ticker — REAL events only**
+- Files: `web/src/views/Network.tsx` (new), `web/src/App.tsx` (add `network` route), `web/src/styles.css`
+- Context: violet reported the prototype's TxStream loops forever generating fake events via `makeRandomEvent()` (visuals.jsx:271 setInterval with Math.random). The PRODUCTION port must NOT carry the fake generator. Real implementation sources from `subscribeTxLog` (txLogger) for this wallet's events; shows empty state when no events. This is also where SPEC-0004 §3.3 "live tx stream" wires in if/when chain-wide event filter is added.
+- Acceptance criterion: Network screen rendered at /network with the 4-stat panel (latest block from real chain, active rulings count from on-chain query, contract address, agent identifier) + a live tx stream filtered to the connected wallet's confirmed txs from subscribeTxLog. NO setInterval generating events. Empty state when subscribeTxLog has no events.
+
+### UNIT-UI-2 (NEW — design-conformance tick 14 follow-up; small visible win)
+**Overview filter pill bar — per `screens.jsx:99-115`**
+- Files: `web/src/views/Overview.tsx`, `web/src/styles.css`
+- Acceptance criterion: 5 pills (All / Open / In negotiation / Settled / Closed) above the request table, each showing its count. Active pill highlighted with `var(--accent)` background. Clicking a pill filters the rows. State stored in `useState<FilterKey>`; no URL routing.
+
+### UNIT-4b-narrow (LANDED tick 13 — useNegotiation hook)
+**`web/src/hooks/useNegotiation.ts` — Detail re-derive (SPEC-0003 §2.3 R13)**
+- What landed: typed hook `useNegotiation(reqId, events): UseNegotiationResult`. useEffect re-runs on [reqId, events, refetchTrigger]; `cancelled` flag prevents stale writes; `prevReqIdRef` clears state on reqId-change. `refetch()` increments counter for imperative re-fetch.
+- Gate verdict: lib 53/53 ✓, hardhat 28/28 ✓, both tsc ✓, Opus solidity/security PASS, Opus strict-review PASS (1 MEDIUM closed inline: R14 → R13 citation; 4 NITs deferred).
+- Wire-up into Detail.tsx deferred — was originally tick 14 plan; tick 14 redirected to UNIT-UI-1 per user signal.
 
 ### UNIT-4-narrow (LANDED tick 12 — first web/ tick)
 **`src/protocol/revertReasonMap.ts` + `web/src/hooks/useAction.ts` + shared.ts piggyback**

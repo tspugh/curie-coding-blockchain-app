@@ -1,3 +1,9 @@
+# Security findings — 2026-05-29 tick 14 (Overview KPI strip — UNIT-UI-1)
+
+**Verdict:** PASS (0 findings). Diff in `web/src/views/Overview.tsx` + `web/src/styles.css` adds 4 KPI cards derived from existing `rows: NegotiationView[]` via a single `reduce()`; no new I/O, network, fs, timers, or `eval`. Counts (`total`/`active`/`settled`/`saved`) are all real-data-derived — no mocks, stubs, or synthetic values. Labels/subs are hardcoded string literals; values are `number` or `bigint`-via-`fmtAmount`, both rendered through React's default-escaping JSX (no `dangerouslySetInnerHTML`, no XSS surface). CSS additions are static class names + literal hex colors with no dynamic `style=` attribute built from input (no CSS-injection vector).
+
+---
+
 # Security findings — 2026-05-29 tick 13 (useNegotiation hook — view/policy/priceBasis refetch on tx-confirmed)
 
 **Verdict:** PASS (0 findings)

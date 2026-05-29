@@ -1936,3 +1936,327 @@ populates `dist/`). No prior tick's findings are re-opened or
 regressed.
 
 ### Final tick-13 verdict: PASS (0 HIGH/LOW; 1 MEDIUM R-citation; 4 NITs)
+
+---
+
+# Strict-review findings — tick 14 (UNIT-UI-1, Overview KPI strip)
+
+**Date:** 2026-05-29
+**Scope:** the 2 files touched this tick:
+- `web/src/views/Overview.tsx` (KpiCard local component + KPI strip render + counts reducer)
+- `web/src/styles.css` (added `.kpi-strip`, `.kpi-card`, `.kpi-label`, `.kpi-value`, `.kpi-value.tone-{review,approved,accent}`, `.kpi-sub`)
+
+R-citations the unit claims to satisfy: none directly — design-conformance
+gate against `docs/reference/ui-prototype-handoff/project/screens.jsx:84-93`
+(the KPI strip block), informational, not a SPEC-0003 R-cited unit.
+
+---
+
+### Gate checks (all three pass)
+
+- `node --import tsx --test "src/**/*.test.ts"` → **53 / 53 pass, 0 fail**
+  (duration 2.38 s; same count as tick 13 — no test added or regressed by
+  this UI-only edit).
+- `npx tsc -p tsconfig.json --noEmit` → **0 errors**.
+- `npx tsc -p web/tsconfig.json --noEmit` → **0 errors**.
+- `npx vite build` (from repo root — vite config sets `root: "web"`) →
+  **succeeds**: 212 modules transformed, `dist/assets/index-*.css = 20.70
+  kB gzipped 4.76 kB`, `dist/assets/index-*.js = 542.94 kB gzipped 192.56
+  kB` in 3.42 s. (NOTE: `npx vite build` from `web/` directly **fails**
+  with `Rollup failed to resolve import "@lib"` because the `@lib` alias
+  is defined in the repo-root `vite.config.ts`; this is the existing
+  project convention, not a regression from this tick. The tick-14
+  briefing says "run `npx vite build`" without specifying cwd — running
+  from the repo root is the correct cwd and was verified green.)
+
+### Field-existence audit (NegotiationView shape vs. dev's reducer)
+
+Cross-checked every field the reducer reads against `src/types/coverage.types.ts`:
+
+| Reducer reads | Declared at | Type | Verdict |
+|---|---|---|---|
+| `r.terminal` | `coverage.types.ts:175` | `boolean` | OK |
+| `r.state` | `coverage.types.ts:163` | `State` | OK |
+| `r.negotiation.hasRuling` | `coverage.types.ts:128` | `boolean` | OK |
+| `r.negotiation.lastDecision` | `coverage.types.ts:126` | `Decision` | OK |
+| `r.negotiation.coveredAmount` | `coverage.types.ts:114` | `bigint` | OK |
+| `r.negotiation.requestedAmount` | `coverage.types.ts:100` | `bigint` | OK |
+
+The reducer iterates `rows` (the `readonly NegotiationView[]` state seeded
+by the existing `useEffect` that calls `client.negotiation.count()` then
+`client.negotiation.getNegotiationView(id)` per id). This is the same
+real-data path the table renders against, so KPIs and table rows can
+never disagree about the source set — they ARE the source set.
+
+`fmtAmount(counts.saved)` is the right helper choice: `saved` accumulates
+into a `bigint` (initial `0n`, additions of `bigint - bigint`), and
+`fmtAmount(v: bigint)` is the project's only stringifier that accepts
+`bigint`. The other three KPIs (`total`, `active`, `settled`) are plain
+`number` counters, rendered through `value: string | number` → React
+coerces. No `Number(bigint)` cast, no `.toString()` boilerplate — clean.
+
+### Real-data fidelity audit
+
+- No `Math.random` in `Overview.tsx` (grep clean).
+- No `setInterval` / `setTimeout` (grep clean).
+- No hard-coded fake counts.
+- The reducer ONLY reads `rows`, which is loaded exclusively from
+  `client.negotiation.{count,getNegotiationView}` — the same backend
+  surface the rest of the app uses. Whether the backend is `RealBackend`
+  (live RPC) or `SimulatedBackend` (in-memory) is invisible here, which
+  is correct per SPEC-0001 R11/R14.
+- The user's session-level concern about "fake data" is fully addressed:
+  the KPIs ARE the same data the table is iterating — there is literally
+  no second source the reducer could be reading from.
+
+### Prototype structural alignment
+
+Side-by-side with `screens.jsx:65-93`:
+
+| Position | Prototype label | Prototype sub | Prototype tone | Landed label | Landed sub | Landed tone | Match? |
+|---|---|---|---|---|---|---|---|
+| 1 | "Total requests" | "across all profiles" | default | "Total requests" | "across all profiles" | (none → default) | **OK** |
+| 2 | "In negotiation" | "before a terminal state" | `var(--state-review)` | "In negotiation" | "before a terminal state" | `tone-review` (#d97706) | **OK semantically** |
+| 3 | "Settled" | "both parties accepted" | `var(--state-approved)` | "Settled" | "both parties accepted" | `tone-approved` (#059669) | **OK semantically** |
+| 4 | "Capped vs ask" | "requested − covered" | `var(--accent)` | "Capped vs ask" | "requested − covered" | `tone-accent` (#2563eb) | **OK** |
+
+All four labels and subs are byte-verbatim from the prototype (including
+the en-dash glyph in "requested − covered" at U+2212). Order is
+identical. Tone mapping is semantically correct. See **Finding 1**
+below on the tone hex literals vs. project tokens.
+
+### `saved` semantics audit — the key correctness question
+
+Prototype (`screens.jsx:61`):
+```js
+if (r.covered != null && r.decision === "approve") a.saved += (r.requested - r.covered);
+```
+
+Landed (`Overview.tsx:81-87`):
+```ts
+if (
+  r.negotiation.hasRuling &&
+  r.negotiation.lastDecision === Decision.Approve &&
+  r.negotiation.coveredAmount > 0n
+) {
+  a.saved += r.negotiation.requestedAmount - r.negotiation.coveredAmount;
+}
+```
+
+Translating prototype → on-chain:
+- `r.covered != null` (prototype's "a ruling has been computed") →
+  on-chain analog is `hasRuling`. In the prototype data
+  (`data.jsx:74-247`), `covered: null` appears alongside un-ruled
+  states (`UnderReview`, `EvidenceRequested`, `PolicyInvalidated`) and
+  `covered: 0` appears for `Denied`. So `covered != null` is true
+  whenever the ruling exists. Mapping to `hasRuling`: **correct**.
+- `r.decision === "approve"` → `lastDecision === Decision.Approve`:
+  **correct** (Decision enum, see `coverage.types.ts`).
+
+The dev's third gate `coveredAmount > 0n` is **extra** — not in the
+prototype. On the contract path, `coveredAmount = min(requested,
+costPlusCap)` on Approve (per SPEC-0001 R6a, see also
+`coverage.types.ts:113-114`). For an Approve ruling, can `coveredAmount`
+ever be `0`? Yes, edge case: if `requestedAmount` is 0 OR if
+`costPlusUnitPrice * quantity` is 0. The former is rejected at
+`createContract` time (the typical `requestedAmount > 0` guard); the
+latter would require a NDC look-up that returns 0 (unlikely under R6a
+which requires a deterministic positive cap).
+
+In the realistic case the gate is a no-op. In the edge case where
+`coveredAmount === 0` on an Approve ruling, the dev's reducer skips it
+entirely — which is actually safer than the prototype's behavior:
+without the gate, `saved += (requested - 0) = requested`, which would
+inflate "Capped vs ask" by the full requested amount for what is
+effectively a degenerate ruling.
+
+**Verdict: minor semantic divergence from the prototype, but the gate
+is defensive and produces a more meaningful KPI. Acceptable. Flagged
+as NIT-1 below for awareness, not as a correctness defect.**
+
+### CSS audit
+
+- New rules `.kpi-strip`, `.kpi-card`, `.kpi-label`, `.kpi-value`,
+  `.kpi-value.tone-review`, `.kpi-value.tone-approved`,
+  `.kpi-value.tone-accent`, `.kpi-sub` are **unique** to this strip — a
+  full grep across `web/src/` finds zero other consumers. No leakage
+  into existing surfaces (table, header, badges, cards, stepper, etc.).
+- The `var(--token, fallback)` pattern is used consistently — `--panel`,
+  `--border`, `--muted`, `--text`, `--muted-lt` all have inline
+  fallbacks. Per project convention (header / wallet / button rules
+  use bare `var(--token)` without fallback), the fallbacks are *more*
+  defensive than the surrounding code, not less. Not a finding.
+- Class-name style matches the project's hyphenated convention
+  (`.empty-state`, `.policy-card`, `.gauge-row`, etc.) — `.kpi-strip` /
+  `.kpi-card` / `.kpi-label` fit perfectly.
+- Rule placement: §25b "KPI strip (Overview — UNIT-UI-1)" inserted
+  **before** §25 "Empty state (Overview)" (lines 1089-1128). The §
+  numbering is now §25b → §25, which is a minor ordering glitch but
+  doesn't affect cascade behavior. Logged as NIT-2.
+- No new design-system tokens added at `:root` — the dev opted to put
+  the three tone colors inline as hex literals in the rules
+  themselves. See **Finding 1**.
+
+### Findings
+
+#### Finding 1 — Tone colors use literal hex instead of existing project tokens — **LOW**
+
+**Where:** `web/src/styles.css:1120-1122`
+```css
+.kpi-value.tone-review   { color: #d97706; /* amber */ }
+.kpi-value.tone-approved { color: #059669; /* green */ }
+.kpi-value.tone-accent   { color: #2563eb; /* blue  */ }
+```
+
+The project already has:
+- `--accent: #2563eb` — **exact match** for `tone-accent`; should just
+  be `color: var(--accent);`.
+- `--ok: #15803d`, `--ok-mid: #22c55e` — for green. The dev's `#059669`
+  is between the two, neither.
+- `--warn: #b45309`, `--warn-mid: #f59e0b` — for amber. The dev's
+  `#d97706` is between the two, neither.
+
+The prototype itself uses semantic tokens (`var(--state-review)`,
+`var(--state-approved)`, `var(--accent)`) — the spirit of the
+prototype is "name the role, don't hard-code the swatch". The dev
+re-implemented the right idea (named tone classes) but at the last
+step opted for raw hex instead of the project's named tokens.
+
+**Severity rationale:** LOW because (a) the `tone-accent` hex
+coincidentally equals `--accent`, so theme drift on the blue is
+impossible; (b) the green/amber are close enough that no human will
+spot the difference in this view; (c) the visual outcome is correct
+TODAY. But the moment someone touches the project's `--ok` /
+`--warn` tokens to re-theme, these three KPI tone rules silently
+break consistency — exactly the kind of theme-drift the token system
+exists to prevent.
+
+**Suggested fix:**
+```css
+.kpi-value.tone-review   { color: var(--warn); }    /* or --warn-mid */
+.kpi-value.tone-approved { color: var(--ok); }      /* or --ok-mid */
+.kpi-value.tone-accent   { color: var(--accent); }
+```
+Then drop the comment glyphs — `var(--warn)` is self-documenting.
+
+#### Finding 2 — `coveredAmount > 0n` gate diverges from prototype `saved` reducer — **NIT-1**
+
+Documented in the **`saved` semantics audit** section above. The dev's
+reducer adds a third gate (`coveredAmount > 0n`) the prototype doesn't
+have. In the realistic adjudication path this is a no-op; in the
+degenerate Approve-with-zero-cap edge case it produces a more
+meaningful KPI than the prototype would. Acceptable design choice.
+
+**Severity rationale:** NIT — the divergence is *toward* a safer KPI,
+not away from one. Flagged for awareness only.
+
+**Fix (optional):** if exact prototype parity matters, drop the third
+gate:
+```ts
+if (r.negotiation.hasRuling && r.negotiation.lastDecision === Decision.Approve) {
+  a.saved += r.negotiation.requestedAmount - r.negotiation.coveredAmount;
+}
+```
+But the current form is defensible; recommend leaving as-is and
+documenting the rationale in a one-line comment.
+
+#### Finding 3 — CSS section numbering glitch (§25b before §25) — **NIT-2**
+
+`styles.css:1089` opens with `/* ─── 25b. KPI strip (Overview — UNIT-UI-1) ─── */`
+which precedes `/* ─── 25. Empty state (Overview) ──── */` at line
+1130. The numbering reads §25b → §25 in source order. Cosmetic only —
+cascade behavior is unaffected because there's no overlap between the
+two rule sets — but a future reader will be momentarily confused.
+
+**Severity rationale:** NIT — purely a comment/numbering concern.
+
+**Fix (optional):** either renumber the empty-state block to §25b and
+the KPI block to §25, OR move the KPI block to after the empty-state
+block (more natural since the empty-state predates this tick). The
+latter requires moving roughly 40 lines and is the lower-risk
+approach.
+
+#### Finding 4 — Dead reducer state when `rows` is empty — **NIT-3**
+
+When `rows.length === 0` (the empty-state branch on lines 110-118),
+the KPI strip still renders with `total: 0`, `active: 0`, `settled:
+0`, `saved: "0"`. The strip sits above the empty-state hero. The
+prototype's behavior in the same situation is the same (the prototype
+always renders the strip, even with zeros), so this is faithful.
+However, visually the row of four "0" cards above an empty-state
+illustration is slightly redundant.
+
+**Severity rationale:** NIT — matches the prototype, not a defect.
+Future polish could hide the strip when `rows.length === 0` and only
+show the empty-state, but that diverges from the prototype.
+
+### Regression checks (no findings)
+
+- **No prior tick's findings re-opened.** Tick 13's MEDIUM (R-citation
+  miscite in `useNegotiation.ts`) is untouched and unaffected — this
+  tick doesn't import the hook yet. Tick 12's `useAction.ts`
+  test-infra deferral remains the same. Tick 8/9/10 scenario fixtures
+  and tests are unchanged (53/53 same as last tick).
+- **Counts source-of-truth.** `rows.length` for `total` matches the
+  `<tbody>` row count exactly (same array, same iteration). No risk
+  of the KPI saying "5 total" while the table shows 4 rows.
+- **`<table>` cascade.** The new `.kpi-strip` lives **outside** the
+  `<table className="contracts">`, so the table's `border-collapse`
+  and `border-radius` corner rules are unaffected. Verified by the
+  vite build CSS output (20.70 kB total — well in line with the prior
+  baseline; no surprise size bloat).
+- **`Decision` enum import.** `Overview.tsx:6` imports
+  `{ ..., Decision, State }` from `@lib`. Both were already imported
+  before this tick — the diff only adds the use sites in the reducer,
+  not new imports. (Confirmed by `git diff HEAD`-style inspection of
+  the file vs. its previous header.)
+- **`fmtAmount(0n)` rendering.** `fmtAmount` is `v.toString()` per
+  `web/src/shared.ts:11-13`, so `fmtAmount(0n) === "0"`. Renders as
+  "0" in the empty-state KPI — matches the prototype's `money(0) →
+  "$0"` shape (modulo the `$` prefix; the project's `fmtAmount`
+  intentionally has no currency prefix per its JSDoc "plain decimal").
+- **`KpiCard` not exported.** `function KpiCard` is declared without
+  `export`. Only `Overview` is exported. Confirmed by grep:
+  `grep -n "export" Overview.tsx` shows only `export function Overview`.
+- **Comments.** The two block comments at lines 10-12 and 70-75 are
+  scaffolding (rule annotations / field-citation cheat-sheet),
+  neither lying nor restating code. Acceptable.
+
+### Tick-14 verdict
+
+**OVERALL: PASS — 0 HIGH; 0 MEDIUM; 1 LOW (Finding 1 — tone hex
+literals should reuse project tokens); 3 NITs (Findings 2-4).**
+
+Severity breakdown:
+- **HIGH:** 0.
+- **MEDIUM:** 0.
+- **LOW:** 1 (Finding 1: `.kpi-value.tone-*` uses raw hex instead of
+  `var(--accent)` / `var(--ok)` / `var(--warn)` — silent theme-drift
+  risk).
+- **NIT:** 3 (Finding 2: defensive `coveredAmount > 0n` gate diverges
+  from prototype; Finding 3: §25b/§25 source-order glitch; Finding 4:
+  zero-KPI strip above empty state).
+
+The unit lands cleanly. The KPI strip is structurally byte-faithful
+to the prototype (4 cards, in the same order, with the same labels
+and subs verbatim, with semantically-correct tone mapping). The
+counts reducer reads exclusively from the same `rows` state the
+table renders against, so KPI / table divergence is structurally
+impossible — directly addressing the user's session-level concern
+about fake data. Every NegotiationView/Negotiation field the reducer
+touches exists with the right type per `src/types/coverage.types.ts`.
+`fmtAmount(saved)` correctly handles the `bigint` accumulator. No
+inline styles in the JSX, no fake data, no timers, no `Math.random`.
+The new CSS classes are unique to this strip, follow the project's
+hyphenated naming convention, and don't leak into any other surface.
+
+Three required gates pass: 53/53 node tests green; root + web
+`tsc --noEmit` both clean; `npx vite build` from the repo root
+succeeds (3.42 s, 20.70 kB CSS). No prior tick's findings are
+re-opened or regressed.
+
+The one LOW finding (token literals vs. design-system vars) is a
+silent theme-drift risk, not a runtime defect — recommended for a
+quick follow-up but not blocking.
+
+### Final tick-14 verdict: PASS (0 HIGH; 0 MEDIUM; 1 LOW; 3 NITs)

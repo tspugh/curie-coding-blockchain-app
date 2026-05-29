@@ -1,4 +1,4 @@
-# Solidity compliance — tick 13
+# Solidity compliance — tick 14
 
 **Date:** 2026-05-29
 **Scope:** no `contracts/` diff this tick — audit deferred to next contract-touching tick
@@ -7,9 +7,10 @@
 ## This tick's diff scope
 
 Verified via `git diff --name-only HEAD~1..HEAD -- contracts/` (empty result). This
-tick's working-tree change consists of:
+tick edits web-only files:
 
-- 1 new TS file: `web/src/hooks/useNegotiation.ts` (untracked)
+- `web/src/views/Overview.tsx`
+- `web/src/styles.css`
 
 No changes to `contracts/contracts/CoverageNegotiation.sol`,
 `contracts/contracts/mocks/MockAgentPlatform.sol`, or
@@ -18,6 +19,11 @@ No changes to `contracts/contracts/CoverageNegotiation.sol`,
 Because no Solidity source or contract-level test was touched this tick, no new
 audit pass is warranted. The next contract-touching tick should re-trigger a
 full focused review.
+
+## Tick 13 — preserved for reference
+
+Tick 13 also had no `contracts/` diff (working-tree change was 1 new TS file,
+`web/src/hooks/useNegotiation.ts`). PASS — no new findings.
 
 ## Tick 12 — preserved for reference
 
@@ -41,10 +47,10 @@ From tick 4 (UNIT-2):
   `uint8 indexed round` width gap was explicitly noted as forward-compatible
   and accepted, not an open finding.
 
-Ticks 8 (UNIT-3a), 9 (UNIT-3b), 10 (UNIT-3c), 11, 12, and 13 (this tick) also
-touched no `contracts/` files and added no new findings.
+Ticks 8 (UNIT-3a), 9 (UNIT-3b), 10 (UNIT-3c), 11, 12, 13, and 14 (this tick)
+also touched no `contracts/` files and added no new findings.
 
-No unresolved compliance items carry into tick 13. One spec-side carry-forward
+No unresolved compliance items carry into tick 14. One spec-side carry-forward
 flag (R6b `policyVoidedClauseIndices`) remains noted for the next
 contract-touching tick — see tick 11 entry in git history for full context:
 the R6b prose update in `docs/specs/0001-mvp0-coverage-negotiation.md` mentions

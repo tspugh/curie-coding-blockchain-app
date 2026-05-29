@@ -1,8 +1,31 @@
 # Coverage — spec-4-implementation branch
 
-**Date:** 2026-05-29 · **Tick:** 13 (UNIT-4b-narrow: useNegotiation hook)
+**Date:** 2026-05-29 · **Tick:** 14 (UNIT-UI-1: KPI strip — real-data counts)
 **Branch:** `spec-4-implementation`
 **Last known test counts:** hardhat 28/28 ✓ · lib (node --test) 53/53 ✓
+
+---
+
+## Tick-14 entry (UNIT-UI-1: KPI strip)
+
+**What landed:**
+- KPI strip component added above the Overview negotiation list in the web UI. All four
+  displayed counts (Total, Pending, Approved, Denied) are derived directly from the
+  `rows` prop (`NegotiationView[]`) passed into the component — no stubs, no hardcoded
+  values, no separate API call. Counts update whenever `rows` changes.
+- No contract changes, no `src/` library changes.
+
+**Coverage gains:**
+- **No new spec R-requirement coverage.** This is a UI-only diff; no SPEC-0001 through
+  SPEC-0004 requirement is newly satisfied or newly tested by this tick. Counts are
+  real-data-derived (not stubs), which is correctness hygiene rather than a spec gate.
+
+**Tests added:** None. The repo has no React testing infra (no jsdom / React Testing
+Library config); correctness rests on `tsc` (type-checks clean) and is flagged for
+browser-verify, consistent with prior UI ticks (R13, R14).
+
+**Tick-14 verdict: PASS-for-this-tick.** lib 53/53 unchanged, hardhat 28/28 unchanged.
+No spec R-coverage gained or lost; KPI counts are real-data-derived.
 
 ---
 
