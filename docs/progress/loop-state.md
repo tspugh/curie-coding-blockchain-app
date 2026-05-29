@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 30 — batch audit + 1 cosmetic NIT closure)
+**Last updated:** 2026-05-29 (tick 31 — design-conformance refresh + queue rewrite)
 **Current mode:** `impl`
-**Current tick:** 30
-**Last focus:** Batch strict-review audit across `cc0a40a..2397045` (tick 26-29 closures of tick 25's findings). Verified every closure is real: 4 MEDIUMs + 6 LOWs all CLOSED, 2 NITs closed via the walletKeys.ts extraction; only NIT 1 (WalletKeysPanel component extraction) and NIT 4 (ProfileRegistry sync convention) remain — both non-blocking. Audit surfaced one NEW cosmetic NIT: the save-error span lives in `.key-actions` but the CSS rule was scoped `.key-row .key-error` so the danger color was lost. Fixed inline by un-scoping `.key-error`. Tick 25's strict-review batch is now substantively clean (0 HIGH/MEDIUM/LOW; 3 deferred non-blocking NITs).
-**Last commit:** `<this tick>` (tick 30 — batch audit + cosmetic CSS fix)
+**Current tick:** 31
+**Last focus:** Refreshed design-conformance measurement after the run of visible-UI ticks (14-30). **62% → 82% (+20pp)**. Per-surface: Overview 53→88%, Settings 0→90%, Network 0→85%, TopBar 40→72%, Detail 68→72%, Create 70→73%. Top 3 remaining gaps: (1) AppealLadder absent from Detail (`screens.jsx:233-266`); (2) Detail event log missing tx-hash chip + cost + attribution per row (`screens.jsx:386-417`, also reversed order); (3) TopBar ProfileSwitcher is a `<select>` not a pill-row (`app.jsx:115-131`). Queued as `UNIT-TopBar-profile-pills`, `UNIT-AppealLadder`, `UNIT-Detail-event-log-polish`. Each is a separate focused tick.
+**Last commit:** `<this tick>` (tick 31 — design-conformance refresh)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)
