@@ -75,17 +75,45 @@ Status: Draft · Owner: tspugh · Date: 2026-05-29 · Builds on: [SPEC-0001](000
   next to the snippet — not a bare hash. This is the "be clearer about where evidence is
   coming from" thread you flagged.
 
-### 2.4 Appeal-stage labels — Q2, OPEN
+### 2.4 (2026-05-29) Appeal-stage labels: hybrid — ladder named on-chain, stage named in UI
 
-- Decision deferred: does the **contract** state machine carry the real named stage
-  (`Redetermination`, `IRE Reconsideration`, `ALJ`, `Medicare Appeals Council`) as an enum,
-  or does it carry a generic `appealRound: uint8` and let the **UI** translate per the
-  payer-profile (Part D vs commercial)?
-- Trade-off recap: named-in-contract = credibility + tight schema, but baked-in jurisdiction
-  (commercial plans don't have IRE/ALJ — different ladder); generic-in-contract + named-in-UI
-  = cleaner contract + multi-line support, but the chain doesn't *know* what stage it's at.
-- See the [domain doc Finding 4 / 5](../domain/coverage-exception-process.md) for the two
-  ladders we'd need to support if we go generic.
+- **R13 (MUST) Ladder named on-chain.** The contract carries a `payerLine: enum { PartD,
+  Commercial }` on each contract instance and a per-round `appealRound: uint8`. The
+  combination `(payerLine, appealRound)` is enough for the contract to look up
+  ladder-specific rules (see R14) without baking any single jurisdiction's vocabulary into
+  the schema.
+- **R14 (MUST) Ladder-specific rules enforced on-chain.** The contract enforces the rules
+  that *differ* between the Part D and commercial ladders, indexed by `(payerLine,
+  appealRound)`:
+  - **Filing windows.** Each `(payerLine, appealRound)` carries a max time-from-prior-
+    ruling before the appeal lapses (e.g., Part D `(PartD, 2)` IRE-reconsideration round =
+    60 days from the redetermination ruling; commercial `(Commercial, 2)` external review =
+    payer-line-specific window). Submissions past the window revert.
+  - **Threshold gates.** Some rounds require an amount-in-controversy threshold
+    (Part D `(PartD, 3)` ALJ ≈ $200 in 2026). Submissions under the threshold revert.
+  - **Sequencing.** No skipping levels — the contract refuses
+    `requestAdjudication(round=N)` unless `round=N-1` was actually ruled (denied) first.
+  - **Terminal rounds.** Each ladder has a maximum round; past that, only `Settled` /
+    `Deadlocked` are reachable. Part D goes through Council + federal court (treated as
+    terminal off-chain — the contract stops at ALJ for v0); commercial maxes out at
+    external review.
+- **R15 (MUST) Stage names rendered in the UI per payer profile.** The UI looks up the
+  stage name from `(payerLine, appealRound)` via a static table mirroring
+  [Finding 4 / 5](../domain/coverage-exception-process.md):
+  - `(PartD, 1)` → "Redetermination"
+  - `(PartD, 2)` → "IRE Reconsideration"
+  - `(PartD, 3)` → "ALJ / OMHA Hearing"
+  - `(PartD, 4)` → "Medicare Appeals Council" *(out of scope for v0 — see R14 terminal)*
+  - `(Commercial, 1)` → "Internal Appeal"
+  - `(Commercial, 2)` → "External Review"
+- **R16 (SHOULD) Static ladder table in the library.** The `(payerLine, appealRound) →
+  { name, description, window, threshold }` table ships as a typed constant in the library
+  so the UI and any off-chain tools render the same labels the contract enforces against.
+- **Rationale.** The contract knows enough to enforce the *ladder's* rules (filing windows,
+  sequencing, thresholds) without leaking one ladder's vocabulary into a schema the other
+  ladder doesn't use. The UI keeps domain-fluent stage names visible to viewers and payer-
+  side operators. New payer lines (Medicaid, military, etc.) extend the `payerLine` enum +
+  the static table without re-architecting the state machine.
 
 ## 3. Technical documentation
 
@@ -153,8 +181,10 @@ calls in a round; rulings differ across runs with the same inputs.
 
 ## 8. Open questions / tracked tasks
 
-- **Q2 (§2.4) — Appeal-stage labels.** Named-in-contract vs generic-in-contract +
-  named-in-UI. **OPEN.**
+- **Q2 (§2.4) — Appeal-stage labels.** **RESOLVED 2026-05-29:** hybrid — `(payerLine,
+  appealRound)` on-chain (so the contract can enforce ladder-specific filing windows,
+  thresholds, and sequencing), stage names rendered in the UI via a static table. See
+  §2.4 R13–R16.
 - **TASK-1 — Real de-identified note corpus.** Track sourcing a real de-id'd clinical-note
   corpus (e.g., MIMIC-III/IV note subsets, n2c2 challenges, or a licensed payer-side corpus)
   for post-demo real-world testing. Don't block the demo on it; we want a path beyond
