@@ -231,13 +231,19 @@ function WalletKeysPanel() {
           spellCheck={false}
           placeholder="0x… (leave empty to use VITE_PRIVATE_KEY from .env)"
           value={providerKey}
-          onChange={(e) => setProviderKey(e.target.value.trim())}
+          onChange={(e) => {
+            setProviderKey(e.target.value.trim());
+            setSavedAt(null);
+          }}
           aria-invalid={!providerValid}
         />
         <button
           type="button"
           className="key-generate"
-          onClick={() => setProviderKey(generateHexKey())}
+          onClick={() => {
+            setProviderKey(generateHexKey());
+            setSavedAt(null);
+          }}
           title="Generate a fresh random key (you'll need to fund the address)"
         >
           Generate
@@ -256,13 +262,19 @@ function WalletKeysPanel() {
           spellCheck={false}
           placeholder="0x… (leave empty to fall back to provider key)"
           value={insurerKey}
-          onChange={(e) => setInsurerKey(e.target.value.trim())}
+          onChange={(e) => {
+            setInsurerKey(e.target.value.trim());
+            setSavedAt(null);
+          }}
           aria-invalid={!insurerValid}
         />
         <button
           type="button"
           className="key-generate"
-          onClick={() => setInsurerKey(generateHexKey())}
+          onClick={() => {
+            setInsurerKey(generateHexKey());
+            setSavedAt(null);
+          }}
           title="Generate a fresh random key (you'll need to fund the address)"
         >
           Generate

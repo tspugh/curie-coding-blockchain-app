@@ -1879,3 +1879,23 @@ tr.row-link:hover td:first-child {
   background: transparent;
   color: var(--accent-dk);
 }
+
+/* SPEC-0003 §2.9 R42 — onboarding banner shown when client.ts's
+   walletSetupRequired flag is set (real-mode selected but no key found). */
+.setup-banner {
+  background: var(--warn-lt);
+  border: 1px solid var(--warn-mid);
+  color: var(--text);
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 24px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.setup-banner strong {
+  color: var(--warn);
+}
+.setup-banner code {
+  background: rgba(255, 255, 255, .55);
+  padding: 1px 5px;
+}

@@ -3,7 +3,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { type CoverageEvent, type Profile } from "@lib";
-import { client, setActiveClientProfile } from "./client.js";
+import { client, setActiveClientProfile, walletSetupRequired } from "./client.js";
 import { shortHex } from "./shared.js";
 import { Overview } from "./views/Overview.js";
 import { Create } from "./views/Create.js";
@@ -148,6 +148,21 @@ export function App() {
       </header>
 
       <main className="main">
+        {walletSetupRequired && (
+          <div className="setup-banner" role="alert">
+            <strong>Wallet configuration required.</strong>{" "}
+            Real mode is selected but no private key was found in <code>.env</code> or{" "}
+            <code>localStorage</code>. The app is running in <em>simulated</em> mode —
+            on-chain writes will not work until you paste a key.{" "}
+            <button
+              type="button"
+              className="link-button"
+              onClick={goSettings}
+            >
+              Open Settings → Wallet keys
+            </button>
+          </div>
+        )}
         {view.kind === "overview" && (
           <Overview events={events} onOpen={goDetail} onCreate={goCreate} />
         )}

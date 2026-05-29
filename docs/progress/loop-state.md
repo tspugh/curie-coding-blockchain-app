@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 26 — retrospective strict-review on tick 25 + 4 MEDIUM closures)
+**Last updated:** 2026-05-29 (tick 27 — onboarding banner + close tick-25 LOW 1)
 **Current mode:** `impl`
-**Current tick:** 26
-**Last focus:** Ran retrospective strict-review on tick 25's `9319c42` (which had landed without the gate). Surfaced 4 MEDIUMs, 6 LOWs, 4 NITs. All 4 MEDIUMs closed inline this tick: (1) Simulated-mode profile switch losing state — `insurerClient` now aliases `providerClient` in simulated mode (single shared backend); (2) Real-mode missing-key throw bricking React before Settings is reachable — falls back to simulated + exposes `walletSetupRequired` flag for App to render onboarding; (3) "SPEC-0003 R30" mis-citations in client.ts/styles.css/Settings.tsx (R30 is actually submit-amount gating) — replaced with R42; (4) R42 said "per-row Generate" plural but only insurer had one — added Generate to provider row for symmetry. LOWs + NITs deferred.
-**Last commit:** `<this tick>` (tick 26 — 4 MEDIUM closures)
+**Current tick:** 27
+**Last focus:** Wired the `walletSetupRequired` flag from tick-26's MEDIUM 2 closure into App.tsx as a visible onboarding banner: when real mode is selected but no key is found in `.env`/localStorage, a warn-styled banner renders above every view directing the user to "Settings → Wallet keys". Closed tick-25 LOW 1 (stale "Saved. Reload to apply." after re-edit) — every onChange/Generate handler now clears `savedAt` so the message only shows immediately after a save. Added `.setup-banner` CSS using project tokens.
+**Last commit:** `<this tick>` (tick 27 — onboarding banner + LOW 1)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)
