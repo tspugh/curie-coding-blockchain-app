@@ -1,8 +1,76 @@
 # Coverage — spec-4-implementation branch
 
-**Date:** 2026-05-29 · **Tick:** 14 (UNIT-UI-1: KPI strip — real-data counts)
+**Date:** 2026-05-29 · **Tick:** 38 (UNIT-9: packet.ts — Merkle-root helpers)
 **Branch:** `spec-4-implementation`
-**Last known test counts:** hardhat 28/28 ✓ · lib (node --test) 53/53 ✓
+**Last known test counts:** hardhat 28/28 ✓ · lib (node --test) 65/65 ✓ (+12)
+
+---
+
+## Tick 38 — UNIT-9 packet.ts coverage
+
+### Tool used
+
+`node --import tsx --test --experimental-test-coverage src/protocol/packet.test.ts`
+(node's built-in `--experimental-test-coverage` flag; no external tool required).
+
+### Test results
+
+All 12 tests passed; 0 failures.
+
+```
+# tests 12
+# pass  12
+# fail  0
+```
+
+### Coverage report (tool output)
+
+```
+# -----------------------------------------------------------------
+# file             | line % | branch % | funcs % | uncovered lines
+# -----------------------------------------------------------------
+# src              |        |          |         |
+#  protocol        |        |          |         |
+#   packet.test.ts | 100.00 |   100.00 |  100.00 |
+#   packet.ts      | 100.00 |   100.00 |  100.00 |
+# -----------------------------------------------------------------
+# all files        | 100.00 |   100.00 |  100.00 |
+# -----------------------------------------------------------------
+```
+
+**packet.ts: 100% line, 100% branch, 100% functions — exceeds the 85% threshold.**
+
+### Per-spec gap table — SPEC-0004 R9/R10/R11/§3.4
+
+| Req  | Description                                               | This tick                    | Notes |
+|------|-----------------------------------------------------------|------------------------------|-------|
+| R9   | Off-chain evidence collection (process requirement)       | no test (unchanged)          | Process/runtime concern; not directly testable via unit tests |
+| R10  | Frozen evidence packet — `EvidenceReference` shape + Merkle root committed | **test exists — 100% covered** | Tests 4–12 cover `sliceHash`, `merkleLeaf`, `merkleRoot` formula; Test 6 validates the all-zero empty-packet convention; Tests 8–12 cover 2-leaf and 3-leaf (odd duplicate-last) paths |
+| R11  | Merkle-leaf + root helpers (`merkleLeaf`, `merkleRoot`)   | **test exists — 100% covered** | All helpers exercised and pinned against independently-computed expected values; Tests 4–12 |
+| §3.4 | Hash formula: sliceHash → keccak256(utf8(JSON.stringify(slice))); leaf → keccak256(abi.encode(string,bytes32,bytes32)); root → sorted-pair | **test exists — 100% covered** | Tests 3, 4 pin each formula against inline-computed expected; Tests 9 verifies pair-sort order independence |
+
+### Branch-by-branch manual audit
+
+`packet.ts` has four executable code paths in `merkleRoot` beyond the straight-line helper code:
+
+| Branch | Condition | Test exercising it |
+|--------|-----------|--------------------|
+| Empty packet → `bytes32(0)` | `refs.length === 0` | Test 8 (`merkleRoot([])`) |
+| Single leaf → return as-is | `level.length === 1` after initial map | Test 9 (`merkleRoot([refA])`) |
+| Multi-leaf, even count | `level.length % 2 === 0` (two refs) | Tests 10, 11 (`merkleRoot([refA, refB])`) |
+| Multi-leaf, odd count → duplicate-last | `level.length % 2 !== 0` (three refs) | Test 12 (`merkleRoot([refA, refB, refC])`) |
+| Pair sort lo < hi | `a < b` branch inside pair loop | Tests 10/11 (order-independence test confirms both orderings hit both sides of the ternary) |
+| Pair sort lo ≥ hi | `a >= b` branch inside pair loop | Test 11 (swapped order `[refB, refA]`) |
+
+All branches reachable in the implementation are exercised by at least one test.
+
+### Tick-38 verdict: PASS
+
+`packet.ts` line/branch/function coverage = **100%** (threshold: 85%). All 12 tests pass.
+R10 and R11 advance from "no test" to **test exists**. R9 remains a process requirement
+not testable at the unit level (unchanged). The node built-in `--experimental-test-coverage`
+flag produced a full coverage report without requiring any additional tooling.
+lib suite grows from 53 → 65 (+12).
 
 ---
 
@@ -131,7 +199,7 @@ of `src/`, `contracts/`, and `web/src/` is therefore unchanged from tick 6.
 | R8    | Per-line release pin in payer-profile.json             | test exists           | test exists           | PartD discriminant validated; void case correctly omits release pin |
 | R9    | Off-chain evidence collection                          | no test               | no test               | Process requirement; not directly testable |
 | R10   | Frozen evidence packet — ≥1 EvidenceReference with shape | test exists         | test exists           | All three scenario packets validated for `references` array, `url`, and `contentHash` keccak256 format |
-| R11   | Merkle leaf + root helpers (`merkleLeaf`, `merkleRoot`) | no test              | no test               | UNIT-9 pending; `src/protocol/packet.ts` not yet written |
+| R11   | Merkle leaf + root helpers (`merkleLeaf`, `merkleRoot`) | **test exists (tick 38)** | **test exists (tick 38)** | `packet.test.ts` 12 assertions; 100% line/branch coverage; formula pinned against independently-computed expected |
 | R13   | `PayerLine` enum + `LADDERS` constant                  | test exists           | test exists           | `ladders.test.ts` (14 assertions, landed tick 3) |
 | R14a  | `appeal()` requires prior ruling = Deny                | test exists           | test exists           | Hardhat + vitest sim/real tests (ticks 4–6) |
 | R15   | All documented stage names present in LADDERS          | test exists           | test exists           | `ladders.test.ts` pins all R15 names |

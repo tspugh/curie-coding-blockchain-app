@@ -5295,3 +5295,268 @@ flagged in the brief; neither is actionable for tick 36's scope.
 Steady state holds.
 
 ### Final tick-36 verdict: PASS (0 HIGH; 0 MEDIUM; 0 LOW; 2 NITs — both flagged-as-future-only)
+
+---
+
+# Tick 38 — UNIT-9 packet.ts strict review
+
+**Date:** 2026-05-29
+**Scope:** the 2 files newly added this tick:
+- `src/protocol/packet.ts` (NEW) — SPEC-0004 §2.3 R9/R10/R11 + §3.4 schema
+- `src/protocol/packet.test.ts` (NEW) — node:test assertions
+
+R-citations the unit claims to satisfy: SPEC-0004 §2.3 R9, R10, R11; §3.4 (verbatim
+schema + per-leaf hash + Merkle-root construction).
+
+Cross-references checked: `src/protocol/ladders.ts` (file-header + JSDoc style),
+`src/content/content.ts` (keccak256 / ethers convention), `docs/specs/0004-data-and-evidence-model.md`
+§2.3 R9/R10/R10a/R10b/R11/R12 and §3.4 (`Packet`, `EvidenceReference`, per-leaf hash, root).
+
+Test status: `npm run test:lib` — 12/12 packet tests pass, 75/75 total lib tests pass.
+
+---
+
+## Findings
+
+### M1 MEDIUM | `packet.ts:87` — JSDoc "(OpenZeppelin MerkleProof convention)" claim is misleading
+
+- The JSDoc at line 87 says `"odd levels duplicate the last leaf (OpenZeppelin MerkleProof convention)"`.
+- This is two unrelated facts collapsed into one citation that doesn't apply.
+  - OZ's `MerkleProof.sol` on-chain verifier is *tree-construction-agnostic* — it just walks
+    a proof and does not prescribe duplicate-last vs promote.
+  - OZ's `StandardMerkleTree` (the off-chain JS library most callers would mirror)
+    explicitly **does not** duplicate the last leaf; lone unpaired nodes promote up.
+  - The duplicate-last pattern is the Bitcoin convention, not OpenZeppelin's.
+- The sorted-pair part of the impl IS aligned with OZ's `MerkleProof` verifier (which
+  uses `keccak256(min || max)`), so the citation is half-right — but the comment
+  conflates the two and will mislead a contract-side reviewer who goes looking for
+  the OZ verifier and finds a different tree-construction convention.
+- **Fix:** rewrite the comment to be honest — e.g., "duplicate-last on odd levels
+  (Bitcoin convention; sorted pairs matching OZ MerkleProof's
+  `keccak256(min(L,R) || max(L,R))` so a future on-chain verifier can use OZ
+  MerkleProof.verify without flipping the proof)."
+
+### M2 MEDIUM | `packet.test.ts:66-84` — tests are self-pinning, not pinned against an externally computed value
+
+- The brief asks: *"do the tests pin hashes against independently-computed values, or
+  just assert 'not equal to X'? Could the test pass with a broken impl?"*
+- `computeSliceHash` (test:66), `computeMerkleLeaf` (test:70), and `sortedPairHash`
+  (test:79) re-use the EXACT same ethers primitives in the EXACT same order as
+  `sliceHash`/`merkleLeaf`/`merkleRoot` in the impl. Tests 3, 4, 8, 10 just assert
+  "impl computation == helper computation."
+- Concrete attack scenario this misses: if a future refactor switched the abi types
+  in the impl from `["string", "bytes32", "bytes32"]` to `["bytes", "bytes32", "bytes32"]`
+  AND a careless review let the same change land in the test helper, all four
+  formula tests would still pass — but the on-chain leaf hash (which `merkleLeaf` is
+  load-bearing for under R11 ruling-citation replay) would diverge from any
+  third-party verifier that computed from the spec formula directly.
+- The strongest test for a hash formula is **one** hardcoded expected literal
+  (`0xabc…`) computed by an independent tool (`cast keccak`, web3.py, Foundry test)
+  and pinned in the test. That literal is the only thing that anchors the impl to
+  the *spec formula evaluated independently of this codebase's ethers usage*.
+- **Fix:** add ONE pin-against-literal test per formula. E.g., for `refA`:
+  ```ts
+  // Computed independently via `cast abi-encode` + `cast keccak` (commit hash <X>).
+  const refAExpectedLeaf = "0x<computed-out-of-band>";
+  assert.equal(merkleLeaf(refA), refAExpectedLeaf);
+  ```
+  This catches the "impl + helper drift together" failure mode that the current
+  test suite is blind to.
+
+### L1 LOW | `packet.ts:103-119` — duplicate-last vs promote is an unannounced design choice (spec is silent)
+
+- SPEC-0004 §3.4 says only `"Packet Merkle root: Merkle root over all leaves."` —
+  it does not mandate duplicate-last vs promote-lone-node.
+- The impl picked duplicate-last. Once the on-chain `PacketSubmitted` event (§3.5) is
+  wired and a future spec ships an on-chain verifier (R10b's
+  `verifySliceAgainstSource` already presumes leafHash lookup), the verifier must
+  agree on this convention or rulings will be unreplayable.
+- This is a spec-level open question the unit closed by-default without flagging.
+- **Fix:** add a one-line forward note to `packet.ts` JSDoc: "Convention pinned here
+  (duplicate-last) MUST match any future on-chain verifier; revisit when SPEC-0004
+  Phase 5's on-chain `PacketSubmitted` consumer lands." Surface as an open question
+  on SPEC-0004 §3.4 or carry forward into the relevant ADR.
+
+### L2 LOW | `packet.test.ts` — missing edge cases the brief explicitly called out
+
+Brief asked: *"what does `merkleRoot([])` do? `merkleRoot([oneRef])`? `merkleRoot`
+with 1024 refs? `sliceHash({text: ""})`? `merkleLeaf` with an `EvidenceReference`
+whose `contentHash` is `0x` + 64 hex of zeros?"*
+
+Covered:
+- `merkleRoot([])` — Test 6 ✓
+- `merkleRoot([oneRef])` — Test 7 ✓
+- `merkleLeaf` with all-zero contentHash — implicitly via `refA` (hashAllZero) ✓
+
+NOT covered:
+- `sliceHash({text: ""})` — empty-text slice. Cryptographically uncontroversial but a
+  party COULD submit it; should pin behaviour.
+- Slice with `kind` undefined — `JSON.stringify` omits undefined fields, producing a
+  shorter canonical form. No test exercises this branch even though the type
+  declares `kind?:`.
+- Slice with a populated nested `locator` — `JSON.stringify` recurses; no test
+  exercises a multi-field nested object.
+- 4-leaf root — proves that the duplicate-last branch is NOT hit when count is
+  already even, and exercises a second tree level. Currently 0-leaf, 1-leaf, 2-leaf,
+  3-leaf are tested; 4-leaf (even, two pairs, second level) is the missing case
+  that exercises the "level shrinks 4→2→1" loop.
+- 1024-leaf or other "large" case — not required, but a single 1024-leaf root
+  computation pinned against a literal would be a strong determinism canary.
+- Two leaves whose `merkleLeaf` values are *adjacent* under string-compare in a way
+  that exercises both branches of `a < b ? [a,b] : [b,a]` deterministically.
+  Currently the test relies on whichever order the helper produces; a hand-picked
+  pair that forces the `[b,a]` branch would be stronger.
+
+**Fix:** add at minimum tests for (a) `sliceHash({text: ""})` pinned-against-literal,
+(b) slice with `kind` undefined pinned-against-literal, (c) 4-leaf root vs
+manually-computed.
+
+### L3 LOW | `packet.test.ts:166-168` — Test 9 name claims more than the test proves
+
+- Test 9: `"merkleRoot([refA, refB]) === merkleRoot([refB, refA]) (pair-sort order independence)"`.
+- This is true for `n = 2` only — there's just one pair, and sorted-pair-hash
+  collapses both orders. With `n ≥ 4`, root IS order-dependent (e.g.,
+  `[A,B,C,D]` vs `[D,C,B,A]` produces different roots because the pairs `(A,B)` vs
+  `(D,C)` are different sets).
+- The test name oversells. A reader skimming the test names would conclude
+  `merkleRoot` is order-independent across all inputs, which would be a wrong
+  invariant to rely on downstream.
+- **Fix:** rename to `"merkleRoot order-independence within a single pair (n=2 case)"`
+  and add a `n=4` test that asserts `merkleRoot([A,B,C,D]) !== merkleRoot([D,C,B,A])`
+  to explicitly pin the LACK of cross-pair order independence.
+
+### L4 LOW | `packet.ts:61-65` + tests — JSON canonicalization risk documented but not regression-tested
+
+- `sliceHash` JSDoc (lines 53-60) correctly warns that key insertion order matters
+  because `JSON.stringify` is order-preserving and no canonicalization library is
+  used. This is a real footgun: a slice authored as `{kind, text}` vs `{text, kind}`
+  produces different hashes.
+- No test exercises this. A regression test that builds the same logical slice in
+  two different key orders and asserts `sliceHash(a) !== sliceHash(b)` would
+  *document the gotcha as executable behaviour*, so a future canonicalization
+  upgrade (e.g., adopting RFC 8785 JCS) deliberately breaks the test rather than
+  silently changing on-chain hash inputs.
+- **Fix:** add a "canonicalization-sensitive: key insertion order matters" test
+  that pins the asymmetric behaviour. Comment can point to a future
+  canonicalization-upgrade follow-up.
+
+### N1 NIT | `packet.ts` — six `as \`0x${string}\`` casts; one helper would centralize the unsafe cast
+
+- Lines 64, 77, 100, 106, 111, 112, 116, 121 — eight `as \`0x${string}\`` casts.
+  Most are forced because `ethers.keccak256` returns `string` and the codebase has
+  chosen the template-literal type as the wire type for hashes.
+- Not actionable as a bug, but `function bytes32(s: string): \`0x${string}\` { return s as \`0x${string}\`; }`
+  would centralize the "trust that ethers.keccak256's output is well-formed" lie in
+  one place where a runtime check (`assert(/^0x[0-9a-fA-F]{64}$/.test(s))`) could
+  later be added if hash-validation paranoia ever becomes worth it.
+- **Disposition:** NIT — convention debate, not a bug. Flagged for visibility only.
+
+### N2 NIT | `packet.ts:104, 113` — comments that paraphrase the code
+
+- Line 104: `// Duplicate last leaf when the level has an odd count (OZ convention).`
+  — the `if (level.length % 2 !== 0)` immediately below already says exactly this.
+  And per Finding M1, "OZ convention" is wrong.
+- Line 113: `// Sort pair so the root is order-independent within each pair (OZ pattern).`
+  — the line beneath (`const [lo, hi] = a < b ? [a, b] : [b, a];`) is self-evidently
+  a sort. Comment adds the "(OZ pattern)" claim, which is correct only for the
+  sorted-pair half of M1.
+- **Disposition:** NIT — the M1 fix should also clean these up. Tracking under M1.
+
+---
+
+## Verdict
+
+**FAIL — 0 HIGH; 2 MEDIUM; 4 LOW; 2 NITs.**
+
+The unit's implementation is *functionally* correct for the cases it covers — all 12
+tests pass and the helpers produce values consistent with SPEC-0004 §3.4's formula
+under the impl's own definitions of that formula. But the gate is ZERO findings, and:
+
+- **M1 (misleading OZ citation)** is a comment-that-lies and a real correctness risk
+  for the future contract-side reviewer who'll wire this into an on-chain verifier.
+- **M2 (self-pinning tests)** is the substantive test-quality finding the brief
+  explicitly asked us to scrutinize: tests assert the impl matches a helper that
+  uses the same primitives in the same order, not that the impl matches the spec
+  formula evaluated independently. A drift in both that landed together would not
+  be caught.
+- **L1** is a real spec-silence the unit closed by default without flagging.
+- **L2** is missing edge cases the brief enumerated.
+- **L3, L4** are test-name and test-coverage gaps.
+
+None of the LOWs are "deferred to a queued unit" — they are inline-closable issues
+in this tick's two files. The MEDIUMs are inline-closable too: M1 is a comment
+rewrite, M2 is adding three hardcoded literal expected-values to the test file.
+
+**Recommended next action:** address M1 + M2 inline (comment rewrite + 3 literal-pin
+tests) and re-review. L1-L4 + N1/N2 can ride the same fix-up edit since they're all
+small.
+
+### Final tick-38 verdict: FAIL (0 HIGH; 2 MEDIUM; 4 LOW; 2 NITs)
+
+---
+
+## Tick 38 strict-review iteration 2
+
+Re-review after the fix subagent landed inline edits. Files re-read end-to-end:
+`src/protocol/packet.ts` and `src/protocol/packet.test.ts`. Five frozen hex
+literals independently recomputed; all match. `npm run test:lib` → 84/84 pass.
+`npx tsc --noEmit` → clean (no output).
+
+### Status of previous findings
+
+- **M1 (misleading OZ citation in `packet.ts:87` JSDoc) — CLOSED.** JSDoc at
+  `packet.ts:80-95` now honestly splits the two design choices: duplicate-last
+  is attributed to Bitcoin convention with an explicit "NOT OpenZeppelin's
+  `StandardMerkleTree`" disclaimer, and sorted-pair is correctly attributed to
+  OZ `MerkleProof.verify`. The inline comment at line 116 also updated to a
+  truthful one-liner.
+- **M2 (self-pinning tests) — CLOSED.** Five literal-pinned expected-hex
+  constants (`LITERAL_SLICE_A_HASH`, `LITERAL_LEAF_A`, `LITERAL_ROOT_AB`,
+  `LITERAL_EMPTY_TEXT_HASH`, `LITERAL_ROOT_4_LEAF`) declared as string
+  constants with `# tick-38 strict-review M2 anchor` provenance comments
+  containing the exact `node -e` recipe to regenerate. All five recomputed
+  via fresh `node -e` invocations and matched byte-for-byte; not placeholders.
+- **L1 (duplicate-last design choice unannounced) — CLOSED.** `packet.ts:94`
+  contains "Revisit when SPEC-0004 Phase 5's on-chain `PacketSubmitted`
+  consumer lands."
+- **L2 (missing edge cases) — CLOSED.** Tests added at `packet.test.ts:241,
+  246, 258, 278` for: `sliceHash({text:""})` pinned to literal; `kind:
+  undefined` equals omitted-kind; nested-locator determinism + asymmetry; and
+  4-leaf root (4→2→1, no odd-padding branch) pinned to literal.
+- **L3 (Test 9 oversold) — CLOSED.** Test 9 renamed to "order-independence
+  within a single pair (n=2 only)" (`packet.test.ts:178`). Cross-pair-order
+  assertion added at `packet.test.ts:296` swapping B↔C (which genuinely
+  changes pair groupings — comment correctly notes that whole-array reversal
+  would NOT, because sorted-pair makes within-pair order irrelevant).
+- **L4 (JSON key-order regression) — CLOSED.** `packet.test.ts:311` pins
+  key-insertion-order sensitivity by constructing one slice with object
+  literal `{text, kind}` and another by assigning `kind` then `text` onto
+  `{}` — distinct JSON.stringify output → distinct hashes. Includes a forward
+  note that an RFC-8785 JCS upgrade would invert this test.
+- **N1 (`as` cast centralization) — SKIPPED (disposition unchanged).**
+- **N2 (paraphrasing comments) — CLOSED via M1 rewrite.** Old
+  paraphrase-with-lie comments at line 104/113 replaced with the truthful
+  one-liner at line 116.
+
+### New findings introduced by the fix
+
+None observed. Spot checks performed:
+
+- M2 frozen literals: all 5 independently recomputed via fresh `node -e`,
+  byte-for-byte match. Provenance comments are accurate.
+- L3 cross-pair test: swap is B↔C across pair boundaries, not whole-array
+  reversal — the assertion genuinely fails to be order-independent under
+  sorted-pair semantics. Inline comment correctly explains why reversal would
+  have been tautological.
+- L4 key-order test: insertion order differs by construction (object literal
+  vs. assignment after `{}`), JSON.stringify output differs, hashes differ.
+  Not tautological.
+- JSDoc grammar/accuracy: the new comment splits the two design choices and
+  pins each to its real upstream convention. No new lies.
+- The `as any` cast at `packet.test.ts:250` for the `kind: undefined` case
+  is annotated with a clear rationale (exactOptionalPropertyTypes); not a
+  regression — it is a deliberate runtime-vs-type-checker bridge.
+
+### Verdict
+
+**PASS (zero findings).**

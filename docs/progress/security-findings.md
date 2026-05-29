@@ -1,3 +1,101 @@
+# Tick 38 — UNIT-9 packet.ts security review
+
+**Verdict:** PASS (0 findings).
+
+## Diff scope
+
+- `src/protocol/packet.ts` (NEW, 122 lines) — SPEC-0004 §2.3 evidence-packet
+  types + Merkle helpers (`sliceHash`, `merkleLeaf`, `merkleRoot`).
+- `src/protocol/packet.test.ts` (NEW, 188 lines) — node:test assertions
+  pinning each formula against independently-computed ethers primitives.
+
+## Per-concern verdict
+
+### 1. Hash-formula correctness vs SPEC-0004 §3.4 — PASS
+
+- Spec line 460: `keccak(abi.encode(url, contentHash, keccak(JSON.stringify(slice))))`.
+- `sliceHash` (packet.ts:61-65) = `keccak256(toUtf8Bytes(JSON.stringify(slice)))` — matches.
+- `merkleLeaf` (packet.ts:71-78) = `keccak256(coder.encode(["string","bytes32","bytes32"], [url, contentHash, sliceHash(slice)]))` — matches.
+- `merkleRoot` uses sorted-pair + duplicate-last (OZ MerkleProof convention),
+  documented in the impl comment (packet.ts:84-91). Spec §3.4 specifies "Merkle
+  root over all leaves" without pinning a tree convention; the impl's choice of
+  OZ-compatible sorted-pair matches the on-chain consumer pattern used elsewhere
+  in the protocol layer.
+
+### 2. Type-safety holes — PASS
+
+The `as \`0x${string}\`` casts on `ethers.keccak256` outputs (packet.ts:62-64,
+72-77, 100, 106, 116) are necessary because ethers v6 returns plain `string`
+from `keccak256`. Each cast is applied to a value that genuinely is a
+0x-prefixed 32-byte hex string by construction. No information-losing casts;
+no `any`; no bypasses of the `EvidenceReference.contentHash` template-literal
+invariant.
+
+### 3. JSON canonicalization — PASS (documented limitation)
+
+`sliceHash` depends on `JSON.stringify` insertion order. This is **explicitly
+documented** in the impl (packet.ts:56-60): "callers must author the slice
+object in canonical (insertion) order … No canonicalization library is used
+(out of scope for v0)." Spec §3.4 (lines 442-462) defines slice as a typed
+TS object with a fixed field order (`text`, `kind`, `locator`); a compliant
+party agent that constructs slices via object-literal will produce a stable
+hash. Risk surface is bounded to a misbehaving party agent that reorders
+fields, which would produce a *different* leaf-hash and fail the
+content-addressed packet-store check (R10a Lambda rejects mismatched bodies).
+No impersonation or collision vector.
+
+### 4. Merkle second-preimage attack — PASS (inherited OZ convention)
+
+Sorted-pair Merkle without leaf/internal-node domain separation is the
+documented OpenZeppelin MerkleProof convention. The impl explicitly states it
+matches the OZ on-chain verifier pattern (packet.ts:88-91). Theoretical
+second-preimage attack requires inverting keccak256 — not exploitable. The
+on-chain consumer (per spec context) is OZ-style; introducing leaf-domain
+separation here would break verifier compatibility.
+
+### 5. Empty-packet bytes32(0) collision — PASS
+
+`merkleRoot([])` returns `bytes32(0)` (packet.ts:93-95), Test 6 pins this.
+A non-empty packet whose computed root equals `bytes32(0)` would require a
+keccak256 preimage of 0 — astronomically unlikely (2^-256). No exploitable
+collision vector. Test 6 covers the empty case; an absent "non-empty root ≠ 0"
+test is a theoretical-only gap and not actionable.
+
+### 6. Single-leaf root === leaf (length-extension shape) — PASS
+
+`merkleRoot([refA]) === merkleLeaf(refA)` (packet.ts:99-101, Test 7). A 1-leaf
+tree's "root" is 32 bytes; a 2-leaf tree's root is `keccak256(64 bytes)`. An
+attacker claiming a 2-leaf root is actually a 1-leaf root would need to invert
+keccak256 — not exploitable. Matches OZ MerkleProof's behavior for
+single-element trees.
+
+### 7. Test quality — PASS
+
+Tests 3, 4, 8, and 10 **independently compute** the expected hash via inline
+`ethers` primitives (`computeSliceHash`, `computeMerkleLeaf`,
+`sortedPairHash`) and assert equality with the impl — not just
+"differs-from-other-value" comparisons. Any formula drift in the impl would
+cause those tests to fail loud. Auxiliary tests (1, 2, 5, 6, 7, 9) cover
+determinism, distinctness, empty/single-leaf cases, and pair-sort
+order-independence. Coverage is tight against the SPEC-0004 §3.4 formula.
+
+### 8. PHI / synthetic-fixture hygiene — PASS
+
+Test fixtures use `example.com` URLs (packet.test.ts:46, 52, 58) and generic
+synthetic slice text ("Drug X", "condition Y", "allergy Z" —
+packet.test.ts:25-38). No real FDA/CMS URLs, no real drug names, no PHI, no
+load-bearing external references. Aligns with the project-wide "no clinical
+data on-chain or in fixtures" rule.
+
+### 9. Dependencies — PASS
+
+`ethers` (^6.16.0) is the only new import in packet.ts and packet.test.ts;
+already a project dependency (used in `src/contract/`, `src/wallet/`). API
+surface used: `AbiCoder.defaultAbiCoder()`, `keccak256`, `toUtf8Bytes`,
+`solidityPacked` — all idiomatic v6 usage. No side effects on import.
+
+---
+
 # Security findings — 2026-05-29 tick 14 (Overview KPI strip — UNIT-UI-1)
 
 **Verdict:** PASS (0 findings). Diff in `web/src/views/Overview.tsx` + `web/src/styles.css` adds 4 KPI cards derived from existing `rows: NegotiationView[]` via a single `reduce()`; no new I/O, network, fs, timers, or `eval`. Counts (`total`/`active`/`settled`/`saved`) are all real-data-derived — no mocks, stubs, or synthetic values. Labels/subs are hardcoded string literals; values are `number` or `bigint`-via-`fmtAmount`, both rendered through React's default-escaping JSX (no `dangerouslySetInnerHTML`, no XSS surface). CSS additions are static class names + literal hex colors with no dynamic `style=` attribute built from input (no CSS-injection vector).
