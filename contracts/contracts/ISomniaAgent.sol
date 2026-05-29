@@ -1,11 +1,22 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
-/// @title Somnia native agent-platform interfaces
-/// @notice Mirrors the real Somnia "Agentic L1" Solidity interfaces
-///         (https://docs.somnia.network/agents/invoking-agents/from-solidity),
-///         confirmed via Context7 (/websites/somnia_network). Only the subset
-///         the Coverage Negotiation contract needs is declared here.
+/// @title Somnia native agent-platform interfaces (local vendored mirror)
+/// @notice Vendored re-statement of the canonical Solidity interfaces published
+///         at https://docs.somnia.network/agents/invoking-agents/from-solidity.
+///         **SPEC-0001 R19** governs this file: Solidity has no on-chain
+///         interface registry, so this source MUST exist and MUST byte-match
+///         the upstream so `solc` emits selectors the deployed `AgentPlatform`
+///         actually responds to. Only the subset Coverage Negotiation uses
+///         is declared.
+///
+///         Upstream URL: https://docs.somnia.network/agents/invoking-agents/from-solidity
+///         Context7 source-of-truth: /websites/somnia_network
+///         Last verified against upstream: 2026-05-29.
+///
+///         Any change to this file MUST update the verified date above and
+///         cite the upstream diff in the commit body (SPEC-0001 R19). A
+///         drift-detection script is planned (SPEC-0001 R19, future tick).
 
 /// @dev Consensus mode for an advanced request (unused by createRequest defaults).
 enum ConsensusType {

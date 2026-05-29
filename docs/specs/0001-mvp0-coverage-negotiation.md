@@ -69,6 +69,31 @@ agent and are **bounded to N rounds** → `Deadlocked` if unresolved. Both accep
 - **R16 (MUST)** Three views — **Overview** (claims table + live status), **Create** (file a request), **Maintain/detail** (timeline, current ruling + rationale + cited clause, covered amount, accept/appeal/refuse/settle, gated by state + active profile).
 - **R17 (SHOULD)** Observable over JSON-RPC (events + live subscription).
 - **R18 (MUST — deployment)** The web app is **deployed as a public HTTPS static site** (the SPA is fully client-side; simulated mode needs no backend). v0 target: **AWS S3 (private bucket) + CloudFront (HTTPS) + ACM** (custom domain optional; the default CloudFront cert suffices otherwise), driven by a **repeatable deploy script**. **No PHI and no secrets ship in the static bundle** (synthetic fixtures only; any real-mode key is supplied at runtime, never built in).
+- **R19 (MUST — Somnia agent-interface mirror posture)** Solidity has no on-chain
+  interface registry: to call `IAgentRequester.createRequest(...)` and to implement
+  `IAgentRequesterHandler.handleResponse(...)` the calling contract MUST contain a
+  Solidity source declaring those interfaces (so `solc` emits the correct 4-byte
+  selectors). `contracts/contracts/ISomniaAgent.sol` is that re-statement. Its
+  selectors MUST byte-match Somnia's deployed `AgentPlatform`, or every fired
+  request reverts. **The mirror is a deliberate vendoring decision, not an
+  abstraction** — there is currently no published Solidity package we can
+  import as a versioned dependency. Concretely:
+  - The file header MUST cite the canonical upstream URL and the access date
+    on which the mirror was last verified (`https://docs.somnia.network/agents/invoking-agents/from-solidity`).
+  - Each commit that **modifies** `ISomniaAgent.sol` MUST update the access
+    date in the header and explain the change in the commit body. A drive-by
+    bump is not OK — the upstream diff must be cited.
+  - A **drift check** SHOULD exist that fails the build if the upstream Solidity
+    has changed since the recorded access date. v0 acceptable form: a script in
+    `scripts/check-somnia-interface.ts` that fetches the docs URL (or its source
+    of truth on Context7 `/websites/somnia_network`) and `keccak256`-compares the
+    interface block. v1 may move to importing a Somnia-published npm package
+    once one exists.
+  - **Failure mode the mirror protects against** is *exactly* the tick 36/37
+    incident: an ABI mismatch between the TS client's selector and the deployed
+    contract's selector causes empty-data reverts. The mirror keeps the
+    *contract↔platform* edge stable; tests + browser-verify keep the
+    *client↔contract* edge stable. Both edges need explicit drift protection.
 
 ## 3. Technical documentation
 
