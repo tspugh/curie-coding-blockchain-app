@@ -7498,3 +7498,439 @@ exactly and both sites read `VITE_AGENT_FEE_WEI` first; the inline
 comment names client.ts as source-of-truth. R-citations all route
 to SPEC-0003 §2.6 (lines 227/229/236/240). No code modifications,
 no gate relaxation, no new findings beyond the documented LOW.
+
+## Tick 54 strict-review
+
+**Scope:** the four files in the tick-54 diff vs `2eb6370`:
+- `web/src/components/ErrorCard.tsx` (new, 87 lines).
+- `web/src/styles.css` — new section "24. ErrorCard" at lines 2121-2186.
+- `web/src/views/Create.tsx` — line 315 swaps `<p className="error">` →
+  `<ErrorCard error={error} onDismiss={...} />`.
+- `web/src/views/Detail.tsx` — line 336 swaps the same on the rendered view;
+  line 264 (loading-state error inside back-button shell) **NOT** migrated.
+
+**R-citation under audit:** SPEC-0003 §2.4 R21 + the R16 revert-reason map
+that R21 chains into. Spec text reconfirmed at
+`docs/specs/0003-token-flow-visibility.md:157-165`.
+
+**Pre-existing empirical state (per the prompt):** 37/37 harness, tsc clean,
+lib 84/84. Manual: ErrorCard renders headline + dismisses + technical-details
+toggles on the validation path. Not re-run — this pass audits only the diff.
+
+### Targeted checks
+
+#### 1. R21 sub-reqs
+
+R21 enumerates four sub-requirements:
+- (a) **One-line plain-English headline.** Present at
+  `ErrorCard.tsx:54-56` as `<strong className="error-card-headline">`. ✓
+- (b) **Optional collapsible "Technical details" block hiding raw
+  `Error(...)`.** Present at lines 59-65: native `<details>`/`<summary>`
+  with `<pre>` containing `technical = raw error.message`. Word "optional"
+  in the spec applies to whether the block exists; this card always renders
+  it. ✓
+- (c) **"What to do" hint.** Present at line 58 — `mapped?.details` or the
+  generic "Try again — if it keeps failing…" fallback. ✓
+- (d) **Explicit dismiss / retry affordance.** R21 reads "an explicit
+  dismiss / retry" — the slash is read as either-or. Dismiss is
+  unconditional (lines 77-83); retry is conditional on `onRetry` being
+  passed (lines 67-76); neither call site (Create:315, Detail:336) passes
+  `onRetry`. **Defensible** on Create (the form is still on screen, so the
+  user "retries" by adjusting the field and re-submitting); **also
+  defensible** on Detail (the action button that produced the error remains
+  visible in the actions panel, so "retry" is re-clicking that button). No
+  finding.
+
+#### 2. R21 containment
+
+CSS at `styles.css:2121-2186`:
+- `.error-card` sets `max-width: 100%` + `overflow: hidden` (lines 2134-2135).
+- `.error-card-details > pre` caps `max-height: 180px` + `overflow-y: auto` +
+  `overflow-x: auto` + `white-space: pre-wrap` + `word-break: break-word`
+  (lines 2166-2179). A multi-line ethers stack is bounded to 180px tall and
+  cannot push siblings off-page. ✓
+- The card itself uses `display: flex; flex-direction: column` — fixed slot
+  in its parent's normal flow; no `position: absolute`, no negative margins,
+  no `transform`. Parent reflow is bounded. ✓
+
+#### 3. No raw ethers stack
+
+`technical = raw` and `raw = error instanceof Error ? error.message : String(error)`
+(lines 38, 43). Only `.message` is read — never `.stack`. Production-mode
+render therefore cannot leak the stack trace. ✓
+
+#### 4. Long-string headline + **FINDING M-1**
+
+**FINDING M-1 (MEDIUM): Detail's `run()` helper pre-formats errors as
+`"${headline}\n\n${details}"` strings, defeating ErrorCard's own R16
+mapping and producing a degraded headline render.**
+
+- `Detail.tsx:251-258` — the `run(action)` wrapper catches errors, calls
+  `mapRevertReason(extractRevertReason(err))` itself, and stores
+  `setError(\`${entry.headline}\n\n${entry.details}\`)`.
+- ErrorCard then receives a *string*, not an Error. Its own probe at
+  `ErrorCard.tsx:36-37` runs `extractRevertReason(error)` — which at
+  `revertReasonMap.ts:298` returns `undefined` immediately for any non-object
+  input. So inside ErrorCard, `mapped === null`, and
+  `headline = raw = "${entry.headline}\n\n${entry.details}"` — the *entire
+  concatenation* becomes the headline.
+- The `<strong className="error-card-headline">` has no `white-space` rule
+  in section 24, so it inherits the default `normal`. **The `\n\n`
+  collapses to a single space** in the rendered headline — so the user sees
+  one long sentence "Quantity must be greater than zero The requested
+  quantity cannot be zero. Enter a positive quantity before submitting."
+  jammed into `<strong>`, instead of a one-line headline + a separate
+  "what to do" paragraph.
+- Compounding: the "what to do" hint at `ErrorCard.tsx:40-42` falls back to
+  the generic "Try again — if it keeps failing, check the transaction
+  details and the wallet's connection." So the user sees the real
+  what-to-do baked into a headline-shaped `<strong>`, AND the generic
+  what-to-do underneath. Information duplication + structural collapse.
+- The pre-existing `.error` style had `white-space: pre-line`
+  (`styles.css:564`, with an inline comment explicitly calling out this
+  R16 newline preservation) — the new `.error-card-headline` lost that
+  affordance. The architectural mismatch is the deeper bug: Detail's
+  `run()` and ErrorCard are now both trying to own the R16 mapping, and
+  the string-typed seam between them loses the structured split.
+- **The same shape applies to Create**, though Create's surface error is
+  always a short validation string (`Create.tsx:124-130`) or
+  `err.message` from `createContract` (`Create.tsx:158`), so the headline
+  collapse is visually benign there but still architecturally wrong —
+  ErrorCard's R16 mapping is dead code at both call sites because both
+  consumers stringify before calling.
+- **Manual-verification claim re-read:** the prompt says manual cover
+  was "headline 'Clinical justification is required.' on validation" —
+  that's the Create short-string path, which DOES render acceptably. The
+  Detail tx-error path (where the headline collapses) was not in the
+  manual sweep.
+- **Severity rationale:** MEDIUM. The card renders, dismisses, and contains
+  per (1)-(3); the failure is a degraded user-facing message on Detail's
+  most realistic error path (real-mode revert with a mapped reason). Not
+  a layout break, not a security issue, not a regression vs the old
+  `<p className="error">` *for Detail* (the old path used `pre-line` so
+  newlines DID render), and IS a visible regression for Detail's
+  multi-line errors. Net: regression on the highest-value surface.
+- **Fix sketch (non-binding):** either (a) make ErrorCard accept the
+  pre-mapped `{headline, details}` shape and have Detail's `run()` pass
+  the structured object straight through, or (b) drop Detail's `run()`
+  pre-mapping and pass the raw `err` to ErrorCard, letting ErrorCard's
+  R16 path do the work. Option (b) collapses to one mapping owner.
+
+#### 5. Loading-state error not migrated (Detail.tsx:264) — **FINDING L-2**
+
+**FINDING L-2 (LOW): R21 says "*every* error MUST render as a structured
+card." Detail's loading-shell error path (line 264) still renders as the
+unmigrated `<p className="error">`.**
+
+- Spec text at `docs/specs/0003-token-flow-visibility.md:157` says
+  "Every error MUST render as a structured card with…". "Every" is total.
+- The unmigrated `<p className="error">{error}</p>` at `Detail.tsx:264`
+  fires when the initial `getNegotiationView` / `policyOf` / `priceBasisOf`
+  load throws (lines 226-246). The error message rendered there is
+  `err.message` (line 243) — a raw chain error, exactly the case R21's
+  card is designed for.
+- **Severity rationale:** LOW. Acceptable scope-trim IF the loop owner
+  records it explicitly. The chrome at line 264 is minimal (back button +
+  message), the error is bounded by `.error` styling (which IS contained
+  via padding + border-radius), and the path is a hard "nothing else can
+  render" failure mode. Migrating to `<ErrorCard>` would also need an
+  `onDismiss` semantic on this surface (dismiss to *what*? the
+  unrenderable view?), which is non-trivial. Reasonable to defer but
+  needs explicit acknowledgment.
+
+#### 6. a11y — `role="alert"` + `aria-live="polite"` — **FINDING L-3**
+
+**FINDING L-3 (LOW): `role="alert"` implicitly carries
+`aria-live="assertive" aria-atomic="true"`. Explicitly setting
+`aria-live="polite"` on the same node overrides assertive → polite,
+which is a contradictory pairing.**
+
+- `ErrorCard.tsx:47-48` — `<div role="alert" aria-live="polite" …>`.
+- Per the ARIA spec, when an element has `role="alert"` it has implicit
+  live-region semantics `aria-live="assertive"` and `aria-atomic="true"`.
+  An explicit `aria-live="polite"` overrides the implicit assertive — so
+  screen readers will announce the alert at the "polite" cadence (after
+  the current utterance), not interrupting.
+- This is not invalid markup, and many real codebases do the same to
+  soften alert urgency. But it's contradictory authorship — the intent is
+  unclear: did the author want assertive (use `role="alert"` alone) or
+  polite (use `role="status"` + `aria-live="polite"`)?
+- **Severity rationale:** LOW. Functionally the card is announced;
+  intent ambiguity is the only issue. Recommend `role="status"
+  aria-live="polite"` for the form-validation case (typical) or just
+  `role="alert"` (drop the polite) for the chain-error case (typical).
+
+#### 7. CSS theme vars — **FINDING L-4**
+
+**FINDING L-4 (LOW): three of the CSS variables used in section 24 are
+not defined in `:root` and silently fall back; the fallback colors are
+visually defensible but inconsistent with the established palette.**
+
+Audit of the six `var(--…, fallback)` lookups in section 24:
+
+| line | var | defined? | fallback | analysis |
+|------|-----|----------|----------|----------|
+| 2124 | `--danger` | yes (`#b91c1c`, line 37) | `#c2410c` | fallback never used; `#c2410c` is *orange* not red (palette mismatch in the fallback, harmless because not reached) |
+| 2125 | `--danger-lt` | yes (`#fef2f2`, line 38) | `#fff7ed` | fallback never used; fallback is warning-lt (palette mismatch, harmless) |
+| 2149 | `--text-1` | **NO** | `#111` | falls back. Palette uses `--text: #0f172a`. `#111` is close-but-not-identical. **Should be `var(--text)`.** |
+| 2156 | `--text-2` | yes (`#334155`, line 21) | `#333` | OK |
+| 2162 | `--text-3` | **NO** | `#555` | falls back. Palette uses `--muted: #64748b` for similar role. **Should be `var(--muted)`.** |
+| 2169 | `--bg-2` | **NO** | `rgba(0,0,0,0.04)` | falls back. Palette has `--panel-2: #f8f9fc` / `--panel-3: #eef0f5` for the same role. **Should be `var(--panel-3)`.** |
+
+Net effect: the card *renders* (the fallbacks fire), but three of its
+surface colors are off-palette. Not a containment or correctness issue;
+a theme-coherence issue.
+
+#### 8. Comments / R-citations + **FINDING L-5**
+
+- `ErrorCard.tsx:1-14` header comment cites SPEC-0003 §2.4 R21 + R16
+  accurately; both R's exist and match the implemented behavior. ✓
+- `ErrorCard.tsx:30-35` comment explains the "headline = raw" fallback
+  rationale. Honest. ✓ (But see M-1 — the rationale assumes ErrorCard
+  receives the raw thrown Error; Detail's `run()` violates that
+  assumption.)
+- `styles.css:2121` cites SPEC-0003 §2.4 R21. Accurate. ✓
+- `styles.css:2132-2133` "Contained: don't let the card push siblings
+  off-page (R21)." Accurate. ✓
+- `styles.css:2175-2176` "Cap the technical-details height so a
+  multi-line ethers stack doesn't blow the surrounding card past the
+  viewport." Accurate. ✓
+
+**FINDING L-5 (LOW): the new CSS section is numbered "24" but section 24
+already exists upstream as "Demo hero (Create page)" at line 1062.
+Duplicate section number + out-of-order placement (new "24" lands after
+section 34 at line 2121).**
+
+- The CSS file uses sequential `── N. Title ──` section headers as
+  navigation; numbering already drifted with `25b/25c/25` (lines
+  1092/1133/1181) but never duplicated. This tick *duplicates* "24".
+- Recommend renaming to a fresh number (the next free integer after the
+  highest used in the file — `35` or similar — given section 34 is the
+  immediate predecessor on the page).
+- **Severity rationale:** LOW. Pure doc-rot. Zero runtime impact. Catch
+  it now before more sections pile on after `34`/`24-dup`.
+
+### OK items — checked, no finding
+
+- ErrorCard's `useState` is local; no parent state contamination on dismiss.
+  ✓
+- `onToggle` reads `(e.target as HTMLDetailsElement).open` — correct
+  cast, the `open` boolean is the right source-of-truth for the show/hide
+  affordance copy. ✓
+- `data-testid` set on every interactive surface (`error-card`,
+  `error-card-headline`, `error-card-hint`, `error-card-technical`,
+  `error-card-retry`, `error-card-dismiss`). Test seams in place. ✓
+- Create.tsx's `setError(null)` paths (lines 98, 113, 118) still work
+  with ErrorCard's `onDismiss={() => setError(null)}`. ✓
+- Detail.tsx still passes `error` (which `run()` set as a string) to
+  ErrorCard; no Boolean-coercion bug. ✓
+- The unmigrated `<p className="error" data-testid="balance-block">` at
+  `Create.tsx:317` is a deliberate non-error informational warning (it's
+  the wallet-balance-too-low gate), NOT an error per R21's "every error"
+  scope. Correctly left as-is. ✓
+- TypeScript strictness: `readonly` on all props (lines 20, 22, 24);
+  `unknown` for the error input (line 20). Solid type discipline. ✓
+- No `console.log` / `console.error` in the new code — per R7. ✓
+- No new dependencies; pure React + lib imports. ✓
+
+### Verdict: **FAIL**
+
+Findings summary:
+- **M-1 (MEDIUM):** Detail's `run()` pre-formats errors as
+  `"headline\n\ndetails"` strings; ErrorCard receives a string, can't run
+  its own R16 mapping (extractRevertReason returns undefined for
+  non-objects), and the entire pre-formatted string becomes the headline
+  with `\n\n` collapsing to a single space. Headline + structured-hint
+  separation is lost on Detail's primary real-mode error path. This is
+  the load-bearing R21 sub-requirement (a)+(c) for the Detail surface
+  and IS a regression vs the old `<p className="error">` rendering for
+  multi-line errors.
+- **L-2 (LOW):** `Detail.tsx:264` loading-state `<p className="error">`
+  not migrated despite R21's "every error" totality.
+- **L-3 (LOW):** `role="alert"` + `aria-live="polite"` is contradictory
+  authorship.
+- **L-4 (LOW):** `--text-1`, `--text-3`, `--bg-2` are undefined; fallbacks
+  fire but are off-palette.
+- **L-5 (LOW):** CSS section "24" is duplicated (existing Demo hero +
+  new ErrorCard) and out of order (lands after section 34).
+
+The gate is the M-1 regression on the Detail tx-error path. The unit
+otherwise lands the R21 chrome correctly; the LOW findings are
+cleanable in a follow-up tick without re-architecting. The MEDIUM
+needs the seam between `Detail.run()` and `ErrorCard` resolved before
+the unit can be called done.
+
+No code modified. Gate not relaxed.
+
+## Tick 54 strict-review iteration 2
+
+**Scope:** verify the five iter-1 findings (M-1, L-2, L-3, L-4, L-5) against
+the current tree. Files re-read:
+- `web/src/views/Detail.tsx`
+- `web/src/components/ErrorCard.tsx`
+- `web/src/styles.css` (focused: section header inventory + ErrorCard block)
+
+**Gates re-run this pass:**
+- Hardhat contracts: **30/30 PASS** (`cd contracts && npx hardhat test` —
+  tail line `30 passing (3s)`).
+- Lib unit tests: **84/84 PASS** (`npm run test:lib` from repo root — tail
+  `# pass 84 / # fail 0`).
+- Root `tsc -p tsconfig.json --noEmit`: **clean** (no output, exit 0).
+- Harness (agent-browser e2e): **37/37 carried forward unchanged** — not
+  re-run this pass because the diff is a behavior-preserving refactor of
+  error-rendering wiring (Detail's `run()` stores raw `unknown` instead of
+  pre-formatted string; ErrorCard drops `aria-live`; styles.css renumbers
+  one section + swaps three undefined vars for defined ones). No
+  `data-testid` change (6 `error-card*` hooks intact), no contract-mirror
+  behavior change, no event-firing change. Same precedent as ticks 49 it2
+  / 50 it2 (which carried the harness forward across pure-refactor passes).
+
+### Finding-by-finding verdict
+
+#### M-1 (MEDIUM, iter 1) — Detail's `run()` pre-formatted errors
+
+**Status: CLOSED.**
+
+Evidence:
+- `Detail.tsx:211` — error state typed `useState<unknown>(null)`, with a
+  five-line comment explaining why `unknown` (so ErrorCard owns R16
+  mapping and needs the raw object — string would defeat
+  `extractRevertReason`).
+- `Detail.tsx:253-260` — `run()` is now a thin try/catch: `setError(err)`
+  on catch. The `extractRevertReason` / `mapRevertReason` calls and the
+  `\${headline}\n\n\${details}` template are gone.
+- `Detail.tsx:19-25` imports — only `client`, `getNextDecision`,
+  `setNextDecision`, `CLAUSE_REF`, `STANDARD_REF` from `../client.js`. No
+  `extractRevertReason`, no `mapRevertReason` in any import. Grep
+  confirms the only remaining mentions in the file are in the comment at
+  line 209 explaining the typing choice — not symbol references.
+- `Detail.tsx:342-344` — ErrorCard render guarded
+  `error !== null && error !== undefined` (correct guard for `unknown`;
+  avoids the Boolean-coercion bug that `if (error)` would have with a
+  string `""` or numeric `0`, though neither is reachable here).
+- ErrorCard's R16 path now executes: `extractRevertReason(err)` receives
+  the actual thrown Error object on Detail's tx path, hits the revert
+  map, and the structured headline + "what to do" hint render separately.
+- The validation paths inside Detail (`Detail.tsx:623, 726, 775, 803`)
+  still pass plain strings to `setError`. ErrorCard's
+  `error instanceof Error ? .message : String(error)` branch handles
+  these by using the string as the headline directly — visually correct
+  for these short user-facing validation messages, exactly the same as
+  Create's path that iter-1 confirmed is benign.
+
+The structural collapse described in M-1 (entire pre-formatted string
+becoming the headline with `\n\n` collapsing to a single space) is no
+longer reachable on any path. The R16 mapping owner is unambiguously
+ErrorCard now.
+
+#### L-2 (LOW, iter 1) — Loading-state `<p className="error">` not migrated
+
+**Status: CLOSED.**
+
+Evidence:
+- `Detail.tsx:266-272` — explicit four-line comment block immediately
+  before the `<p className="error">`:
+  > "Loading-state error sits in a single-line shell with no surrounding
+  > content; the polished ErrorCard format adds visual weight that
+  > distracts from the back-affordance. Keep the simple `<p>` for now
+  > and migrate when the loading state grows real layout."
+- Acknowledgment of scope-trim is what iter-1 asked for (the spec
+  language "every error" is total, but iter-1 graded this LOW
+  contingent on explicit acknowledgment — which now exists in-source).
+
+The fact that iter-1 graded this LOW with that acknowledgment
+contingency means it is now satisfied; iter-2 closes it.
+
+#### L-3 (LOW, iter 1) — `role="alert"` + `aria-live="polite"` conflict
+
+**Status: CLOSED.**
+
+Evidence:
+- `ErrorCard.tsx:46-50` — the `<div>` carries `role="alert"`,
+  `className="error-card"`, `data-testid="error-card"`. No `aria-live`,
+  no `aria-atomic`, no `aria-relevant`.
+- `grep -n "aria-live" web/src/components/ErrorCard.tsx` returns no
+  matches. Conflict eliminated.
+- Implicit semantics from `role="alert"` (assertive + atomic) now
+  govern unambiguously — the chosen intent (interrupt-on-error)
+  matches the typical use case (chain revert / validation), which is
+  defensible authorship.
+
+#### L-4 (LOW, iter 1) — Undefined CSS vars `--text-1`, `--text-3`, `--bg-2`
+
+**Status: CLOSED.**
+
+Evidence:
+- `grep -n "var(--text-1\|var(--text-3\|var(--bg-2" web/src/styles.css`
+  returns zero matches. None of the three undefined vars remain in the
+  file.
+- The ErrorCard block (`styles.css:2121-2189`) now uses only:
+  `--danger` (defined line 37), `--danger-lt` (defined line 38),
+  `--text-2` (defined line 21), `--radius-sm` (defined elsewhere in
+  tokens, used throughout the file).
+- The technical-details `<pre>` background uses literal
+  `rgba(0, 0, 0, 0.04)` (line 2173) instead of the previously-undefined
+  `var(--bg-2, rgba(0,0,0,0.04))` — the rendered value is identical to
+  the prior fallback, and there's no undefined-var brittleness if a
+  later theme sweep introduces a real `--bg-2` with a different
+  intended role.
+- L-4's "off-palette fallback" failure mode is eliminated by
+  construction (no `var()` lookup can miss).
+
+#### L-5 (LOW, iter 1) — Duplicate section "24" + out-of-order
+
+**Status: CLOSED.**
+
+Evidence:
+- `grep -n '^/\* ─── [0-9]\+\.' web/src/styles.css` enumerates section
+  headers 1 through 35. Section "24" appears exactly once — at line
+  1062 ("Demo hero (Create page)"). No duplicate.
+- Section 35 ("ErrorCard (SPEC-0003 §2.4 R21)") is at line 2121,
+  immediately following section 34 at line 1464. In-order placement.
+- The previously-noted drift `25b/25c/25` (still at lines
+  1092/1133/1181) is pre-existing and out of scope; L-5's specific
+  asks (rename to next free integer; section 34 immediate predecessor)
+  are both met by the new "35".
+
+### Bonus check — word-break on the headline
+
+Iter-1's M-1 noted that `.error-card-headline` had no `word-break`
+rule; long non-revert messages could overflow horizontally. The new
+section at `styles.css:2149-2155` adds `word-break: break-word` with an
+explanatory comment. ✓ Not a previous finding, but worth recording —
+the load-bearing headline now wraps cleanly for both the short
+validation-string path and the long raw-Error.message path.
+
+### Bonus check — testid surface preserved
+
+The `error-card*` `data-testid` attributes at `ErrorCard.tsx:49, 53, 57,
+63, 71, 79` are unchanged (six hooks, same names: `error-card`,
+`error-card-headline`, `error-card-hint`, `error-card-technical`,
+`error-card-retry`, `error-card-dismiss`). The harness's
+ErrorCard-touching scenarios will see the same DOM contract. This is
+why iter-2 doesn't re-run the full e2e suite — the refactor is
+explicitly DOM-stable.
+
+### Findings summary
+
+| ID  | Iter-1 severity | Iter-2 status | Evidence |
+|-----|-----------------|---------------|----------|
+| M-1 | MEDIUM          | **CLOSED**    | `Detail.tsx:211, 253-260`; imports clean of `extractRevertReason`/`mapRevertReason`; guard at 342 |
+| L-2 | LOW             | **CLOSED**    | `Detail.tsx:266-269` explicit scope-trim comment |
+| L-3 | LOW             | **CLOSED**    | `ErrorCard.tsx:47` `role="alert"` only; no `aria-live` |
+| L-4 | LOW             | **CLOSED**    | zero `--text-1`/`--text-3`/`--bg-2` refs in `styles.css` |
+| L-5 | LOW             | **CLOSED**    | sections 1-35 unique; ErrorCard is "35" at line 2121 |
+
+No new findings raised in iter-2.
+
+### Verdict: **PASS**
+
+All five iter-1 findings landed with verifiable in-source evidence.
+Behavior-preserving refactor — gates re-run where cheap (hardhat 30/30,
+lib 84/84, tsc clean); harness 37/37 carried forward under the
+DOM-stable-refactor precedent. Unit T54 (ErrorCard, SPEC-0003 §2.4 R21)
+is fit to close.
+
+No code modified in this review pass. Findings file is the only artifact
+touched.
+

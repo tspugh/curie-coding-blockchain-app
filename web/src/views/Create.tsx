@@ -15,6 +15,7 @@ import { client, INSURER_ADDRESS } from "../client.js";
 import { parseAmount, shortHex } from "../shared.js";
 import { SAMPLE_CASE } from "../sampleCase.js";
 import { useWalletBalance } from "../hooks/useWalletBalance.js";
+import { ErrorCard } from "../components/ErrorCard.js";
 
 // SPEC-0003 §2.6 R31: the user's wallet must hold `requestedAmount` plus the
 // reserve for the next-step `requestAdjudication` so they can finish the
@@ -311,7 +312,7 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
           </span>
         </div>
 
-        {error && <p className="error">{error}</p>}
+        {error && <ErrorCard error={error} onDismiss={() => setError(null)} />}
         {balanceBlock && (
           <p className="error" data-testid="balance-block">
             Wallet balance is below the agent-fee reserve required for the

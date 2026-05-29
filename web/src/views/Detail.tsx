@@ -5,8 +5,6 @@ import {
   ZERO_HASH,
   hashContent,
   verifyContent,
-  extractRevertReason,
-  mapRevertReason,
   txUrl,
   SOMNIA_TESTNET,
   LADDERS,
@@ -26,6 +24,7 @@ import {
   STANDARD_REF,
 } from "../client.js";
 import { SAMPLE_CASE } from "../sampleCase.js";
+import { ErrorCard } from "../components/ErrorCard.js";
 import {
   FDA_DRUG_LABEL,
   FDA_INDICATION_TEXT,
@@ -205,7 +204,11 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   const [view, setView] = useState<NegotiationView | null>(null);
   const [policy, setPolicy] = useState<PolicyCommitment | null>(null);
   const [priceBasis, setPriceBasis] = useState<PriceBasis | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Error state is `unknown` so the raw caught value (Error object, string, etc.)
+  // can flow into ErrorCard, which runs its own R16 revert-reason mapping via
+  // extractRevertReason (which requires an object — string messages would lose the
+  // mapping). Validation errors below pass plain strings (already user-facing).
+  const [error, setError] = useState<unknown>(null);
 
   const [policyText, setPolicyText] = useState("");
   const [policyChoice, setPolicyChoice] = useState<"compliant" | "noncompliant" | null>(null);
@@ -238,22 +241,21 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
           setPriceBasis(pb);
         }
       } catch (err) {
-        if (!cancelled)
-          setError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setError(err);
       }
     })();
     return () => { cancelled = true; };
   }, [reqId, events]);
 
-  // Route wallet errors through extractRevertReason + mapRevertReason to render
-  // a plain-English headline + details for known contract reverts (SPEC-0003 R16).
+  // Forward the raw error to ErrorCard, which runs the SPEC-0003 R16
+  // revert-reason mapping itself. (Pre-formatting the message here would
+  // double-render the headline + collapse "what to do" into the headline.)
   async function run(action: () => Promise<unknown>) {
     setError(null);
     try {
       await action();
     } catch (err) {
-      const entry = mapRevertReason(extractRevertReason(err));
-      setError(`${entry.headline}\n\n${entry.details}`);
+      setError(err);
     }
   }
 
@@ -261,7 +263,13 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
     return (
       <section className="view detail">
         <button type="button" onClick={onBack}>← Back</button>
-        {error ? <p className="error">{error}</p> : <p className="hint">Loading…</p>}
+        {/* Loading-state error sits in a single-line shell with no surrounding
+            content; the polished ErrorCard format adds visual weight that
+            distracts from the back-affordance. Keep the simple `<p>` for now
+            and migrate when the loading state grows real layout. */}
+        {error
+          ? <p className="error">{error instanceof Error ? error.message : String(error)}</p>
+          : <p className="hint">Loading…</p>}
       </section>
     );
   }
@@ -331,7 +339,9 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
         })}
       </ol>
 
-      {error && <p className="error">{error}</p>}
+      {error !== null && error !== undefined && (
+        <ErrorCard error={error} onDismiss={() => setError(null)} />
+      )}
 
       <div className="detail-grid">
         {/* Request details */}

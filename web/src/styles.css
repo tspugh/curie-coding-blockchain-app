@@ -2117,3 +2117,73 @@ tr.row-link:hover td:first-child {
   padding: 1px 6px;
   color: var(--accent-dk);
 }
+
+/* ─── 35. ErrorCard (SPEC-0003 §2.4 R21) ────────────────────────────────── */
+
+.error-card {
+  border: 1px solid var(--danger);
+  background: var(--danger-lt);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* Contained: don't let the card push siblings off-page (R21). */
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.error-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.error-card-icon {
+  font-size: 18px;
+  line-height: 1;
+  color: var(--danger);
+}
+
+.error-card-headline {
+  color: var(--text-2);
+  font-size: 14px;
+  /* Headline can hold a long non-revert error.message — wrap rather than
+     overflow the card. */
+  word-break: break-word;
+}
+
+.error-card-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.error-card-details > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-2);
+  list-style: revert;
+}
+
+.error-card-details > pre {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* Cap the technical-details height so a multi-line ethers stack doesn't
+     blow the surrounding card past the viewport. */
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.error-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
