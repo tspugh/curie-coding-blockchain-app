@@ -2640,3 +2640,322 @@ prototype's fmap"). Re-run the three gates after that change. NITs
 3-5 are at-leisure.
 
 ### Final tick-15 verdict: FAIL (0 HIGH; 1 MEDIUM; 1 LOW; 3 NITs)
+
+---
+
+# Strict-review findings — tick 16 (UNIT-UI-3, Overview Appeal stage + Round columns)
+
+**Date:** 2026-05-29
+**Scope:** the three files modified by this tick:
+- `web/src/views/Overview.tsx` (+10/-1)
+- `src/index.ts` (+3/-0)
+- `web/src/styles.css` (+15/-0)
+
+R-citations the unit claims to satisfy:
+- SPEC-0004 §2.4 R15/R17 (appeal-ladder stage names — `stageNameFor` is the typed API)
+- Indirectly SPEC-0003 R20 (timeline UI surfaces ladder stage)
+
+Gate checks:
+- `node --import tsx --test "src/**/*.test.ts"`: 53/53 green.
+- `npx tsc -p tsconfig.json --noEmit`: 0 errors.
+- `npx tsc -p web/tsconfig.json --noEmit`: 0 errors.
+- `npm run web:build` (vite build, root=web, alias `@lib` → `dist/index.js`): success,
+  212 modules transformed, no warnings beyond the pre-existing chunk-size note.
+  (Direct `npx vite build` from `web/` fails because the vite config lives at
+  the repo root with `root: "web"` — that's the project's intended invocation
+  path, not a regression.)
+
+---
+
+## Findings
+
+### Finding 1 — MEDIUM | Stage rendering diverges from the prototype: chip vs plain text + missing payer-line sub-caption
+
+- `web/src/views/Overview.tsx:219-223` renders the stage inside a
+  `<span className="stage-chip">…</span>` (a pill with border + tinted bg).
+- The prototype's `RequestRow` at
+  `docs/reference/ui-prototype-handoff/project/screens.jsx:141-144` renders the
+  stage as **plain text** in a two-line cell:
+  ```jsx
+  <span style={{ minWidth: 0 }}>
+    <div style={{ fontSize: 12.5, color: "var(--fg-soft)" }}>{stage.name}</div>
+    <div className="caption" style={{ fontSize: 10.5, color: "var(--fg-dim)" }}>
+      {r.payerLine === "PartD" ? "Part D" : r.payerLine}
+    </div>
+  </span>
+  ```
+  No chip, no rounded border, no tinted bg — just text with a `var(--fg-soft)` colour
+  and a small caption underneath naming the payer line ("Part D" / "Commercial" /
+  "Medicaid").
+- The briefing explicitly asks this question ("does the prototype use a chip
+  or a plain label?"). The answer is plain label — so the `.stage-chip` wrapper
+  is over-engineering AND the payer-line sub-caption is missing entirely.
+- Severity rationale: MEDIUM because (a) the briefing names "design-handoff" as
+  the working branch and the prototype-conformance journey is the explicit point
+  of the UNIT-UI-* series, (b) the chip styling visually competes with the
+  state badge in the adjacent column where the prototype intentionally keeps
+  the stage cell quieter, and (c) the missing payer-line sub-caption removes
+  information the prototype surfaces (the user can no longer tell at a glance
+  whether a row is Part D vs Commercial vs Medicaid).
+- Suggested fix: drop the `.stage-chip` wrapper, render `{stageName}` directly
+  inside the `<td>`, and add a small caption line below with the formatted
+  payer-line name (matching prototype semantics: `PartD → "Part D"`,
+  others verbatim). The `.stage-chip` and `.col-round` CSS additions stay
+  except `.stage-chip` becomes dead code (remove with the JSX change).
+
+### Finding 2 — LOW | `stageNameFor` returns `"—"` on out-of-range; prototype's `stageOf` clamps to last stage
+
+- `src/protocol/ladders.ts:169-173` defines:
+  ```ts
+  export function stageNameFor(line: PayerLine, round: number): string {
+    const ladder = LADDERS[line];
+    if (!ladder) return "—";
+    return ladder[round]?.name ?? "—";
+  }
+  ```
+- The prototype's `data.jsx:53-56` defines:
+  ```js
+  function stageOf(payerLine, round) {
+    const ladder = LADDERS[payerLine] || LADDERS.PartD;
+    return ladder[Math.min(round, ladder.length - 1)] || ladder[0];
+  }
+  ```
+- Two behavioral divergences:
+  1. Out-of-range `round` (≥ `ladder.length`): we return `"—"`; prototype clamps
+     to the last stage (e.g. round 99 on PartD returns "Medicare Appeals
+     Council", not "—").
+  2. Unrecognised `line`: we return `"—"`; prototype falls back to PartD's
+     ladder.
+- Practical impact in this tick: under normal contract flow `appealRound`
+  is bounded by `maxRounds` (the contract enforces it), and `payerLine` is
+  a typed enum so the unrecognised-line branch is unreachable in TS code.
+  So the divergence is essentially never observable through normal UI use.
+- Severity rationale: LOW because (a) the dev's claim "`stageNameFor`
+  fallback is `'—'`" is honestly self-described and the typed signature
+  makes the fallback hard to trigger, (b) this is a pre-existing UNIT-1
+  design choice (the function landed in `4518016`, not this tick), and (c)
+  the "—" fallback is arguably more correct than the prototype's silent
+  clamp (a clamped "you are now at the federal Council stage" is a false
+  signal vs the honest "—"). But it's a prototype-conformance miss worth
+  noting for the queue.
+- Suggested fix: NONE for this tick — surface for the design-conformance
+  journey as "decide whether to align `stageNameFor` with prototype clamp
+  semantics or codify the `'—'` fallback in spec".
+
+### Finding 3 — NIT | Inline `var(--…, fallback)` literals in `.stage-chip` rules
+
+- `web/src/styles.css:1505-1513` uses `var(--panel-2, #f8f9fc)`,
+  `var(--text-2, #334155)`, `var(--border-lt, #eaedf4)`.
+- All three custom properties (`--panel-2`, `--text-2`, `--border-lt`) ARE
+  defined at the `:root` block (lines 9-58) with the same hex values — the
+  inline fallback is therefore strictly redundant.
+- The same `var(--token, hex-fallback)` pattern was used in the UNIT-UI-1
+  KPI strip (`.kpi-card`, `.kpi-label`, `.kpi-value`, `.kpi-sub` —
+  lines 1099-1127) and the UNIT-UI-2 filter pill bar
+  (`.filter-pill`, `.filter-pill-summary` — lines 1144-1175), so this is a
+  project-consistent convention introduced by the UI ticks rather than new
+  drift from this tick.
+- Severity rationale: NIT because (a) the fallbacks are no-ops at runtime
+  given the tokens always resolve, (b) the convention matches earlier UI
+  ticks, and (c) the alternative (`var(--panel-2)` bare) would actually be
+  cleaner but inconsistent with the surrounding code.
+- Suggested fix: NONE — at-leisure follow-up could strip all the fallback
+  hexes once UI tokens stabilise.
+
+### Finding 4 — NIT | `Round` column renders raw integer, prototype renders `round/maxRounds`
+
+- `web/src/views/Overview.tsx:233` renders `{v.negotiation.appealRound}` —
+  a bare integer.
+- The prototype's `RequestRow` line 152 renders
+  `{r.round}/{r.maxRounds}` (e.g. "1/3") and uses `r.round` (the
+  adjudication round, not `appealRound`).
+- Two related divergences:
+  1. Prototype uses `r.round` (adjudication round, 0..maxRounds per R6c);
+     production uses `appealRound` (ladder stage index, 0..ladder.length-1).
+     These are different fields! Prototype's `data.jsx` happens to use
+     `round` for the column but the COLUMN HEADER is "Round" in both —
+     so it's plausibly the intended field, but the production app's
+     `appealRound` is semantically different.
+  2. Prototype shows the denominator (`/maxRounds`) so the user can see
+     where on the round budget they are; production shows only the
+     numerator.
+- Severity rationale: NIT for this tick because (a) the briefing focuses
+  on Appeal stage + Round columns landing at all and is explicit about
+  the dev's "show appealRound" intent, (b) `maxRounds` may not exist on
+  the typed `Negotiation` (it's not in `coverage.types.ts` — adjudication
+  cap lives in contract-level configuration), so the `/maxRounds` denominator
+  would require a new field, and (c) `appealRound` is the right thing to
+  show next to an Appeal stage column. But the divergence from the
+  prototype is real and worth noting.
+- Suggested fix: NONE for this tick — surface for the queue as "decide
+  whether the Round column should be `round` (adjudication) or
+  `appealRound` (ladder stage); add `maxRounds` to the projection if we
+  want the `n/m` rendering".
+
+### Finding 5 — NIT | Production-only "Policy" column persists; prototype has "Benchmark" instead
+
+- `web/src/views/Overview.tsx:190` renders `<th>Policy</th>` and the
+  matching cell at line 224 (`{v.policyAttached ? "✓ Attached" : "—"}`).
+  This is pre-existing — it landed before UNIT-UI-1.
+- The prototype's 8 columns are `[Req, Medication, Status, Appeal stage,
+  Requested, Covered, Benchmark, Round]` (screens.jsx:115). The
+  production app's 8 columns are now
+  `[#, Medication, Status, Appeal stage, Policy, Requested, AI Covered, Round]`.
+- Drift introduced BY THIS TICK is exactly the Appeal stage + Round headers
+  (per briefing). The Policy / no-Benchmark / "AI Covered" / "#" vs "Req"
+  differences are all pre-existing.
+- Severity rationale: NIT because (a) the dev did NOT introduce this drift,
+  (b) the Benchmark column needs a `MiniBenchmark` sparkline component
+  that hasn't been built yet, and (c) the Policy column is genuinely useful
+  information that the prototype omits.
+- Suggested fix: NONE for this tick — surface for the design-conformance
+  queue as "decide whether to drop Policy + add Benchmark to match the
+  prototype, or codify the production divergence in spec / amendment".
+
+### Finding 6 — NIT | Adding 2 columns may push the table off-screen at narrow widths
+
+- Briefing item 9. The table sits inside `.main` (`max-width: 1200px,
+  padding: 0 40px` per `web/src/styles.css:223-229`) → roughly 1120px
+  content width.
+- With 8 columns at ~14px font / 11px padding × 2 each side ≈ 134px per
+  column minimum if equal-width → table needs ~1080px just for column
+  text, fitting at 1200px desktop but tight.
+- No horizontal-scroll wrapper around `<table>`, no `table-layout: fixed`,
+  no per-column min-width caps. At 1024×768 (next breakpoint below the
+  briefing's reference 1280×800), `body` is 1024px, `.main` is content
+  width ≈ 944px — the 8-column table will overflow `.main` and create
+  page-level horizontal scroll.
+- SPEC-0003 R20/R22 (the briefing's named overflow callouts) are about
+  the timeline view, not the Overview table, so this isn't a hard violation.
+  But the prototype handles this by using a CSS grid with explicit
+  `gridTemplateColumns` ratios (`screens.jsx:114`) that gracefully
+  re-flow; the production app uses an HTML `<table>` with no layout
+  control.
+- Severity rationale: NIT because (a) the briefing's reference window is
+  1280×800 (the table fits there), (b) the dev followed the established
+  table structure and only added cells, and (c) the responsiveness
+  question is a broader Overview concern not a UNIT-UI-3 regression.
+- Suggested fix: NONE for this tick — surface for the queue as "decide
+  whether to wrap `.contracts` in an `overflow-x: auto` container or
+  migrate to a grid layout matching the prototype's column ratios".
+
+### Finding 7 — NIT | No tests added; correctness rests on tsc + browser-verify
+
+- Briefing item 10. Web has no React testing infrastructure (no Jest,
+  no Vitest, no Playwright unit harness; `web/tests/agent-browser/` is
+  an integration script).
+- The Appeal stage column's correctness depends on three things working
+  together: `stageNameFor` returning the right name (covered by
+  `src/protocol/ladders.test.ts` if it exists — let me note as below);
+  `payerLine` + `appealRound` being correctly threaded through the
+  client.negotiation.getNegotiationView call (covered by simulated /
+  real backend tests); and the JSX rendering them in the right column
+  (NOT covered by any test).
+- Grep for `ladders.test`: not present. So `stageNameFor` itself is
+  exercised only via the partd-approvable scenario test indirectly.
+- Severity rationale: NIT because (a) this is a project-wide structural
+  gap not a tick-level regression, (b) the UNIT-UI-1 and UNIT-UI-2
+  ticks made the same choice without findings, and (c) `tsc` + vite-build
+  + the existing browser-verify journey are the de-facto gate for web
+  ticks.
+- Suggested fix: NONE for this tick — surface for the queue as "add a
+  unit test for `stageNameFor` covering all three payer lines + the
+  out-of-range fallback".
+
+---
+
+## OK items — checked, no finding
+
+- **Column-header order against UNIT-UI-2 baseline:** `[#, Medication,
+  Status, Policy, Requested, AI Covered]` was the prior 6-column layout
+  (`git show c23a185:web/src/views/Overview.tsx`). This tick inserts
+  `Appeal stage` at index 3 (between Status and Policy) and appends
+  `Round` at index 7 — both placements match the prototype's relative
+  positions (Appeal stage after Status, Round last).
+- **`stageNameFor(payerLine, appealRound)` call signature:** matches
+  `src/protocol/ladders.ts:169` exactly — `(line: PayerLine, round: number)`.
+  `v.negotiation.payerLine` is typed as `PayerLine` (non-optional, not
+  `| undefined`) at `src/types/coverage.types.ts:132`; `v.negotiation.appealRound`
+  is typed `number` at line 134. No coercion needed.
+- **`payerLine` always populated:** mandatory on the typed `Negotiation`
+  record; the contract's `createContract` requires it (`src/contract/abi.ts:13`);
+  the simulated backend wires it through (`src/contract/simulated.ts:148,244,678`);
+  the real backend decodes it from tuple position [21] (`src/contract/real.ts:77,587`).
+  No path returns a Negotiation without it. The briefing's concern
+  ("can it be undefined for older contracts?") is moot.
+- **`appealRound: 0` rendering:** `<td>{0}</td>` renders the string "0",
+  not "false" or blank. Browser-verified mentally; no falsy-render trap.
+- **Re-export hygiene (`src/index.ts:110`):** clean append in the existing
+  re-export block, named exports `LADDERS` and `stageNameFor` resolve
+  unambiguously from `./protocol/ladders.js` (only file defining either
+  symbol). No naming clash with the rest of `index.ts`. `LADDERS` was
+  already a public concept via the UNIT-1 commit message and prior
+  re-export discipline; promoting `stageNameFor` to public API is the
+  smallest change that satisfies the UI need.
+- **Re-export validates via vite build:** `dist/index.js` line 23 and
+  `dist/index.d.ts` line 18 both contain `export { LADDERS, stageNameFor
+  } from "./protocol/ladders.js"`, so the web `@lib` alias resolves the
+  symbols.
+- **CSS naming consistency:** `.stage-chip` and `.col-round` follow
+  the project's hyphen-kebab convention (consistent with `.kpi-card`,
+  `.filter-pill`, `.ruling-hero`, `.col-round` matches the `.col-*`
+  pattern from other tables — verified by grep, only this tick adds
+  `.col-*` so the pattern is forward-looking but consistent with
+  Bootstrap-style column-utility class naming).
+- **CSS uses project tokens, not raw hex (in the named places):**
+  `var(--panel-2, …)`, `var(--text-2, …)`, `var(--border-lt, …)`
+  all resolve to project tokens. The hex fallbacks are redundant
+  (see Finding 3) but not raw-hex-as-primary.
+- **No fake data, no `Math.random`:** every cell reads from
+  `v.negotiation.*` or `v.*`; no client-side fabrication.
+- **`stageNameFor` empty-payer-line guard:** `if (!ladder) return "—";`
+  protects against `LADDERS[unrecognised]` returning `undefined`. With
+  the typed enum this branch is unreachable in TS code, but the runtime
+  guard is correct defense-in-depth.
+- **`tabular-nums` on `.col-round`:** correct for an integer-valued
+  right-aligned numeric column; matches the prototype's
+  `className="mono tabular"` choice on the same cell.
+
+---
+
+## Verdict
+
+UNIT-UI-3 lands the typed-API integration cleanly: `stageNameFor` is
+imported from `@lib`, called with the correct `(PayerLine, number)`
+signature, and threaded through `v.negotiation.payerLine` and
+`v.negotiation.appealRound` which are both typed and always-populated.
+The Round column reads a bare integer, right-aligned, tabular-nums.
+The re-export hygiene in `src/index.ts` is clean and validates through
+`dist/`. The vite build (`npm run web:build`) succeeds and the new
+columns ship without bundle warnings. All 53 library tests and both
+tsc projects stay green.
+
+The MEDIUM finding is a prototype-conformance miss against the
+explicit briefing question ("does the prototype use a chip or a plain
+label?"): the prototype renders the stage as plain text with a
+payer-line sub-caption underneath; the production app wraps it in a
+`.stage-chip` pill and omits the payer-line caption. This is the
+prototype-conformance journey's whole point per the design-handoff
+branch name. The LOW finding is the `stageNameFor` divergence from
+the prototype's clamp-and-fallback `stageOf` (we return "—", prototype
+clamps to the last stage and falls back to PartD on an unknown line);
+practical impact is near-zero given the type system but the divergence
+deserves a queue note. The four NITs (redundant CSS fallback hexes;
+Round-vs-appealRound + missing `/maxRounds`; the pre-existing Policy
+column; the table-overflow risk at narrow widths; and the absence of
+web-side tests) are all either pre-existing, structural, or at-leisure.
+
+Briefing says "Zero findings required." One MEDIUM design-conformance
+finding plus one LOW divergence finding → the tick does not clear the
+gate.
+
+**Recommended remediation for the MEDIUM:** drop the `<span
+className="stage-chip">…</span>` wrapper around the stage name; render
+`{stageNameFor(payerLine, appealRound)}` directly; add a small caption
+`<div>` below with the formatted payer-line name (`PartD → "Part D"`,
+others verbatim) matching the prototype's two-line cell at
+`screens.jsx:141-144`. Remove the now-unused `.stage-chip` CSS rule.
+Re-run the three gates after that change. The LOW + NITs are queue
+items, not blockers for re-review.
+
+### Final tick-16 verdict: FAIL (0 HIGH; 1 MEDIUM; 1 LOW; 5 NITs)

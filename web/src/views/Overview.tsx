@@ -3,7 +3,7 @@
  * Re-fetches on every event (R16). Each row opens the request detail view.
  */
 import { useEffect, useMemo, useState } from "react";
-import { type CoverageEvent, type NegotiationView, Decision, State } from "@lib";
+import { type CoverageEvent, type NegotiationView, Decision, PayerLine, State, stageNameFor } from "@lib";
 import { client } from "../client.js";
 import { fmtAmount, shortHex } from "../shared.js";
 
@@ -64,6 +64,17 @@ const filters: Record<FilterKey, (r: NegotiationView) => boolean> = {
   settled: r => r.state === State.Settled,
   closed:  r => CLOSED_STATES.has(r.state),
 };
+
+// Display name for a payer line — the typed enum's symbolic name reads "PartD"
+// but the prototype renders it with a space ("Part D"); the other two are
+// already display-ready.
+function payerLineDisplay(line: PayerLine): string {
+  switch (line) {
+    case PayerLine.PartD: return "Part D";
+    case PayerLine.Commercial: return "Commercial";
+    case PayerLine.Medicaid: return "Medicaid";
+  }
+}
 
 const filterLabels: Record<FilterKey, string> = {
   all:     "All",
@@ -186,9 +197,11 @@ export function Overview({ events, onOpen, onCreate }: OverviewProps) {
               <th>#</th>
               <th>Medication</th>
               <th>Status</th>
+              <th>Appeal stage</th>
               <th>Policy</th>
               <th>Requested</th>
               <th>AI Covered</th>
+              <th className="col-round">Round</th>
             </tr>
           </thead>
           <tbody>
@@ -214,6 +227,14 @@ export function Overview({ events, onOpen, onCreate }: OverviewProps) {
                     {FRIENDLY_STATE[v.state]}
                   </span>
                 </td>
+                <td className="col-stage">
+                  <div className="stage-name">
+                    {stageNameFor(v.negotiation.payerLine, v.negotiation.appealRound)}
+                  </div>
+                  <div className="stage-payer">
+                    {payerLineDisplay(v.negotiation.payerLine)}
+                  </div>
+                </td>
                 <td>{v.policyAttached ? "✓ Attached" : "—"}</td>
                 <td>{fmtAmount(v.negotiation.requestedAmount)}</td>
                 <td>
@@ -223,6 +244,7 @@ export function Overview({ events, onOpen, onCreate }: OverviewProps) {
                     "—"
                   )}
                 </td>
+                <td className="col-round">{v.negotiation.appealRound}</td>
               </tr>
             ))}
           </tbody>

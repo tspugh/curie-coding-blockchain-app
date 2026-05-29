@@ -4,14 +4,25 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 15 — UNIT-UI-2: Overview filter pill bar)
+**Last updated:** 2026-05-29 (tick 16 — UNIT-UI-3: Appeal stage + Round columns)
 **Current mode:** `impl`
-**Current tick:** 15
-**Last focus:** 5-pill filter bar (All / Open / In negotiation / Settled / Closed) between the KPI strip and the request table. Strict-review caught a real MEDIUM: my prompt incorrectly claimed the prototype overlapped Settled in both Settled+Closed buckets — the prototype's `fmap` actually hand-lists state allowlists per bucket, so every row falls in exactly one bucket and counts sum to rows.length. Fixed inline with explicit `ACTIVE_STATES` and `CLOSED_STATES` sets mirroring `screens.jsx:47-53` verbatim. Denied → Closed (not In negotiation) per prototype's narrative grouping. The lying comment was also removed (LOW closure). User-reported bug "auth: not insurer" on engage queued as UNIT-7a (two-wallet demo).
-**Last commit:** `<this tick>` (tick 15 — UNIT-UI-2 filter pills + d0375f4 trycloudflare host fix)
+**Current tick:** 16
+**Last focus:** Added the missing "Appeal stage" + "Round" columns to the Overview request table per prototype `screens.jsx:114-152`. Stage cell renders two lines per prototype: stage name (top, from `stageNameFor(payerLine, appealRound)` — typed `LADDERS` lookup, R15/R17) and payer-line caption below it ("Part D" / "Commercial" / "Medicaid"). Round cell right-aligned with tabular-nums. `LADDERS` + `stageNameFor` + `PayerLine` re-exported from `src/index.ts` so `@lib` import works. Strict-review caught 1 MEDIUM (chip wrapper diverged from prototype's two-line plain layout — fixed inline by dropping chip, adding caption) + 1 LOW (`stageNameFor` fallback semantics differ from prototype — queued as separate followup).
+**Last commit:** `<this tick>` (tick 16 — UNIT-UI-3)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)
+
+### UNIT-UI-3 (LANDED tick 16 — Appeal stage + Round columns)
+**Two new columns in the Overview request table; stage name + payer-line caption + round/Nm**
+- What landed: `web/src/views/Overview.tsx` adds the "Appeal stage" column (two-line cell: stageNameFor() result + payer-line caption "Part D" / "Commercial" / "Medicaid") and "Round" column (right-aligned tabular-nums). `src/index.ts` re-exports `LADDERS`, `stageNameFor`, `PayerLine` from `protocol/ladders.ts` so `@lib` works. CSS adds `.col-stage` / `.stage-name` / `.stage-payer` / `.col-round` using project tokens.
+- Strict-review iter 1: 1 MEDIUM (chip wrapper diverged from prototype's plain two-line layout — fixed inline by dropping `.stage-chip` chip wrapper, rendering plain `stage-name` div + caption `stage-payer` div per `screens.jsx:142-144`); 1 LOW (`stageNameFor` returns "—" on out-of-range while prototype's `stageOf` clamps with PartD fallback — queued as `UNIT-ladders-fallback-semantics`); 5 NITs noted for future.
+- Gate verdict: lib 53/53 ✓, hardhat 28/28 ✓, both tsc ✓, vite build ✓, secret-scan ✓.
+
+### UNIT-ladders-fallback-semantics (NEW — strict-review tick 16 LOW)
+**Reconcile `stageNameFor` out-of-range behavior with prototype's `stageOf`**
+- Files: `src/protocol/ladders.ts`, `src/protocol/ladders.test.ts`, `docs/reference/ui-prototype-handoff/project/data.jsx` (read-only — for prototype's clamping logic)
+- Acceptance criterion: pick a coherent fallback policy (likely: clamp out-of-range round to last stage of the line, fall back to PartD on unknown line) and either update `stageNameFor` to match OR document the divergence as intentional in the JSDoc. Update tests to pin the chosen behavior.
 
 ### UNIT-UI-2 (LANDED tick 15 — Overview filter pill bar)
 **5-pill filter bar between KPI strip and table; verbatim prototype labels + partition predicates**

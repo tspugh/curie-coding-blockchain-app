@@ -1500,3 +1500,22 @@ tr.row-link:hover td:first-child {
 .tx-monitor .tx-list .hash        { color: var(--text-2); font-size: 11.5px; }
 .tx-monitor .tx-list .cost        { grid-column: 3 / 4; grid-row: 1; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-2); }
 .tx-monitor .tx-list .attribution { grid-column: 1 / -1; grid-row: 2; color: var(--text-2); font-size: 11.5px; }
+
+/* UNIT-UI-3: Appeal stage (two-line: stage name + payer-line caption per
+   prototype screens.jsx:142-144) + Round column */
+.col-stage { min-width: 0; }
+.stage-name {
+  font-size: 12.5px;
+  color: var(--text-2);
+  line-height: 1.25;
+}
+.stage-payer {
+  font-size: 10.5px;
+  color: var(--muted);
+  line-height: 1.25;
+  margin-top: 2px;
+}
+.col-round {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

@@ -106,6 +106,9 @@ export {
   orderSignToDraft,
 } from "./integrations/cds-hooks/index.js";
 
+// --- Re-exports: appeal-ladder helpers (UNIT-UI-3) ---
+export { LADDERS, stageNameFor } from "./protocol/ladders.js";
+
 import {
   createCoverageClient,
   type CoverageClientOptions,
