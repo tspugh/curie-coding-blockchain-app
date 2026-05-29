@@ -4,10 +4,7 @@ pragma solidity ^0.8.24;
 import {
     IAgentRequester,
     IAgentRequesterHandler,
-    Response,
-    Request,
-    ResponseStatus,
-    ConsensusType
+    ResponseStatus
 } from "../ISomniaAgent.sol";
 
 /// @dev Minimal view used to probe the requesting contract's state mid-`createRequest`.
@@ -74,67 +71,22 @@ contract MockAgentPlatform is IAgentRequester {
         observedStateDuringCreate = IStateProbe(callbackAddress).stateOf(reqIdFromPayload);
     }
 
-    /// @dev The arbiter ruling fields the contract decodes from `responses[0].result`.
-    ///      Passed as one calldata struct to keep `triggerRuling` off the stack limit.
-    struct Ruling {
-        uint8 decision; // 0=approve,1=deny,2=need_more_evidence,3=policy_invalid
-        uint256 costPlusUnitPrice; // Mark Cuban Cost Plus per-unit; contract caps at × quantity
-        uint256 nadacUnitPrice; // NADAC per-unit acquisition-cost floor reference
-        bytes32 rationaleHash;
-        bytes32 clauseRef; // policy clause the agent relied on
-        bytes32 standardRef; // public standard cited for a policy flag (R6b)
-        uint256 receiptId; // off-chain receipt pointer to surface
-    }
-
-    /// @notice Drive a successful necessity ruling back into the target as the
-    ///         platform would, encoding the arbiter tuple the contract decodes:
-    ///         `(decision, costPlusUnitPrice, nadacUnitPrice, rationaleHash, clauseRef,
-    ///         standardRef, receiptId)`.
-    /// @param target The CoverageNegotiation contract (implements handleResponse).
-    /// @param requestId The request to resolve.
-    /// @param r The ruling fields (see {@link Ruling}).
-    function triggerRuling(address target, uint256 requestId, Ruling calldata r) external {
-        Response[] memory responses = new Response[](1);
-        responses[0] = Response({
-            validator: address(this),
-            result: abi.encode(
-                r.decision, r.costPlusUnitPrice, r.nadacUnitPrice, r.rationaleHash, r.clauseRef, r.standardRef, r.receiptId
-            ),
-            status: ResponseStatus.Success,
-            receipt: r.receiptId,
-            timestamp: block.timestamp,
-            executionCost: deposit
-        });
-
-        IAgentRequesterHandler(target).handleResponse(
-            requestId,
-            responses,
-            ResponseStatus.Success,
-            _emptyRequest(requestId, target)
+    /// @notice Drive a successful approval ruling back into the target.
+    ///         Encodes output as the real platform does: output[0]=status byte,
+    ///         output[1:]=abi.encode(uint256) where 1=approve, 0=deny.
+    /// @param approve True for an Approve ruling, false for Deny.
+    function triggerRuling(address target, uint256 requestId, bool approve) external {
+        uint256 approvedVal = approve ? 1 : 0;
+        bytes memory output = bytes.concat(
+            bytes1(uint8(ResponseStatus.Success)),
+            abi.encode(approvedVal)
         );
+        IAgentRequesterHandler(target).handleResponse(requestId, output);
     }
 
     /// @notice Drive a failed/timed-out outcome back into the target.
-    function triggerFailure(
-        address target,
-        uint256 requestId,
-        ResponseStatus status
-    ) external {
-        Response[] memory empty = new Response[](0);
-        IAgentRequesterHandler(target).handleResponse(
-            requestId,
-            empty,
-            status,
-            _emptyRequest(requestId, target)
-        );
-    }
-
-    function _emptyRequest(uint256 requestId, address target) internal view returns (Request memory r) {
-        r.id = requestId;
-        r.requester = target;
-        r.callbackAddress = target;
-        r.status = ResponseStatus.Success;
-        r.consensusType = ConsensusType.Majority;
-        r.createdAt = block.timestamp;
+    function triggerFailure(address target, uint256 requestId, ResponseStatus status) external {
+        bytes memory output = bytes.concat(bytes1(uint8(status)));
+        IAgentRequesterHandler(target).handleResponse(requestId, output);
     }
 }

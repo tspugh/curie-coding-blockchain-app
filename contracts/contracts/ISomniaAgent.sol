@@ -73,12 +73,12 @@ interface IAgentRequester {
 }
 
 /// @notice Interface a contract implements to receive agent responses.
+/// @dev The platform always calls handleResponse(uint256, bytes) where output[0]
+///      is the ResponseStatus byte and output[1:] is the ABI-encoded result value.
 interface IAgentRequesterHandler {
-    /// @notice Platform callback delivering the consensus result + receipt.
-    function handleResponse(
-        uint256 requestId,
-        Response[] memory responses,
-        ResponseStatus status,
-        Request memory details
-    ) external;
+    /// @notice Platform callback delivering the consensus result.
+    /// @param requestId The request id returned by createRequest.
+    /// @param output Packed response: output[0] = ResponseStatus byte,
+    ///               output[1:] = abi.encode(result) for the agent's return type.
+    function handleResponse(uint256 requestId, bytes calldata output) external;
 }

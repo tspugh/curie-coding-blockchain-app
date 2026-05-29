@@ -127,6 +127,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   const [verifyText, setVerifyText] = useState("");
   const [verifyResult, setVerifyResult] = useState<"match" | "mismatch" | null>(null);
   const [showProof, setShowProof] = useState(false);
+  const [txPending, setTxPending] = useState(false);
 
   const timeline = useMemo(
     () => events.filter((e) => e.reqId === reqId),
@@ -158,10 +159,13 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
 
   async function run(action: () => Promise<unknown>) {
     setError(null);
+    setTxPending(true);
     try {
       await action();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTxPending(false);
     }
   }
 
@@ -493,6 +497,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                   type="button"
                   className="primary"
                   data-testid="engage-submit"
+                  disabled={txPending}
                   onClick={() => {
                     if (!policyText.trim()) { setError("Select a policy first."); return; }
                     const stored = client.content.put(policyText);
@@ -505,7 +510,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                     );
                   }}
                 >
-                  Attach Policy &amp; Engage →
+                  {txPending ? "Submitting…" : "Attach Policy & Engage →"}
                 </button>
               )}
               <textarea
@@ -544,12 +549,13 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                 type="button"
                 className="primary"
                 data-testid="adjudicate-submit"
+                disabled={txPending}
                 onClick={() => {
                   setNextDecision(decision);
                   void run(() => client.negotiation.requestAdjudication(reqId));
                 }}
               >
-                Request AI Decision →
+                {txPending ? "Submitting…" : "Request AI Decision →"}
               </button>
             </div>
           )}
@@ -644,6 +650,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                 type="button"
                 className="primary"
                 data-testid="evidence-submit"
+                disabled={txPending}
                 onClick={() => {
                   if (!evidenceText.trim()) { setError("Evidence reference is required."); return; }
                   void run(() =>
@@ -652,7 +659,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                   setEvidenceText("");
                 }}
               >
-                Submit Evidence →
+                {txPending ? "Submitting…" : "Submit Evidence →"}
               </button>
             </div>
           )}

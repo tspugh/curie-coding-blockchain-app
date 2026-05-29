@@ -6,8 +6,6 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {
     IAgentRequester,
     IAgentRequesterHandler,
-    Response,
-    Request,
     ResponseStatus
 } from "./ISomniaAgent.sol";
 
@@ -150,7 +148,7 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     /// @dev The agent extracts a number from this page: 1=approve coverage, 0=deny.
     ///      Set to an FDA label or drug information page. Updatable by owner for demos.
     string public agentEvidenceUrl =
-        "https://medlineplus.gov/druginfo/meds/a603010.html";
+        "https://en.wikipedia.org/wiki/Adalimumab";
 
     /// @dev Auto-incrementing request id.
     uint256 private _nextId = 1;
@@ -479,29 +477,15 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     // ---------------------------------------------------------------------
 
     /// @notice Somnia platform callback delivering the agent's necessity ruling
-    ///         (R6/R6a/R6b/R9).
-    /// @dev DESIGN NOTE (carried from v0, re-verified against Somnia docs): the real
-    ///      platform calls the fixed `IAgentRequesterHandler.handleResponse(requestId,
-    ///      responses, status, details)` signature, so that is what we implement and
-    ///      the selector we pass to `createRequest`. From `responses[0].result` we
-    ///      decode the arbiter tuple:
-    ///        `(Decision decision, uint256 costPlusUnitPrice, uint256 nadacUnitPrice,
-    ///          bytes32 rationaleHash, bytes32 clauseRef, bytes32 standardRef,
-    ///          uint256 receiptId)`.
-    ///      R6a forbids an AI-chosen amount: the agent supplies only PUBLIC PRICE
-    ///      LOOKUPS (Mark Cuban Cost Plus per-unit retail price + NADAC per-unit
-    ///      acquisition-cost floor), and the CONTRACT computes the cap
-    ///      deterministically as `benchmarkCap = costPlusUnitPrice * quantity` then
-    ///      `coveredAmount = min(requestedAmount, benchmarkCap)` (R6a, resolved
-    ///      2026-05-27). `quantity` (R2) is the cap driver; `daysSupply` never enters
-    ///      the price. NADAC is recorded as the floor reference. A `PolicyInvalid`
-    ///      decision voids the contract (R6b). Gated to the platform.
-    function handleResponse(
-        uint256 requestId,
-        Response[] memory responses,
-        ResponseStatus status,
-        Request memory /* details */
-    ) external override {
+    ///         (R6/R6a/R9). Gated to the platform address.
+    /// @dev The platform always calls handleResponse(uint256, bytes) — output[0] is
+    ///      the ResponseStatus byte, output[1:] is abi.encode(result). For the
+    ///      LLM Parse Website ExtractANumber agent the result is a uint256 (1=approve,
+    ///      0=deny). Non-Success status routes to EvidenceRequested (retriable).
+    /// @notice Somnia platform callback. The platform always calls
+    ///         handleResponse(uint256, bytes) where output[0] is the ResponseStatus
+    ///         byte and output[1:] is abi.encode(result) for the agent's return type.
+    function handleResponse(uint256 requestId, bytes calldata output) external override {
         require(msg.sender == address(platform), "callback: not platform");
 
         uint256 reqId = _requestToNegotiation[requestId];
@@ -512,14 +496,11 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
         _clearRequest(n);
 
-        // MULTI-RESPONSE POLICY (R6/R9): the platform delivers the CONSENSUS-encoded
-        // result. We read exactly `responses[0]` as that consensus output and ignore
-        // any further validator entries (`responses[1..]`); the platform is trusted to
-        // have reconciled validators into `responses[0]` before this callback. The
-        // empty / failed / timed-out case (`responses.length == 0` or a non-Success
-        // status) carries no usable ruling, so it routes to the retriable
-        // `EvidenceRequested` state rather than reverting or guessing a decision.
-        if (status != ResponseStatus.Success || responses.length == 0) {
+        // output[0] is the ResponseStatus byte; output[1:] is abi.encode(uint256).
+        // A non-Success status means the agent failed or timed out — route to
+        // retriable EvidenceRequested rather than guessing a decision.
+        ResponseStatus status = ResponseStatus(uint8(output[0]));
+        if (status != ResponseStatus.Success || output.length < 2) {
             n.state = State.EvidenceRequested;
             emit RulingTimedOut(reqId, requestId);
             emit EvidenceRequested(reqId);
@@ -528,7 +509,7 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
         // Decode the Somnia LLM Parse Website agent's ExtractANumber response.
         // The agent returns 1=APPROVE or 0=DENY based on the drug's FDA indications.
-        uint256 approvedVal = abi.decode(responses[0].result, (uint256));
+        uint256 approvedVal = abi.decode(output[1:], (uint256));
         Decision decision = approvedVal >= 1 ? Decision.Approve : Decision.Deny;
 
         n.lastDecision = decision;
@@ -650,9 +631,9 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
             "1=APPROVE drug coverage (medically necessary and FDA-indicated), 0=DENY coverage",
             uint256(0),
             uint256(1),
-            "Based on this drug information page, is the drug FDA-approved and medically necessary for treating rheumatoid arthritis and similar inflammatory conditions? Return 1 to APPROVE coverage or 0 to DENY.",
+            "Based on this page, is the drug FDA-approved and medically necessary for treating rheumatoid arthritis and similar inflammatory conditions? Return 1 to APPROVE coverage or 0 to DENY.",
             agentEvidenceUrl,
-            true,
+            false,  // resolveUrl=false: scrape the URL directly, do not domain-search
             uint8(1)
         );
 

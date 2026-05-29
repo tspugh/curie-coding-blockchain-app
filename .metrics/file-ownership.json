@@ -13,8 +13,8 @@
   },
   "e:\\Repos\\curie-coding-blockchain-app\\web\\src\\views\\Detail.tsx": {
     "last_editor": "claude",
-    "last_mtime": "1780003627.518072",
-    "last_edit_time": "2026-05-28T21:27:07.855498+00:00",
+    "last_mtime": "1780013249.046154",
+    "last_edit_time": "2026-05-29T00:07:29.355020+00:00",
     "ticket_id": null
   },
   "e:\\Repos\\curie-coding-blockchain-app\\web\\src\\views\\Create.tsx": {
@@ -55,8 +55,8 @@
   },
   "e:\\Repos\\curie-coding-blockchain-app\\contracts\\contracts\\CoverageNegotiation.sol": {
     "last_editor": "claude",
-    "last_mtime": "1780003829.786893",
-    "last_edit_time": "2026-05-28T21:30:30.154197+00:00",
+    "last_mtime": "1780013644.049607",
+    "last_edit_time": "2026-05-29T00:14:04.365521+00:00",
     "ticket_id": null
   },
   "e:\\Repos\\curie-coding-blockchain-app\\contracts\\scripts\\admin.ts": {
@@ -85,8 +85,8 @@
   },
   "e:\\Repos\\curie-coding-blockchain-app\\contracts\\scripts\\trigger-ruling.ts": {
     "last_editor": "claude",
-    "last_mtime": "1780004006.439821",
-    "last_edit_time": "2026-05-28T21:33:26.810725+00:00",
+    "last_mtime": "1780013113.824253",
+    "last_edit_time": "2026-05-29T00:05:14.245223+00:00",
     "ticket_id": null
   },
   "e:\\Repos\\curie-coding-blockchain-app\\contracts\\scripts\\restore-real-platform.ts": {
@@ -99,6 +99,18 @@
     "last_editor": "claude",
     "last_mtime": "1780005002.740627",
     "last_edit_time": "2026-05-28T21:50:03.118904+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\contracts\\contracts\\ISomniaAgent.sol": {
+    "last_editor": "claude",
+    "last_mtime": "1780012989.6824098",
+    "last_edit_time": "2026-05-29T00:03:10.114802+00:00",
+    "ticket_id": null
+  },
+  "e:\\Repos\\curie-coding-blockchain-app\\contracts\\contracts\\mocks\\MockAgentPlatform.sol": {
+    "last_editor": "claude",
+    "last_mtime": "1780013088.3386166",
+    "last_edit_time": "2026-05-29T00:04:48.750034+00:00",
     "ticket_id": null
   }
 }

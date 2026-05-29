@@ -33,19 +33,8 @@ async function main() {
     return;
   }
 
-  // Build an Approve ruling (all non-decision fields can be zero for the demo)
-  const ruling = {
-    decision: 0,              // 0 = Approve
-    costPlusUnitPrice: 0n,
-    nadacUnitPrice: 0n,
-    rationaleHash: ethers.ZeroHash,
-    clauseRef: ethers.ZeroHash,
-    standardRef: ethers.ZeroHash,
-    receiptId: 0n,
-  };
-
   console.log(`\nTriggering Approve ruling for requestId ${lastRequestId} on ${lastCallback}…`);
-  const tx = await (mock as any).triggerRuling(lastCallback, lastRequestId, ruling);
+  const tx = await (mock as any).triggerRuling(lastCallback, lastRequestId, true /* approve */);
   await tx.wait();
   console.log("✅  Ruling triggered — contract should now be in Approved state.");
   console.log("    Reload the UI and both parties can Accept → Settle.");
