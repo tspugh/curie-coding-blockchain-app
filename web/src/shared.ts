@@ -114,3 +114,49 @@ export function eventTone(name: CoverageEvent["name"]): "ok" | "warn" | "danger"
       return "accent";
   }
 }
+
+/**
+ * Best-effort attribution label for a CoverageEvent — which actor on the
+ * protocol made this event happen. Used by the Detail timeline's per-row
+ * attribution chip (SPEC-0003 §2.3 R20 conformance with prototype EventLog).
+ *
+ * Some events carry an explicit `partyId` (Appealed, Accepted) — those route
+ * "provider" vs "insurer" by id. Others are inferred from semantics:
+ *   - provider-class:   ContractCreated, ContentCommitted, EvidenceSubmitted,
+ *                       ProviderRefused, Withdrawn
+ *   - insurer-class:    InsurerEngaged
+ *   - arbiter-class:    AdjudicationRequested, RulingRequested, Ruled,
+ *                       PolicyFlagged, PolicyInvalidated, EvidenceRequested,
+ *                       PacketSubmitted, RulingTimedOut
+ *   - system / contract: ContractReady, Settled, Deadlocked, FeedbackPosted
+ */
+export function eventAttribution(e: CoverageEvent): string {
+  switch (e.name) {
+    case "Appealed":
+    case "Accepted":
+      // partyId is 1 (provider), 2 (insurer), 99 (observer) per ProfileRegistry.
+      return e.partyId === 1n ? "provider" : e.partyId === 2n ? "insurer" : "party " + e.partyId.toString();
+    case "ContractCreated":
+    case "ContentCommitted":
+    case "EvidenceSubmitted":
+    case "ProviderRefused":
+    case "Withdrawn":
+      return "provider";
+    case "InsurerEngaged":
+      return "insurer";
+    case "AdjudicationRequested":
+    case "RulingRequested":
+    case "Ruled":
+    case "PolicyFlagged":
+    case "PolicyInvalidated":
+    case "EvidenceRequested":
+    case "PacketSubmitted":
+    case "RulingTimedOut":
+      return "arbiter";
+    case "ContractReady":
+    case "Settled":
+    case "Deadlocked":
+    case "FeedbackPosted":
+      return "system";
+  }
+}

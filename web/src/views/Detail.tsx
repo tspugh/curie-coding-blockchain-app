@@ -31,7 +31,7 @@ import {
   FDA_INDICATION_TEXT,
   FDA_LABEL_URL,
 } from "../fdaIndication.js";
-import { describeEvent, fmtAmount, shortHex } from "../shared.js";
+import { describeEvent, eventAttribution, eventTone, fmtAmount, shortHex } from "../shared.js";
 
 interface DetailProps {
   readonly reqId: bigint;
@@ -825,12 +825,33 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
             {timeline.length === 0 ? (
               <li className="empty">No events yet.</li>
             ) : (
-              timeline.map((e, i) => (
-                <li key={`${e.name}-${i}`} className="ev-row">
-                  <span className="ev-name">
-                    {FRIENDLY_EVENT[e.name] ?? e.name}
-                  </span>
-                  <span className="ev-desc">{describeEvent(e)}</span>
+              // Newest-first per prototype EventLog (screens.jsx:391).
+              [...timeline].reverse().map((e, i) => (
+                <li
+                  key={`${e.txHash ?? "noTx"}-${e.name}-${i}`}
+                  className={`ev-row tone-${eventTone(e.name)}`}
+                >
+                  <div className="ev-row-head">
+                    <span className="ev-name">
+                      {FRIENDLY_EVENT[e.name] ?? e.name}
+                    </span>
+                  </div>
+                  <div className="ev-desc">{describeEvent(e)}</div>
+                  <div className="ev-row-foot">
+                    {e.txHash ? (
+                      <a
+                        className="ev-tx-chip"
+                        href={txUrl(SOMNIA_TESTNET, e.txHash)}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {shortHex(e.txHash)}
+                      </a>
+                    ) : (
+                      <span className="ev-tx-chip is-empty">no tx</span>
+                    )}
+                    <span className="ev-attr">{eventAttribution(e)}</span>
+                  </div>
                 </li>
               ))
             )}

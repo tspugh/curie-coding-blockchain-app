@@ -2032,3 +2032,59 @@ tr.row-link:hover td:first-child {
   color: var(--muted);
   line-height: 1.45;
 }
+
+/* SPEC-0003 Detail event-log polish (tick 34) — tx-hash chip + attribution
+   chip + per-event tone for the name. The .ev-row / .ev-name rules higher
+   up (~line 769/777) supply the base spacing; these additions are layered
+   on top, scoped under `.timeline` so they don't bleed into other surfaces
+   that use the same class names. */
+.timeline .ev-row {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border-lt);
+}
+.timeline .ev-row:last-child { border-bottom: none; }
+.timeline .ev-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.timeline .ev-row.tone-ok      .ev-name { color: var(--ok); }
+.timeline .ev-row.tone-warn    .ev-name { color: var(--warn); }
+.timeline .ev-row.tone-danger  .ev-name { color: var(--danger); }
+.timeline .ev-row.tone-purple  .ev-name { color: var(--purple); }
+.timeline .ev-row.tone-accent  .ev-name { color: var(--accent); }
+.timeline .ev-desc {
+  font-size: 12.5px;
+  color: var(--text-2);
+  margin-top: 2px;
+  line-height: 1.45;
+}
+.timeline .ev-row-foot {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ev-tx-chip {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  text-decoration: none;
+}
+.ev-tx-chip:hover { background: var(--accent-lt); }
+.ev-tx-chip.is-empty {
+  color: var(--muted-lt);
+  background: transparent;
+  border-style: dashed;
+}
+.ev-attr {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+}

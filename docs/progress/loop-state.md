@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 33 — UNIT-AppealLadder)
+**Last updated:** 2026-05-29 (tick 34 — UNIT-Detail-event-log-polish)
 **Current mode:** `impl`
-**Current tick:** 33
-**Last focus:** Closed tick-31 gap #1 (biggest Detail gap): ported the prototype's per-payer appeal ladder (`screens.jsx:233-266`) into Detail.tsx as a new `<AppealLadder>` section above the action grid. Reads `LADDERS[n.payerLine]` (typed from UNIT-1) and renders stage cards with current-stage highlight (var(--accent-lt) bg, var(--accent-mid) border, var(--accent-dk) text), passed stages with ✓ in a filled-accent badge, distant-future stages dimmed. Header caption shows current stage name + `windowDays` ("file within N days") + `thresholdCents` ("$X AIC"). Local `payerLineDisplay()` ("Medicare Part D" / "Commercial" / "Medicaid") + `windowDaysDisplay()` + `thresholdDisplay()` helpers; payerLineDisplay duplicated from Overview pending a small future shared.ts extraction. Initial impl typo'd field names (`threshold` instead of `thresholdCents`) caught by tsc and fixed.
-**Last commit:** `<this tick>` (tick 33 — UNIT-AppealLadder)
+**Current tick:** 34
+**Last focus:** Closed tick-31 gap #2 (last queued visible gap): Detail timeline now polished to match the prototype's EventLog (`screens.jsx:386-417`). Four changes: (1) Newest-first ordering via `[...timeline].reverse()` — matches the prototype's `events.slice().reverse()`. (2) Tx-hash chip per row: `.ev-tx-chip` links to Somnia Explorer when txHash is present; dashed "no tx" placeholder otherwise. (3) Attribution chip via new `eventAttribution(e)` helper in shared.ts (mappings: provider-class / insurer-class / arbiter-class / system; explicit-partyId events route via partyId). (4) Per-event tone tint on the event name (reuses `eventTone()` from tick 24 — ok/warn/danger/purple/accent). Cost-per-event deliberately skipped (txLogger has gas data; would double-source). CSS scoped under `.timeline` to avoid cross-screen drift (lesson from tick 21's class collision). All tick-31 visible-UI gaps now closed.
+**Last commit:** `<this tick>` (tick 34 — UNIT-Detail-event-log-polish)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)
