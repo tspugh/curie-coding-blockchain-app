@@ -163,7 +163,7 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
       </div>
 
       {cdsProvenance && (
-        <div className="cds-provenance" data-testid="cds-provenance">
+        <div className="provenance" data-testid="cds-provenance">
           <strong>Imported from EHR</strong>
           <span>{cdsProvenance}</span>
         </div>

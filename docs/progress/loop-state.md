@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 47 — gate verification + bookkeeping)
+**Last updated:** 2026-05-29 (tick 48 — CDS provenance CSS polish; tick-46 LOW closed)
 **Current mode:** `impl` (T2b-2/3/4 still blocked on operator wallet funding — see Operator notes)
-**Current tick:** 47
-**Last focus:** Two no-new-code verifications: (a) **VITE_EXPOSE_TEST_API gate** — built `web/dist/` without the flag, confirmed empirically that `window.__curie === undefined` and the `setNextCostPlusUnitPrice` identifier is fully tree-shaken from the minified bundle (`grep -lE setNextCostPlusUnitPrice` on the dist file: 0 hits). UI still renders correctly. Closes the strict-review tick-45 production-leak gate empirically, not just by reasoning. (b) **UNIT-ladders-fallback-semantics** (tick-16 strict-review LOW) verified ALREADY-CLOSED: ladders.ts lines 162-184 document the intentional divergence from prototype's `stageOf` (prototype clamps + fallback; production fails loud with `"—"` sentinel), and ladders.test.ts lines 42-56 pin all four edge cases (in-range, out-of-range round, negative round, invalid PayerLine). Stale queue item marked LANDED.
-**Last commit:** `<this tick>` (tick 47 — bookkeeping)
+**Current tick:** 48
+**Last focus:** Closed the tick-46 strict-review LOW polish gap: `web/src/views/Create.tsx` was rendering the CDS-provenance banner with `className="cds-provenance"` but the matching CSS rule in `web/src/styles.css:1043` is `.provenance` (under the explicit "CDS-Hooks provenance note" section header). Banner rendered unstyled. Fixed by changing the className to `provenance` (preserving the `data-testid="cds-provenance"` so the harness still matches). Verified empirically: `getComputedStyle(...).borderLeftWidth === "3px"` (matches the `.provenance` rule's `border-left: 3px solid var(--accent-mid)`). Harness still 35/35 PASS.
+**Last commit:** `<this tick>` (tick 48 — CSS polish)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)
