@@ -1,6 +1,38 @@
 # Browser-verify
 
-Last run: tick 44 — 2026-05-29 — **28/35 pass = 80%** (was 9/35 at tick 39)
+Last run: tick 45 — 2026-05-29 — **30/35 pass = 86%** (was 9/35 at tick 39)
+
+## Tick 45 update — 30/35
+
+Scenario A fully closed (5/7 → 7/7). Two fixes:
+
+1. **Badge text assertion was too strict.** The harness expected exact "Ready"
+   but the redesigned UI renders "Policy Attached — Ready for AI" (user-facing
+   friendly label, not the bare state-machine name). The prototype's
+   `data.jsx:10` defined the label as "Policy attached" — *the original
+   harness was wrong*. Relaxed to a substring-match `*Ready*` scoped to the
+   state-badge element; authoritative state truth is asserted on the prior
+   line via `state_of(1) == 1`.
+2. **Cost-pegging inputs don't exist in the redesigned UI.** The harness was
+   filling non-existent `costplus-unit-price` / `nadac-unit-price` testids
+   (silently no-op'd), so the simulated arbiter defaulted to
+   `ceil(requested/quantity) * quantity` ≥ requested, and the cap was never
+   enforced (covered = 5200 instead of 4200). Exposed
+   `setNextDecision` / `setNextCostPlusUnitPrice` / `setNextNadacUnitPrice`
+   on `window.__curie` under the same `VITE_EXPOSE_TEST_API=1` gate; harness
+   pokes the SimulatedBackend mutables directly. Cost-pegging is a sim-runtime
+   concern not a user-facing UX surface — SPEC-0001 R16 doesn't require it.
+
+### Score delta
+
+- 28/35 (tick 44) → **30/35 (tick 45)** (+2).
+- Scenario A: 5/7 → **7/7 PASS**.
+
+Still failing (5 remaining):
+- Scenario G (1): `nonparty-attempt` testid not implemented in UI.
+- Scenario H (4): CDS-Hooks prefill button not implemented.
+
+## Tick 44 update — 28/35
 
 ## Tick 44 update — 28/35
 

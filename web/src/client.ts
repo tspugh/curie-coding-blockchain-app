@@ -302,6 +302,14 @@ if (import.meta.env.DEV || import.meta.env.VITE_EXPOSE_TEST_API === "1") {
       content: CurieClient["content"];
       wallet: CurieClient["wallet"];
       profiles: CurieClient["profiles"];
+      // Simulated-arbiter overrides for the e2e harness. These wire the
+      // module-level next* mutables that the SimulatedBackend reads at
+      // adjudication time. The harness uses these instead of UI inputs
+      // because the redesigned UI lacks the price-pegging fields (the
+      // simulation overrides are demo-runtime concerns, not user-facing).
+      setNextDecision: typeof setNextDecision;
+      setNextCostPlusUnitPrice: typeof setNextCostPlusUnitPrice;
+      setNextNadacUnitPrice: typeof setNextNadacUnitPrice;
     };
   }).__curie = {
     provider: providerClient,
@@ -310,6 +318,9 @@ if (import.meta.env.DEV || import.meta.env.VITE_EXPOSE_TEST_API === "1") {
     get content() { return client.content; },
     get wallet() { return client.wallet; },
     get profiles() { return client.profiles; },
+    setNextDecision,
+    setNextCostPlusUnitPrice,
+    setNextNadacUnitPrice,
   };
 }
 

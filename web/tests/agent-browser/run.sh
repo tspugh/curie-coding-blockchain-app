@@ -150,14 +150,21 @@ scenario_happy_path() {
   eval_click engage-submit
   ab wait 300 >/dev/null
   assert_eq "policy attached -> Ready (on-chain)" "1" "$(state_of 1)"
-  assert_eq "UI badge reflects Ready (R16)" "Ready" "$(ab get text "[data-testid=state-badge]" | tail -1)"
+  # Badge text is the user-facing label, not the bare state-machine name
+  # ("Policy Attached — Ready for AI" — Detail.tsx renders R16 with friendly copy).
+  case "$(ab get text "[data-testid=state-badge]" | tail -1)" in
+    *Ready*) echo "  ✓ UI badge reflects Ready (R16)"; PASS=$((PASS + 1));;
+    *) echo "  ✗ UI badge reflects Ready (R16) — badge text did not contain 'Ready'"; FAIL=$((FAIL + 1));;
+  esac
 
   # Act: pick decision 'approve' + a Cost Plus unit price of 2100 (cap = 2100 ×
   # quantity 2 = 4200 < requested 5200) and request adjudication -> arbiter fires
   # (R6), auto-resolves ~1.2s -> Approved (SPEC-0001 2026-05-27 per-unit cap).
+  # The redesigned UI doesn't surface cost-pegging inputs (sim-runtime concern);
+  # poke the SimulatedBackend's mutables via the test API instead (tick 45).
   eval_click decision-approve   # 0 = Decision.Approve
-  ab find testid costplus-unit-price fill "2100" >/dev/null
-  ab find testid nadac-unit-price fill "2000" >/dev/null
+  ev "window.__curie.setNextCostPlusUnitPrice(2100n); 1" >/dev/null
+  ev "window.__curie.setNextNadacUnitPrice(2000n); 1" >/dev/null
   eval_click adjudicate-submit
   ab wait 1800 >/dev/null
   assert_eq "approve ruling routes to Approved" "4" "$(state_of 1)"

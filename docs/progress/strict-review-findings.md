@@ -6002,3 +6002,158 @@ a finding.
 ### Verdict
 
 **PASS (zero findings).**
+
+## Tick 45 strict-review
+
+Reviewer: strict-review subagent. Diff base: `beb17f9`. Scope:
+`web/src/client.ts` (+14/-2) and `web/tests/agent-browser/run.sh` (~10
+lines). Three new entries on the gated `window.__curie` test-API
+(`setNextDecision`, `setNextCostPlusUnitPrice`, `setNextNadacUnitPrice`)
+and Scenario A's badge assertion + cost-pegging fills rewritten against
+those setters.
+
+**1. Production gate / leak of sim setters — CLOSED.**
+The gate is unchanged: `if (import.meta.env.DEV ||
+import.meta.env.VITE_EXPOSE_TEST_API === "1")` (client.ts:296). Vite
+substitutes `import.meta.env.DEV` with the literal `false` and
+`import.meta.env.VITE_EXPOSE_TEST_API` with `undefined` (or the env
+value) at build time, so a production build without the opt-in env var
+sees `false || undefined === "1"` constant-fold to `false`, allowing the
+whole `__curie` assignment block (lines 296–325) including the three new
+property assignments (lines 321–323) to be dead-code-eliminated. The
+three `setNext*` functions remain exported at top level (lines 68, 78,
+88), but that does NOT make them runtime-reachable: with the gated
+block eliminated there is no `window.__curie` and the only in-bundle
+caller of `setNextDecision` is `Detail.tsx` (lines 581, 647 — the
+Decision dropdown handler, an EXISTING simulated-mode wiring not
+introduced by tick 45). `setNextCostPlusUnitPrice` and
+`setNextNadacUnitPrice` have zero non-test callers (grep confirmed) and
+are only reachable through the gated `__curie` handle. A malicious page
+cannot invoke them on a production build because the only object that
+carries them is never assigned to `window`. Same posture as tick-25's
+LOW 5 closure for the existing four entries. Not a finding.
+
+**2. Type-honesty of the `as unknown as` cast — CLOSED.**
+The three new keys are typed `typeof setNextDecision` / `typeof
+setNextCostPlusUnitPrice` / `typeof setNextNadacUnitPrice` (lines
+310–312). Reading the source signatures: `setNextDecision(d: Decision):
+void` (line 68), `setNextCostPlusUnitPrice(p: bigint): void` (line 78),
+`setNextNadacUnitPrice(p: bigint): void` (line 88). The values assigned
+(lines 321–323) are the same function references — identifier shorthand
+of the imported names. `typeof setNextDecision` is exactly the function
+type `(d: Decision) => void`; the assigned value has that type. The
+cast is honest: each asserted key/value pair matches reality, and the
+casts themselves don't drop any structural promise (the cast goes from
+`window` → an enriched shape, all keys narrower than `unknown`). No
+hidden over-assertion. Not a finding.
+
+**3. Prototype-vs-app badge text — CLOSED.**
+The "Ready" exact-match was tied to the bare contract-enum name, not to
+either the prototype or the redesigned UI. Verified by reading the
+prototype handoff:
+`docs/reference/ui-prototype-handoff/project/data.jsx:10` defines
+`Ready: { label: "Policy attached", ... }` and
+`docs/reference/ui-prototype-handoff/project/visuals.jsx:5–12`'s
+`StatePill` renders that label. So the prototype's actual badge text
+for `Ready` is **"Policy attached"** — and notably does NOT contain the
+substring "Ready" (capital R). The redesigned `Detail.tsx:47` renders
+`"Policy Attached — Ready for AI"` (with `data-testid="state-badge"` at
+line 310), which DOES contain "Ready". The redesigned UI is therefore
+strictly more verbose than the prototype's badge — both are
+spec-conformant (R16 only requires the UI to reflect the on-chain
+state, see SPEC-0001 line 69). The original `assert_eq "...Ready"`
+was therefore wrong against BOTH the prototype and the redesigned UI;
+it only ever matched a hypothetical UI that rendered the bare
+state-machine name. The harness was the source of the drift, not the
+app. Relaxing to substring is the correct fix; the spec/design SoT
+divergence claim resolves to "harness was wrong". Not a finding.
+
+**4. Substring-match weakness (`*Ready*` over-matches) — CLOSED.**
+`*Ready*` would technically match "Already", "Readying", or any text
+containing "Ready" as a substring. But the assertion is scoped to the
+`[data-testid=state-badge]` element specifically, not arbitrary page
+text — so the only confounders would be alternative badge labels also
+containing "Ready". Surveying `FRIENDLY_STATE` in `Detail.tsx:45–57`:
+the other ten labels are `"Filed — Awaiting Insurer"`, `"AI Reviewing…"`,
+`"More Information Needed"`, `"Approved"`, `"Denied"`, `"Settled"`,
+`"Deadlocked"`, `"Policy Voided by AI"`, `"Provider Refused"`,
+`"Withdrawn"` — NONE contain "Ready" as a substring. The only badge
+text that matches `*Ready*` is the `State.Ready` rendering. The
+assertion is therefore as discriminating as `==="Policy Attached —
+Ready for AI"` in practice, while being robust to label-copy edits
+(which were the source of the tick-44 regression). The on-chain
+truth ("state is Ready") is asserted authoritatively one line earlier
+at `state_of 1 == 1` (run.sh:152), so a state-machine bug that left
+the contract in a non-Ready state would already fail BEFORE the badge
+assertion. The badge assertion is testing R16's "UI reflects on-chain
+state" specifically, and substring is sufficient for that. Not a
+finding.
+
+**5. Sim-API surface area / no UI input for cost-pegging — CLOSED.**
+The redesigned UI deliberately omits cost-pegging input fields because
+they are demo-runtime concerns, not user-facing controls. SPEC-0001 R16
+defines the three views as Overview, Create, Maintain/detail (line 69)
+— with no requirement for a covered-amount-input control. R6a is
+explicit that the covered amount is "not AI-chosen" and is computed
+deterministically by the contract as `min(requested, benchmarkCap)`
+(line 53). In simulated mode the SimulatedBackend stand-in needs the
+per-unit price fed in somehow, but that's a sim-runtime concern that
+should NOT bleed into the user-facing UI (it would confuse a user who
+expects the price to come from a real Cost Plus oracle in production
+mode). Exposing the test-only setters through a gated `__curie` handle
+keeps the sim-only price-injection mechanism isolated from production
+UI surface. The harness reaching in via `window.__curie.setNext*` is
+the correct factoring. Not a finding.
+
+**6. Comment honesty — CLOSED.**
+client.ts:305–309 comment block accurately describes the three
+additions: "Simulated-arbiter overrides for the e2e harness. These
+wire the module-level next* mutables that the SimulatedBackend reads at
+adjudication time. The harness uses these instead of UI inputs because
+the redesigned UI lacks the price-pegging fields (the simulation
+overrides are demo-runtime concerns, not user-facing)." Verified
+against `next*` mutable declarations at lines 39, 47, 50 and their
+read-sites in the simulated `contract.simulated.decision/
+costPlusUnitPrice/nadacUnitPrice` lambdas (lines 130–138 / 168–176) —
+the SimulatedBackend reads them at adjudication-time exactly as the
+comment claims. run.sh:153–154 comment ("Badge text is the user-facing
+label, not the bare state-machine name — Detail.tsx renders R16 with
+friendly copy") matches Detail.tsx:47 / Detail.tsx:310. run.sh:163–164
+comment ("The redesigned UI doesn't surface cost-pegging inputs;
+poke the SimulatedBackend's mutables via the test API instead (tick
+45)") matches the new ev calls at lines 166–167 and the absence of
+testids `costplus-unit-price` / `nadac-unit-price` in any view (grep
+confirmed — they were testids in the pre-redesign Detail.tsx that no
+longer exist). All four comments are accurate. Not a finding.
+
+**7. R-citation accuracy — CLOSED.**
+run.sh references R16 (badge reflection of on-chain state) and R6a
+(deterministic covered amount = `min(requested, costPlus × qty)`).
+Verified: SPEC-0001 line 69 defines R16 as the three-views requirement
+(Overview / Create / Maintain-detail) with the detail view explicitly
+required to show current state — i.e. the state-badge IS R16's
+surface. SPEC-0001 line 53 defines R6a as `coveredAmount =
+min(requestedAmount, benchmarkCap)` with `benchmarkCap = Cost Plus
+per-unit × quantity`. The harness's covered-amount assertion (4200 =
+min(5200, 2100 × 2)) is exactly R6a's formula with the test fixture
+values. Both R-numbers are correctly attributed. Not a finding.
+
+**8. Empirical verification — CLOSED.**
+Reviewer reports 30/35 pass (was 28/35 at tick 44), Scenario A 7/7 PASS
+(was 5/7) with both the badge-text assertion and the
+coveredAmount=4200 assertion green; hardhat 28/28, lib 84/84, tsc both
+roots clean. The deterministic causal chain: (a) badge assertion now
+substring-matches the user-facing label that Detail.tsx:311 actually
+renders for State.Ready, replacing the exact-match that could only have
+matched a hypothetical bare-enum UI; (b) the two cost-pegging ev calls
+set `nextCostPlusUnitPrice = 2100n` and `nextNadacUnitPrice = 2000n`
+before `eval_click adjudicate-submit`, so the simulated arbiter's
+`costPlusUnitPrice` lambda (client.ts:131–135 / 169–173) returns 2100n
+and the deterministic min computes to `min(5200, 2100 × 2) = 4200n`,
+satisfying the line-172 assertion. Both are exact deterministic
+consequences of the diff. No live harness re-run performed (out of
+strict-review scope), but the causal chain is airtight. Not a finding.
+
+### Verdict
+
+**PASS (zero findings).**
