@@ -7934,3 +7934,75 @@ is fit to close.
 No code modified in this review pass. Findings file is the only artifact
 touched.
 
+## Tick 55 strict-review
+
+**Date:** 2026-05-29
+**Scope:** the 1 new file vs `060a9f5`:
+- `src/protocol/somniaInterfaceDrift.test.ts` (~58 lines incl. JSDoc)
+
+R-citations the unit claims to satisfy: SPEC-0001 R19 (drift-check SHOULD,
+v0 form).
+
+Empirical baseline (independently verified this pass):
+- `npm run test:lib` → 85/85 pass; new test is subtest #85
+  ("ISomniaAgent.sol matches the frozen R19 verification hash"), 16.5ms.
+- Ran the JSDoc-embedded recompute one-liner verbatim from repo root
+  (`node -e "const fs=require('fs'),{ethers}=require('ethers');
+  console.log(ethers.keccak256(ethers.toUtf8Bytes(fs.readFileSync(
+  'contracts/contracts/ISomniaAgent.sol','utf8'))))"`) → output
+  `0x5036e6ca31886f6ff3b6c0864632d8d11749dd5b59d5af4c06a6afbd6929016a`,
+  matches `FROZEN_INTERFACE_HASH` at line 39 exactly.
+- `ISomniaAgent.sol` header (line 15) carries
+  `Last verified against upstream: 2026-05-29.` — the date the editor
+  pinned the hash against; the header and the constant move together as
+  required by the JSDoc protocol (lines 9-13).
+
+### Scrutiny checklist (per tick-55 prompt)
+
+| # | Item | Finding |
+|---|------|---------|
+| 1 | **R19 v0 form fit** — spec language is "v0 acceptable form: a script in `scripts/check-somnia-interface.ts` that fetches the docs URL and `keccak256`-compares the interface block." This impl is a `node:test` (not a script in `scripts/`), AND pins the LOCAL hash (no upstream fetch). | **Defensible alternative path.** R19 is a SHOULD, and the spec language is the "acceptable form" (sufficient, not necessary). Two substantive deltas: (a) test-vs-script — a test gates the build by participating in `npm run test:lib`, which is the actual CI gate; a separate `scripts/` file would need its own wire-up to gate anything. The test form fails the build *more* aggressively than a script that has to be invoked. (b) local-hash-vs-upstream-fetch — pinning the LOCAL keccak catches any unintended *local* edit (including ABI-affecting whitespace and accidental rewrites); it does NOT catch silent upstream drift, which is the strictly broader threat. Per the file's own JSDoc (line 18) and the spec's stated future-tick acknowledgement, the live-fetch form is deferred. The tick-prompt also acknowledges this: "A future tick can add the live-fetch comparison once an offline-tolerant fetch path is wired." Net: partial coverage of R19, honestly self-labelled as v0 SHOULD-tier, with the gap visibly named both in code (line 19 of the .sol header: "A drift-detection script is planned (SPEC-0001 R19, future tick)") and in the JSDoc. No finding. |
+| 2 | **Path traversal correctness** — `join(__dirname, "..", "..", "contracts", "contracts", "ISomniaAgent.sol")` from `src/protocol/`. | **Correct.** Verified: `src/protocol/` is 2 levels below repo root; `../../contracts/contracts/ISomniaAgent.sol` resolves to `<root>/contracts/contracts/ISomniaAgent.sol`, which exists (verified via `ls`). The successful test run + matching hash recompute from repo root is end-to-end proof. |
+| 3 | **Recompute one-liner fidelity** — JSDoc lines 19-21 give a `node -e` snippet the reviewer can run; must compute the same hash as the test. | **Faithful.** Test does `ethers.keccak256(ethers.toUtf8Bytes(readFileSync(path, "utf8")))`; JSDoc one-liner does the same composition with the same encoding (`'utf8'`). Ran it literally — output matches `FROZEN_INTERFACE_HASH`. The one-liner uses CJS `require`, which works because the repo has no `"type": "module"` (verified package.json). |
+| 4 | **Failure-message helpfulness** — assert.equal third arg (lines 50-56). | **Strong.** Message lists the four required steps explicitly: re-verify byte-match against upstream, cite the upstream URL (embedded inline so the reviewer can click it), update the "Last verified against upstream" date in the header, bump `FROZEN_INTERFACE_HASH`, cite the upstream diff in the commit body. Includes both `Expected:` and `Got:` hashes so the reviewer can diff. Matches the JSDoc protocol verbatim. |
+| 5 | **Test isolation / silent rename risk** — could the test pass under a renamed/moved file. | **No.** `readFileSync` throws ENOENT on missing path; node:test treats throw as failure. Verified by the JSDoc claim at lines 15-16 ("If the file is renamed, moved, or deleted the test ALSO fails on the fs read"). No mocks, no try/catch swallow, no fallback paths. No state outside the file is read. |
+| 6 | **Race / staleness** — fs caching could read stale content. | **Not applicable.** `readFileSync` is synchronous and uncached by Node — every test run hits the kernel; no cross-test state. Single-shot read per test execution. |
+| 7 | **Comment honesty** — any lying or restating comments. | **Clean.** JSDoc lines 2-22 explain *why* (R19, selector byte-match) and the failure protocol — load-bearing context, not restatement. Inline comment at line 42 ("Walk up from src/protocol/ to the repo root, then dive into contracts/.") is a navigation aid that matches the actual path components, not a restatement of the `join(...)` mechanics. No comments contradict the code. |
+| 8 | **`FROZEN_INTERFACE_HASH` placement / privacy** — could it leak as a fixture or be imported. | **Private to file.** No `export` keyword (verified via grep — only 5 references, all inside `somniaInterfaceDrift.test.ts`). Module-local `const`, no cross-file imports. Cannot be misused as a fixture from another test. |
+| 9 | **CI-friendliness** — runs cleanly under existing `npm run test:lib` glob. | **Yes.** Glob `src/**/*.test.ts` picks up `src/protocol/somniaInterfaceDrift.test.ts` automatically; observed in the `1..85` run (84 prior + 1 new). No new dependencies — `ethers` already in deps, `node:test`/`node:fs`/`node:path`/`node:url`/`node:assert/strict` are stdlib. No filesystem-permission risk: reads a tracked file inside the repo with the same permissions the test runner already uses to read its own source. |
+
+### New findings
+
+None. Each scrutiny item resolved cleanly with in-source evidence.
+
+### Hash drift sanity-check (independent reproduction)
+
+Reviewer ran the embedded one-liner verbatim and confirmed:
+```
+0x5036e6ca31886f6ff3b6c0864632d8d11749dd5b59d5af4c06a6afbd6929016a
+```
+matches `FROZEN_INTERFACE_HASH` at `somniaInterfaceDrift.test.ts:39`.
+The header date at `ISomniaAgent.sol:15` is `2026-05-29`, the day the
+hash was pinned — header and constant are in sync per the JSDoc protocol.
+
+### Carried-forward gates (per tick-55 baseline)
+
+- `npm run test:lib` → **85/85** (was 84/84; +1 = the new test). Re-ran
+  this pass.
+- hardhat → 30/30 (carried; no contracts touched).
+- harness → 37/37 (carried; no web/UI touched).
+- root `tsc` clean / web `tsc` clean (carried; no TS-typed-surface change
+  — new file is a node:test, not imported by app code).
+
+No code modified in this review pass. Findings file is the only artifact
+touched.
+
+### Verdict: **PASS**
+
+The drift-check unit is honest about its v0 scope (catches local edits;
+upstream-fetch deferred and named-as-deferred in both the .sol header and
+the test JSDoc), self-contained, fails loudly with actionable
+remediation, and integrates into the existing `npm run test:lib` gate
+without new dependencies. Unit T55 (ISomniaAgent.sol drift-check, SPEC-0001
+R19) is fit to close.
+
