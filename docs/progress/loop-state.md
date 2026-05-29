@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 23 — UNIT-profile-descriptions: close tick-22 NIT 4)
+**Last updated:** 2026-05-29 (tick 24 — UNIT-event-tones: per-event-type colors in tx-stream)
 **Current mode:** `impl`
-**Current tick:** 23
-**Last focus:** Added `description?: string` field to the `Profile` interface and populated it on `DEFAULT_PROFILES` (provider: "Files coverage-exception requests with attached clinical evidence."; insurer: "Attaches the coverage policy and accepts or appeals the arbiter ruling."). Settings.tsx profile cards now render `p.description ?? p.id` so the sub-line is genuinely informative instead of just "provider"/"insurer". Added `src/profiles/profiles.test.ts` with 3 node:test cases pinning the baseline shape + description-present invariant. Lib test count 60 → 63 (+3). Closes tick-22 NIT 4.
-**Last commit:** `<this tick>` (tick 23 — UNIT-profile-descriptions)
+**Current tick:** 24
+**Last focus:** Closed tick-21 NIT 6: tx-stream event names were all rendered in `var(--accent)` regardless of semantic. Added `eventTone(name)` to `web/src/shared.ts` returning a union `"ok" | "warn" | "danger" | "purple" | "accent"` per CoverageEvent kind: ok = Accepted/Settled (terminal success); warn = EvidenceRequested/Submitted (needs action); danger = Deadlocked/PolicyInvalidated/PolicyFlagged/ProviderRefused/Withdrawn (terminal fail); purple = procedural mid-flight (ContractCreated/ContentCommitted/InsurerEngaged/Appealed/PacketSubmitted); accent = AI-action transitions (Ruled/RulingRequested/AdjudicationRequested/etc.). Switch covers all 20 CoverageEvent names — tsc exhaustiveness guarantees adding a new event without a tone fails the build. 5 CSS rules added (.tx-ev-name.tone-*). Network.tsx row gains `tone-${eventTone(e.name)}` className. Mirrors prototype's EVENT_META intent without porting its missing tokens (--purple-500/--state-review etc.).
+**Last commit:** `<this tick>` (tick 24 — UNIT-event-tones)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)

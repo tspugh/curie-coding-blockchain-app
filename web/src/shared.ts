@@ -68,3 +68,49 @@ export function parseAmount(raw: string): bigint | null {
     return null;
   }
 }
+
+/**
+ * Map a CoverageEvent name to a UI tone token for color highlighting.
+ *
+ * Used by the Network tx-stream rows to tint the event-name cell by semantic
+ * meaning. Tones map to existing project palette tokens:
+ *   ok     → terminal success (Accepted, Settled)
+ *   warn   → needs attention (EvidenceRequested, EvidenceSubmitted)
+ *   danger → terminal failure (Denied paths)
+ *   purple → procedural mid-flight (Filed / ContentCommitted / InsurerEngaged
+ *            / Appealed / PacketSubmitted)
+ *   accent → AI-action transitions (AdjudicationRequested / RulingRequested /
+ *            Ruled / ContractReady / FeedbackPosted / RulingTimedOut)
+ *
+ * Mirrors the prototype's EVENT_META intent at data.jsx:305 but uses tokens
+ * that actually exist in our stylesheet.
+ */
+export function eventTone(name: CoverageEvent["name"]): "ok" | "warn" | "danger" | "purple" | "accent" {
+  switch (name) {
+    case "Accepted":
+    case "Settled":
+      return "ok";
+    case "EvidenceRequested":
+    case "EvidenceSubmitted":
+      return "warn";
+    case "Deadlocked":
+    case "PolicyFlagged":
+    case "PolicyInvalidated":
+    case "ProviderRefused":
+    case "Withdrawn":
+      return "danger";
+    case "ContractCreated":
+    case "ContentCommitted":
+    case "InsurerEngaged":
+    case "Appealed":
+    case "PacketSubmitted":
+      return "purple";
+    case "ContractReady":
+    case "AdjudicationRequested":
+    case "RulingRequested":
+    case "Ruled":
+    case "RulingTimedOut":
+    case "FeedbackPosted":
+      return "accent";
+  }
+}

@@ -1633,6 +1633,12 @@ tr.row-link:hover td:first-child {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Per-event-type tones from web/src/shared.ts:eventTone() — keep in sync. */
+.tx-ev-name.tone-ok      { color: var(--ok); }
+.tx-ev-name.tone-warn    { color: var(--warn); }
+.tx-ev-name.tone-danger  { color: var(--danger); }
+.tx-ev-name.tone-purple  { color: var(--purple); }
+.tx-ev-name.tone-accent  { color: var(--accent); }
 
 .tx-ev-tx {
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;

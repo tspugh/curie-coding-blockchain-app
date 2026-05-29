@@ -15,7 +15,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { type CoverageEvent, type NegotiationView, State, txUrl, SOMNIA_TESTNET } from "@lib";
 import { client } from "../client.js";
-import { describeEvent, shortHex } from "../shared.js";
+import { describeEvent, eventTone, shortHex } from "../shared.js";
 
 // ---------------------------------------------------------------------------
 // Block-number polling helper — mirrors WalletBalance/useWalletBalance pattern.
@@ -215,7 +215,7 @@ export function Network({ events, onBack }: NetworkProps) {
                 key={`${e.txHash ?? "noTx"}-${e.name}-${e.reqId.toString()}`}
                 className="tx-stream-row"
               >
-                <span className="tx-ev-name">{e.name}</span>
+                <span className={`tx-ev-name tone-${eventTone(e.name)}`}>{e.name}</span>
                 <span className="tx-ev-tx">
                   {e.txHash ? (
                     <a href={txUrl(SOMNIA_TESTNET, e.txHash)} target="_blank" rel="noreferrer">
