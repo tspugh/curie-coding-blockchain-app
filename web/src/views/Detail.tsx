@@ -5,6 +5,7 @@ import {
   ZERO_HASH,
   hashContent,
   verifyContent,
+  mapRevertReason,
   txUrl,
   SOMNIA_TESTNET,
   type CoverageEvent,
@@ -156,12 +157,25 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
     return () => { cancelled = true; };
   }, [reqId, events]);
 
+  // Extract the bare contract revert string from a wallet error and look it up
+  // in REVERT_REASON_MAP for a plain-English headline+details (SPEC-0003 R16).
+  // Ethers v6 puts the decoded `Error(string)` payload on `.reason`; viem/wagmi
+  // use `.shortMessage`. Probe in that order so the cleanest copy wins; fall
+  // back to `.message`. Unmatched reasons get the generic-fallback entry whose
+  // `details` carry the raw string so no information is lost.
   async function run(action: () => Promise<unknown>) {
     setError(null);
     try {
       await action();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const e = (err ?? {}) as { reason?: unknown; shortMessage?: unknown; message?: unknown };
+      const reason =
+        (typeof e.reason === "string" && e.reason) ||
+        (typeof e.shortMessage === "string" && e.shortMessage) ||
+        (typeof e.message === "string" && e.message) ||
+        String(err);
+      const entry = mapRevertReason(reason);
+      setError(`${entry.headline}\n\n${entry.details}`);
     }
   }
 

@@ -109,6 +109,10 @@ export {
 // --- Re-exports: appeal-ladder helpers (UNIT-UI-3) ---
 export { LADDERS, stageNameFor } from "./protocol/ladders.js";
 
+// --- Re-exports: revert-reason mapping (UNIT-4c — Detail wire-up) ---
+export { mapRevertReason, REVERT_REASON_MAP } from "./protocol/revertReasonMap.js";
+export type { RevertReason, RevertReasonEntry } from "./protocol/revertReasonMap.js";
+
 import {
   createCoverageClient,
   type CoverageClientOptions,

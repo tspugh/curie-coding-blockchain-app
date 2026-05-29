@@ -2959,3 +2959,370 @@ Re-run the three gates after that change. The LOW + NITs are queue
 items, not blockers for re-review.
 
 ### Final tick-16 verdict: FAIL (0 HIGH; 1 MEDIUM; 1 LOW; 5 NITs)
+
+---
+
+# Strict-review findings — tick 18 (UNIT-4c-narrow, mapRevertReason wired into Detail's `run` helper)
+
+## Scope under review
+
+1. `src/index.ts` — adds two re-export lines (a value re-export for
+   `mapRevertReason` + `REVERT_REASON_MAP`; a type re-export for
+   `RevertReason` + `RevertReasonEntry`), both from
+   `./protocol/revertReasonMap.js`. No other changes.
+2. `web/src/views/Detail.tsx` — adds `mapRevertReason` to the existing
+   `@lib` import block, and rewrites the `run(action)` helper at
+   lines 160-180. The helper now:
+   - Probes the thrown error in the order `.reason` (ethers v6) →
+     `.shortMessage` (viem/wagmi) → `.message` (generic Error) →
+     `String(err)` last resort, mirroring the probe order in
+     `useAction.ts` post-tick-12-NIT-2-fix.
+   - Passes the extracted reason into `mapRevertReason()` from the
+     library.
+   - Calls `setError(`${entry.headline}\n\n${entry.details}`)`,
+     concatenating the structured map output into a single string.
+3. The four pre-existing client-validation `setError("plain string")`
+   call sites (~497 "Select a policy first.", ~599 "New evidence is
+   required to appeal.", ~648 "Evidence reference is required.",
+   ~676 "Note text is required.") are intentionally left untouched.
+
+## R-citations
+
+- SPEC-0003 §2.3 **R16** — revert-reason map; now wired into Detail's
+  user-visible action panel.
+
+## Required gates (verified)
+
+- `node --import tsx --test "src/**/*.test.ts"` → `# tests 53 / # pass
+  53 / # fail 0` (CLEAN; full transcript witnessed; 2305 ms).
+- `npx tsc -p tsconfig.json` → exit 0, no output (CLEAN; `dist/` was
+  rebuilt so vite consumes the new re-exports).
+- `npx tsc -p web/tsconfig.json --noEmit` → exit 0, no output (CLEAN).
+- `npx vite build` (from repo root, where `vite.config.ts` lives —
+  initial attempt from `web/` failed because the config defines
+  `root: "web"` and aliases `@lib` → `<repoRoot>/dist/index.js`) →
+  succeeds, 213 modules transformed, 554 kB bundle, build time 3.54 s.
+  No errors; only the pre-existing >500 kB chunk-size advisory.
+
+## Cross-checks performed
+
+1. **Probe order parity with `useAction.ts`.** Side-by-sided the new
+   `run` helper at `Detail.tsx:166-180` against `extractRevertReason`
+   in `useAction.ts:74-92`. The order `.reason → .shortMessage →
+   .message` is identical. Both use `typeof e["…"] === "string" &&
+   e["…"]` guards to reject non-string and empty-string values.
+   Detail.tsx adds a `String(err)` last resort that useAction.ts does
+   not (useAction returns `undefined` and lets `mapRevertReason`
+   produce the generic fallback; Detail.tsx forces a non-empty
+   stringification first). Both paths eventually reach the same
+   generic-fallback entry for unknown reasons, so the observable
+   behaviour is equivalent for the common cases.
+
+2. **Falsy-but-defined string handling.** The `&& e.reason` short-
+   circuit on `e.reason === ""` returns `""` (falsy), so the `||`
+   chain falls through to the next probe. Correct — empty-string
+   `.reason` is treated as no-reason.
+
+3. **`String(err)` for null / undefined / primitives.**
+   - `err = null` → `err ?? {}` becomes `{}`, all probes miss,
+     `String(err)` is `String(null) = "null"` → `mapRevertReason("null")`
+     returns the generic fallback with `details` carrying `Raw reason:
+     null`. Doesn't crash. Acceptable.
+   - `err = "boom"` (thrown string) → `err ?? {}` keeps `"boom"`,
+     property accesses on a primitive return `undefined`, `String(err)
+     = "boom"`. mapRevertReason exact-matches if `"boom"` happens to
+     be a known key (no chance), otherwise generic fallback with the
+     string in `details`. Acceptable.
+   - `err = {}` → all probes miss, `String(err) = "[object Object]"` →
+     generic fallback. Acceptable.
+
+4. **`mapRevertReason` exact-match limitation.** Confirmed:
+   `revertReasonMap.ts:272-285` does `REVERT_REASON_MAP[reasonRaw as
+   RevertReason]` — strict object indexing, no fuzzy match. Ethers v6
+   exposes the bare contract revert string on `.reason` (verified via
+   the ethers docs surface), so for the common path `.reason ===
+   "engage: not Open"` → exact match → user-friendly entry. For
+   wallets that expose the reason only inside a noisy `.message`
+   (e.g. `"VM Exception while processing transaction: reverted with
+   reason string 'engage: not Open'"`), the exact match fails and
+   the generic fallback fires. The fallback's `details` carry the
+   raw string so no information is lost — confirmed at
+   `revertReasonMap.ts:280-284`. Acceptable for tick 18 scope.
+
+5. **Re-export hygiene in `src/index.ts`.** Greped the entire `src/`
+   tree for `mapRevertReason`, `REVERT_REASON_MAP`, `RevertReason`,
+   `RevertReasonEntry`. No collisions: these four symbols are unique
+   to `src/protocol/revertReasonMap.ts` and the new re-export lines
+   are the only mention in `src/index.ts`. The re-exports correctly
+   separate the value re-export (`export { mapRevertReason,
+   REVERT_REASON_MAP }`) from the type re-export (`export type {
+   RevertReason, RevertReasonEntry }`), which is required under
+   `isolatedModules`/`verbatimModuleSyntax`. The dist build picks them
+   up — vite resolved `@lib` and bundled successfully.
+
+6. **JSDoc truthfulness.** The new comment block at
+   `Detail.tsx:160-165` claims:
+   - "Ethers v6 puts the decoded `Error(string)` payload on `.reason`"
+     — confirmed against the ethers v6 contract-call-error shape.
+   - "viem/wagmi use `.shortMessage`" — confirmed against viem's
+     `BaseError.shortMessage` field.
+   - "Probe in that order so the cleanest copy wins; fall back to
+     `.message`" — matches the implementation.
+   - "Unmatched reasons get the generic-fallback entry whose `details`
+     carry the raw string so no information is lost" — confirmed
+     against the fallback at `revertReasonMap.ts:280-284`.
+
+7. **No new tests added — acceptable per precedent.** The web layer
+   has no React testing infrastructure (verified in earlier ticks,
+   e.g. tick 13). Detail.tsx changes rest on tsc + vite build +
+   future manual browser-verify. Consistent with the convention; not
+   a finding.
+
+## Findings
+
+### MEDIUM 1 — `\n\n` in concatenated error string collapses to a single space at render time, defeating the structured headline+details that R16 introduces
+
+`Detail.tsx:178` does:
+
+```ts
+setError(`${entry.headline}\n\n${entry.details}`);
+```
+
+`error` is then rendered at lines 186 and 256 as:
+
+```tsx
+<p className="error">{error}</p>
+```
+
+The `.error` CSS rule at `web/src/styles.css:554-562` is:
+
+```css
+.error {
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 12px;
+  background: var(--danger-lt);
+  border-radius: var(--radius-sm);
+  border: 1px solid #fca5a5;
+}
+```
+
+There is **no `white-space: pre-wrap` / `pre-line` / `pre`** on
+`.error`, and `<p>` is not a `<pre>`. HTML's default whitespace
+collapsing rule will fold the embedded `\n\n` into a single space.
+The result the user actually sees is a single line concatenating
+headline and details with one space between them, e.g.:
+
+> Only the provider can perform this action Your connected wallet
+> is not the provider address on this contract. Switch to the
+> provider wallet and try again.
+
+…which:
+
+- Visually loses the headline-as-prominent / details-as-explanation
+  distinction that `RevertReasonEntry` was deliberately designed for
+  (see `revertReasonMap.ts:52-61` — "shown prominently in the error
+  card (R21)" vs "Shown in the 'What to do' area of the error card").
+- Means R16's user-visible payoff (a curated, two-tier user copy
+  surface) is only half-wired: the data flows but the presentation
+  flattens it back into the same one-line string blob the prior
+  generic-Error rendering used. From the user's seat, the upgrade
+  is "the wording is now better" — not "there's now a structured
+  card with a headline and an explanation," which is what
+  `revertReasonMap.ts`'s API design and SPEC-0003 R21 ("error card
+  with headline and details area") imply.
+
+This is also the architectural divergence point flagged in checklist
+item 6 of the briefing: useAction.ts stores `RevertReasonEntry`
+**as a struct** so a future consumer can render `headline` and
+`details` into distinct DOM nodes. Detail.tsx's `run` helper
+collapses the struct into a string at the boundary, which means
+any future "render the error card properly" work has to undo this
+collapsing.
+
+**Recommended remediation (smallest possible change):** either
+
+- (a) change `setError` state shape to `RevertReasonEntry | string |
+  null` and render `<p>` with `entry.headline` in a `<strong>` and
+  `entry.details` in a sibling span (or two `<p>`s inside an error
+  card div), preserving the structure end-to-end; or
+- (b) keep the string contract but add `white-space: pre-line` to
+  `.error` so the `\n\n` survives rendering. This is one CSS line
+  and visually achieves the two-tier presentation.
+
+Option (b) is the smallest, but option (a) is the architecturally
+correct one and aligns with what `useAction.ts` already does. Either
+remediation re-runs the same three gates.
+
+### LOW 1 — Duplicated probe logic between `Detail.tsx:run` and `useAction.ts:extractRevertReason` is borderline DRY-violation that will rot
+
+The probe block in `Detail.tsx:171-176`:
+
+```ts
+const e = (err ?? {}) as { reason?: unknown; shortMessage?: unknown; message?: unknown };
+const reason =
+  (typeof e.reason === "string" && e.reason) ||
+  (typeof e.shortMessage === "string" && e.shortMessage) ||
+  (typeof e.message === "string" && e.message) ||
+  String(err);
+```
+
+is structurally a subset of `useAction.ts:74-92`'s
+`extractRevertReason` plus a `String(err)` fallback. If the probe
+order or wallet-shape coverage changes in one place (e.g. tick 12
+made the order `.reason → .shortMessage → .message` after a NIT
+fix; a future viem upgrade might add `.cause.message` probing),
+both places need to change in lockstep. The repo has no test
+covering the Detail.tsx path so silent rot is plausible.
+
+The briefing's checklist item 5 asks whether this is "acceptable
+for tick 18" or "finding-worthy." My read: it's finding-worthy at
+LOW (not MEDIUM) because (a) the duplication is short — 4 lines —
+and (b) the two consumers are architecturally distinct (per-action
+hook with pending state vs shared per-component runner without
+pending state), so DRY-ing them naively would couple structures
+that don't otherwise share an interface. But the fix is also cheap:
+extract `extractRevertReason(err: unknown): string | undefined` to
+`src/protocol/revertReasonMap.ts` (where the map already lives,
+adjacent concern), re-export from `@lib`, import it in both
+useAction.ts and Detail.tsx. Both probe sites then call the same
+4-line helper.
+
+**Recommended remediation:** lift the probe to a shared helper next
+to `mapRevertReason`. Not a hard blocker, but worth bundling into
+the MEDIUM 1 fix to avoid touching Detail.tsx twice.
+
+### LOW 2 — `setError` type now mixes two semantic shapes (plain string vs concatenated revert headline+details), and the four pre-existing client-validation call sites render differently from the new revert path
+
+`setError` is typed as `string | null` (line 120). It now stores:
+
+- Plain client-validation strings: `"Select a policy first."`,
+  `"New evidence is required to appeal."`, `"Evidence reference is
+  required."`, `"Note text is required."` (lines 497, 599, 648, 676).
+- Concatenated revert headline+details: `${entry.headline}\n\n
+  ${entry.details}` (line 178).
+
+Both pass through the same `<p className="error">{error}</p>` render.
+Visually, the four client-validation messages render fine (single
+line, short). The revert-path message renders as MEDIUM 1 describes
+(`\n\n` collapses to a space, looks like a long sentence). The
+inconsistency is mild because the four short strings happen to be
+acceptable as single-line; but if you adopt MEDIUM 1's remediation
+(b) (`white-space: pre-line`), the client-validation strings continue
+to render fine. If you adopt remediation (a) (struct shape), you
+either have to wrap the validation strings in
+`{ headline: "Select a policy first.", details: "" }` (verbose) or
+keep `setError` as a sum type and branch in the render — both
+acceptable but worth deciding explicitly.
+
+**Recommended remediation:** adopt MEDIUM 1's option (b) so the four
+plain-string call sites keep working unchanged; document the design
+choice in a one-line comment near `setError`.
+
+### NIT 1 — `(err ?? {}) as { reason?: unknown; ... }` cast is harmless but unidiomatic compared to useAction.ts's `Record<string, unknown>` pattern
+
+`Detail.tsx:171` casts to a closed object shape with three optional
+fields. `useAction.ts:76` casts to `Record<string, unknown>` and then
+uses bracket access `e["reason"]`. Both compile and both are type-
+safe at the property-access boundary. The closed-shape cast is
+slightly more documentative ("here's the surface we care about"),
+the `Record` version is more flexible. Pure style; not a finding.
+
+### NIT 2 — JSDoc cites R16 but does not cite R21 (the error-card-shape requirement that the headline/details split exists for)
+
+Lines 160-165 cite SPEC-0003 R16 only. The reason `RevertReasonEntry`
+has separate `headline` and `details` fields is SPEC-0003 R21's
+"error card" surface. Citing both would make MEDIUM 1's rendering
+miss more visible to a future reader. Pure docs polish.
+
+## OK items — checked, no finding
+
+- No naming clashes in `src/index.ts` re-exports — confirmed via
+  full-`src/` grep of the four symbol names.
+- `mapRevertReason` exact-match on `REVERT_REASON_MAP` keys —
+  confirmed at `revertReasonMap.ts:274` (`REVERT_REASON_MAP[reasonRaw
+  as RevertReason]`); object indexing, no fuzzy or substring match.
+  Wallet errors that DO expose the bare contract string on `.reason`
+  (ethers v6) match exactly. Wallets that don't fall through to
+  the fallback with the raw reason carried in `details`. Confirmed.
+- Probe order matches `useAction.ts` post-tick-12-NIT-2-fix
+  (`.reason → .shortMessage → .message`). Confirmed by side-by-side
+  read.
+- Empty-string `.reason` / `.shortMessage` / `.message` falls
+  through to the next probe via the `&& e.…` short-circuit.
+  Confirmed.
+- `String(err)` final fallback never crashes for `null`/`undefined`/
+  primitives/objects. Confirmed.
+- The four pre-existing client-validation `setError("plain string")`
+  call sites at ~497/~599/~648/~676 are untouched. Confirmed by
+  re-reading Detail.tsx; the diff only touches the import block and
+  the `run` helper.
+- `src/index.ts` re-export uses both `export { … }` (values) and
+  `export type { … }` (types), correct under `verbatimModuleSyntax`.
+  Confirmed.
+- `tsc -p tsconfig.json` rebuilt `dist/index.js` and vite consumed
+  the rebuilt dist (vite bundled successfully with the new re-
+  exports reachable from `@lib`). Confirmed.
+- Tests 53/53 pass. Confirmed.
+- Both tsc projects clean. Confirmed.
+- `npx vite build` (from repo root) succeeds. Confirmed.
+
+## Verdict
+
+Tick 18 lands the data flow correctly: `mapRevertReason` is re-exported
+from `@lib` without naming clashes, `Detail.tsx`'s `run(action)` helper
+probes the wallet error in the right order (matching the tick-12 hook),
+and the map's structured output reaches `setError`. All four gates
+(tests, both tsc projects, vite build) stay green. The four pre-
+existing client-validation `setError` call sites are correctly left
+alone, and the JSDoc on the `run` helper is truthful about the probe
+order and the fallback-carries-raw-reason guarantee.
+
+However, the **MEDIUM 1** finding blocks the gate: the helper
+concatenates `entry.headline` + `\n\n` + `entry.details` into a single
+string, but the `.error` CSS class has no `white-space: pre-line` /
+`pre-wrap`, so the `\n\n` collapses to a single space at render time.
+The user-visible result is a single long sentence with no headline-
+prominence — defeating R16's whole point of splitting copy into a
+prominent headline and an explanatory details paragraph, and partially
+undoing R21's error-card shape. The data plumbing works; the
+presentation flattens the structure right back to one-line. This is
+fixable with one CSS line (option b: add `white-space: pre-line` to
+`.error`) or, better, by carrying `RevertReasonEntry` as a struct end-
+to-end like `useAction.ts` already does (option a).
+
+The **LOW 1** finding (probe-logic duplication between Detail.tsx and
+useAction.ts) is fixable by lifting `extractRevertReason` next to
+`mapRevertReason` in `src/protocol/revertReasonMap.ts` and re-exporting
+from `@lib`. Worth bundling into the MEDIUM 1 fix. The **LOW 2** finding
+(mixed `setError` shapes / inconsistent rendering between client-
+validation strings and concatenated headline+details) goes away under
+remediation option (b) and is worth a one-line design comment.
+
+Briefing says "Zero findings required." One MEDIUM blocker (presentation
+fidelity for R16) + two LOWs (DRY duplication; mixed setError shapes) +
+two NITs → the tick does not clear the gate.
+
+**Recommended remediation summary for next tick:**
+
+1. (MEDIUM 1) Either add `white-space: pre-line` to `.error` in
+   `web/src/styles.css` (one-line CSS fix; preserves the `\n\n`), or
+   carry `RevertReasonEntry` as a struct in `setError`'s state and
+   render `headline` + `details` into separate DOM nodes. Option (a)
+   is more architecturally correct and aligns with `useAction.ts`;
+   option (b) is the smallest possible fix.
+2. (LOW 1) Lift the probe block to a shared
+   `extractRevertReason(err: unknown): string | undefined` helper
+   next to `mapRevertReason` in `src/protocol/revertReasonMap.ts`,
+   re-export from `@lib`, import in both `useAction.ts` and
+   `Detail.tsx`. Removes 4 lines of duplication.
+3. (LOW 2) Document the `setError` sum-type convention with a one-
+   line comment so a future reader sees both shapes are intentional.
+4. (NIT 2) Add an R21 citation to the JSDoc on the `run` helper so
+   the headline/details split's purpose is visible.
+
+Re-run the three gates after each change.
+
+### Final tick-18 verdict: FAIL (0 HIGH; 1 MEDIUM; 2 LOWs; 2 NITs)
+

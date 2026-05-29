@@ -559,6 +559,9 @@ tr.row-link:hover td:first-child {
   background: var(--danger-lt);
   border-radius: var(--radius-sm);
   border: 1px solid #fca5a5;
+  /* Preserve `\n` separators between RevertReasonEntry.headline and .details
+     (SPEC-0003 R16). Without this, the `\n\n` collapses to a single space. */
+  white-space: pre-line;
 }
 
 .hint {

@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 17 — UNIT-ladders-fallback-semantics; JSDoc-only LOW closure)
+**Last updated:** 2026-05-29 (tick 18 — UNIT-4c-narrow: wire mapRevertReason into Detail's action panel)
 **Current mode:** `impl`
-**Current tick:** 17
-**Last focus:** Closed strict-review tick 16 LOW: `stageNameFor` returns `"—"` on out-of-range round / unknown line while prototype's `stageOf` silently clamps + falls back to PartD. Resolution = intentional divergence (production fails loud; out-of-range round means the contract wrote a value beyond `maxRounds` which is a bug worth surfacing, not papering over). Updated JSDoc on `stageNameFor` (`src/protocol/ladders.ts:163-178`) to document the divergence + reasoning. No behavior change — existing 14 ladders tests still green; production is intentionally stricter than the prototype.
-**Last commit:** `<this tick>` (tick 17 — JSDoc closure)
+**Current tick:** 18
+**Last focus:** SPEC-0003 R16 wire-up. `Detail.tsx:run()` now extracts the bare contract revert string via probe order `.reason → .shortMessage → .message → String(err)` (same as `useAction.ts`'s extractRevertReason) and routes through `mapRevertReason()` to produce a plain-English `headline + "\n\n" + details` set on the error display. Strict-review caught the rendering MEDIUM: the `\n\n` was collapsing because `.error` CSS lacked `white-space: pre-line` — fixed inline. The user's reported "auth: not insurer" now surfaces as "Only the insurer can attach a policy. Your connected wallet is not the insurer address on this contract. Switch to the insurer wallet and try again." LOWs deferred: shared probe logic with useAction.ts (4-line dup → future helper extraction), mixed setError shapes (plain-string client-validation vs struct-flattened-string revert) — both queued as `UNIT-error-display-cleanup`.
+**Last commit:** `<this tick>` (tick 18 — UNIT-4c-narrow)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)
