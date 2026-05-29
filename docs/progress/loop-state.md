@@ -4,13 +4,18 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 5 — UNIT-2-followup-A landed; appeal-state edge coverage green)
+**Last updated:** 2026-05-29 (tick 6 — UNIT-2-followup-B landed; createContract guard ordering pinned)
 **Current mode:** `impl`
-**Current tick:** 5
-**Last focus:** UNIT-2-followup-A — parameterized appeal-from-any-non-Denied-state tests (DONE; 27/27 + 20/20)
-**Last commit:** *(set after tick 5 commit)*
+**Current tick:** 6
+**Last focus:** UNIT-2-followup-B — R2b zero-address guard ordering test (DONE; 28/28 + 21/21)
+**Last commit:** *(set after tick 6 commit)*
 
 ## Work queue (priority order)
+
+### UNIT-2-followup-B (LANDED tick 6 — createContract guard ordering pinned)
+**R2b zero-address ordering test — prevents silent revert-string drift**
+- What landed: new test in `contracts/test/CoverageNegotiation.test.ts` after the existing R2b test, asserting all 4 sub-cases: `provider==0 → "addr: zero"`, `insurer==0 → "addr: zero"`, `provider==insurer==0 → "addr: zero"` (NOT "create: self-contract"), `provider==insurer!=0 → "create: self-contract"`. Mirror added in `src/contract/simulated.auth.test.ts` confirming sim/real parity. If a future refactor swaps the require lines in `createContract`, the (zero, zero) case would silently flip strings and the test fails immediately.
+- Gate verdict: hardhat 28/28 ✓ (+1), vitest 21/21 ✓ (+1), tsc ✓, secret-scan ✓. Opus gates skipped per very-lean-tick procedure (test-only diff; trivial ordering invariant).
 
 ### UNIT-2-followup-A (LANDED tick 5 — appeal-state edge coverage)
 **Parameterized "appeal from any non-Denied state reverts" test**
@@ -121,6 +126,7 @@
 
 ## Recent findings (rolling — newest first, last 20)
 
+- **2026-05-29 (tick 6 — UNIT-2-followup-B landed, very-lean tick):** Closed the zero-address ordering gap from tick 4's strict-review LOW finding. Both UNIT-2 follow-ups now landed; SPEC-0004 Phase 1 contract work fully tested. Token budget after tick 6 estimated ~80% — clearly in the 75–90% band per procedure. Next tick must stop dispatching subagents, do small inline work only, and prepare for emergency tag if a non-trivial unit is next. UI units (UNIT-4+) will require a fresh session — they're too large to safely fit in remaining budget.
 - **2026-05-29 (tick 5 — UNIT-2-followup-A landed, lean tick):** Closed the appeal-state edge-coverage gap from tick 4's strict-review. Confirmed by exhaustive testing: the contract's `appeal()` state guard is ordered BEFORE auth + cap checks, so all 9 non-Denied states produce the identical `"appeal: prior ruling not Deny"` revert — no terminal-state guard ordering surprises. Lean tick: skipped Opus gates since change was test-only and the prescribed fix was already vetted. Sim/real parity maintained. Token budget after tick 5 estimated ~75% — next tick should be very lean (skip all subagents per procedure; commit whatever's coherent; prepare for emergency-tag if needed).
 - **2026-05-29 (tick 4 — UNIT-2 landed):** SPEC-0004 Phase 1 contracts landed. Initial strict-review caught 6 findings; 3 CRITICAL (lying R12 comment in contract header, runtime regressions in 3 consumers from the new R2b predicate, sim/real PacketSubmitted parity break) were release-blockers that I addressed inline. Net: contract change + 3 callsite updates + new TS event type + sim emission + real ABI mapping. Token budget after tick 4 estimated 70% — next tick is in the 60–75% band, so should skip non-essential subagents. Findings 4–6 deferred as UNIT-2-followup-A/B units in the queue (parameterized edge tests + zero-address ordering test).
 - **2026-05-29 (tick 3 — UNIT-1 landed):** SPEC-0004 §2.4 R13/R15/R16 typing layer is now in place. Initial strict-review flagged 5 findings (2 MEDIUM: stale ROUND SEMANTICS comment, untested appealRound deadlock invariant; 3 LOW: ladders.test.ts spot-coverage, stageNameFor edge cases, FileRequestInput optional-with-PartD-default vs CreateContractParams required). All 5 addressed inline. Final vitest count grew from 5 → 19 (added 14 ladders assertions). Hardhat 15/15 unchanged (assertions added to existing T6 + R9-deadlock-appeal tests). Total tick cost included 3 Opus gate reviews (solidity/security/strict-1); strict-review-2 skipped to preserve token budget — findings instead resolved by direct edit + test reruns. Token budget after tick 3 estimated ~55–60% — tick 4 will be lean per the procedure (skip non-essential subagents if needed).

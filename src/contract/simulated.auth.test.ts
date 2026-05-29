@@ -140,6 +140,32 @@ test("R2b (SPEC-0004 §2.1): self-contract (providerAddr == insurerAddr) is reje
   );
 });
 
+test("UNIT-2-followup-B (sim): createContract guards order — addr: zero precedes create: self-contract", async () => {
+  // Pins the simulated backend's revert ordering to match the on-chain contract.
+  // If sim and real diverge here, the same input would produce different revert
+  // strings across modes — silent test-fidelity regression.
+  const ZERO = "0x0000000000000000000000000000000000000000";
+  const b = backend();
+  b.setCaller(PROVIDER);
+  const expect = async (
+    providerAddr: string,
+    insurerAddr: string,
+    msg: string,
+  ): Promise<void> => {
+    await assert.rejects(
+      () => b.createContract(params({ providerAddr, insurerAddr })),
+      (e: unknown) => {
+        assert.equal((e as Error).message, msg);
+        return true;
+      },
+    );
+  };
+  await expect(ZERO, PROVIDER, "addr: zero");
+  await expect(PROVIDER, ZERO, "addr: zero");
+  await expect(ZERO, ZERO, "addr: zero"); // NOT "create: self-contract"
+  await expect(PROVIDER, PROVIDER, "create: self-contract");
+});
+
 test("ANY_CALLER wildcard preserves back-compat (no gating)", async () => {
   const b = new SimulatedBackend({ autoResolve: false }); // default caller is ANY_CALLER
   assert.equal(b.activeAddress, ANY_CALLER);

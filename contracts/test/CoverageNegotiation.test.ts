@@ -220,6 +220,40 @@ describe("CoverageNegotiation", () => {
     ).to.be.revertedWith("create: self-contract");
   });
 
+  it("UNIT-2-followup-B: createContract guards order — addr: zero precedes create: self-contract", async () => {
+    // Pins the ordering of the createContract require chain. If a future refactor
+    // swaps the `addr: zero` and `create: self-contract` lines, the (zero, zero)
+    // case would silently change revert string and downstream consumers parsing
+    // revert messages would degrade. SPEC-0004 §2.1 AC-6 + structural invariant.
+    const { contract } = await deploy();
+    const [provider] = await ethers.getSigners();
+    const ZERO_ADDR = ethers.ZeroAddress;
+    const args = (providerAddr: string, insurerAddr: string) =>
+      [PROVIDER_ID, INSURER_ID, providerAddr, insurerAddr, DRUG_REF, REQUESTED,
+       QUANTITY, DAYS_SUPPLY, JUSTIFICATION_HASH, EVIDENCE_URI, 0] as const;
+
+    // provider == 0, insurer != 0 → addr: zero
+    await expect(
+      contract.connect(provider).createContract(...args(ZERO_ADDR, provider.address))
+    ).to.be.revertedWith("addr: zero");
+
+    // provider != 0, insurer == 0 → addr: zero
+    await expect(
+      contract.connect(provider).createContract(...args(provider.address, ZERO_ADDR))
+    ).to.be.revertedWith("addr: zero");
+
+    // provider == insurer == 0 → addr: zero (NOT "create: self-contract" — ordering matters)
+    await expect(
+      contract.connect(provider).createContract(...args(ZERO_ADDR, ZERO_ADDR))
+    ).to.be.revertedWith("addr: zero");
+
+    // provider == insurer != 0 → create: self-contract (already covered above; restated
+    // here so the ordering invariant is documented in one place).
+    await expect(
+      contract.connect(provider).createContract(...args(provider.address, provider.address))
+    ).to.be.revertedWith("create: self-contract");
+  });
+
   it("T4 (R6/R9): adjudication fires the agent → UnderReview; mock records the createRequest", async () => {
     const { platform, contract } = await deploy();
     const [provider, insurer] = await ethers.getSigners();
