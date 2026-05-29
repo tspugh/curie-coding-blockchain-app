@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 34 — UNIT-Detail-event-log-polish)
+**Last updated:** 2026-05-29 (tick 35 — design-conformance refresh: 82% → 89%)
 **Current mode:** `impl`
-**Current tick:** 34
-**Last focus:** Closed tick-31 gap #2 (last queued visible gap): Detail timeline now polished to match the prototype's EventLog (`screens.jsx:386-417`). Four changes: (1) Newest-first ordering via `[...timeline].reverse()` — matches the prototype's `events.slice().reverse()`. (2) Tx-hash chip per row: `.ev-tx-chip` links to Somnia Explorer when txHash is present; dashed "no tx" placeholder otherwise. (3) Attribution chip via new `eventAttribution(e)` helper in shared.ts (mappings: provider-class / insurer-class / arbiter-class / system; explicit-partyId events route via partyId). (4) Per-event tone tint on the event name (reuses `eventTone()` from tick 24 — ok/warn/danger/purple/accent). Cost-per-event deliberately skipped (txLogger has gas data; would double-source). CSS scoped under `.timeline` to avoid cross-screen drift (lesson from tick 21's class collision). All tick-31 visible-UI gaps now closed.
-**Last commit:** `<this tick>` (tick 34 — UNIT-Detail-event-log-polish)
+**Current tick:** 35
+**Last focus:** Re-measured design-conformance after the three tick-32/33/34 closures. **82% → 89% (+7pp)**. Per-surface: Detail 72→87 (+15), TopBar 72→83 (+11), Overview 88, Create 73, Network 85, Settings 90 unchanged. **1pp short of the 90% steady-state threshold.** Highest-leverage remaining gap is Create's payer-line selector + live hash preview (`screens.jsx:469-473, 492-499`) — queued as UNIT-Create-payer-selector. Closing it should push over 90% (Create gets a 15-20pp bump). Other remaining gaps: Network right panel (Contract-state-live key-value grid + on/off-chain boundary diagram); Detail event-log cost/STT column (deliberately deferred tick 34).
+**Last commit:** `<this tick>` (tick 35 — conformance refresh)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)

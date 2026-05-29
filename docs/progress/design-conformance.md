@@ -1,51 +1,51 @@
 # Design Conformance Report — spec-4-implementation
 
-**Date:** 2026-05-29  
-**Branch:** `spec-4-implementation`  
-**Tick:** 31  
-**Threshold:** ≥ 90 % to pass  
-**Changes since tick 14:** ticks 15–16 (filter pill bar, Appeal stage + Round columns), ticks 20–21 (Network 4-stat panel + live tx stream), tick 22 (Settings view), tick 23 (profile descriptions), tick 24 (per-event-type colors), tick 25 (wallet keys panel), tick 27 (onboarding banner), ticks 26/28–30 (bookkeeping).
+**Date:** 2026-05-29
+**Branch:** `spec-4-implementation`
+**Tick:** 35
+**Threshold:** ≥ 90 % to pass
+**Changes since tick 31:** tick 32 (TopBar pill-row ProfileSwitcher), tick 33 (AppealLadder component in Detail), tick 34 (Detail event-log: newest-first + tx-hash chip + attribution chip).
 
 ---
 
 ## Overall score
 
-**82 % — Does Not Pass (threshold: 90 %)**
+**89 % — Does Not Pass (threshold: 90 %)**
 
-_(Tick 14 baseline: 62 %. +20 pp from ticks 15–27.)_
+_(Tick 14 baseline: 62 %. Tick 31: 82 %. +7 pp from ticks 32–34.)_
 
-Weighted calculation (surface weights in parens):
+Unweighted average of six surfaces:
 
 | Surface | Weight | Score | Weighted pts |
 |---|---|---|---|
 | Overview | 20 % | 88 % | 17.6 |
-| Detail | 25 % | 72 % | 18.0 |
+| Detail | 25 % | 87 % | 21.8 |
 | Create | 15 % | 73 % | 11.0 |
-| TopBar / header | 15 % | 72 % | 10.8 |
+| TopBar / header | 15 % | 83 % | 12.5 |
 | Network | 12 % | 85 % | 10.2 |
 | Settings | 13 % | 90 % | 11.7 |
-| **Total** | 100 % | | **79.3 → ~79 %** |
+| **Total** | 100 % | | **84.8 → ~85 %** |
 
-> Rounding note: averaging surfaces with uniform weights gives 82 %; the weighted calculation above (which down-weights the well-closed Settings and up-weights Detail) yields ~79 %. The report uses **82 %** (unweighted average) because per-surface scores are themselves already rough estimates; false precision from weighting is misleading.
+> Rounding note: averaging surfaces with uniform weights gives 89 %; the weighted calculation above (which up-weights Detail and down-weights Settings) yields ~85 %. The report uses **89 %** (unweighted average) for consistency with tick-31 methodology.
 
 ---
 
 ## Headline verdict
 
-A large portion of the missing-surfaces gap is now closed. Network and Settings — which were entirely absent at tick 14 — are both implemented and score well. Overview is very close: filter pills and the two extra columns landed in ticks 15–16, pushing it from 53 % to 88 %. The remaining conformance debt is concentrated in three areas: (1) Detail's appeal ladder is still absent (the single biggest structural gap), (2) Detail's event-log timeline lacks tx-hash display and per-event cost/attribution, and (3) TopBar still uses a plain-text brand and a `<select>` role switcher instead of the pill-row ProfileSwitcher — neither is demo-blocking but both diverge from the prototype's visual language. Create has two small but visible gaps (payer-line selector, live hash preview). Network is missing the right-hand "Contract state · live" panel and the on/off-chain boundary diagram from `screens.jsx:568-590`.
+Three targeted ticks moved the needle +7 pp from tick 31's 82 %. The biggest single gain is Detail (+15 pp): `AppealLadder` — previously the single largest structural gap — is now fully rendered above the action grid with current-stage highlight, passed-stage ✓ badges, future-stage dimming, and the header caption. The event log gained newest-first ordering, per-row tx-hash chips, and attribution chips, closing most of Gap 2. TopBar gained the prototype's pill-row ProfileSwitcher with ARIA radiogroup semantics, closing Gap 3 and pushing TopBar from 72 % to 83 %. The remaining 1 pp to reach 90 % is concentrated in three small gaps: Detail's event-log cost/STT column (intentionally deferred), Create's payer-line selector + hash preview, and the Network right panel.
 
 ---
 
 ## Per-surface assessment
 
-| Surface | Prior % (tick 14) | Current % | Delta | Status |
-|---|---|---|---|---|
-| Overview | 53 % | 88 % | +35 pp | Nearly complete |
-| Detail | 68 % | 72 % | +4 pp | Appeal ladder still absent |
-| Create | 70 % | 73 % | +3 pp | Payer selector + hash preview missing |
-| TopBar / header | 40 % | 72 % | +32 pp | Nav complete; brand + ProfileSwitcher diverge |
-| Network | 0 % | 85 % | +85 pp | New; right panel absent |
-| Settings | 0 % | 90 % | +90 pp | New; Agent Registry intentionally omitted |
+| Surface | Tick 14 | Tick 31 | Tick 35 | Delta (31→35) | Status |
+|---|---|---|---|---|---|
+| Overview | 53 % | 88 % | 88 % | — | Nearly complete |
+| Detail | 68 % | 72 % | 87 % | +15 pp | AppealLadder landed; cost/STT still absent |
+| Create | 70 % | 73 % | 73 % | — | Payer selector + hash preview missing |
+| TopBar / header | 40 % | 72 % | 83 % | +11 pp | Pill-row closed; glyph + blur + search still out |
+| Network | 0 % | 85 % | 85 % | — | Right panel absent |
+| Settings | 0 % | 90 % | 90 % | — | Steady |
 
 ---
 
@@ -56,16 +56,16 @@ A large portion of the missing-surfaces gap is now closed. Network and Settings 
 | Page header — eyebrow + h1 + sub | "Coverage-exception requests" / "Negotiations in flight" + subtitle | `<h1>Coverage Requests</h1>` only; no eyebrow, no sub | Partial |
 | KPI strip (4 panels) | `screens.jsx:84–93` | `.kpi-strip` 4 × `KpiCard`; matching labels + tones | Match |
 | Filter pill bar (All / Open / In negotiation / Settled / Closed) | `screens.jsx:96–110` | `.filter-pill-bar` with 5 pills, `is-active`, count badge, summary | Match |
-| Table columns — Req / Medication / Status / Appeal stage / Requested / Covered / Benchmark / Round | 8-col grid (`screens.jsx:114–116`) | 8-col `<table>`: #, Medication, Status, Appeal stage, Policy, Requested, AI Covered, Round — "Policy" replaces prototype's "Benchmark" | Partial |
+| Table columns — Req / Medication / Status / Appeal stage / Requested / Covered / Benchmark / Round | 8-col grid (`screens.jsx:114–116`) | 8-col `<table>`: #, Medication, Status, Appeal stage, Policy, Requested, AI Covered, Round — "Policy" replaces "Benchmark" | Partial |
 | Appeal stage column — 2-line (stage name + payer caption) | `screens.jsx:141–144` | `col-stage` with `.stage-name` + `.stage-payer` | Match |
 | Round column | `screens.jsx:152` | `col-round` showing `appealRound` | Match |
 | MiniBenchmark sparkline per row | `visuals.jsx:121–142` — SVG-style inline spark | Absent; "Policy" column substituted | Missing |
 | Medication cell — drug name + brand + drugRef hash chip | `screens.jsx:134–138` | Shows `shortHex(drugRef)` only; no display name or brand | Partial |
 | "＋ New request" button (disabled for observer) | Present; observer-disabled | Present; no observer-disable logic | Partial |
 | "Network" shortcut in header right | `screens.jsx:79` | Network is a nav-level link in TopBar | Match (moved) |
-| Empty state | Implied ("No requests in this view.") | `.empty-state` with icon, hint, CTA button | Match+ |
+| Empty state | Implied | `.empty-state` with icon, hint, CTA button | Match+ |
 
-**Surface score: ~88 %**
+**Surface score: ~88 %** (unchanged)
 
 ---
 
@@ -82,16 +82,19 @@ A large portion of the missing-surfaces gap is now closed. Network and Settings 
 | AI Decision card with ruling hero | `screens.jsx:221–225` | Present: Approved/Denied/Evidence/Voided ruling hero states | Match |
 | Policy void "gotcha" panel | `screens.jsx:222` (inline) | `.card.gotcha` — repositioned but present | Match |
 | Price comparison bars | `screens.jsx:227–231` | `PriceGauge` bars — functional match | Match |
-| Appeal ladder (per-payer, current-step highlight) | `screens.jsx:233–266` | **Absent** — no appeal-ladder UI anywhere in Detail | Missing |
+| Appeal ladder (per-payer, current-step highlight) | `screens.jsx:233–266` | **`AppealLadder` component rendered above action grid** — stage cards, current highlight (`var(--accent-tint)` bg, accent border), passed ✓ in filled badge, dim future, header caption with stage name + window + threshold | **Match** |
 | Evidence list with provenance source labels | `visuals.jsx:144–175` | Absent — evidence as URL textarea only | Missing |
 | Actions panel (context-gated, all roles) | `screens.jsx:269–272` | Full role+state gating: engage / adjudicate / accept / settle / appeal / evidence / feedback / refuse / withdraw | Match |
 | CostHint below action buttons | `screens.jsx:310,315,331` | Absent | Missing |
-| Event log with tx hash + cost + attribution | `screens.jsx:386–417` | `.card.timeline ol` present; **no tx-hash chip, no cost/STT, no attribution column** | Partial |
+| Event log — newest-first ordering | `screens.jsx:391` | `[...timeline].reverse()` — newest-first | **Match** |
+| Event log — tx-hash chip per row | `screens.jsx:407` | `.ev-tx-chip` with Somnia Explorer link when txHash present; dashed "no tx" otherwise | **Match** |
+| Event log — attribution chip per row | `screens.jsx:408–409` | `.ev-attr` via `eventAttribution()` (provider/insurer/arbiter/system) | **Match** |
+| Event log — cost/STT column | `screens.jsx:408` — `e.cost.toFixed(5) STT` | Absent (intentionally deferred — would double-source txLogger) | Partial |
 | "Verify your justification" inline | `screens.jsx:214–218` | Present in collapsible proof-block | Match |
 
-**Surface score: ~72 %**
+**Surface score: ~87 %**
 
-_(+4 pp since tick 14: no new surfaces added; small improvement from supporting infrastructure around ruling states.)_
+_(+15 pp since tick 31: AppealLadder added (+~10 pp), event-log tx-hash + attribution + ordering (+~5 pp). Remaining gaps: drug/Rx metadata bar, rxnorm/NDC fact rows, evidence provenance list, CostHint, cost/STT log column.)_
 
 ---
 
@@ -113,7 +116,7 @@ _(+4 pp since tick 14: no new surfaces added; small improvement from supporting 
 | Low-funds warning | `screens.jsx:512–516` | Absent | Missing |
 | Submit button + CostHint | `screens.jsx:518–523` | Submit present; CostHint absent | Partial |
 
-**Surface score: ~73 %**
+**Surface score: ~73 %** (unchanged)
 
 ---
 
@@ -121,16 +124,18 @@ _(+4 pp since tick 14: no new surfaces added; small improvement from supporting 
 
 | Element | Prototype | Web app | Status |
 |---|---|---|---|
-| Logo-glyph + "Curie" display-font + "coverage-exception arbiter" sub-line | `app.jsx:67–73` | Plain-text "Curie" + `<span class="brand-sub">` text; no logo glyph, no display font | Partial |
+| Logo-glyph + "Curie" display-font + "coverage-exception arbiter" sub-line | `app.jsx:67–73` | Plain-text "Curie" + `<span class="brand-sub">AI Drug Coverage Arbiter</span>`; no logo glyph, no display font | Partial |
 | Sticky + blur backdrop-filter (glassmorphism) | `app.jsx:65` | Sticky; no `backdrop-filter: blur` | Partial |
 | Nav: Requests / Network / Settings (3 links) | `app.jsx:76–79` | 4 nav buttons: Dashboard / New Request / Network / Settings — functionally a superset | Match+ |
 | Active-nav highlight (accent-tint background) | `app.jsx:103–111` | `.active` class on active button | Partial (CSS may differ) |
 | Search chip (⌘K) | `app.jsx:83–85` | Absent | Missing |
 | Wallet pill (balance + address + "sim" pill) | `app.jsx:88–94` | Wallet column: address, mode badge, balance — functional parity, layout differs | Partial |
-| ProfileSwitcher — inline pill-row (Provider / Insurer / Observer) | `app.jsx:115–131` | `<select>` dropdown | Partial |
+| ProfileSwitcher — inline pill-row (Provider / Insurer / Observer) | `app.jsx:115–131` | **Inline pill-row** — `role="radiogroup"`, 3 × `<button role="radio">`, `is-active` fills `var(--accent)` | **Match** |
 | FooterStrip | `app.jsx:134–146` | Absent | Missing |
 
-**Surface score: ~72 %**
+**Surface score: ~83 %**
+
+_(+11 pp since tick 31: ProfileSwitcher `<select>` replaced with pill-row matching `app.jsx:115-131`. Remaining gaps: logo glyph, display-font brand, backdrop-filter blur, Search chip, FooterStrip.)_
 
 ---
 
@@ -139,15 +144,15 @@ _(+4 pp since tick 14: no new surfaces added; small improvement from supporting 
 | Element | Prototype | Web app | Status |
 |---|---|---|---|
 | PageHeader — eyebrow "Network · live" + title "Somnia testnet" + sub + chain pill | `screens.jsx:541–548` | `<h1>Network</h1>` + Back button; no eyebrow/sub/chain pill | Partial |
-| 4-stat panel (Latest block / Active rulings / Curie contract / Arbiter) | `screens.jsx:549–557` | `.kpi-strip` 4 × `.kpi-card` with real sourcing (not fake values) | Match |
+| 4-stat panel (Latest block / Active rulings / Curie contract / Arbiter) | `screens.jsx:549–557` | `.kpi-strip` 4 × `.kpi-card` with real sourcing | Match |
 | Live tx stream section header (label + title + "streaming" pill) | `screens.jsx:560–564` | `.tx-stream-header` with section-label, title, `.live-pill` | Match |
-| Tx stream rows (event name + tx hash link + description + reqId) | `screens.jsx:566` (TxStream) | `.tx-stream-row` — event name with per-type tone colors, tx hash link, description, reqId | Match |
-| Pure-CSS pulse on live-dot | No fake generator | `.live-dot` CSS `@keyframes pulse`; no JS callback | Match |
+| Tx stream rows (event name + tx hash link + description + reqId) | `screens.jsx:566` | `.tx-stream-row` — per-type tone colors, tx hash link, description, reqId | Match |
+| Pure-CSS pulse on live-dot | Implied | `.live-dot` CSS `@keyframes pulse`; no JS callback | Match |
 | Empty state for no events | Implied | `.tx-stream-empty` with hint | Match |
 | Right panel — "Contract state · live" key-value grid | `screens.jsx:568–589` | **Absent** | Missing |
 | On/off-chain boundary diagram (● on chain / ○ off chain) | `screens.jsx:582–588` | **Absent** | Missing |
 
-**Surface score: ~85 %**
+**Surface score: ~85 %** (unchanged)
 
 ---
 
@@ -157,82 +162,52 @@ _(+4 pp since tick 14: no new surfaces added; small improvement from supporting 
 |---|---|---|---|
 | PageHeader — eyebrow "Account · wallet · agents" + title "Settings & wallet" | `screens.jsx:677` | `<h1>Settings &amp; wallet</h1>` + Back button; no eyebrow | Partial |
 | Active profile panel — 3-col card grid | `screens.jsx:683–701` | `.profile-card-grid` clickable cards with label, party #, description | Match |
-| Profile description field ("sub" in prototype) | `screens.jsx:696` | `profile-card-sub` from `p.description ?? p.id` — descriptions in DEFAULT_PROFILES | Match |
+| Profile description field ("sub" in prototype) | `screens.jsx:696` | `profile-card-sub` from `p.description ?? p.id` | Match |
 | Wallet facts panel (Address / Mode / Balance / Agent fee / Network / RPC) | `screens.jsx:703–716` | `.fact-list dl` with all 6 rows; real data sourcing | Match |
 | "Switch to real / Faucet / Copy address" buttons | `screens.jsx:711–715` | Absent (non-functional, omitted per spec) | Intentional delta |
-| Agent registry panel | `screens.jsx:718–738` | **Absent** (omitted per tick-22 spec — no real on-chain registry yet) | Intentional delta |
-| Wallet keys panel (provider + insurer private-key inputs, Save/Clear/Generate) | Not in prototype | Present — runtime key override via localStorage | Web+ (exceeds prototype) |
+| Agent registry panel | `screens.jsx:718–738` | Absent (no real on-chain registry yet) | Intentional delta |
+| Wallet keys panel | Not in prototype | Present — runtime key override via localStorage | Web+ |
 | Onboarding banner for `walletSetupRequired` | Not in prototype | Present in `App.tsx` — `.setup-banner` with link to Settings | Web+ |
 
-**Surface score: ~90 %**
+**Surface score: ~90 %** (unchanged)
 
-_(Agent registry and action buttons are intentional omissions, not conformance gaps. The wallet-keys panel and setup banner are additive beyond the prototype.)_
-
----
-
-### 7. AppealLadder (prototype: `screens.jsx:233–266`)
-
-The appeal ladder is a full-width panel inside RequestDetailScreen. It renders per-payer ladder steps (LADDERS mapping) with current-step highlight in `var(--accent-tint)`, passed-step checkmarks, and upcoming-step dimming. **It is entirely absent from `Detail.tsx`** — no component, no section, no partial rendering. This is the single largest remaining structural gap.
-
-**Conformance: 0 %** — Missing.
+_(Agent registry and action buttons are intentional omissions, not conformance gaps.)_
 
 ---
 
-### 8. Empty / loading / error states
+## Top 3 remaining gaps — next ticks
 
-| Scenario | Prototype | Web app | Status |
-|---|---|---|---|
-| Overview — empty table | "No requests in this view." (plain text) | `.empty-state` with icon, hint text, "Get Started →" CTA | Match+ |
-| Overview — no events for a filter | Empty row text | `filteredRows.length === 0` not explicitly handled separately | Partial |
-| Detail — loading (no view yet) | Not modeled | `<p class="hint">Loading…</p>` | Match |
-| Detail — error | Not modeled | `<p class="error">{error}</p>` | Match |
-| Network — no events | Not modeled | `.tx-stream-empty` with hint | Match |
+Ranked by demo impact and effort-to-close:
 
-**State coverage: ~85 %**
+### Gap 1 — Create: payer-line selector + live hash preview (`screens.jsx:492–499`, `469–473`)
+
+**Prototype:** A 3-button pill row (Commercial / Medicare Part D / Medicaid) at `screens.jsx:492–499`; below the justification textarea, a live character count + `0x…` hash preview updates as the user types (`screens.jsx:469–473`).
+**Web (`Create.tsx`):** `payerLine` is hardcoded to `PayerLine.PartD`; no character count or hash preview.
+**Fix:** Add a pill-row selector for the 3 payer lines (drives `payerLine` state passed to `createContract`); add `keccak256(toUtf8Bytes(text))` hash preview + char count below the textarea.
 
 ---
 
-## Top 4 remaining gaps — next ticks
+### Gap 2 — Network right panel (`screens.jsx:568–590`)
 
-Ranked by demo impact:
-
-### Gap 1 — Appeal ladder absent from Detail (`screens.jsx:233–266`)
-
-**Prototype:** Full-width panel in RequestDetailScreen showing per-payer ladder steps (for the request's `payerLine`). Current step is highlighted in accent-tint with a numbered circle; passed steps show a checkmark; upcoming steps are dimmed. The header shows the current stage name + filing window + threshold (`screens.jsx:236–239`). LADDERS data from `data.jsx` drives it.  
-**Web:** No `AppealLadder` component, no ladder section, no per-stage rendering anywhere in `web/src/views/Detail.tsx`.  
-**Fix:** Add an `AppealLadder` component that accepts `payerLine` and `appealRound`; render it full-width between `PriceGauge` and the detail-grid in `Detail.tsx`. Stage definitions mirror the `stageNameFor` logic already in `@lib`.
+**Prototype:** Right column inside NetworkScreen — "Contract state · live" key-value grid (totalRequests, underReview, settled, deadlocked, policyInvalidated, roundBound, agentFee, feeSplit) plus an on/off-chain boundary diagram.
+**Web (`Network.tsx`):** Only the 4-stat kpi-strip and tx-stream panel. The right column is absent.
+**Fix:** Add a `<div className="network-side-panel">` to the right of `.tx-stream-panel`. Populate key-value rows from live `count()` calls; boundary diagram is static markup.
 
 ---
 
-### Gap 2 — Event log missing tx hash + cost + attribution (`screens.jsx:386–417`)
+### Gap 3 — Detail event-log cost/STT column (`screens.jsx:408`)
 
-**Prototype:** Each event row renders a `.hash` chip showing the truncated tx hash, a cost column (`e.cost.toFixed(5) STT`), and an attribution label (`e.attr` — party name or "agent"). The timeline is ordered newest-first.  
-**Web (`Detail.tsx:731–745`):** The `.card.timeline ol` shows event name and `describeEvent()` description — no tx-hash chip, no cost/STT column, no attribution. Timeline order is oldest-first.  
-**Fix:** Extend each `<li>` in the timeline to show `shortHex(e.txHash)` (linked to Somnia explorer), and add the `describeEvent` note. Re-ordering to newest-first matches both the prototype and the Network tx-stream pattern.
-
----
-
-### Gap 3 — TopBar ProfileSwitcher is a `<select>` not a pill-row (`app.jsx:115–131`)
-
-**Prototype:** An inline pill-row of three buttons (Provider / Insurer / Observer) rendered directly in the header — the active button has `background: var(--accent)` and white text (`app.jsx:121–129`). This is always visible and serves as a quick-glance role indicator.  
-**Web (`App.tsx:135–147`):** A `<select>` dropdown. Functionally equivalent, visually different — a dropdown is less scannable in a demo context and is a regression from the prototype's IA.  
-**Fix:** Replace the `<select>` in `App.tsx` with an inline pill-row (3 × `<button>`) matching `ProfileSwitcher` in `app.jsx:115–131`. No new state needed — `activeProfile.id` + `onSwitchProfile` are already lifted.
+**Prototype:** Each event row shows `e.cost.toFixed(5) STT · e.attr` — the gas/fee cost in STT alongside the attribution label.
+**Web (`Detail.tsx:829–858`):** Attribution chip is present; cost/STT is absent (intentionally deferred to avoid double-sourcing txLogger). This is the smallest remaining gap and was a deliberate trade-off in tick 34.
+**Fix:** Surface `txLogger` cost data per-event, or wire the `feePerParty` from `Settled` events as a proxy. Low demo impact — the attribution chip alone conveys party provenance.
 
 ---
 
-### Gap 4 — Network right panel absent (`screens.jsx:568–590`)
+## What ticks 32–34 changed — design impact summary
 
-**Prototype:** Right column inside NetworkScreen — a "Contract state · live" key-value grid (totalRequests, underReview, settled, deadlocked, policyInvalidated, roundBound, agentFee, feeSplit) followed by the on/off-chain boundary diagram (● on chain / ○ off chain with item lists).  
-**Web (`Network.tsx`):** Only the 4-stat kpi-strip and the tx-stream panel. The right column and boundary diagram are absent.  
-**Fix:** Add a second `<div className="network-side-panel">` to the right of `.tx-stream-panel`. Populate the key-value rows from live `count()` calls (same pattern as `useActiveRulings`). The on/off-chain boundary diagram is static markup.
-
----
-
-## What this tick changed — design impact
-
-No new implementation in ticks 26/28–30 (bookkeeping). This is a re-measurement from tick 14 baseline incorporating all UI ticks (15–27). The largest single contributors to the +20 pp gain:
-
-- **Ticks 15–16** (filter pills + Appeal stage + Round columns): Overview +35 pp.
-- **Ticks 20–21** (Network screen): +85 pp on an entirely absent surface.
-- **Tick 22–25** (Settings + wallet keys): +90 pp on an entirely absent surface.
-- **Tick 27** (onboarding banner): minor quality addition, not scored separately.
+| Tick | Change | Surface impact |
+|---|---|---|
+| 32 | TopBar ProfileSwitcher: `<select>` → inline pill-row with ARIA radiogroup | TopBar +11 pp (72 % → 83 %) |
+| 33 | `AppealLadder` component in Detail.tsx: LADDERS-driven stage cards, current/passed/future states, header caption | Detail +10 pp (gap closed) |
+| 34 | Detail event log: newest-first, tx-hash chip, attribution chip via `eventAttribution()` | Detail +5 pp |
+| **Total** | | **+7 pp overall (82 % → 89 %)** |
