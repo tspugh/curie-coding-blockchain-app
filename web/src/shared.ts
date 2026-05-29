@@ -27,6 +27,8 @@ export function describeEvent(e: CoverageEvent): string {
       return "Adjudication requested — firing the necessity arbiter";
     case "RulingRequested":
       return `Ruling requested — request ${e.requestId}, fee ${e.fee}`;
+    case "PacketSubmitted":
+      return `Evidence packet pinned — round ${e.round}, root ${shortHex(e.packetRoot)} (${e.packetUrl})`;
     case "Ruled":
       return `Arbiter ruled "${DECISION_NAMES[e.decision]}" — covered ${e.coveredAmount}, clause ${shortHex(e.clauseRef)}, receipt ${e.receiptId}`;
     case "PolicyFlagged":

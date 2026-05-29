@@ -1,4 +1,4 @@
-# Solidity compliance — tick 11
+# Solidity compliance — tick 12
 
 **Date:** 2026-05-29
 **Scope:** no `contracts/` diff this tick — audit deferred to next contract-touching tick
@@ -9,10 +9,9 @@
 Verified via `git diff --name-only HEAD~1..HEAD -- contracts/` (empty result). This
 tick's diff consists of:
 
-- Refactor of 3 scenario test files under `src/protocol/`
-- New TS helper module under `src/protocol/`
-- Prose-only edit to `docs/specs/0001-mvp0-coverage-negotiation.md`
-- Progress-file updates under `docs/progress/`
+- 3 new TS files: `src/protocol/revertReasonMap.ts`,
+  `src/protocol/revertReasonMap.test.ts`, `web/src/hooks/useAction.ts`
+- 1 edit: `web/src/shared.ts` (added missing `PacketSubmitted` case)
 
 No changes to `contracts/contracts/CoverageNegotiation.sol`,
 `contracts/contracts/mocks/MockAgentPlatform.sol`, or
@@ -21,17 +20,6 @@ No changes to `contracts/contracts/CoverageNegotiation.sol`,
 Because no Solidity source or contract-level test was touched this tick, no new
 audit pass is warranted. The next contract-touching tick should re-trigger a
 full focused review.
-
-## Spec-side note — R6b prose update (future contract work)
-
-The R6b prose update in `docs/specs/0001-mvp0-coverage-negotiation.md` mentions a
-future `policyVoidedClauseIndices` field on the `Ruled` event. This is a **spec
-change, not yet a contract change** — the on-chain `Ruled` event signature in
-`CoverageNegotiation.sol` is unchanged this tick. Flagging for the next
-contract-touching tick: when implemented, the event-signature audit checks
-(ABI width, indexed-vs-non-indexed positioning, gas cost of additional
-dynamic-array parameter, and event-emission CEI placement) will need to run
-fresh against the new field.
 
 ## Carry-forward — prior open findings
 
@@ -45,12 +33,19 @@ From tick 4 (UNIT-2):
   `uint8 indexed round` width gap was explicitly noted as forward-compatible
   and accepted, not an open finding.
 
-Ticks 8 (UNIT-3a), 9 (UNIT-3b), 10 (UNIT-3c), and 11 (this tick) also touched
-no `contracts/` files and added no new findings.
+Ticks 8 (UNIT-3a), 9 (UNIT-3b), 10 (UNIT-3c), 11, and 12 (this tick) also
+touched no `contracts/` files and added no new findings.
 
-No unresolved compliance items carry into tick 11. One spec-side carry-forward
-flag (R6b `policyVoidedClauseIndices`) is noted above for the next
-contract-touching tick.
+No unresolved compliance items carry into tick 12. One spec-side carry-forward
+flag (R6b `policyVoidedClauseIndices`) remains noted for the next
+contract-touching tick — see tick 11 entry in git history for full context:
+the R6b prose update in `docs/specs/0001-mvp0-coverage-negotiation.md` mentions
+a future `policyVoidedClauseIndices` field on the `Ruled` event. This is a
+spec change, not yet a contract change — the on-chain `Ruled` event signature
+in `CoverageNegotiation.sol` is unchanged. When implemented, the
+event-signature audit checks (ABI width, indexed-vs-non-indexed positioning,
+gas cost of additional dynamic-array parameter, and event-emission CEI
+placement) will need to run fresh against the new field.
 
 ## Tick 4 (UNIT-2) audit — preserved for reference
 

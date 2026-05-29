@@ -1203,3 +1203,381 @@ are CLOSED. The two new NITs are flagged for record-keeping; neither
 blocks landing.
 
 ### Final tick-11 verdict: PASS (0 actionable findings; 2 NITs documented)
+
+---
+
+## Tick 12 strict review (2026-05-29)
+
+**Scope under review (UNIT-4-narrow + a piggyback fix):**
+1. `src/protocol/revertReasonMap.ts` — SPEC-0003 R16. `RevertReason` union
+   (32 contract revert strings), `REVERT_REASON_MAP` (frozen Record), the
+   `RevertReasonEntry` shape, and `mapRevertReason(raw): RevertReasonEntry`
+   with a generic fallback that embeds raw input.
+2. `src/protocol/revertReasonMap.test.ts` — 9 sub-tests via `node:test`.
+3. `web/src/hooks/useAction.ts` — SPEC-0003 R13/R14. React hook wrapping
+   async writes with `pending`, mapped `error`, and a `useRef`-backed
+   in-flight guard that hard-rejects concurrent `run()` calls.
+4. `web/src/shared.ts` — pre-existing `describeEvent` exhaustiveness bug
+   surfaced after UNIT-2 added `PacketSubmittedEvent`; tick 12 closes it
+   with `case "PacketSubmitted": …` so web `tsc` is clean.
+
+**Required gates (verified):**
+- `node --import tsx --test "src/**/*.test.ts"` → `# tests 53 / # pass 53
+  / # fail 0` (CLEAN).
+- `npx tsc -p tsconfig.json --noEmit` → exit 0, no output (CLEAN).
+- `npx tsc -p web/tsconfig.json --noEmit` (after `npx tsc -p tsconfig.json`
+  builds `dist/`) → exit 0, no output (CLEAN).
+
+### Cross-checks performed
+
+1. **Contract revert string ↔ `REVERT_REASON_MAP` enumeration.** Ran the
+   prompted grep over `contracts/contracts/*.sol`:
+
+   ```
+   grep -nE 'revert "[^"]*"|require\([^,]+,\s*"[^"]*"' contracts/contracts/*.sol
+   ```
+
+   Yielded 38 hits across `CoverageNegotiation.sol`. After collapsing
+   duplicates (`auth: not provider` × 3 sites — createContract L324,
+   submitEvidence L396, refuse L505; `fee: refund failed` × 3 sites —
+   submitEvidence L409, appeal L454, requestAdjudication-helper L806),
+   **27 unique revert strings** remain. **All 27 are present in
+   `REVERT_REASON_MAP`** with no inventions:
+
+   | Contract string | Map key |
+   |---|---|
+   | `addr: zero` · `auth: not provider` · `qty: zero` · `create: self-contract` | ✓ |
+   | `engage: not Open` · `auth: not insurer` · `policy: empty` | ✓ |
+   | `adjudicate: not Ready` | ✓ |
+   | `evidence: wrong state` · `evidence: empty` | ✓ |
+   | `appeal: prior ruling not Deny` · `appeal: unknown party` · `appeal: needs evidence` | ✓ |
+   | `accept: not ruled` · `settle: not ruled` · `settle: not both accepted` | ✓ |
+   | `refuse: not refusable` · `withdraw: terminal` · `feedback: terminal` | ✓ |
+   | `timeout: not UnderReview` · `timeout: too early` | ✓ |
+   | `callback: not platform` · `callback: unknown request` · `callback: not UnderReview` | ✓ |
+   | `fee: underfunded` · `fee: refund failed` | ✓ |
+   | `auth: not a party` | ✓ |
+   | `funds: zero addr` · `funds: insufficient` · `funds: transfer failed` | ✓ |
+   | `unknown contract` | ✓ |
+   | `maxRounds: < 1` | ✓ |
+
+   The map carries **32 entries** total. The gap (27 unique contract
+   strings vs 32 map keys) is the de-duplication of three sites each that
+   share `auth: not provider` and `fee: refund failed` — i.e. the map
+   collapses by-string-not-by-site, which is correct (the user sees the
+   string, not the line number). **No spec drift.**
+
+2. **`RevertReason` type union vs map keys.** The exported union enumerates
+   all 32 strings; the map ends with
+   `satisfies Record<RevertReason, RevertReasonEntry>` — the compiler
+   enforces every union member has an entry. **No type-vs-runtime gap.**
+   Re-verified by reading both blocks side-by-side: count matches (32),
+   spelling matches (incl. unusual `"maxRounds: < 1"` with embedded space
+   around `<`, and `"funds: zero addr"` not `"funds: zero address"`).
+
+3. **`describeEvent` exhaustiveness post-fix.** `web/src/shared.ts` now
+   carries **20 `case` arms** for the 20 `BaseEvent` subtypes exported by
+   `src/types/coverage.types.ts` (counted via
+   `grep -c "readonly name:"`). The added `case "PacketSubmitted":` arm
+   reads `e.round` (bigint), `e.packetRoot` (string), `e.packetUrl`
+   (string), which matches `PacketSubmittedEvent` lines 260-265 of
+   `src/types/coverage.types.ts` exactly. The arm template-stringifies
+   `round` (BigInt → string at runtime), `shortHex`-truncates the root,
+   and shows the URL verbatim in parens. **Field shape is correct.**
+
+4. **`mapRevertReason` fallback embeds raw input.** Lines 280-283 of
+   `revertReasonMap.ts`:
+
+   ```ts
+   details: `The contract rejected the transaction. The technical reason
+   is shown below.${
+     reasonRaw !== undefined ? ` Raw reason: ${reasonRaw}` : ""
+   }`,
+   ```
+
+   When the raw string is undefined, the `Raw reason:` suffix is omitted —
+   no `Raw reason: undefined` artefact. Test 5 of the test file
+   (`mapRevertReason with unknown string returns fallback and embeds raw
+   string in details`) pins the included-when-defined path with
+   `assert.ok(entry.details.includes(raw))`. **Spec'd behaviour
+   preserved.**
+
+5. **`Object.freeze` semantics.** `Object.freeze(REVERT_REASON_MAP)` is
+   shallow: the top-level map is frozen, but each nested entry object is
+   not. Test 6 only asserts `Object.isFrozen(REVERT_REASON_MAP)`. See
+   NIT 1 below.
+
+6. **`useAction` race-condition analysis.** Re-read lines 33-65 of
+   `web/src/hooks/useAction.ts`:
+   - `inFlightRef = useRef(false)` (line 38) — synchronous,
+     not-state-batched.
+   - `run` reads `inFlightRef.current` (line 41) **before** any awaits.
+   - If `false`, sets `inFlightRef.current = true` synchronously (line
+     46), then `setPending(true)` + `setError(null)` (state updates,
+     batched).
+   - The `finally` clears both `inFlightRef.current` and `pending`.
+
+   Two `run()` calls in the same tick: the second sees
+   `inFlightRef.current === true` set by the first → hard-rejects with
+   `Error("in-flight")`. **No window for double-entry.** The earlier
+   tick-7 finding pattern (state-only guard with stale-closure or
+   batched-update window) does not apply here — the ref is the load-bearing
+   guard, `pending` is presentational.
+
+7. **`useAction` generic typing.** Signature is
+   `useAction<T>(fn: () => Promise<T>): { …; run: () => Promise<T> }`.
+   `run` `await`s `fn()` and returns the resolved value, so
+   `run(): Promise<T>` is correct. On error, `run` rethrows (not
+   suppressed), so the caller's `.catch` / `try/await` still fires.
+   **Type-correct.**
+
+8. **`extractRevertReason` probe order.** Lines 79-86: checks
+   `e.reason` → `e.message` → `e.shortMessage`. See NIT 2 below.
+
+9. **Test 3 strictness** (`mapRevertReason returns the correct entry for
+   each known revert string`). Asserts headline of returned entry equals
+   headline of the map entry — does NOT assert returned-`details` equals
+   map-`details`, and does NOT assert reference-equality
+   (`assert.equal(entry, REVERT_REASON_MAP[key])`). For the 5 baseline
+   keys all headlines are unique strings, so the existing assertion is
+   sufficient to catch swapped-entry bugs in practice. See NIT 3 below.
+
+10. **`shared.ts` PacketSubmitted fix as scope creep.** The diff in
+    tick 12 bundles a pre-existing exhaustiveness bug
+    (`web/src/shared.ts` missing a `case "PacketSubmitted":` arm after
+    UNIT-2 / tick 4 added the event type) into the same commit as the
+    SPEC-0003 R13/R16 work. The fix is one arm in one file, and it was
+    blocking the `npx tsc -p web/tsconfig.json` gate that the tick must
+    leave clean. See NIT 4 below.
+
+### Findings
+
+#### NIT 1 — `Object.freeze` on `REVERT_REASON_MAP` is shallow; entries are mutable
+
+**File:** `src/protocol/revertReasonMap.ts:67-68`, `:97-102` (test).
+
+`Object.freeze(REVERT_REASON_MAP)` prevents key add/remove/reassign on the
+top-level map but does NOT freeze the nested `RevertReasonEntry` objects.
+A consumer with a reference to e.g. `REVERT_REASON_MAP["engage: not
+Open"]` could legally execute
+`REVERT_REASON_MAP["engage: not Open"].headline = "lol"` and corrupt the
+shared instance — every subsequent `mapRevertReason("engage: not Open")`
+call would return the mutated entry. Test 6 only asserts
+`Object.isFrozen(REVERT_REASON_MAP)`, not per-entry freeze. The
+`Readonly<Record<RevertReason, RevertReasonEntry>>` type and the
+`readonly headline`/`readonly details` markers prevent this at the
+TypeScript level — but at runtime, a JS consumer or a
+`@ts-ignore`-wielding caller can still mutate. For a copy-table used
+purely as a lookup, the practical risk is low; a strict reviewer flags it
+because the freeze gesture promises immutability that the implementation
+does not fully deliver.
+
+**Suggested fix (optional):** deep-freeze the entries, e.g.
+
+```ts
+export const REVERT_REASON_MAP = Object.freeze(
+  Object.fromEntries(
+    Object.entries(rawMap).map(([k, v]) => [k, Object.freeze(v)]),
+  ),
+) as Readonly<Record<RevertReason, RevertReasonEntry>>;
+```
+
+or factor a `deepFreeze` helper. One-line addition; eliminates the
+gesture-vs-guarantee gap. Severity: **NIT** (academic; current
+TypeScript readonly markers carry the contract for in-repo callers).
+
+#### NIT 2 — `extractRevertReason` makes `shortMessage` unreachable in practice
+
+**File:** `web/src/hooks/useAction.ts:74-89`.
+
+Probe order is `.reason` → `.message` → `.shortMessage`. Ethers v6
+errors *always* carry a non-empty `.message` (it's the base `Error`
+property), so the `.shortMessage` branch is unreachable for any error
+that bubbles through ethers — even viem / wagmi errors that primarily
+expose `.shortMessage` are typically wrapped or thrown as `Error`
+subclasses with a populated `.message`. The consequence: when the
+underlying error has a clean `.shortMessage` like `"engage: not Open"`
+and a noisy `.message` like
+`"execution reverted: engage: not Open (action=\"estimateGas\", …)"`,
+the noisy `.message` wins, the map lookup misses (exact-string match in
+`mapRevertReason` requires `"engage: not Open"` verbatim), and the user
+sees the generic fallback with the entire ethers stack pasted into
+`Raw reason: …`.
+
+This is a real R16 regression hazard: the very strings the map exists to
+translate get routed through the fallback because the probe order
+prioritises the noisier source.
+
+**Suggested fix (optional):** swap the order — try `.reason` first
+(decoded), then `.shortMessage` (clean wallet copy), then `.message`
+(noisy fallback). Alternatively, normalise `.message` by stripping
+common prefixes (`execution reverted: `, `VM Exception while processing
+transaction: revert `, etc.) before the map lookup. Severity: **NIT**
+borderline LOW — depending on which wallet stack the demo uses, this
+could degrade R16's plain-English coverage in practice. Worth fixing in
+the same tick as the next `useAction` consumer or as a follow-up; not
+blocking the gate.
+
+#### NIT 3 — Test 3 (`mapRevertReason returns the correct entry`) only checks `headline`
+
+**File:** `src/protocol/revertReasonMap.test.ts:56-66`.
+
+The assertion is
+
+```ts
+assert.equal(
+  entry.headline,
+  REVERT_REASON_MAP[key as keyof typeof REVERT_REASON_MAP].headline,
+);
+```
+
+— it does not assert `entry.details === REVERT_REASON_MAP[key].details`
+nor `entry === REVERT_REASON_MAP[key]` (reference equality). A
+hypothetical bug in `mapRevertReason` that returned a different entry
+whose headline coincided with the requested entry's headline would slip
+past. For the 5 baseline keys, all headlines are unique, so the test
+catches the intended class of bug — but a stricter assertion (reference
+equality or full-object deep-equal) costs nothing and pins the contract.
+
+**Suggested fix (optional):** replace the `headline`-only check with
+`assert.equal(entry, REVERT_REASON_MAP[key])` (reference equality —
+`mapRevertReason` returns the map's own object on the happy path, lines
+274-276) OR `assert.deepEqual(entry, REVERT_REASON_MAP[key])` (deep
+equality). Either is a single-character change. Severity: **NIT** (test
+strength, not implementation correctness).
+
+#### NIT 4 — `shared.ts` `PacketSubmitted` fix is bundled with SPEC-0003 work
+
+**File:** `web/src/shared.ts:30-31` (added arm).
+
+The fix is one arm in `describeEvent` that closes a pre-existing
+exhaustiveness gap left by UNIT-2 (tick 4, where `PacketSubmittedEvent`
+was added to `src/types/coverage.types.ts:260-265` but not to
+`describeEvent`). The loop's prompt acknowledges this and frames it as
+defensible because it was blocking the web `tsc` gate. From a
+strict-review standpoint:
+
+- **In favour of bundling:** the gate requires both `tsc` projects
+  clean; without this arm the web project doesn't compile and the
+  SPEC-0003 work can't ship behind a clean gate. The fix is minimal
+  (one switch arm, no new behaviour), and the R-citation
+  (`SPEC-0001 §3.5 / SPEC-0004 PacketSubmitted event`) is explicit in
+  the tick-12 prompt.
+- **Against bundling:** the commit will read as "SPEC-0003 R13 + R16"
+  in the log but actually carries a UNIT-2 follow-up. A reviewer
+  bisecting the `describeEvent` history would have to read tick 12 to
+  find this delta even though it's logically a UNIT-2 follow-up.
+
+Severity: **NIT** (process / commit-hygiene observation, not a
+correctness gap). Pattern: tick-7-style "emergency-tag at clean stopping
+point" history-doc note would have captured this cleanly if the loop
+had taken that route. The pre-existing-bug framing in the tick-12
+prompt is accurate; no spec drift.
+
+### Symmetry / regression checks (no findings)
+
+- **Exhaustiveness:** `describeEvent` has 20 `case` arms for 20 event
+  subtypes in `src/types/coverage.types.ts` (counted via
+  `grep -c "readonly name:" src/types/coverage.types.ts` → 20 and
+  `grep -c 'case "' web/src/shared.ts` → 20). Switch is exhaustive; no
+  unreachable arms; the TS narrowing `e.name === "PacketSubmitted"` on
+  `CoverageEvent` correctly admits access to `e.round`, `e.packetRoot`,
+  `e.packetUrl`.
+- **Baseline-key acceptance criterion** (`docs/progress/loop-state.md`):
+  test 1 enumerates the 5 baseline keys and asserts presence in the map;
+  tests 2/7/8 pin non-emptiness, headline-length ≤80, details-length
+  ≥30; test 9 pins headline ≠ raw revert string. The five required
+  baselines are all present and all four content quality bands pass.
+- **Type-vs-map alignment:** `RevertReason` union has 32 members;
+  `REVERT_REASON_MAP` literal has 32 keys; the `satisfies
+  Record<RevertReason, RevertReasonEntry>` enforces every member is
+  present. Adding a new revert string to the contract requires touching
+  both the union and the map; the compiler will fail-loud if only one
+  side moves.
+- **Fallback when `reasonRaw === undefined`:** map lookup is skipped
+  (the `if (reasonRaw !== undefined)` guard at line 273), fallback is
+  returned with no `Raw reason:` suffix. Test 4 pins the
+  non-empty-headline / non-empty-details contract on this path. **No
+  `Raw reason: undefined` UI artefact.**
+- **`useAction` state clears** (R13/R14 §2.3): `error` is cleared
+  inside `run`, at the start of each attempt — guarantees that a
+  successful retry after a failed call clears the stale error before
+  the new attempt. `pending` is cleared in `finally`, so both
+  resolve-paths and reject-paths re-enable the button. No timer-based
+  clears; the only escape from `pending=true` is the `finally`. No
+  "hidden re-arming."
+- **Mutation of returned entry from `mapRevertReason`:** on the happy
+  path, `mapRevertReason` returns the **same object reference** as the
+  map entry (line 276: `return entry`). If a consumer mutates the
+  returned `RevertReasonEntry` it mutates the shared map — same root
+  cause as NIT 1. The `Readonly<...>` type + `readonly` field markers
+  catch this at compile-time for TS callers.
+- **PacketSubmitted arm field shape:** matches
+  `src/types/coverage.types.ts:260-265` exactly. The `BigInt → string`
+  template coercion is the same pattern used elsewhere in the file
+  (e.g. `Settled`, `Deadlocked`). `packetUrl` is rendered untruncated;
+  rationale per the prompt is that it's a content-store URL the user
+  may want to copy. Defensible. (No regression vs the pre-fix file —
+  the arm just didn't exist, so the switch returned `undefined` at
+  runtime for `PacketSubmitted` and TS flagged the exhaustiveness gap.)
+- **Comments that lie or restate code:** none found. The JSDoc on
+  `useAction` (lines 9-29) accurately describes the hook's contract
+  including the R14 hard-reject decision and the rationale (closure
+  identity may differ across renders); the comment is load-bearing
+  (explains a design choice that's not obvious from the code) and
+  matches the implementation. The `revertReasonMap.ts` JSDoc on
+  `mapRevertReason` accurately describes the
+  matches-known-key vs fallback dichotomy; the section headers
+  (`// ── createContract ────`) correctly group the entries by contract
+  function and match the contract's actual revert sites. The
+  `REVERT_REASON_MAP` doc comment ("Add new entries here whenever the
+  contract gains a new revert path") is the maintenance directive
+  paired with the `satisfies` compile-time check. Clean.
+
+### Tick-12 verdict
+
+**OVERALL: PASS — 0 actionable findings; 4 NITs documented.**
+
+Severity breakdown:
+- **HIGH:** 0.
+- **MEDIUM:** 0.
+- **LOW:** 0.
+- **NIT:** 4 (Finding 1: shallow `Object.freeze` on map; Finding 2:
+  `extractRevertReason` probe order makes `shortMessage` unreachable
+  with ethers v6; Finding 3: test 3 only checks `headline`; Finding 4:
+  `shared.ts` `PacketSubmitted` fix bundled with SPEC-0003 work as
+  process / commit-hygiene observation).
+
+`revertReasonMap.ts` enumerates every unique contract revert string
+(27 unique sites collapsed to 27 keys; 32 total map entries including
+5 site-duplicates for `auth: not provider` and `fee: refund failed`
+that collapse to the same user-visible string — but counted by *key*
+the map has 32, matching the type union). The `satisfies` check closes
+the type-vs-runtime gap. The fallback embeds raw input on the
+defined-but-unknown path and omits the `Raw reason:` suffix on the
+undefined path. Headlines are plain English (not raw revert strings,
+asserted by test 9), all ≤80 chars (test 7), details ≥30 chars
+(test 8). The fee-refund / funds-* / callback-* / maxRounds-* entries
+correctly include the "internal error — please contact support" /
+"admin action" framing so the user understands they're not the
+intended remediator. No invented entries; no missing entries.
+
+`useAction.ts` correctly uses `useRef` (not `useState`) for the
+in-flight guard, eliminating the React-state-batching window. The hard
+"in-flight" reject is justified in the doc comment (closure identity
+may vary across renders, coalescing is unsound). Generic type
+threading is correct. The `extractRevertReason` helper is the only
+NIT-worthy issue (probe order — see NIT 2).
+
+`web/src/shared.ts` `PacketSubmitted` arm is field-shape-correct
+against `src/types/coverage.types.ts:260-265`. The switch is now
+exhaustive (20/20 cases for 20 event subtypes). Bundling this fix with
+the SPEC-0003 work is defensible per the prompt (it was blocking the
+web `tsc` gate); flagged as NIT 4 for commit-hygiene record-keeping
+only.
+
+All three required gates pass: 53/53 tests green; root `tsc` clean;
+web `tsc` clean after building `dist/`. No prior tick's findings are
+re-opened or regressed.
+
+### Final tick-12 verdict: PASS (0 actionable findings; 4 NITs documented)

@@ -1,8 +1,42 @@
 # Coverage — spec-4-implementation branch
 
-**Date:** 2026-05-29 · **Tick:** 11 (UNIT-3-refactor + R6b spec-prose update)
+**Date:** 2026-05-29 · **Tick:** 12 (UNIT-4-narrow: revertReasonMap + useAction hook)
 **Branch:** `spec-4-implementation`
-**Last known test counts:** hardhat 28/28 ✓ · lib (node --test) 44/44 ✓
+**Last known test counts:** hardhat 28/28 ✓ · lib (node --test) 53/53 ✓
+
+---
+
+## Tick-12 entry (UNIT-4-narrow)
+
+**What landed:**
+- `src/protocol/revertReasonMap.ts` — SPEC-0003 R16: exports `REVERT_REASON_MAP`
+  (keyed by raw revert string) and `mapRevertReason` helper. Covers the revert-reason
+  mapping contract required by R16.
+- `src/protocol/revertReasonMap.test.ts` — 9 sub-tests via `node:test`; all 9 pass.
+  lib suite grows from 44 → 53 (+9).
+- `web/src/hooks/useAction.ts` — SPEC-0003 R13: React hook providing an in-flight guard
+  (`isPending` state) that prevents duplicate submissions. **Implementation only — no
+  unit test.** The repo has no React testing infra (no jsdom / React Testing Library
+  config); correctness rests on `tsc` (type-checks clean) and is flagged for
+  browser-verify in a future tick.
+- `web/src/shared.ts` — side-effect bug fix: added missing `case "PacketSubmitted":`
+  branch that was absent since UNIT-2 (tick 4). This was a pre-existing bug that caused
+  `web tsc` to fail; fixing it unblocks the web TypeScript build.
+
+**Coverage gains:**
+- **SPEC-0003 R16** (revert reason map): now has 9 passing `node:test` assertions.
+  Status advances from "no test" → **test exists**.
+- **SPEC-0003 R13** (useAction in-flight guard): implementation present; no automated
+  test path in this repo. Status is **implementation only, no test — browser-verify
+  flagged**.
+
+**Side-effect fix:** `web/src/shared.ts` missing `PacketSubmitted` case repaired;
+web `tsc` now clean. No spec requirement directly advances from this fix alone, but
+it removes a pre-existing blocker for web-layer test work.
+
+**Tick-12 verdict: PASS-for-this-tick.** lib suite 53/53 (+9), hardhat 28/28
+unchanged. SPEC-0003 R16 gains a passing test suite; SPEC-0003 R13 gains an
+implementation with browser-verify pending.
 
 ---
 
@@ -86,8 +120,10 @@ These specs' coverage is unchanged from tick 6. Summary:
 - **SPEC-0002** (R1 timeline backfill, R2/R3/R5/R6 demo UX, R7 CDS-Hooks seam): partial —
   R1 historical backfill known broken (UNIT-8, queued); R2/R3/R5/R6/R7 implemented but no
   automated regression tests for UI paths.
-- **SPEC-0003** (R13–R22 in-flight guards, ErrorCard, layout): not yet tested —
-  UNIT-4 through UNIT-7 queued.
+- **SPEC-0003** (R13–R22 in-flight guards, ErrorCard, layout): partial as of tick 12 —
+  R16 (revert reason map) now has 9 passing `node:test` assertions (test exists);
+  R13 (useAction in-flight guard) has an implementation but no automated test
+  (browser-verify flagged); UNIT-5 through UNIT-7 queued for remaining requirements.
 
 ---
 

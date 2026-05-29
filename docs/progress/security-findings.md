@@ -1,3 +1,248 @@
+# Security findings — 2026-05-29 tick 12 (revertReasonMap + useAction hook + PacketSubmitted UI label)
+
+**Verdict:** PASS (0 findings)
+
+## Diff scope
+
+1. **NEW** `src/protocol/revertReasonMap.ts` (286 lines) — pure-data
+   mapping of contract revert strings to user-facing copy. Exports the
+   `RevertReason` string union, the frozen `REVERT_REASON_MAP` record,
+   and the lookup function `mapRevertReason(reasonRaw)`. No I/O, no
+   network, no dynamic code, no dependencies beyond the type-only
+   alias re-export.
+2. **NEW** `src/protocol/revertReasonMap.test.ts` (143 lines) —
+   `node:test` + `node:assert/strict` asserting 9 invariants over the 5
+   baseline revert strings called out by the loop-state.md SPEC-0003
+   R16 acceptance criterion (`engage: not Open`, `adjudicate: not
+   Ready`, `fee: underfunded`, `auth: not a party`, `appeal: needs
+   evidence`): presence, non-empty headline/details, lookup correctness,
+   undefined-input fallback, unknown-input fallback embeds raw, map is
+   frozen, headline ≤ 80 chars, details ≥ 30 chars, headline ≠ raw key.
+3. **NEW** `web/src/hooks/useAction.ts` (90 lines) — React hook
+   wrapping an async write `fn` with `pending` (boolean), `error`
+   (`RevertReasonEntry | null`), and `run` (re-invokes `fn`). Uses
+   `useState` for the two render-visible fields and a `useRef`
+   (`inFlightRef`) for the in-flight guard. Hard-rejects concurrent
+   `run()` while pending with `throw new Error("in-flight")`. Calls
+   `mapRevertReason` on the extracted raw revert string from caught
+   errors. The local `extractRevertReason` helper probes ethers v6
+   `.reason`, generic `.message`, and viem/wagmi `.shortMessage` in
+   order.
+4. **MODIFIED** `web/src/shared.ts` — single-line addition (line 31)
+   of the missing `PacketSubmitted` case to `describeEvent`'s switch.
+   Renders `round`, `shortHex(packetRoot)`, and `packetUrl` as plain
+   template-string text. Fix for the tick-4 oversight where the event
+   union member was added without wiring the UI label (the TS compiler
+   already required exhaustive coverage of the union, so this case was
+   the missing arm).
+
+## Per-concern verdict
+
+### 1. Information disclosure via revertReasonMap fallback — PASS
+
+The fallback at `revertReasonMap.ts:279-284` embeds the raw revert
+string into the user-facing `details` field:
+
+```ts
+details: `The contract rejected the transaction. The technical reason
+  is shown below.${reasonRaw !== undefined ? ` Raw reason: ${reasonRaw}` : ""}`,
+```
+
+A full sweep of every revert string in `contracts/contracts/*.sol` via
+`grep -nE 'revert "[^"]*"|require\([^,]+,\s*"[^"]*"'` returns 38
+matches. **Every match is a static fixed string literal.** None embed
+user input via string concatenation, `string.concat(...)`, `abi.encode`,
+`Strings.toString(uint)`, `Strings.toHexString(address)`, or any
+other dynamic-string call. The complete revert vocabulary (matched 1:1
+against `RevertReason` in `revertReasonMap.ts:4-50`):
+
+`maxRounds: < 1`, `funds: zero addr`, `funds: insufficient`, `funds:
+transfer failed`, `addr: zero`, `auth: not provider`, `qty: zero`,
+`create: self-contract`, `engage: not Open`, `auth: not insurer`,
+`policy: empty`, `adjudicate: not Ready`, `evidence: wrong state`,
+`evidence: empty`, `fee: refund failed`, `appeal: prior ruling not
+Deny`, `appeal: unknown party`, `appeal: needs evidence`, `accept: not
+ruled`, `settle: not ruled`, `settle: not both accepted`, `auth: not
+provider`, `refuse: not refusable`, `withdraw: terminal`, `timeout: not
+UnderReview`, `timeout: too early`, `feedback: terminal`, `callback:
+not platform`, `callback: unknown request`, `callback: not UnderReview`,
+`fee: underfunded`, `unknown contract`, `auth: not a party`.
+
+No revert string contains an address, an amount, a `bytes32` value, a
+clinical identifier, a salt, a hash, or any sender-controlled
+parameter. Worst case: a future contract change introduces a
+dynamic-string revert that surfaces an address — and the fallback
+would render it, but addresses are public on-chain data and not
+sensitive. **No PHI surface, no key surface, no private-state surface
+in the current revert vocabulary.**
+
+The fallback path is also strictly opt-in to *unknown* revert strings;
+all 33 known strings have curated copy that doesn't embed the raw
+input. Defense-in-depth: the React rendering side (concern 2) does not
+treat the string as HTML, so even if a future revert *did* contain
+attacker-controlled characters (`<`, `>`, `"`), they would be
+text-escaped at the DOM boundary, not parsed.
+
+### 2. DOM injection in useAction error path — PASS
+
+`useAction` stores the error as a `RevertReasonEntry` object with two
+string fields (`headline`, `details`) in `useState`. The hook itself
+does **not** render anything — it returns the state to the caller. A
+repo-wide grep for `dangerouslySetInnerHTML` across
+`web/src/**` returns **zero matches**. The error object will be
+rendered by whatever consumer the hook is wired into (no consumer is
+added in this tick); React's default `{entry.headline}` and
+`{entry.details}` JSX interpolation text-escapes both strings, so a
+revert string containing `<script>...</script>` would render as the
+literal characters, not parse as HTML. Safe by React's default
+escaping; no `dangerouslySetInnerHTML` reachable from this surface.
+
+### 3. Concurrent-run race conditions — PASS
+
+The in-flight guard uses **`useRef`**, not state:
+
+```ts
+const inFlightRef = useRef(false);
+const run = async (): Promise<T> => {
+  if (inFlightRef.current) {
+    throw new Error("in-flight");
+  }
+  inFlightRef.current = true;
+  setPending(true);
+  setError(null);
+  try { return await fn(); }
+  ...
+  finally {
+    inFlightRef.current = false;
+    setPending(false);
+  }
+};
+```
+
+JavaScript is single-threaded; the `if (inFlightRef.current)` check
+and the immediately-following `inFlightRef.current = true` assignment
+run in the **same synchronous turn** of the event loop, before any
+`await` is reached. There is no microtask, no `setTimeout`, no DOM
+event boundary, and crucially no `await` between the check and the
+set. Two synchronous `run()` calls — even from the same
+`onClick`-handler chain or from React batched re-renders that fire
+multiple effects — cannot both pass the guard: the first call sets
+`inFlightRef.current = true` before yielding to the awaited `fn()`,
+and the second call sees the ref already set and throws synchronously.
+
+The fact that `inFlightRef` is a ref rather than `useState` is
+load-bearing: `useState`'s `setPending(true)` is asynchronous (the
+state update is queued for the next render), so a `useState`-only
+guard would have a window where two synchronous calls in the same
+turn both observe `pending === false` and proceed. The ref's
+synchronous mutation closes that window. The `setPending(true)` /
+`setPending(false)` calls are purely for **render-visible** state so
+the consuming component re-renders to show the disabled-button /
+spinner UI; correctness of the guard itself does not depend on them.
+
+The `finally` block correctly clears both the ref and the state
+regardless of success or failure, so even an `fn()` that throws
+synchronously before yielding still releases the guard. There is no
+re-entrant `fn()` path that could call `run()` again synchronously
+before the first call returns (`fn` is an arbitrary user-supplied
+async function, but the ref is set before `fn()` is invoked, so any
+synchronous `run()` call from inside `fn` would still hit the
+guard). No race window present.
+
+### 4. PacketSubmitted UI label — text-only rendering of on-chain data — PASS
+
+The new switch arm at `web/src/shared.ts:31` renders three fields
+from the event: `e.round`, `shortHex(e.packetRoot)`, and
+`e.packetUrl`. Per SPEC-0004 §3.5 and the typed declaration at
+`src/types/coverage.types.ts:260-265`, `packetUrl` is currently a
+`bytes32` ABI-encoded value carrying the same `evidenceUri` as
+`packetRoot` until UNIT-9 lands the Merkle-root + body-store URL —
+i.e., it is a 0x-prefixed 66-char hex string, not a free-form URL
+today. Even after UNIT-9, the documented intent is a CDN URL.
+**Critically, `describeEvent` returns a plain string** that is then
+rendered into JSX as `{describeEvent(e)}` (text content), never as
+`href={...}`, `src={...}`, `window.open(...)`, or
+`dangerouslySetInnerHTML`. A repo-wide grep for `href.*packetUrl`,
+`window.open`, and `location.*packetUrl` across `web/src/` returns
+zero matches.
+
+`shortHex(packetRoot)` truncates `packetRoot` for compact display.
+`packetUrl` is rendered **without** `shortHex`, which means a UNIT-9
+URL like `https://packets.example.com/0xabc...` would display in full
+inside the parentheses. The task brief explicitly considered
+`shortHex(e.packetUrl)` to limit display length and concluded it is
+"safe" because the text path doesn't permit HTML injection. Confirmed
+by inspection: text-only, no href, no innerHTML, no
+attacker-controlled execution surface. **The only "data quality" gap
+is cosmetic — a long URL could overflow a narrow timeline cell. Not a
+security finding; if the design-handoff branch wants compact display
+the call site can adopt `shortHex(e.packetUrl)` later. Out of scope
+for tick 12.**
+
+The fields `round`, `packetRoot`, and `packetUrl` are all on-chain
+data (validated by the `PacketSubmitted` event signature
+`event PacketSubmitted(uint256 indexed reqId, uint256 indexed round,
+bytes32 packetRoot, bytes32 packetUrl)` at `src/contract/abi.ts:42`)
+— nothing PHI-bearing leaks through this label. SPEC-0004 R1
+preserved.
+
+### 5. No new secrets / credentials in the diff — PASS
+
+Across all four touched files:
+- `src/protocol/revertReasonMap.ts` — only static English-language
+  user copy strings; no `0x` hex literals, no API keys, no tokens,
+  no environment-variable reads.
+- `src/protocol/revertReasonMap.test.ts` — only the 5 baseline revert
+  strings as test inputs plus assertion messages; no secrets.
+- `web/src/hooks/useAction.ts` — only the literal `"in-flight"`
+  Error message and the field-name probes `"reason"`, `"message"`,
+  `"shortMessage"`. No credentials, no URLs, no `process.env`, no
+  network calls.
+- `web/src/shared.ts` — single line added; no secret material.
+
+Sweep across the diff for `BEGIN|PRIVATE KEY|AKIA|sk-[A-Za-z0-9]|
+xoxb-|xoxp-|ghp_|github_pat|secret|password|api[_-]?key|mnemonic|
+seed phrase` returns zero matches. No `.env` reads, no `process.env`
+accesses, no `localStorage` / `sessionStorage` writes. Clean.
+
+## Notes
+
+- The hook adds a new client-side surface but no new external calls.
+  The wrapped `fn` is supplied by the caller; the hook itself never
+  reaches the network or chain.
+- The `mapRevertReason` fallback is currently the **only** path that
+  reflects an externally-influenced string back to the UI. Because
+  every contract revert string is a static literal, the
+  attacker-controlled surface is empty today.
+- Recommended (advisory, not blocking): if a future contract revision
+  introduces a `string.concat`-style revert string carrying an
+  address or amount, audit the fallback's `details` template at
+  pre-merge time to confirm no sensitive context is being surfaced.
+  Until then, the fallback is the correct UX choice (transparency
+  over silence).
+- The `useAction` hook fixes the missing in-flight guard called out by
+  SPEC-0003 R13/R14. The hard-reject semantics (vs. coalesce-to-existing-promise)
+  is the safer choice given that the caller may pass a different
+  `fn` closure on each render: coalescing would silently substitute
+  a stale closure's result for the new caller's expectations.
+
+## Overall verdict
+
+**PASS — zero findings.** The four-file diff adds two pure-data
+modules (revertReasonMap + its test), one client-side hook with a
+correctly-implemented synchronous in-flight guard, and a one-line
+exhaustive-switch fix in the timeline labeller. Every contract revert
+string is a static literal, so the `mapRevertReason` fallback cannot
+disclose dynamic sensitive data; React's default JSX escaping
+neutralises the DOM-injection concern; the `useRef`-backed in-flight
+guard has no async window between check-and-set; and the
+PacketSubmitted UI label renders on-chain data as plain text (no
+href, no innerHTML, no XSS surface). No new dependencies, no new
+external calls, no new credentials, no PHI exposure. Tick 12 ships
+clean.
+
+---
+
 # Security findings — 2026-05-29 tick 11 (scenarioFixtures.test-helpers extraction + R6b prose narrowing)
 
 **Verdict:** PASS (0 findings)
