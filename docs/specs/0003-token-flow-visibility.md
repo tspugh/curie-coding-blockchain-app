@@ -276,6 +276,163 @@ decision text, on-chain receipt — not just see the new state badge.
   rationale body lives wherever the off-chain agent stores it (content-addressed,
   same as the note + packet). Track this dependency on SPEC-0004's deliverable.
 
+### 2.8 (2026-05-29) Adjudication-loop detection + escalation surface (Decision 8)
+
+Bug surfaced by Violet's session log (2026-05-29). The arbiter responded
+`EvidenceRequested` after the first ruling; the user submitted more evidence;
+the next ruling **timed out** (`RulingTimedOut`); the contract auto-routed back
+to `EvidenceRequested`. Repeated for a second cycle → same outcome. User had no
+out except `Refuse Terms` or `Withdraw Request`. Today the UI offers
+**no signal** that the loop is happening, no aggregate view of how many rounds
+have elapsed, no explanation of *why* the arbiter keeps asking, and nothing to
+stop the user from burning another 0.33 STT silently.
+
+Two distinct failure modes feel the same to the user, and the UI should handle
+both:
+
+- **(a)** Arbiter responds, but the response is `NeedMoreEvidence` round after
+  round. The agent is producing decisions; they're just not terminal.
+- **(b)** Arbiter doesn't respond before the contract's timeout fires;
+  `onRulingTimeout` routes the request back to `EvidenceRequested` without an
+  agent rationale.
+
+Requirements:
+
+- **R37 (MUST) Loop detection.** The client tracks per-`reqId` consecutive
+  `(Ready → UnderReview → {NeedMoreEvidence | Timeout} → EvidenceRequested)`
+  cycles. After **N=2** consecutive non-terminal cycles, the request enters a
+  `stuck` UI flag (in addition to its on-chain state). N lives in client config
+  (R39).
+- **R38 (MUST) Surface the stuck state with explanation.** When `stuck`, the
+  Detail view replaces the bare "submit more evidence" affordance with a
+  *Looks stuck* card that shows:
+  - Number of completed non-terminal cycles + their decision types (per-cycle
+    `NeedMoreEvidence` vs `Timeout`).
+  - The arbiter's stated reason for each `NeedMoreEvidence` (linked to the
+    §2.7 R33 reasoning explorer for the corresponding round).
+  - The on-chain receipt id + Somnia-explorer link for each round (per §2.7
+    R33's per-round receipt).
+  - Escalation options as explicit buttons: **Try once more** (a deliberate
+    re-fire that costs STT, requires a confirmation), **Refuse terms** (the
+    Provider's terminal exit), **Withdraw** (the Provider's pre-ruling pull),
+    **Deadlock** (if the contract permits — see SPEC-0004 §2.4 R14 terminal).
+- **R39 (SHOULD) Configurable threshold.** `N` is a client config value
+  (default 2). Deployments running real-money arbitration may want stricter
+  thresholds; demo deployments may want more headroom for instructional
+  iteration. Documented next to the wallet/RPC config block.
+- **R40 (MUST) Auto-pause `requestAdjudication` while stuck.** When `stuck`,
+  the "Request AI Decision" button is disabled by default. Re-enabling
+  requires the user to expand the *Looks stuck* card and explicitly choose
+  *Try once more* with a confirmation that names the STT cost
+  (`0.33 STT to fire again — last 2 attempts didn't reach a terminal ruling.
+  Continue?`). This prevents the silent-burn failure mode that Violet hit.
+- **R41 (SHOULD) Distinguish failure mode in the surface.** The *Looks stuck*
+  card labels each round's failure as either `NeedMoreEvidence (agent ruled)`
+  or `Timeout (agent did not respond)` — they suggest different remediations
+  (the former: rework the evidence packet; the latter: check the agent's
+  health or wait for it to come back).
+
+**Cross-spec.** R37–R41 are UI-side detection + surface; the underlying
+contract behaviour (auto-routing timeouts to `EvidenceRequested`) is in
+SPEC-0001 R9 / R12 territory. Reconsidering whether the contract should
+auto-loop forever, or cap at a hard terminal `Deadlocked` after N timeouts, is
+a SPEC-0001 amendment-level question — captured here as a follow-up.
+
+## Implementation plan (auxiliary)
+
+> Non-normative. Phases the polish work into landable PRs against the spec
+> above. Update as implementation lands.
+
+### Already done
+
+- **§2.1 R1 (balance chip)** — `web/src/hooks/useWalletBalance.ts` +
+  `web/src/components/WalletBalance.tsx`, mounted in `App.tsx` header. Live
+  refresh on tx-confirmed + 30s visibility-gated poll.
+- **§2.1 R3 (per-tx realized cost)** + **§2.1 R4 (attribution)** — minimum
+  viable in `web/src/components/TxMonitor.tsx`; attribution rule pinned to
+  "Outbound to agent (fee escrow)" when `value > 0` else "Burned (gas)".
+- **§2.1 R7 (no console-spam logging)** — no `console.*` writes on the happy
+  path anywhere in the tx-event flow.
+- **§2.2 R8–R10 (event bus + dev sink + gitignore)** — `RealBackend.txEvents`
+  dispatches `tx-confirmed` after every `_send()` write; `web/src/txLogger.ts`
+  subscribes + POSTs; `vite.config.ts` middleware writes JSONL to
+  `.tmp/tx-log.jsonl`; `.tmp/` gitignored.
+
+### Phase A — Action coherence + estimateGas pre-flight (§2.3 R13–R19)
+
+Smallest visible polish. Lands before any layout work because the same
+re-render-from-state machinery underpins the layout fixes in Phase B.
+
+- `web/src/views/Detail.tsx` — subscribe action panel to a `useNegotiation(reqId)`
+  hook that re-fetches on every `tx-confirmed` (R13).
+- Every action button gains a `pending` state from `useAction()` wrapper (R14).
+- `web/src/lib/revertReasonMap.ts` (new) — `Error(string)` → user-facing copy
+  (R16). Exported from the lib so off-chain tools render the same.
+- `web/src/views/Create.tsx` — in-flight set keyed on
+  `(providerId, drugRef, justificationHash)` (R15).
+- Semantic confirmation card component used by both Detail + Create (R18).
+- TxMonitor + JSONL entries gain `summary` field (R19).
+
+### Phase B — Layout, error UI, simulated parity, screenshot review (§2.4 R20–R23)
+
+- CSS pass for the 10 baseline issues. Header column compaction is the most
+  impactful single fix; form column width / textarea growth are next.
+- `<ErrorCard>` component used by Create + Detail (R21).
+- Mirror Phase A's `useAction()` wrapper in `SimulatedBackend` (R22).
+- Re-capture screenshots into `docs/progress/2026-MM-DD-post-spec0003/` for the
+  after-set (R23).
+
+### Phase C — Wallet & onboarding (§2.5 R24–R29)
+
+Independent of A/B; could ship in parallel.
+
+- New `Landing` view (CTAs: *Sign in to my organisation* / *Try the demo*).
+- `web/src/lib/auth/siwe.ts` — SIWE challenge + verify against a connected
+  wallet via WalletConnect / MetaMask (R25). No Privy code yet.
+- Profile picker becomes role-restricted in production builds (R27).
+- Production builds set `IS_DEMO=false` and read the wallet from the connected
+  signer; demo builds keep the current `VITE_PRIVATE_KEY` path.
+
+### Phase D — Submit-amount gating (§2.6 R30–R32)
+
+Smallest of the lot — depends on Phase A's pending pattern.
+
+- `web/src/views/Create.tsx` — inline validation using `useWalletBalance` +
+  `contract.createContract.estimateGas` for the gas portion. Block + render
+  per-R30 error.
+
+### Phase E — AI reasoning panel + receipts (§2.7 R33–R36)
+
+Depends on SPEC-0004's evidence-packet schema + agent callback shape
+(`usedReferenceIndices`, `rationaleHash`). Build the panel against a fixture
+first, wire to real once SPEC-0004 lands.
+
+- New `web/src/views/AiReasoning.tsx` (inline, not a separate route).
+- `web/src/lib/explorerLinks.ts` — Somnia explorer URL builder.
+- Reasoning chip on each `Ruled` timeline row (R35).
+
+### Phase F — Loop detection + escalation surface (§2.8 R37–R41)
+
+- `web/src/hooks/useNegotiationLoopStatus.ts` — derives `stuck` state from the
+  negotiation's event history.
+- `LooksStuckCard` component used by Detail when `stuck`.
+- Config block in the demo header documents the threshold N (R39).
+- Confirmation modal for the *Try once more* path (R40).
+
+### Test approach
+
+- Vitest unit tests for the pure derivations (`useNegotiationLoopStatus`,
+  `revertReasonMap`, the dedupe set for R15) live alongside the modules.
+- Agent-browser smoke tests for each phase land in `web/tests/agent-browser/`
+  exactly like the existing `run.sh` pattern. Phase A and Phase B get
+  screenshot-diff steps per R23.
+
+### PR strategy
+
+One PR per phase. Phase order: A → B → D in sequence (each lands a UI
+contract subsequent phases rely on); C and E in parallel; F last, after the
+loop-detection signal is well-understood.
+
 ## 3. Technical documentation
 
 - **Balance source:** `wallet.provider.getBalance(wallet.address)`. The web client already

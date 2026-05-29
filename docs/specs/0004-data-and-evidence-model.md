@@ -250,3 +250,111 @@ calls in a round; rulings differ across runs with the same inputs.
 - **Q3 follow-up — Which Part D release?** Pin a specific monthly release (e.g., the latest
   stable CMS posting) so the demo cites a specific dataset; revisit before the hackathon
   cutoff if newer.
+
+## Implementation plan (auxiliary)
+
+> Non-normative. Sequences the data + evidence + ladder work into landable PRs.
+> SPEC-0004 is **highest priority** of the in-flight specs (functional). Implementation
+> reference for the ladder enforcement lives in
+> [`../technical-design/appeal-ladder-enforcement.md`](../technical-design/appeal-ladder-enforcement.md).
+
+### Phase 1 — Contract changes (§2.4 R13–R16 + §2.5 R17–R20)
+
+Highest-risk phase — Solidity edits + tests must land cleanly before any UI
+can read the new shape. Bundle into a single contracts PR so the storage
+layout change is reviewed as a whole.
+
+- `contracts/contracts/CoverageNegotiation.sol`:
+  - Add `PayerLine` enum `{ PartD, Commercial, Medicaid }`.
+  - Add `payerLine` + `appealRound` to the `Negotiation` struct (storage slot
+    change — ensure existing test fixtures regenerate).
+  - Add `LADDER_WINDOW[payerLine][appealRound]` + `LADDER_THRESHOLD[…]`
+    constants per `appeal-ladder-enforcement.md`.
+  - Predicates: `_withinFilingWindow`, sequencing checks, threshold checks,
+    `maxRound[payerLine]` terminal.
+  - Backwards-compat: `createContract` defaults `payerLine = PartD` when
+    callers don't supply it, so existing test fixtures continue to compile.
+- `contracts/test/CoverageNegotiation.test.ts`:
+  - Three new scenarios: Part D ladder (ALJ threshold + 60-day window),
+    commercial ladder (180-day internal-appeal window), Medicaid MCO ladder
+    (60-day internal + 120-day external, no threshold).
+  - Negative cases: above-threshold ALJ, below-threshold ALJ, expired
+    filing window, ladder-skip attempt.
+- `contracts/scripts/deploy.ts` + `deploy-mock.ts` — no changes; ladder is
+  pure storage.
+
+### Phase 2 — Library + TS LADDERS constant (§2.4 R15–R16)
+
+The off-chain mirror of the ladder table. Same JSON SoT as the Solidity
+constants (build-time codegen or hand-mirror + CI consistency check — see
+§3 of the technical-design doc).
+
+- `src/protocol/ladders.ts` (new) — the typed `LADDERS` constant per the
+  technical-design doc.
+- `src/contract/real.ts`, `src/contract/simulated.ts` — read `payerLine` +
+  `appealRound` from the contract's `getNegotiation`; expose via the
+  `Negotiation` type.
+- `src/contract/types.ts` — add `payerLine: PayerLine`, `appealRound: number`
+  fields.
+
+### Phase 3 — Synthetic scenarios + scenarios directory (§2.1 R1–R4)
+
+- `demo-data/scenarios/` (new directory):
+  - `approvable/` — note.md + packet.json + payer-profile.json
+  - `policy-void/` — uses the existing FDA-contradicting clause
+  - `denied-then-appealed/` — walks through `(PartD, 1)` Redetermination at
+    minimum
+- Loader: `src/demo/scenarios.ts` — `listScenarios()`, `loadScenario(slug)`.
+- UI hook into Create's "Load Demo Case" button (SPEC-0003 owns the chrome).
+
+### Phase 4 — Real Part D formulary fetch + pin (§2.2 R5–R8)
+
+- `scripts/fetch-formulary.ts` (new) — pulls a specific CMS Part D release
+  to `demo-data/formulary/<release>/formulary.json`. Run at build time; the
+  output is checked in.
+- Hash-pinning: `demo-data/formulary/<release>/.hash` carries the content
+  hash for R7's "two runs against same hash yield identical ruling" guarantee.
+- `src/protocol/formulary.ts` (new) — loader + typed accessor.
+
+### Phase 5 — Evidence packet + Merkle helper (§2.3 R9–R12)
+
+- `src/protocol/packet.ts` (new) — `Packet` type, Merkle-root helper,
+  per-round packet verifier.
+- `RealBackend.requestAdjudication` extended to accept the packet body +
+  derive the Merkle root; off-chain serialisation alongside the note.
+- Agent callback shape extension: `usedReferenceIndices: number[]` +
+  `rationaleHash: bytes32`. Coordinate with the Somnia agent platform
+  configuration.
+
+### Phase 6 — Plumb ladder through the UI (read-only)
+
+Just the surface needed for SPEC-0003 §2.7 to render stage names. No
+new requirements here — it's the read path for §2.4 R15.
+
+- `web/src/views/Detail.tsx` — pass `(payerLine, appealRound)` from
+  `Negotiation` to the action panel's stage label via `LADDERS`.
+
+### Test approach
+
+- `contracts/test/*` — Hardhat tests for every ladder × every round; positive
+  and negative cases per phase 1.
+- `src/protocol/*.test.ts` — Vitest unit tests for the TS mirror (parity with
+  Solidity constants checked via a generated comparison).
+- One full e2e per ladder in `web/tests/agent-browser/` — exercise the loop
+  end-to-end against synthetic notes.
+
+### PR strategy
+
+Sequential PRs, gated on Phase 1 landing:
+1. Contracts PR (Phase 1) — review carefully; storage-layout change.
+2. Library PR (Phase 2) — adds LADDERS + Negotiation type fields.
+3. Scenarios + formulary PR (Phases 3 + 4 bundled — both are data).
+4. Packet PR (Phase 5).
+5. UI read-path PR (Phase 6) — small.
+
+### Cross-spec dependencies
+
+- SPEC-0003 §2.7 (AI reasoning panel) depends on Phase 5's agent callback
+  shape extension.
+- SPEC-0003 §2.5 (wallet/onboarding) is independent — can land in parallel
+  with any phase.
