@@ -76,6 +76,66 @@ delta are not surfaced in the UI — they have to open an explorer to reason abo
   `tail -f .tmp/tx-log.jsonl | jq` works from a side terminal, and an agent-browser test
   can shell out to assert on its contents between scenarios.
 
+### 2.3 (2026-05-29) Action coherence with on-chain state (Decision 3)
+
+UI polish discovered while real-mode driving request #4: an `insurerEngage` succeeded
+on-chain (state `Open → Ready`, `policyHash` and `policyUri` both populated) but the UI
+left the engage button enabled and gave no semantic confirmation of *what* had just
+been attached, so the user re-clicked → contract reverted `engage: not Open`. Failure
+was on the UI side; the chain did the right thing both times. The requirements below
+pin the polish that has to land before agent-browser drives real-mode scenarios
+spending non-trivial STT.
+
+- **R13 (MUST) Action panel re-derives from current on-chain state.** After every
+  `tx-confirmed` event whose receipt touches `reqId`, re-fetch the negotiation and
+  re-render the action panel from the new state — **not** from component-level "I
+  clicked X already" booleans. The set of available actions is a pure function of the
+  on-chain `state`; stale optimistic state must be reconciled within one frame of the
+  receipt.
+- **R14 (MUST) In-flight guard on every tx-firing button.** Every button that calls a
+  write method carries a `pending` flag. While unresolved: button is disabled, label
+  reads "Pending…" (or method-specific equivalent like "Attaching policy…"), and the
+  `tx-confirmed` listener for this `reqId` is the only thing that clears the flag.
+  No timer-based clears, no hidden re-arming.
+- **R15 (MUST) Create-form anti-double-submit + content dedupe.** Submit disabled on
+  first click until receipt or error. Additionally, the client maintains an in-memory
+  set of `(providerId, drugRef, justificationHash)` triples submitted in the last 60s
+  with no confirmed receipt; a re-submit with the same triple is silently coalesced
+  to the in-flight request, not re-fired. This MUST NOT block legitimately re-trying
+  after an explicit error (the set is cleared on error).
+- **R16 (MUST) Estimate-before-send with revert-reason surfacing.** Each action calls
+  `contract.method.estimateGas(args)` before dispatching. If estimateGas reverts, the
+  UI surfaces the contract's revert reason inline as plain English
+  (e.g., `"This request is already past the engage step — refresh to see current
+  state."` rather than the raw `engage: not Open` and an ethers stack). The mapping
+  table from `Error(string)` → user-facing copy lives in the library so the UI and any
+  off-chain tooling render the same message.
+- **R17 (SHOULD) Optimistic state hints with `(unconfirmed)` flag.** After the user
+  submits a write, the UI may render the projected next state immediately with a
+  visible `(unconfirmed)` chip; once the receipt lands, the chip clears and the panel
+  re-derives per R13. If estimateGas already reverted (R16), no optimistic hint is
+  rendered.
+- **R18 (MUST) Post-action semantic confirmation.** After a state transition lands,
+  the UI MUST render the *meaning* of what just happened — not only the new state
+  badge. Concretely, for each transition:
+  - `createContract` → render request id, drug, requested amount, provider profile
+    label; link to the new request's Detail.
+  - `insurerEngage` → render the human-readable policy name (from the policy card
+    label the user picked, or `"policy <shortHex>"` if none), insurer profile label,
+    timestamp, and a `View policy` affordance that resolves the off-chain content.
+  - `requestAdjudication` → render fee paid (in STT), the agent id called, and an
+    "awaiting ruling" countdown.
+  - `submitEvidence`, `appeal`, `accept`, `settle`, `refuse`, `withdraw` → render the
+    actor (profile label), the artefact (if any), and the resulting state.
+  - The post-action card lives at the top of the Detail view's action area for at
+    least the next render cycle, so a user looking at the screen after clicking is
+    not left guessing whether anything happened.
+- **R19 (SHOULD) Semantic TxMonitor entries.** Each row in the TxMonitor (and each
+  JSONL ledger line) MAY carry a `summary: string` derived from the method + decoded
+  args (e.g. `"insurerEngage: attached 'Standard Coverage Policy' to request #4"`),
+  in addition to the method name. The summary is the human-readable handle a viewer
+  reads first; the hash and gas are the audit trail.
+
 ## 3. Technical documentation
 
 - **Balance source:** `wallet.provider.getBalance(wallet.address)`. The web client already
