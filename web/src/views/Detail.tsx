@@ -9,6 +9,9 @@ import {
   mapRevertReason,
   txUrl,
   SOMNIA_TESTNET,
+  LADDERS,
+  PayerLine,
+  stageNameFor,
   type CoverageEvent,
   type NegotiationView,
   type PolicyCommitment,
@@ -89,6 +92,90 @@ const STEPPER_STEPS: readonly {
     ],
   },
 ];
+
+/**
+ * Display name for a payer line — symbolic enum reads "PartD" but the prototype
+ * surfaces "Medicare Part D" / "Commercial" / "Medicaid". Mirrors Overview.tsx's
+ * payerLineDisplay (kept inline rather than shared to keep the diff tight; a
+ * shared helper is a small future NIT closure).
+ */
+function payerLineDisplay(line: PayerLine): string {
+  switch (line) {
+    case PayerLine.PartD: return "Medicare Part D";
+    case PayerLine.Commercial: return "Commercial";
+    case PayerLine.Medicaid: return "Medicaid";
+  }
+}
+
+/** Compact statutory-window display, e.g. "60 days". Null → empty string. */
+function windowDaysDisplay(d: number | null): string {
+  return d == null ? "" : `${d} day${d === 1 ? "" : "s"}`;
+}
+
+/** Compact threshold display in dollars, e.g. "$190 AIC". Null → empty. */
+function thresholdDisplay(cents: number | null): string {
+  if (cents == null) return "";
+  const dollars = Math.round(cents / 100);
+  return `$${dollars.toLocaleString()} AIC`;
+}
+
+interface AppealLadderProps {
+  readonly payerLine: PayerLine;
+  readonly appealRound: number;
+}
+
+/**
+ * Appeal-ladder card (SPEC-0004 §2.4 R15/R17, prototype screens.jsx:233-266).
+ * Renders LADDERS[payerLine] as a row of stage cards. The active card
+ * (i === appealRound) is highlighted; previous (i < appealRound) show ✓;
+ * future (i > appealRound + 1) dim. Header caption shows the current stage
+ * name + window-days + threshold from the ladder row.
+ */
+function AppealLadder({ payerLine, appealRound }: AppealLadderProps) {
+  const stages = LADDERS[payerLine];
+  const currentStage = stages[appealRound];
+  const currentName = stageNameFor(payerLine, appealRound);
+
+  return (
+    <section className="appeal-ladder card">
+      <header className="appeal-ladder-head">
+        <div className="section-label">Appeal ladder · {payerLineDisplay(payerLine)}</div>
+        <div className="appeal-ladder-meta">
+          currently at <strong>{currentName}</strong>
+          {currentStage?.windowDays != null && (
+            <> · file within {windowDaysDisplay(currentStage.windowDays)}</>
+          )}
+          {currentStage?.thresholdCents != null && (
+            <> · {thresholdDisplay(currentStage.thresholdCents)}</>
+          )}
+        </div>
+      </header>
+      <div className="appeal-ladder-grid">
+        {stages.map((s, i) => {
+          const isCurrent = i === appealRound;
+          const isPassed = i < appealRound;
+          const isDistantFuture = !isCurrent && !isPassed && i > appealRound + 1;
+          const cls =
+            "appeal-stage" +
+            (isCurrent ? " is-current" : "") +
+            (isPassed ? " is-passed" : "") +
+            (isDistantFuture ? " is-dim" : "");
+          return (
+            <div key={i} className={cls}>
+              <div className="appeal-stage-head">
+                <span className="appeal-stage-badge">
+                  {isPassed ? "✓" : i}
+                </span>
+                <span className="appeal-stage-name">{s.name}</span>
+              </div>
+              <div className="appeal-stage-desc">{s.description}</div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
 
 function getNextStep(
   state: State,
@@ -450,6 +537,11 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
           </p>
         </div>
       )}
+
+      <AppealLadder
+        payerLine={n.payerLine}
+        appealRound={n.appealRound}
+      />
 
       <div className="detail-grid">
         <div className="card actions">

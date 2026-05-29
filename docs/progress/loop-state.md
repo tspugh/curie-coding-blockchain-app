@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 32 — UNIT-TopBar-profile-pills)
+**Last updated:** 2026-05-29 (tick 33 — UNIT-AppealLadder)
 **Current mode:** `impl`
-**Current tick:** 32
-**Last focus:** Closed tick-31 gap #3: replaced TopBar's `<select>` profile picker with a 3-button pill row matching `app.jsx:115-131`. ARIA: `role="radiogroup"` + `role="radio"` + `aria-checked` for keyboard/AT navigation. Active pill fills `var(--accent)` white text; inactive pills stay transparent muted. Visible on every view since the TopBar is sticky. Expected design-conformance bump on TopBar surface (was 72%); remeasurement deferred to a batch tick.
-**Last commit:** `<this tick>` (tick 32 — UNIT-TopBar-profile-pills)
+**Current tick:** 33
+**Last focus:** Closed tick-31 gap #1 (biggest Detail gap): ported the prototype's per-payer appeal ladder (`screens.jsx:233-266`) into Detail.tsx as a new `<AppealLadder>` section above the action grid. Reads `LADDERS[n.payerLine]` (typed from UNIT-1) and renders stage cards with current-stage highlight (var(--accent-lt) bg, var(--accent-mid) border, var(--accent-dk) text), passed stages with ✓ in a filled-accent badge, distant-future stages dimmed. Header caption shows current stage name + `windowDays` ("file within N days") + `thresholdCents` ("$X AIC"). Local `payerLineDisplay()` ("Medicare Part D" / "Commercial" / "Medicaid") + `windowDaysDisplay()` + `thresholdDisplay()` helpers; payerLineDisplay duplicated from Overview pending a small future shared.ts extraction. Initial impl typo'd field names (`threshold` instead of `thresholdCents`) caught by tsc and fixed.
+**Last commit:** `<this tick>` (tick 33 — UNIT-AppealLadder)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)

@@ -1936,3 +1936,99 @@ tr.row-link:hover td:first-child {
   background: var(--accent);
   color: #ffffff;
 }
+
+/* SPEC-0004 §2.4 R15/R17 — AppealLadder card on Detail. Matches prototype
+   structure at screens.jsx:233-266. Full-width card; row of stage cards;
+   active stage highlighted with var(--accent); passed stages show ✓ in a
+   filled accent badge. */
+.appeal-ladder {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  margin-bottom: 24px;
+  box-shadow: var(--shadow-xs);
+}
+.appeal-ladder-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.appeal-ladder-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+.appeal-ladder-meta strong {
+  color: var(--accent-dk);
+  font-weight: 600;
+}
+.appeal-ladder-grid {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.appeal-stage {
+  flex: 1 1 0;
+  min-width: 130px;
+  padding: 11px 13px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  transition: opacity 0.15s ease;
+}
+.appeal-stage.is-passed {
+  background: var(--panel-2);
+}
+.appeal-stage.is-current {
+  border-color: var(--accent-mid);
+  background: var(--accent-lt);
+}
+.appeal-stage.is-dim {
+  opacity: 0.6;
+}
+.appeal-stage-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 4px;
+}
+.appeal-stage-badge {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--panel);
+  border: 1.5px solid var(--border);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.appeal-stage.is-current .appeal-stage-badge {
+  background: var(--panel);
+  border-color: var(--accent);
+  color: var(--accent-dk);
+}
+.appeal-stage.is-passed .appeal-stage-badge {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+.appeal-stage-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.appeal-stage.is-current .appeal-stage-name {
+  color: var(--accent-dk);
+}
+.appeal-stage-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.45;
+}
