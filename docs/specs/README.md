@@ -7,5 +7,7 @@ out of scope, open questions), enforced by the **`spec-author` skill**
 (`.claude/skills/spec-author/`). Invoke it whenever writing or reviewing a spec.
 
 - [`0001-mvp0-coverage-negotiation.md`](0001-mvp0-coverage-negotiation.md) — MVP0 coverage-exception negotiation loop.
+- [`0002-demo-experience-and-integration-seam.md`](0002-demo-experience-and-integration-seam.md) — Live demo experience + FDA-label "gotcha" + CDS-Hooks seam.
+- [`0003-token-flow-visibility.md`](0003-token-flow-visibility.md) — Design-decisions log for UI token-flow visibility (balance, per-tx cost, attribution).
 
 See [`../../CLAUDE.md`](../../CLAUDE.md) for the full convention.
