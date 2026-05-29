@@ -1,4 +1,4 @@
-# Solidity compliance — tick 12
+# Solidity compliance — tick 13
 
 **Date:** 2026-05-29
 **Scope:** no `contracts/` diff this tick — audit deferred to next contract-touching tick
@@ -7,11 +7,9 @@
 ## This tick's diff scope
 
 Verified via `git diff --name-only HEAD~1..HEAD -- contracts/` (empty result). This
-tick's diff consists of:
+tick's working-tree change consists of:
 
-- 3 new TS files: `src/protocol/revertReasonMap.ts`,
-  `src/protocol/revertReasonMap.test.ts`, `web/src/hooks/useAction.ts`
-- 1 edit: `web/src/shared.ts` (added missing `PacketSubmitted` case)
+- 1 new TS file: `web/src/hooks/useNegotiation.ts` (untracked)
 
 No changes to `contracts/contracts/CoverageNegotiation.sol`,
 `contracts/contracts/mocks/MockAgentPlatform.sol`, or
@@ -20,6 +18,16 @@ No changes to `contracts/contracts/CoverageNegotiation.sol`,
 Because no Solidity source or contract-level test was touched this tick, no new
 audit pass is warranted. The next contract-touching tick should re-trigger a
 full focused review.
+
+## Tick 12 — preserved for reference
+
+Tick 12 diff scope (committed 180573f, UNIT-4-narrow):
+
+- 3 new TS files: `src/protocol/revertReasonMap.ts`,
+  `src/protocol/revertReasonMap.test.ts`, `web/src/hooks/useAction.ts`
+- 1 edit: `web/src/shared.ts` (added missing `PacketSubmitted` case)
+
+No `contracts/` changes — PASS.
 
 ## Carry-forward — prior open findings
 
@@ -33,10 +41,10 @@ From tick 4 (UNIT-2):
   `uint8 indexed round` width gap was explicitly noted as forward-compatible
   and accepted, not an open finding.
 
-Ticks 8 (UNIT-3a), 9 (UNIT-3b), 10 (UNIT-3c), 11, and 12 (this tick) also
+Ticks 8 (UNIT-3a), 9 (UNIT-3b), 10 (UNIT-3c), 11, 12, and 13 (this tick) also
 touched no `contracts/` files and added no new findings.
 
-No unresolved compliance items carry into tick 12. One spec-side carry-forward
+No unresolved compliance items carry into tick 13. One spec-side carry-forward
 flag (R6b `policyVoidedClauseIndices`) remains noted for the next
 contract-touching tick — see tick 11 entry in git history for full context:
 the R6b prose update in `docs/specs/0001-mvp0-coverage-negotiation.md` mentions

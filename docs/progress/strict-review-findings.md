@@ -1581,3 +1581,358 @@ web `tsc` clean after building `dist/`. No prior tick's findings are
 re-opened or regressed.
 
 ### Final tick-12 verdict: PASS (0 actionable findings; 4 NITs documented)
+
+---
+
+## Tick 13 strict review (2026-05-29)
+
+**Scope under review (UNIT-4b-narrow):**
+1. `web/src/hooks/useNegotiation.ts` — NEW. React hook implementing
+   SPEC-0003 §2.3 **R13** (not R14 — see Finding 1 below). Signature
+   `useNegotiation(reqId: bigint, events: readonly CoverageEvent[]):
+   UseNegotiationResult`. Returns `{ view, policy, priceBasis, error,
+   refetch }`. Uses `useState` for the 4 nullable result fields and a
+   `refetchTrigger` counter; `useRef<bigint | null>` for `prevReqIdRef`;
+   `useEffect` keyed on `[reqId, events, refetchTrigger]` with the
+   `cancelled` cleanup pattern; `useCallback` exposing a stable
+   `refetch` that bumps the counter.
+
+No Detail.tsx wiring this tick (deferred to tick 14). No unit test
+(repo has no React testing infrastructure).
+
+**Required gates (verified):**
+- `node --import tsx --test "src/**/*.test.ts"` → `# tests 53 / # pass 53
+  / # fail 0` (CLEAN).
+- `npx tsc -p tsconfig.json --noEmit` → exit 0, no output (CLEAN).
+- `npx tsc -p web/tsconfig.json --noEmit` → exit 0, no output (CLEAN).
+
+### Cross-checks performed
+
+1. **Behaviour parity with the inline pattern at `Detail.tsx:113-156`.**
+   Side-by-sided the new hook against the existing inline `useEffect`
+   block. Fetch order matches: `getNegotiationView` →  `policyOf` →
+   conditional `priceBasisOf` gated on `v.ruled || v.terminal`. The
+   `cancelled` flag + cleanup-on-effect-tear-down idiom is the same.
+   Dependency array `[reqId, events]` matches the inline version; the
+   hook adds `refetchTrigger` as a third dep, which is additive and does
+   not change behaviour relative to the inline version (a Detail.tsx
+   caller that never invokes `refetch()` gets identical semantics).
+   Differences vs the inline version, **all improvements**:
+   - The hook clears `setError(null)` on the success branch (line 59);
+     the inline version never clears `error` on a successful refetch
+     after a failure. The hook's behaviour is correct per R13's "the
+     panel re-derives from the new state" — a successful refetch IS
+     new state and should drop the stale error.
+   - The hook clears `view`/`policy`/`priceBasis` to `null` when
+     `reqId` changes (via `prevReqIdRef`); the inline version did not
+     do this (it would briefly render the previous request's data
+     against the new `reqId` until the new fetch resolved). The hook's
+     behaviour matches the spec language "render the panel from the
+     new state — not from component-level booleans" (R13).
+
+2. **R-language fidelity.** Re-read `docs/specs/0003-token-flow-visibility.md`
+   §2.3 lines 89-99 verbatim:
+   - **R13 (MUST) Action panel re-derives from current on-chain state.**
+     After every `tx-confirmed` event whose receipt touches `reqId`,
+     re-fetch the negotiation and re-render the action panel from the
+     new state…
+   - **R14 (MUST) In-flight guard on every tx-firing button.** Every
+     button that calls a write method carries a `pending` flag…
+   The hook implements **R13** (re-fetch on event change). It does NOT
+   implement R14 (that is `useAction.ts` from tick 12). The hook's
+   docstring (line 1) and the inline comment at line 64 both cite
+   **R14** — this is a misciting. See Finding 1.
+
+3. **Effect lifecycle for `prevReqIdRef`.** Walked the React lifecycle:
+   - Render N: `useNegotiation(A, …)` is called. `prevReqIdRef.current`
+     is `null` (initial) or `A` (steady-state).
+   - Render N+1: `useNegotiation(B, …)` called with new reqId. JSX
+     emitted with `view` still holding A's data. `prevReqIdRef.current`
+     is still `A` (refs are not reset across renders).
+   - After-commit: useEffect fires because deps changed (reqId A→B).
+     Cleanup of effect-N runs first (`cancelled_N = true`), then the
+     new effect body runs: `prevReqIdRef.current (A) !== reqId (B)` →
+     clear the 3 state slots → bump ref to `B`.
+   - **Caveat**: the cleared state (`view = null`) does NOT render until
+     the NEXT commit (after the effect's `setView(null)` triggers a
+     re-render). So between render N+1 and the post-effect re-render,
+     the UI **briefly shows the OLD view against the NEW reqId**. This
+     is a one-frame visual glitch identical to the inline version's
+     behaviour (since the inline version never cleared on reqId
+     change). Not a regression. See Finding 5 below for the alternative
+     (derive-from-reqId-during-render) but accepting the one-frame
+     glitch is defensible — the next render is sub-frame in practice.
+   - Verdict: `prevReqIdRef` pattern is **correct**, not racy.
+
+4. **Stale-data race when events changes rapidly.** Walked the
+   scenario: events ref changes 3 times in quick succession (A→B→C→D),
+   each before the prior fetch resolves.
+   - Effect runs for events=B. Sets `cancelled_B = false`. Starts fetch
+     B. `setView(null)` is NOT called (only triggered by reqId change).
+   - events → C. Effect cleanup runs: `cancelled_B = true`. New effect
+     body: `cancelled_C = false`. Starts fetch C.
+   - events → D. Same cycle: `cancelled_C = true`. Starts fetch D.
+   - Fetch B resolves first (network latency). `if (!cancelled_B)`
+     fails → no state writes. Good.
+   - Fetch C resolves second. Same outcome.
+   - Fetch D resolves last. `cancelled_D` is still false. State writes
+     land. UI shows D's data.
+   - **No race**: only the latest-issued fetch ever writes state. The
+     ordering matters per the spec ("re-render from the new state");
+     `Promise.race`-style return-of-first wouldn't satisfy this. The
+     hook's serial `await` + cancellation gates are correct.
+
+5. **`NegotiationView.ruled` and `.terminal` shape.** Both are
+   `readonly ruled: boolean` and `readonly terminal: boolean` per
+   `src/types/coverage.types.ts:171,175` — non-nullable. The hook's
+   `v.ruled || v.terminal` check (line 52) is well-typed; no `undefined`
+   coercion path. **No bug.**
+
+6. **Type-only imports under `isolatedModules`.** `tsconfig.json:19`
+   and `web/tsconfig.json:16` both set `isolatedModules: true` but
+   neither sets `verbatimModuleSyntax`. The hook uses inline `type`
+   markers within a regular import (`import { type CoverageEvent, … }
+   from "@lib"`) — this is the canonical pattern that works under
+   `isolatedModules` without `verbatimModuleSyntax`. `web tsc --noEmit`
+   passes clean, confirming. **Correct.**
+
+7. **Re-fetch on events for OTHER reqIds.** The hook's effect runs on
+   every `events` reference change, regardless of whether any event in
+   the array carries the matching `reqId`. The spec language R13 says
+   "every tx-confirmed event whose receipt touches `reqId`". In
+   practice, callers (Detail.tsx today, line 132-134) memoize a
+   per-reqId `timeline` slice but pass the unsliced `events` to the
+   effect dep array — so the hook receives unfiltered events.
+   - Filtering by reqId BEFORE passing to the hook IS the caller's job
+     (the hook would otherwise need to know the event shape to filter,
+     which couples it to event-type details unnecessarily). Existing
+     inline pattern at Detail.tsx:157 does the same.
+   - Cost is an extra read-call per unrelated event (typically 2 RPC
+     calls: getNegotiationView + policyOf — priceBasisOf is gated).
+     Not a correctness bug; light wasted bandwidth on multi-request
+     screens. The Overview view passes the unfiltered events; Detail
+     today does the same.
+   - Verdict: **acceptable, not a finding** (per prompt #1's framing).
+
+8. **`refetch` closure stability.** `useCallback(() => {
+   setRefetchTrigger((n) => n + 1); }, [])` with empty deps — the
+   closure captures only the stable `setRefetchTrigger` setter, no
+   stale closures possible. The functional updater `(n) => n + 1`
+   handles concurrent calls correctly (two `refetch()` invocations in
+   the same tick both increment from the freshest value). **Correct.**
+
+9. **`refetchTrigger` counter vs alternative.** Alternative noted in
+   the prompt: expose the fetch closure via `useCallback` and let
+   `refetch` invoke it directly. Trade-offs:
+   - Counter pattern (current): the effect IS the fetch site;
+     `refetch` triggers the effect; cleanup of the prior in-flight
+     fetch fires `cancelled = true` naturally. ONE async fetch path,
+     ONE cancellation idiom.
+   - Closure pattern (alternative): `refetch` calls the fetch closure
+     directly; the effect ALSO calls the same closure. Two call sites,
+     and the closure must carry its own cancellation token (since
+     useEffect cleanup wouldn't gate a manual refetch). More moving
+     parts.
+   - The counter pattern is the well-known React idiom for "imperative
+     refetch via dep-array bump"; not over-engineered.
+   - Verdict: **acceptable design choice**, slight preference for the
+     current pattern. Not a finding.
+
+10. **Test gap acknowledgement.** Repo has no React testing infra
+    (no `@testing-library/react`, no jsdom, no vitest config for
+    components). The 53-test node suite covers `src/` non-React code
+    only. Per project convention (cf. `useAction.ts` from tick 12 also
+    landed without a unit test for the same reason), this is the
+    accepted deferral; verification falls to browser-driven smoke
+    once Detail.tsx is wired in tick 14. **Acceptable**, but note
+    the gap explicitly here so a future tick that DOES add React
+    testing infra knows to back-fill.
+
+### Findings (per prompt's items 1-10)
+
+#### Finding 1 — R-citation misciting (R14 → R13) — **MEDIUM**
+
+The hook's docstring (line 1) and the catch-branch comment (line 64)
+both cite "SPEC-0003 §2.3 R14" as the requirement being implemented.
+Verbatim re-read of the spec (§2.3 lines 89-99):
+
+- **R13** is "Action panel re-derives from current on-chain state.
+  After every `tx-confirmed` event whose receipt touches `reqId`,
+  re-fetch the negotiation and re-render…"
+- **R14** is "In-flight guard on every tx-firing button. Every button
+  that calls a write method carries a `pending` flag…"
+
+The hook implements R13 (re-fetch on event), not R14 (in-flight guard
+on button writes — implemented by `useAction.ts` last tick). The
+prompt itself repeats the R14 miscitation in two places (the "What
+landed" §1 bullet and "R-citations" §1), so the misciting may be a
+transcription error that propagated from the planning prompt into the
+hook's comments. The implementation behaviour matches R13 exactly.
+
+**Why MEDIUM, not HIGH:** the implementation is correct; only the
+R-pointer is wrong. R-citations are load-bearing for spec-driven
+development (auditors trace requirements to code via these), so a
+wrong pointer breaks that trace. But no behaviour is incorrect.
+
+**Why MEDIUM, not LOW:** the same wrong pointer appears in two places
+in the file (line 1 docstring + line 64 inline comment) AND in the
+planning prompt, indicating the miscitation might propagate further
+(e.g. into Detail.tsx wiring next tick, into the spec README, into
+the implementation progress doc). Catching it here prevents drift.
+
+**Fix:** replace both occurrences of "§2.3 R14" with "§2.3 R13" in
+`web/src/hooks/useNegotiation.ts` (lines 1 and 64).
+
+#### Finding 2 — Unnecessary `eslint-disable-next-line react-hooks/exhaustive-deps` — **NIT**
+
+Lines 73-76:
+
+```ts
+// refetchTrigger is intentionally included so the imperative refetch()
+// call re-runs this same effect path.
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [reqId, events, refetchTrigger]);
+```
+
+The effect body reads `reqId`, `events`, and (via the trigger
+mechanism) is intended to re-fire when `refetchTrigger` changes. All
+three ARE in the dep array. `client.negotiation.*` is a module-level
+singleton; setState setters from `useState` are stable. There is
+**no** unlisted dep, so the rule would NOT fire on this hook.
+The eslint-disable comment is therefore dead — it suppresses a
+warning that never appears.
+
+Worse, the comment misleadingly suggests something IS being suppressed
+("refetchTrigger is intentionally included" — but the rule doesn't
+care about *intentional* inclusion; the rule cares about
+*exhaustiveness*, which is satisfied here). A future reader will
+wonder what unlisted dep the comment is justifying.
+
+**Why NIT:** zero runtime impact; just dead-comment hygiene.
+
+**Fix:** remove lines 73-75 entirely (the eslint-disable and its
+preamble); the dep array `[reqId, events, refetchTrigger]` is
+self-explanatory.
+
+#### Finding 3 — Doc comment on line 12 says "null while loading" but `view` stays last-good on refetch — **NIT**
+
+Line 12: `view: NegotiationView | null;  // null while loading`.
+
+This is true on the FIRST mount (initial state `null`) and on
+reqId-change (cleared by `prevReqIdRef` logic). On a `refetch()` or
+`events`-change *during steady-state*, the hook keeps the last-good
+`view` (the catch branch deliberately does not null it — line 63-64
+comment explains this is intentional to avoid UI flash). So
+"null while loading" is *partially* true and could mislead a caller
+into rendering a loading spinner whenever `view === null`.
+
+**Why NIT:** the existing comment is at least directionally honest
+(view IS null while loading on first mount and on reqId change — the
+two times a caller would actually need a spinner). A purer rewording
+("null until first successful fetch for this reqId") is marginally
+clearer but not load-bearing.
+
+**Fix (optional):** consider rewording to "null until first successful
+fetch for this reqId; retains last-good value across refetches".
+
+#### Finding 4 — `error` is not cleared at fetch start; clears only on success — **NIT**
+
+The hook's error semantics (line 59 success branch, line 65 fail
+branch): on a refetch that succeeds, `error` clears; on a refetch
+that fails, `error` is replaced with the new failure message; during
+the in-flight window of a refetch following a prior failure, `error`
+remains visible.
+
+Compare `useAction.ts` (tick 12) which clears `error` at the *start*
+of `run()` (line 48). The two hooks have intentionally different
+semantics:
+
+- `useAction.error` clears at start — caller expects "current attempt"
+  semantics.
+- `useNegotiation.error` clears at success — caller expects "last
+  known fetch outcome" semantics, so the UI doesn't flash
+  error→empty→error during a transient retry.
+
+Both are defensible; the difference is not documented in either
+hook's docstring. A future maintainer wiring these together in
+Detail.tsx (tick 14) may be surprised if they assume parity.
+
+**Why NIT:** not a bug; documentation polish.
+
+**Fix (optional):** add a one-liner to the `error` field's JSDoc:
+"persists across in-flight refetches; cleared only on a successful
+refetch".
+
+#### Finding 5 — One-frame stale-view glitch on reqId change — **NIT**
+
+When `reqId` changes from A to B, the hook clears `view`/`policy`/
+`priceBasis` inside the effect via `setView(null)` etc. (lines 39-41).
+Effects fire *after* the commit, so the render at the moment of the
+reqId change still shows A's data against `reqId=B` in the JSX (since
+the state hasn't been cleared yet). The clear-state setters then
+queue a re-render in which `view === null`, and the loading branch
+kicks in.
+
+A purer "derive-from-reqId-during-render" pattern would compute
+`view = prevReqId === reqId ? viewState : null` in the render body,
+eliminating the one-frame glitch. But it's also more brittle (forgets
+to gate `policy` and `priceBasis` similarly, requires care with
+React 18 concurrent mode).
+
+**Why NIT:** in practice the glitch is sub-frame because the
+useEffect runs synchronously after commit and queues a re-render
+within the same task-tick. Not user-visible. The inline pattern in
+Detail.tsx today doesn't even attempt the clear, so the hook is
+already an improvement over the baseline. Flagged for awareness when
+tick 14 wires this into Detail.tsx — if a user complains about
+"flash of old data on navigate", this is the path to investigate.
+
+**Fix (optional):** none required; defer to tick 14 browser-verify.
+
+### Tick-13 verdict
+
+**OVERALL: PASS — 0 HIGH/LOW actionable findings; 1 MEDIUM (R-citation
+misciting); 4 NITs (eslint-disable dead comment, view JSDoc precision,
+error-clear timing undocumented, one-frame reqId-change glitch).**
+
+Severity breakdown:
+- **HIGH:** 0.
+- **MEDIUM:** 1 (Finding 1: R-citation "§2.3 R14" should be "§2.3 R13"
+  at file lines 1 and 64).
+- **LOW:** 0.
+- **NIT:** 4 (Findings 2-5).
+
+The hook's implementation is faithful to SPEC-0003 §2.3 R13: it
+re-fetches `negotiation`, `policy`, and conditionally `priceBasis`
+on every change to `events`, `reqId`, or the imperative
+`refetchTrigger`. The fetch sequence and cancellation idiom match the
+inline pattern at `Detail.tsx:113-156` byte-for-byte, with two
+improvements: (1) `error` clears on success, (2) state is cleared on
+`reqId` change (via `prevReqIdRef`). The `refetchTrigger` counter
+pattern is the well-known React idiom for "imperative refetch
+without bypassing dep-list discipline" and is not over-engineered
+relative to a closure-based alternative. The `useRef` + comparison
+pattern for `prevReqIdRef` is racially-safe (refs are stable across
+renders; the comparison runs inside the effect body, not during
+render). Type imports use inline `type` markers, correct under
+`isolatedModules: true` without `verbatimModuleSyntax`.
+
+The exported `UseNegotiationResult` is unused this tick but will be
+consumed by `Detail.tsx` next tick (UNIT-4b will replace lines
+113-157 with `const { view, policy, priceBasis, error, refetch } =
+useNegotiation(reqId, events);`). Speculative export is acceptable
+per project convention.
+
+Test-gap: no React unit test landed because the repo has no React
+testing infrastructure; consistent with tick 12's `useAction.ts`
+deferral, verification falls to tick 14's browser-verify pass. This
+deferral is explicitly acknowledged here so a future infra tick
+knows to back-fill `useNegotiation.test.tsx` alongside
+`useAction.test.tsx`.
+
+All three required gates pass: 53/53 node tests green; root
+`tsc --noEmit` clean; web `tsc --noEmit` clean (after the root build
+populates `dist/`). No prior tick's findings are re-opened or
+regressed.
+
+### Final tick-13 verdict: PASS (0 HIGH/LOW; 1 MEDIUM R-citation; 4 NITs)

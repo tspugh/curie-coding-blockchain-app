@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 12 — UNIT-4-narrow: revertReasonMap + useAction + shared.ts PacketSubmitted fix)
+**Last updated:** 2026-05-29 (tick 13 — UNIT-4b-narrow: useNegotiation hook)
 **Current mode:** `impl`
-**Current tick:** 12
-**Last focus:** First substantive web/ tick. Landed `src/protocol/revertReasonMap.ts` (SPEC-0003 R16; 27 contract revert strings mapped to user-facing copy, `Object.freeze`d, generic fallback embedding raw input) + 9-assertion node:test. Landed `web/src/hooks/useAction.ts` (SPEC-0003 R13; useRef-based in-flight guard with no async window, hard-reject on concurrent run). Piggyback fix: added missing `case "PacketSubmitted":` to `web/src/shared.ts:describeEvent` (pre-existing UNIT-2/tick-4 bug; unblocks web tsc). Inline closure of NIT 2 from strict-review: reordered extractRevertReason probe (.reason → .shortMessage → .message) so wallet `.shortMessage` clean copy isn't masked by `.message` noise.
-**Last commit:** `<this tick>` (tick 12 — UNIT-4-narrow)
+**Current tick:** 13
+**Last focus:** Landed `web/src/hooks/useNegotiation.ts` — React hook extracting the Detail.tsx inline re-fetch pattern. useEffect re-runs on `[reqId, events, refetchTrigger]`; `cancelled` flag prevents stale writes; `prevReqIdRef` clears state on reqId-change so UI doesn't show wrong negotiation while next loads. Strict-review surfaced 1 MEDIUM (R14 ↔ R13 miscitation in the docstring and inline comment — fixed inline by replacing §2.3 R14 with §2.3 R13; behavior unchanged). The hook is exported but not yet consumed; wire-up into Detail.tsx is tick 14. R13 + R16 (tick 12) + R13 re-derive (this tick) are now implementation-complete; tests rest on browser-verify.
+**Last commit:** `<this tick>` (tick 13 — UNIT-4b-narrow useNegotiation)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)

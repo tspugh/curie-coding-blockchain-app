@@ -1,8 +1,29 @@
 # Coverage — spec-4-implementation branch
 
-**Date:** 2026-05-29 · **Tick:** 12 (UNIT-4-narrow: revertReasonMap + useAction hook)
+**Date:** 2026-05-29 · **Tick:** 13 (UNIT-4b-narrow: useNegotiation hook)
 **Branch:** `spec-4-implementation`
 **Last known test counts:** hardhat 28/28 ✓ · lib (node --test) 53/53 ✓
+
+---
+
+## Tick-13 entry (UNIT-4b-narrow)
+
+**What landed:**
+- `web/src/hooks/useNegotiation.ts` — SPEC-0003 R14 (Detail re-derive): React hook that
+  re-fetches negotiation detail on every `events` change keyed to `reqId`, exposes a
+  `refetchTrigger` counter for imperative refetch, and applies a cancelled-flag cleanup
+  pattern to avoid stale-state updates after unmount. **Implementation only — no unit
+  test.** The repo has no React testing infra (no jsdom / React Testing Library config);
+  correctness rests on `tsc` (type-checks clean) and is flagged for browser-verify,
+  matching the same status as R13 (useAction).
+- NO contract, `src/`, or other `web/` changes.
+
+**Coverage gains:**
+- **SPEC-0003 R14** (Detail re-derive): implementation present; no automated test path.
+  Status is **implementation only, no test — browser-verify flagged** (same as R13).
+
+**Tick-13 verdict: PASS-for-this-tick.** lib 53/53 unchanged, hardhat 28/28 unchanged.
+SPEC-0003 R14 gains an implementation; browser-verify remains pending for both R13 and R14.
 
 ---
 
@@ -120,10 +141,11 @@ These specs' coverage is unchanged from tick 6. Summary:
 - **SPEC-0002** (R1 timeline backfill, R2/R3/R5/R6 demo UX, R7 CDS-Hooks seam): partial —
   R1 historical backfill known broken (UNIT-8, queued); R2/R3/R5/R6/R7 implemented but no
   automated regression tests for UI paths.
-- **SPEC-0003** (R13–R22 in-flight guards, ErrorCard, layout): partial as of tick 12 —
-  R16 (revert reason map) now has 9 passing `node:test` assertions (test exists);
-  R13 (useAction in-flight guard) has an implementation but no automated test
-  (browser-verify flagged); UNIT-5 through UNIT-7 queued for remaining requirements.
+- **SPEC-0003** (R13–R22 in-flight guards, ErrorCard, layout): partial as of tick 13 —
+  R16 (revert reason map) has 9 passing `node:test` assertions (test exists);
+  R13 (useAction in-flight guard) and R14 (Detail re-derive hook) each have an
+  implementation but no automated test (browser-verify flagged for both);
+  UNIT-5 through UNIT-7 queued for remaining requirements.
 
 ---
 

@@ -1,3 +1,188 @@
+# Security findings — 2026-05-29 tick 13 (useNegotiation hook — view/policy/priceBasis refetch on tx-confirmed)
+
+**Verdict:** PASS (0 findings)
+
+## Diff scope
+
+1. **NEW** `web/src/hooks/useNegotiation.ts` (84 lines) — React hook
+   per SPEC-0003 §2.3 R14. Takes `reqId: bigint` and
+   `events: readonly CoverageEvent[]`. Calls three read-only client
+   methods on every effect run: `client.negotiation.getNegotiationView(reqId)`,
+   `client.negotiation.policyOf(reqId)`, and (conditionally, when
+   `v.ruled || v.terminal`) `client.negotiation.priceBasisOf(reqId)`.
+   Returns `{ view, policy, priceBasis, error, refetch }`. Stale-data
+   protection uses two mechanisms: a closure-local `cancelled: boolean`
+   set by the effect cleanup function, and a `prevReqIdRef: useRef<bigint | null>`
+   that triggers state clear when `reqId` changes between effect runs.
+   Imperative refetch is implemented via a `refetchTrigger` state
+   counter listed in the effect dependency array.
+
+## Per-concern verdict
+
+### 1. Stale-data leak across reqId changes — PASS
+
+The cancellation flag is correctly closed-over per effect invocation
+and prevents stale writes. Inspection of lines 36–72:
+
+```ts
+useEffect(() => {
+  if (prevReqIdRef.current !== reqId) {
+    setView(null); setPolicy(null); setPriceBasis(null);
+    prevReqIdRef.current = reqId;
+  }
+  let cancelled = false;
+  (async () => {
+    try {
+      const v = await client.negotiation.getNegotiationView(reqId);
+      const p = await client.negotiation.policyOf(reqId);
+      const pb = v.ruled || v.terminal
+        ? await client.negotiation.priceBasisOf(reqId)
+        : null;
+      if (!cancelled) {
+        setView(v); setPolicy(p); setPriceBasis(pb); setError(null);
+      }
+    } catch (err) {
+      if (!cancelled) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    }
+  })();
+  return () => { cancelled = true; };
+}, [reqId, events, refetchTrigger]);
+```
+
+React's `useEffect` contract guarantees that **before** the next effect
+body runs (whether triggered by a `reqId` change, a new `events` array
+identity, or a `refetchTrigger` bump), the **previous** cleanup
+function runs first. That cleanup sets the previous closure's
+`cancelled = true`. Each effect invocation creates a **fresh**
+`cancelled` binding via `let cancelled = false` (line 45) inside the
+effect body — the closure captured by the async IIFE on line 47 sees
+that fresh binding, not any other run's binding. When the in-flight
+fetch for the OLD reqId eventually resolves, its `if (!cancelled)`
+guard (lines 55 and 62) reads the OLD closure's binding, which the
+cleanup has flipped to `true`, and the stale `setView(v)` /
+`setPolicy(p)` / `setPriceBasis(pb)` / `setError(...)` writes are
+skipped. State remains whatever the NEW effect invocation wrote (or
+the `null` cleared by the `prevReqIdRef` guard at lines 38–43 if the
+new fetch hasn't resolved yet).
+
+The `prevReqIdRef` guard is a **complementary belt-and-suspenders**:
+on a `reqId` change, the new effect run synchronously clears the three
+state fields to `null` BEFORE its own async fetch starts, so the UI
+visibly transitions to "loading" rather than briefly showing the
+previous negotiation's data while the new fetch is in flight. Even
+without the ref, the cancellation flag alone would prevent the stale
+write — the ref's job is just to avoid showing stale-but-not-yet-overwritten
+data during the loading window. Together they correctly close the
+stale-write window in both directions (new effect's view is clean, old
+effect's view is suppressed). No race window present.
+
+The error path (lines 61–67) also gates on `!cancelled`, so a slow
+fetch for the OLD reqId that throws cannot poison the NEW error state.
+
+### 2. Error message leakage via err.message — PASS
+
+The hook surfaces `err.message ?? String(err)` from any thrown error
+into the `error` state (line 65). The three read methods invoked
+(`getNegotiationView`, `policyOf`, `priceBasisOf`) all execute against
+the `CurieClient` constructed in `web/src/client.ts` lines 110–162.
+In **simulated** mode, errors are local validation throws from the
+simulated backend with static English-language messages (`"unknown
+negotiation"`, etc. — none embed the RPC URL or private key because
+none exist in simulated mode). In **real** mode, errors flow up from
+viem/ethers; viem v2 / ethers v6 `Error.message` strings include the
+revert reason, the contract address, and the method signature, but
+**not** the RPC URL and **not** the signer's private key (`viem`
+explicitly redacts the private key from its serialized error metadata,
+and ethers' `JsonRpcProvider` does not embed the URL into surfaced
+revert errors — RPC URLs only appear in low-level network errors like
+`HTTP 502`, which are themselves public infrastructure facts).
+
+The client-side `VITE_PRIVATE_KEY` is read at module load (line 114)
+and passed into `createClient`; it lives inside the SDK's wallet
+object. Stack traces in the browser may include source file paths
+(`web/src/client.ts:114`) but **do not** include the value of the env
+var — the env var resolves to a string at build time and that string
+is not re-inserted into error frames. The CLAUDE.md comment at line
+164 ("Acceptable only because this is a no-funds dev wallet
+(testnet / simulated)") confirms the threat model: even if the
+build-time private key did leak via a stack trace, it controls only a
+zero-balance testnet wallet. Surfacing `err.message` to the
+`error` state and letting a consumer render it as text (React's
+default JSX escaping prevents DOM injection — same defense as the
+tick-12 `useAction` analysis) is the correct UX choice for showing a
+transient RPC blip. No PHI surface — these are read-only view calls,
+not the evidence/packet submission path. No sensitive runtime state
+surfaced.
+
+### 3. DoS via excessive refetch — N/A
+
+`refetch()` (line 78) is a `useCallback` that bumps an in-memory React
+state counter; it is not exposed to attackers — the consuming
+component is the only caller. Each bump triggers one `useEffect` run
+(three read calls, no writes, no fees). Even a misbehaving UI loop
+would only spam the local RPC provider with view calls, not the
+contract — view calls are gas-free on the local node and chargeable
+only to the wallet/RPC operator. Not a security finding in the SPEC-0003
+threat model. Noted as N/A per the brief.
+
+### 4. No timer-based polling — PASS
+
+`grep -nE 'setInterval|setTimeout|setImmediate|requestAnimationFrame'`
+across `web/src/hooks/useNegotiation.ts` returns **zero matches**.
+The refetch trigger is purely event-driven: the effect re-runs when
+`reqId`, `events` (the parent feeds `events` from the tx-confirmed
+event bus per SPEC-0003 §2.2), or `refetchTrigger` (consumer-driven
+imperative refetch) changes. No background polling loop, no
+`setInterval`-style timer that could fire after unmount, no leaked
+animation-frame callback. The effect cleanup at lines 70–72 only
+flips `cancelled = true` — no timer-clear bookkeeping required
+because no timer exists.
+
+### 5. No new secrets / credentials in the diff — PASS
+
+Sweep across `web/src/hooks/useNegotiation.ts` for `BEGIN|PRIVATE
+KEY|AKIA|sk-[A-Za-z0-9]|xoxb-|xoxp-|ghp_|github_pat|secret|password|
+api[_-]?key|RPC_URL|PRIVATE_KEY|process\.env` returns zero matches.
+The hook imports `client` from `../client.js`, which is itself
+client-construction code; no env vars, no RPC URLs, no credentials are
+read or referenced from inside the hook. Clean.
+
+## Notes
+
+- The hook adds a new client-side surface but no new external calls
+  beyond the three already-existing read methods on
+  `client.negotiation`. No new ABI surface, no new write paths.
+- The cancellation discipline (closure-local `let cancelled = false`
+  + cleanup `cancelled = true`) is the React-standard pattern for
+  async-effect race-safety; correctly applied here.
+- The `prevReqIdRef` clear-on-change guard is an additional
+  UX-correctness layer, not a security guard — even without it, the
+  cancellation flag alone prevents stale writes.
+- Defense-in-depth: the consumer renders `error` as text under React's
+  default JSX escaping (no `dangerouslySetInnerHTML` reachable from
+  this hook), so even if a future viem/ethers version embedded
+  attacker-controllable characters in `.message`, they would
+  text-escape at the DOM boundary.
+
+## Overall verdict
+
+**PASS — zero findings.** The one-file `useNegotiation` hook
+correctly implements stale-write protection via a closure-local
+`cancelled` flag set by the effect cleanup, with a complementary
+`prevReqIdRef` UX layer that clears state on `reqId` change. The
+error path surfaces `err.message ?? String(err)` to the consumer as
+text only; viem/ethers error messages do not embed the RPC URL or
+private key, and the build-time wallet is a no-funds testnet wallet
+per the client.ts security comment. `refetch()` is a UI-only
+callback not exposed to attackers (N/A per brief). Zero
+`setInterval` / `setTimeout` / timer-polling primitives across the
+file. No new secrets, no new external calls, no new on-chain
+disclosure surface. Tick 13 ships clean.
+
+---
+
 # Security findings — 2026-05-29 tick 12 (revertReasonMap + useAction hook + PacketSubmitted UI label)
 
 **Verdict:** PASS (0 findings)
