@@ -13,8 +13,16 @@ total-stickler reviewer has zero findings. Then enter **creativity mode** — ex
 roadmap-listed-but-unspecced ideas, implement small ones on `creativity/<feature>`
 branches, open PRs against `main` for human review.
 
-If you run out of context tokens at any point, **tag where you are and stop the loop
-cleanly**. Don't waste tokens on diminishing-returns work near the cap.
+## On token budget — IGNORE for now
+
+The token-budget self-throttling logic in this prompt (emergency tags, "lean tick"
+guidance, skipping subagents based on % usage) is **deprecated**. Run each tick at
+full breadth — dispatch every subagent the procedure calls for, do not preemptively
+tag or stop. If a tick genuinely cannot complete a step because there's no token
+budget left, **that's fine** — just skip the step it can't do, commit whatever is
+coherent (or commit nothing if nothing is coherent), and let the next tick pick up
+from the queue. Do not emergency-tag, do not flip mode to creativity, do not delete
+the cron. The harness will summarize context as needed.
 
 ## Hard invariants — never violate
 
@@ -26,7 +34,6 @@ cleanly**. Don't waste tokens on diminishing-returns work near the cap.
 - **PHI never on-chain or in fixtures** (SPEC-0004 R1). Synthetic data only.
 - **Push after every commit.** No accumulating local commits.
 - **Browser-verify must pass before claiming steady state.** Non-negotiable.
-- **Token-low → tag and stop.** Don't grind near the cap.
 - **Per-tick scope = one focused unit.** No half-state in the working tree at end of tick.
 
 ## State files
@@ -137,9 +144,10 @@ If all gates green:
 - Update `docs/progress/loop-state.md` (increment tick, record focus completion, refresh verdict table).
 - **`git push origin spec-4-implementation`** — every commit pushed. No exceptions.
 
-### Phase 7 — Self-assess
+### Phase 7 — Self-assess (steady-state check only)
 
-**A. Steady-state check.** All of:
+Run the steady-state check. **Do NOT run any token-budget check** — that logic is
+deprecated (see "On token budget" at the top). All of:
 
 - 100% of R-numbered requirements (specs 0001–0004) have ≥ 1 passing test.
 - All tests pass.
@@ -150,30 +158,19 @@ If all gates green:
 - Browser-verify: all R2/R2a/R2b scenarios green.
 - Design-conformance: ≥ 90%.
 
-**B. Token-budget check** (use context-window % usage as the canonical gauge):
-
-| Usage | Action |
-|---|---|
-| < 60% | Continue full tick. |
-| 60–75% | Next tick: skip non-essential subagents (design-conformance, browser-verify) unless needed for the steady-state check. Commit + exit cleanly. |
-| 75–90% | Next tick: stop dispatching subagents, commit whatever's coherent, run steady-state check, prepare for emergency tag. |
-| **> 90%** | **Emergency tag NOW.** Tag `tokens-emergency-YYYY-MM-DD-N`, push the tag, set mode=creativity in loop-state, stop the loop. Do NOT start another tick. |
-
 ### Phase 8 — Decision tree
 
 | Condition | Action |
 |---|---|
 | impl + steady-state criteria all met | Tag `steady-state-YYYY-MM-DD-N`; push tag; set mode=`creativity` in loop-state.md; commit + push; continue next tick. |
-| impl + token > 90% | Tag `tokens-emergency-YYYY-MM-DD-N`; push tag; set mode=`creativity`; **stop the loop**. |
 | impl + any gate failed | Update loop-state.md queue with the findings as the top-priority item; continue next tick. |
+| impl + a gate could not run (e.g. no tokens left to dispatch the subagent) | Skip it for THIS tick only — note it in loop-state.md so next tick re-runs that gate before relying on its verdict. Continue next tick. |
 | creativity + branch ready | Push `creativity/<feature>`; open PR against `main` via `gh pr create`; record PR # in loop-state.md; continue next tick. |
-| creativity + token > 90% | Same emergency tag; stop. |
 
 ## Tag naming
 
 - `start` — marks the loop-setup commit (pre-tick 0). Added once at setup.
 - `steady-state-YYYY-MM-DD-N` — N starts at 1, increments per day if multiple.
-- `tokens-emergency-YYYY-MM-DD-N` — same convention.
 
 ## Where the wallet + chain config live
 
