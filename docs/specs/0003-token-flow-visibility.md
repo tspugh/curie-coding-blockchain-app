@@ -136,6 +136,49 @@ spending non-trivial STT.
   in addition to the method name. The summary is the human-readable handle a viewer
   reads first; the hash and gas are the audit trail.
 
+### 2.4 (2026-05-29) Layout, error states, and cross-mode parity (Decision 4)
+
+Further polish discovered while real-mode driving: simulated-mode actions (e.g. accept,
+reject) can be clicked indefinitely — the in-flight / re-derive rules from §2.3 only
+fire when there's a real-chain receipt. Long demo content (the multi-paragraph
+justification, the FDA fixture text) pushes UI components past their containers — text
+goes out of bounds, action panels squish. Error UI today is a raw revert string dropped
+inline; it inherits no layout discipline and pushes other elements off the page.
+
+- **R20 (MUST) No overflow, clipping, or horizontal scroll at standard desktop
+  viewports.** All views render cleanly at **1280×800** and **1920×1080** with no
+  unintended horizontal scroll, no text clipped by containers, no buttons pushed past
+  their parents' rounded corners. Long content (multi-paragraph justifications, the
+  FDA-indication evidence text, long hashes) wraps, truncates with a "show more"
+  affordance, or scrolls within a fixed-height region — never breaks the surrounding
+  layout. Specific tested states: empty Overview, Overview with ≥3 rows, Create form
+  empty, Create form filled with the Load-Demo content, Detail at each of the 11 enum
+  states (R5 of SPEC-0001), Detail with a pending tx, Detail with an error.
+- **R21 (MUST) Polished, contained error UI.** Every error MUST render as a structured
+  card with: (a) one-line plain-English headline (R16's revert-reason mapping); (b)
+  optional collapsible "Technical details" block hiding the raw `Error(...)`; (c) a
+  "What to do" hint; (d) an explicit dismiss / retry affordance. The card occupies its
+  own slot in the Detail / Create layout and MUST NOT push other elements off the
+  page or cause the surrounding panel to reflow disruptively. No raw ethers stack
+  traces in production-mode renders; the dev console may still carry the full error
+  per R7 (no console writes on the happy path, but R7 doesn't prohibit dev-only error
+  visibility behind a debug toggle).
+- **R22 (MUST) Simulated-mode parity on idempotency + in-flight guards.** R13, R14,
+  R15 apply identically in simulated mode. Concretely: clicking accept / reject / any
+  state-transitioning button in simulated mode disables it for the duration of the
+  call (the simulated backend's promise resolves on `autoResolveMs`), and the action
+  panel re-derives from the new simulated state on resolution. A duplicate click MUST
+  NOT produce a duplicate state transition or duplicate timeline entry. The lack of a
+  real on-chain receipt does not exempt simulated mode from idempotency — the same
+  visual + behavioural guarantees apply.
+- **R23 (SHOULD) Screenshot-based visual regression check in pass/fail.** Pass
+  criteria include a screenshot review at **1280×800** and **1920×1080** covering the
+  state matrix in R20. Reviewer (human or agent-browser-driven) checks: no element
+  clipped or overflowing its container; no horizontal scroll; the action affordance
+  matches the on-chain state (R13); semantic confirmation card present after the most
+  recent successful action (R18); error card (when applicable) contained per R21.
+  Failures get a labelled screenshot in the PR description.
+
 ## 3. Technical documentation
 
 - **Balance source:** `wallet.provider.getBalance(wallet.address)`. The web client already

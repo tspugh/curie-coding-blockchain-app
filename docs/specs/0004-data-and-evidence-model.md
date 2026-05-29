@@ -78,13 +78,14 @@ Status: Draft · Owner: tspugh · Date: 2026-05-29 · Builds on: [SPEC-0001](000
 ### 2.4 (2026-05-29) Appeal-stage labels: hybrid — ladder named on-chain, stage named in UI
 
 - **R13 (MUST) Ladder named on-chain.** The contract carries a `payerLine: enum { PartD,
-  Commercial }` on each contract instance and a per-round `appealRound: uint8`. The
-  combination `(payerLine, appealRound)` is enough for the contract to look up
+  Commercial, Medicaid }` on each contract instance and a per-round `appealRound: uint8`.
+  The combination `(payerLine, appealRound)` is enough for the contract to look up
   ladder-specific rules (see R14) without baking any single jurisdiction's vocabulary into
-  the schema.
+  the schema. **Medicaid v0 = MCO (managed-care) model only**; fee-for-service Medicaid
+  is deferred to v0.1 — see §2.5 and [domain Finding 5 follow-up](../domain/coverage-exception-process.md).
 - **R14 (MUST) Ladder-specific rules enforced on-chain.** The contract enforces the rules
-  that *differ* between the Part D and commercial ladders, indexed by `(payerLine,
-  appealRound)`:
+  that *differ* between the Part D, commercial, and Medicaid (MCO) ladders, indexed by
+  `(payerLine, appealRound)`:
   - **Filing windows.** Each `(payerLine, appealRound)` carries a max time-from-prior-
     ruling before the appeal lapses (e.g., Part D `(PartD, 2)` IRE-reconsideration round =
     60 days from the redetermination ruling; commercial `(Commercial, 2)` external review =
@@ -106,6 +107,9 @@ Status: Draft · Owner: tspugh · Date: 2026-05-29 · Builds on: [SPEC-0001](000
   - `(PartD, 4)` → "Medicare Appeals Council" *(out of scope for v0 — see R14 terminal)*
   - `(Commercial, 1)` → "Internal Appeal"
   - `(Commercial, 2)` → "External Review"
+  - `(Medicaid, 1)` → "Plan Internal Appeal"
+  - `(Medicaid, 2)` → "External Medical Review / State Fair Hearing" *(v0 collapses
+    the two into a single round; see §2.5)*
 - **R16 (SHOULD) Static ladder table in the library.** The `(payerLine, appealRound) →
   { name, description, window, threshold }` table ships as a typed constant in the library
   so the UI and any off-chain tools render the same labels the contract enforces against.
@@ -117,6 +121,37 @@ Status: Draft · Owner: tspugh · Date: 2026-05-29 · Builds on: [SPEC-0001](000
 - **Implementation reference.** Concrete window / threshold values per `(payerLine,
   appealRound)`, predicate sketches, and the ladder-table SoT proposal live in
   [`../technical-design/appeal-ladder-enforcement.md`](../technical-design/appeal-ladder-enforcement.md).
+
+### 2.5 (2026-05-29) Medicaid MCO ladder (Decision 5)
+
+Medicaid is added as a third `payerLine` per the §2.4 hybrid model. The Medicaid
+landscape has two distinct delivery models with materially different appeal
+mechanics — v0 covers only the managed-care variant because that's where ≈75% of
+Medicaid enrollees are today (per [domain Finding 5 follow-up](../domain/coverage-exception-process.md)).
+
+- **R17 (MUST) Medicaid v0 = MCO (Managed Care) ladder.** The contract treats
+  `payerLine: Medicaid` as the managed-care variant governed by 42 CFR §438.402.
+  Concretely, the two-round MCO appeal flow:
+  - **`(Medicaid, 0)`** — initial coverage determination by the MCO.
+  - **`(Medicaid, 1)`** — *Plan Internal Appeal*. MUST file within 60 days of the
+    initial adverse determination. Plan has 30 days to decide (72 hours expedited).
+  - **`(Medicaid, 2)`** — *External Medical Review / State Fair Hearing* (v0 collapses
+    these two parallel external paths into a single contract round; the UI labels it
+    "External Medical Review / State Fair Hearing" per R15). MUST file within 120 days
+    of the plan's internal-appeal decision.
+- **R18 (SHOULD) Fee-for-service Medicaid is a v0.1 follow-up.** Direct-state-billed
+  Medicaid follows a different ladder (state grievance → State Fair Hearing → judicial
+  review) governed by 42 CFR §431.220+. Adding it would require either (a) a
+  `lineSubtype: { MCO | FFS }` axis on the contract or (b) a separate `PayerLine`
+  enum value. Decision deferred — captured here so v0.1 work knows the structural cost.
+- **R19 (MUST) No amount-in-controversy threshold on Medicaid rounds.** Unlike Part D
+  ALJ ($200), Medicaid MCO appeals are right-of-access regardless of dollar amount.
+  The threshold column in the ladder table is null for all `(Medicaid, *)` entries.
+- **R20 (MUST) State-specific window overrides are out of scope for v0.** The 60-day
+  internal-appeal and 120-day external windows in R17 are the **federal floor**; some
+  states adopt longer windows. v0 enforces only the federal floor. State-specific
+  overrides are a follow-up alongside R18 — both can ride a single Solidity table
+  extension when added.
 
 ## 3. Technical documentation
 
