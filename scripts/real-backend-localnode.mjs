@@ -114,6 +114,7 @@ async function main() {
     insurerId: 22n,
     providerAddr: address,
     insurerAddr: address,
+    payerLine: 0, // PayerLine.PartD
     drugRef: DRUG,
     requestedAmount: REQUESTED,
     quantity: QUANTITY,
@@ -237,6 +238,7 @@ async function main() {
     insurerId: 22n,
     providerAddr: address,
     insurerAddr: address,
+    payerLine: 0, // PayerLine.PartD
     drugRef: DRUG,
     requestedAmount: REQUESTED,
     quantity: QUANTITY,

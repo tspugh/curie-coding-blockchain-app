@@ -58,6 +58,7 @@ const baseScript = {
   requestedAmount: 4200n,
   quantity: 6n, // 6 dispensed units; drives the deterministic cap (R2/R6a)
   daysSupply: 28n, // clinical context only — never enters the price math (R2)
+  payerLine: 0, // PayerLine.PartD — SPEC-0004 R13
 };
 
 async function main() {

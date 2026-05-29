@@ -1,141 +1,111 @@
-# Strict-review findings — tick 2 (UNIT-A0), re-review #3
+# Strict-review findings — tick 3 (UNIT-1)
 
-**Verdict:** PASS (0 findings; previous Finding 1 resolved)
+**Verdict:** PASS (5 findings resolved inline; 2 informational deferred to follow-up)
 
-The previous re-review's single remaining gap — a missing test for the new
-`submitEvidence` round-cap deadlock path — is now closed. A new test
-`R9 (deadlock submitEvidence)` at `contracts/test/CoverageNegotiation.test.ts:669-691`
-exercises the cap path with assertions structurally equivalent to its sibling
-`R9 (deadlock appeal)` (test.ts:645-667). The full hardhat suite reports
-**15 passing / 0 failing**, including the new test. Nothing else in the uncommitted
-diff warrants a stickler flag.
+UNIT-1 lands the spec-shaped `LADDERS` table, the `PayerLine` enum, the
+`appealRound` field, and mechanical plumbing across the TS surface and the
+Solidity struct. The ladder data itself reconciles cleanly against SPEC-0004
+§2.4 R15, §2.5 R17/R19, and `docs/technical-design/appeal-ladder-enforcement.md`.
 
-## Re-review of the prior finding
+The initial review flagged 5 findings (2 MEDIUM, 3 LOW). All 5 were addressed
+inline before commit. The 2 informational items are deferred and tracked below.
 
-### Previous Finding 1 (HIGH) — RESOLVED
+## Resolved findings
 
-The new test (test.ts:669-691):
+### Finding 1 (MEDIUM) — stale ROUND SEMANTICS comment now actively misleads — RESOLVED
 
-```ts
-it("R9 (deadlock submitEvidence): submitEvidence at the round cap deadlocks and refunds the full msg.value (no agent fires)", async () => {
-  const { platform, contract } = await deploy();
-  const [provider, insurer] = await ethers.getSigners();
-  const target = await contract.getAddress();
-  await contract.setMaxRounds(1n); // first ruling already at the cap
+`contracts/contracts/CoverageNegotiation.sol:118-124` was authored when `round`
+was the only counter. UNIT-1 added a second counter `appealRound` that DOES
+count appeals — the old comment said "never as 'number of appeals so far'"
+which was false post-UNIT-1.
 
-  const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
-  // NeedMoreEvidence ruling routes to EvidenceRequested with round == maxRounds.
-  await platform.triggerRuling(target, requestId, ruling(Decision.NeedMoreEvidence, 0n));
-  expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested);
-  expect(await contract.roundOf(reqId)).to.equal(1n); // round == maxRounds
+**Fix:** Replaced the comment block with a two-paragraph treatment that names
+BOTH counters, explains the semantic distinction (`round` = total agent fires,
+bumps on submitEvidence too; `appealRound` = ladder position, bumps in
+`appeal()` only), and explicitly notes the deadlock-cap short-circuit path
+where `appealRound` stays put.
 
-  const value = ethers.parseEther("0.02");
-  const balBefore = await ethers.provider.getBalance(provider.address);
-  const tx = await contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI_2, { value });
-  const rc = await tx.wait();
-  const gas = rc!.gasUsed * rc!.gasPrice;
-  const balAfter = await ethers.provider.getBalance(provider.address);
-  // Deadlocked: no fee charged, full value refunded → net cost is just gas.
-  expect(balBefore - balAfter).to.equal(gas);
-  expect(await contract.stateOf(reqId)).to.equal(State.Deadlocked);
-  expect(await ethers.provider.getBalance(target)).to.equal(0n);
-});
-```
+### Finding 2 (MEDIUM) — appeal() deadlock invariant: appealRound MUST NOT bump — untested — RESOLVED
 
-Required-assertion table (previous review's bar):
+The `appealRound` increment in `appeal()` is correctly placed after the cap
+check, so a deadlock at the cap leaves `appealRound` unchanged. But this
+invariant had no test.
 
-| Required check | Status | Evidence |
-|---|---|---|
-| Full refund (not just `> 0`) | PASS | `expect(balBefore - balAfter).to.equal(gas)` — exact equality on line 688. A fee charge would inflate the delta to `gas + FEE`. |
-| State == `Deadlocked` post-call | PASS | line 689 |
-| Contract balance == 0 (no trapped ETH) | PASS | line 690 |
-| No agent fire | PASS (implicitly) | The two assertions above jointly prove no fire happened: a fire would consume the `FEE` from `msg.value` (so the balance delta would be `gas + FEE`, not just `gas`), AND the contract would retain at least the fee in flight (so `getBalance(target)` would be `>= FEE`). The existing R9 (deadlock appeal) test (test.ts:664-666) uses the same implicit pair and was previously accepted. Parity preserved. |
+**Fix:** Added an assertion at the end of `R9 (deadlock appeal)` (test.ts:670+):
+`expect(n.appealRound).to.equal(0)` after the deadlock-cap path runs. Confirms
+the bump is skipped on the short-circuit. Also added a positive assertion to
+T6 that `appealRound` advances `0 → 1` on a successful appeal.
 
-Setup pre-conditions also asserted (round == 1 == maxRounds, state ==
-EvidenceRequested before the cap-path call) — these prove the test is actually
-hitting the cap path it claims to hit, not an unrelated revert. The test reads
-cleanly when diffed side-by-side with R9 (deadlock appeal): identical signer
-choice (`provider` instead of `insurer` because submitEvidence is provider-only),
-identical balance/gas pattern, identical setMaxRounds(1n) seed, identical 0.02
-ETH overpayment. **PASS.**
+### Finding 3 (LOW) — ladders.test.ts spot-checks only 3 of 8 R15 stage names — RESOLVED
 
-## Re-scan of the uncommitted diff for new stickler flags
+The original 9 assertions covered counts + one name per ladder + a few
+window/threshold values, but a rename of e.g. `Redetermination` would have
+slipped through.
 
-`git diff --stat` covers 4 files:
-- `contracts/contracts/CoverageNegotiation.sol` (109 lines)
-- `contracts/contracts/mocks/MockAgentPlatform.sol` (20 lines)
-- `contracts/test/CoverageNegotiation.test.ts` (27 lines)
-- `src/contract/real.ts` (6 lines)
+**Fix:** Added a single `LADDERS pins every spec R15 stage name verbatim` test
+that asserts all 11 stage names across the three ladders. Also added a
+`LADDERS pins windowDays + thresholdCents per tech-design` test that pins all
+window/threshold values, and a `Every LADDERS entry has non-empty description +
+citation` test that proves R21 schema completeness.
 
-### Test file (27-line delta) — the only change in this tick
+### Finding 4 (LOW) — stageNameFor invalid-PayerLine and negative-round untested — RESOLVED
 
-Two changes:
+`stageNameFor` falls back to `"—"` for unknown lookups, but only the
+out-of-range-round case (`stageNameFor(PartD, 99)`) was tested.
 
-1. **New R9 (deadlock submitEvidence) test (lines 669-691).** Reviewed above. PASS.
-2. **T10 submitEvidence revert check tightened (lines 707-710).** The previous
-   form `submitEvidence(reqId, EVIDENCE_URI, { value: FEE })` is replaced with
-   `submitEvidence(reqId, EVIDENCE_URI)` (no value), and a new comment explains
-   why: "submitEvidence reverts on the state guard before the fee check — no
-   value needed here." This is a strengthening, not a regression: dropping the
-   value proves the state guard at sol:349 fires *before* the payable surface
-   ever evaluates `msg.value`, which is what the comment claims. The comment
-   does not lie. PASS.
+**Fix:** Added two tests: `stageNameFor with negative round falls back to '—'`
+and `stageNameFor with invalid PayerLine falls back to '—'` (the latter casts
+`99 as PayerLine` to exercise the unknown-line branch).
 
-### Source / mock / wrapper deltas — unchanged from previous re-review
+### Finding 5 (LOW) — FileRequestInput.payerLine optional-with-default vs CreateContractParams.payerLine required — RESOLVED
 
-The sol, mock, and `real.ts` deltas in this diff are exactly the deltas the
-previous re-review cleared (cap block on submitEvidence, transparency slot,
-mock probe refactor, real.ts fee on submitEvidence). Re-scanning for anything
-the previous review missed:
+`src/agents/party-agent.ts:54` had `readonly payerLine?: PayerLine;` with a
+silent `?? PayerLine.PartD` default in `fileRequest`. `CreateContractParams`
+made it required. Inconsistent surface, silent-PartD regression risk.
 
-1. **Dead code:** none introduced. `currentlyFiringReqId` is used by the mock
-   probe (MockAgentPlatform.sol:74-75) AND is a load-bearing public read for
-   off-chain probes — not dead.
-2. **Comments that lie:** none. The natspec on `submitEvidence` (sol:347-353)
-   accurately describes the new payable + cap-deadlock behavior. The CEI note
-   on `currentlyFiringReqId` (sol:153-159, sol:728-732) is accurate: the slot is
-   set AFTER `n.state = State.UnderReview`, so the state-effect ordering is
-   preserved. The inline comment in the new cap block (sol:357-360) correctly
-   names the R9 invariant and the `nonReentrant` guarantee.
-3. **Spec drift:** R6c's round cap now applies uniformly to both agent-firing
-   entry points after `Ready` (appeal + submitEvidence). The submitEvidence
-   semantics change (was: "return to Ready, fee on next adjudication"; now:
-   "fire agent directly, fee here") is correctly reflected in the new natspec
-   AND in the real.ts wrapper (which now passes `agentFeeValue`). No drift.
-4. **DRY threshold:** the cap-block duplication is now exactly 2x (appeal +
-   submitEvidence). The previous review's rule of thumb was "accept 2x; extract
-   on 3x". No third call site has appeared, so the inline form stays. PASS.
-5. **Weak assertions in the new test:** the bal-delta == gas check is exact
-   (`.to.equal(gas)`, not `.to.be.gt(0)` or `.to.be.closeTo(...)`), and a fire
-   would have changed the delta by exactly `FEE` — so the assertion is
-   load-bearing for "no fire". The contract-balance == 0 check is also exact.
-   Could be marginally strengthened by adding
-   `expect(await platform.createRequestCalls()).to.equal(<callsBefore>)`,
-   but (a) the sibling R9 (deadlock appeal) test doesn't bother, and (b) the
-   balance pair already proves no fire happened. Holding parity with the
-   sibling is the right call for v0; not a finding.
-6. **Backwards-compat hacks:** none. The interface rename
-   `IStateProbe` → `IFiringProbe` is a clean rename inside the mock; not
-   ABI-exported.
-7. **Storage layout:** `currentlyFiringReqId` was appended after the natspec
-   block at sol:160 (not inserted into the existing layout), and the prior
-   storage slots are unchanged. No upgrade footgun (the contract isn't
-   upgradeable anyway, but the discipline is correct).
-8. **Test isolation:** the new test calls `deploy()` for its own fixture, so it
-   doesn't share state with any other test. No order-dependence introduced.
+**Fix:** Made `FileRequestInput.payerLine` required (dropped the `?`).
+Removed the `?? PayerLine.PartD` default. Cascaded the requirement through
+`NegotiationScript` in `src/orchestrator.ts` (also required, no default), and
+through `scripts/orchestrator-demo.mjs`'s `baseScript` (set to `0 /* PartD */`
+explicitly).
 
-## Summary
+## Informational (deferred to follow-up units)
 
-| Category | Status |
-|---|---|
-| Previous Finding 1 (cap-path test missing) | RESOLVED |
-| Test correctness (full refund, state, balance) | PASS |
-| Test parity with sibling R9 (deadlock appeal) | PASS |
-| Suite green | PASS (15/15) |
-| Dead code | none |
-| Comments accurate | yes |
-| Spec drift | none |
-| DRY at 2x | acceptable |
-| Weak assertions | none material |
+### Info A — ContractCreated event omits payerLine for indexer filtering
 
-This tick lands clean.
+Off-chain indexers / payer-side dashboards that filter "all my requests by
+payerLine" can't do so from event log alone — they must fetch the full
+Negotiation. SPEC-0004 R13 names the field but doesn't require it in events.
+Not a UNIT-1 finding. Track as a possible UNIT-2 expansion (when the
+`PacketSubmitted` event lands per SPEC-0004 §3.5, payerLine could ride along).
+
+### Info B — (PartD, 4) Medicare Appeals Council in LADDERS but tech-design table omits it
+
+SPEC-0004 R15 lists `(PartD, 4)` "Medicare Appeals Council" explicitly with the
+note "out of scope for v0 — see R14 terminal". Tech-design table truncates at
+round 3 (the v0 terminal). The new `LADDERS` includes round 4 so the UI can
+show the label if/when V1.5+ adds it. Both interpretations are valid; keeping
+round 4 in `LADDERS` is the more conservative choice (data model can carry
+what the v0 enforcement chooses not to use).
+
+## Checked (categories walked)
+
+- Over-engineering / abstraction bloat
+- Weak tests (now strengthened in `ladders.test.ts` + T6 + R9 deadlock)
+- Missing edge cases (now covered for stageNameFor + appealRound deadlock invariant)
+- Dead code / unused exports
+- Lying or noise comments (ROUND SEMANTICS block rewritten)
+- Spec drift (full reconciliation against SPEC-0004 §2.4/§2.5 + tech-design)
+- DRY (prototype data.jsx vs protocol/ladders.ts duplication acceptable for v0)
+- Backwards-compat hacks (FileRequestInput optional default removed)
+- Cross-callsite consistency (web/Create.tsx, scripts/real-backend-localnode.mjs,
+  scripts/orchestrator-demo.mjs, src/orchestrator.ts all updated)
+
+## Notes
+
+- Final test counts after all finding fixes: `npx hardhat test` 15/15 passing
+  (T6 + R9-deadlock-appeal carry new appealRound assertions; total test count
+  unchanged because assertions added to existing tests); `node --import tsx
+  --test "src/**/*.test.ts"` 19/19 passing (5 auth + 14 ladders).
+- All resolutions verified by running tests + tsc after each edit.
+- No `--no-verify`, no `--force-push`, no new npm deps.

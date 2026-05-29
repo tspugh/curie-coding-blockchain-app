@@ -11,7 +11,7 @@ import { test } from "node:test";
 
 import { ethers } from "ethers";
 
-import { Decision, State } from "../types/coverage.types.js";
+import { Decision, PayerLine, State } from "../types/coverage.types.js";
 import { ANY_CALLER, SimulatedBackend } from "./simulated.js";
 import type { CreateContractParams } from "./types.js";
 
@@ -42,6 +42,7 @@ function params(over: Partial<CreateContractParams> = {}): CreateContractParams 
     daysSupply: 30n,
     justificationHash: JUSTIFICATION_HASH,
     evidenceUri: EVIDENCE_URI,
+    payerLine: PayerLine.PartD,
     ...over,
   };
 }

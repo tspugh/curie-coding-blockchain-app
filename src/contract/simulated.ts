@@ -43,6 +43,7 @@ import {
   Decision,
   type Negotiation,
   type NegotiationView,
+  PayerLine,
   State,
   STATE_NAMES,
   TERMINAL_STATES,
@@ -144,6 +145,8 @@ interface SimNegotiation {
   lastDecision: Decision;
   hasRuling: boolean;
   round: bigint;
+  payerLine: PayerLine;
+  appealRound: number;
   providerAccepted: boolean;
   insurerAccepted: boolean;
   totalFees: bigint;
@@ -233,6 +236,8 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       lastDecision: Decision.Approve,
       hasRuling: false,
       round: 0n,
+      payerLine: params.payerLine,
+      appealRound: 0,
       providerAccepted: false,
       insurerAccepted: false,
       totalFees: 0n,
@@ -327,6 +332,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     n.evidenceUri = evidenceUri;
     n.rationaleHash = reasonHash;
     n.round += 1n;
+    n.appealRound += 1;
     this.emit({ name: "Appealed", reqId, partyId, evidenceUri, round: n.round });
     this.fireAgent(reqId, n);
   }
@@ -652,6 +658,8 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       lastDecision: n.lastDecision,
       hasRuling: n.hasRuling,
       round: n.round,
+      payerLine: n.payerLine,
+      appealRound: n.appealRound,
       providerAccepted: n.providerAccepted,
       insurerAccepted: n.insurerAccepted,
       totalFees: n.totalFees,

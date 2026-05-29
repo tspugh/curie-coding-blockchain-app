@@ -21,6 +21,7 @@ import {
   type Decision,
   type Negotiation,
   type NegotiationView,
+  PayerLine,
   State,
   STATE_NAMES,
   TERMINAL_STATES,
@@ -49,38 +50,40 @@ export interface RealBackendOptions {
 
 /**
  * Raw `Negotiation` tuple returned by ethers — field order matches the Solidity
- * struct (and `abi.ts`) EXACTLY. 29 fields.
+ * struct (and `abi.ts`) EXACTLY. 31 fields.
  */
 type RawNegotiation = readonly [
-  bigint, // providerId
-  bigint, // insurerId
-  string, // providerAddr
-  string, // insurerAddr
-  string, // drugRef
-  bigint, // requestedAmount
-  bigint, // quantity
-  bigint, // daysSupply
-  string, // justificationHash
-  string, // evidenceUri
-  string, // policyHash
-  string, // policyUri
-  bigint, // coveredAmount
-  bigint, // costPlusUnitPrice
-  bigint, // nadacUnitPrice
-  string, // rationaleHash
-  string, // clauseRef
-  string, // standardRef
-  bigint | number, // lastDecision (uint8)
-  boolean, // hasRuling
-  bigint, // round
-  boolean, // providerAccepted
-  boolean, // insurerAccepted
-  bigint, // totalFees
-  bigint | number, // state (uint8)
-  bigint, // pendingRequestId
-  bigint, // createdAt
-  bigint, // rulingDeadline
-  boolean, // exists
+  bigint, // [0]  providerId
+  bigint, // [1]  insurerId
+  string, // [2]  providerAddr
+  string, // [3]  insurerAddr
+  string, // [4]  drugRef
+  bigint, // [5]  requestedAmount
+  bigint, // [6]  quantity
+  bigint, // [7]  daysSupply
+  string, // [8]  justificationHash
+  string, // [9]  evidenceUri
+  string, // [10] policyHash
+  string, // [11] policyUri
+  bigint, // [12] coveredAmount
+  bigint, // [13] costPlusUnitPrice
+  bigint, // [14] nadacUnitPrice
+  string, // [15] rationaleHash
+  string, // [16] clauseRef
+  string, // [17] standardRef
+  bigint | number, // [18] lastDecision (uint8)
+  boolean, // [19] hasRuling
+  bigint, // [20] round
+  bigint | number, // [21] payerLine (uint8)
+  bigint | number, // [22] appealRound (uint8)
+  boolean, // [23] providerAccepted
+  boolean, // [24] insurerAccepted
+  bigint, // [25] totalFees
+  bigint | number, // [26] state (uint8)
+  bigint, // [27] pendingRequestId
+  bigint, // [28] createdAt
+  bigint, // [29] rulingDeadline
+  boolean, // [30] exists
 ];
 
 /** Raw `priceBasisOf` tuple returned by ethers — matches the view's return order. */
@@ -114,6 +117,7 @@ interface CoverageContract extends ethers.BaseContract {
     daysSupply: bigint,
     justificationHash: string,
     evidenceUri: string,
+    payerLine: number,
   ): Promise<ethers.ContractTransactionResponse>;
   insurerEngage(reqId: bigint, policyHash: string, policyUri: string): Promise<ethers.ContractTransactionResponse>;
   requestAdjudication(reqId: bigint, overrides?: Overrides): Promise<ethers.ContractTransactionResponse>;
@@ -243,6 +247,7 @@ export class RealBackend implements CoverageNegotiationClient {
         params.daysSupply,
         params.justificationHash,
         params.evidenceUri,
+        params.payerLine,
       ),
     );
     // Recover reqId from the ContractCreated event (return values aren't
@@ -569,14 +574,16 @@ export class RealBackend implements CoverageNegotiationClient {
       lastDecision: Number(raw[18]) as Decision,
       hasRuling: raw[19],
       round: raw[20],
-      providerAccepted: raw[21],
-      insurerAccepted: raw[22],
-      totalFees: raw[23],
-      state: Number(raw[24]) as State,
-      pendingRequestId: raw[25],
-      createdAt: raw[26],
-      rulingDeadline: raw[27],
-      exists: raw[28],
+      payerLine: Number(raw[21]) as PayerLine,
+      appealRound: Number(raw[22]),
+      providerAccepted: raw[23],
+      insurerAccepted: raw[24],
+      totalFees: raw[25],
+      state: Number(raw[26]) as State,
+      pendingRequestId: raw[27],
+      createdAt: raw[28],
+      rulingDeadline: raw[29],
+      exists: raw[30],
     };
   }
 

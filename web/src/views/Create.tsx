@@ -3,7 +3,7 @@
  * Clinical justification stays off-chain; only its hash is committed on-chain (R4).
  */
 import { useMemo, useState } from "react";
-import { ZERO_HASH, hashContent, type Profile } from "@lib";
+import { ZERO_HASH, hashContent, PayerLine, type Profile } from "@lib";
 import { client } from "../client.js";
 import { parseAmount } from "../shared.js";
 import { SAMPLE_CASE } from "../sampleCase.js";
@@ -71,6 +71,7 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
         insurerId: insurerProfile.partyId,
         providerAddr: client.wallet.address,
         insurerAddr: client.wallet.address,
+        payerLine: PayerLine.PartD,
         drugRef: hashContent(drug),
         requestedAmount,
         quantity: quantityVal,

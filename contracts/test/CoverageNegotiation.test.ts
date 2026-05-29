@@ -99,7 +99,8 @@ async function createAs(
       quantity,
       daysSupply,
       JUSTIFICATION_HASH,
-      EVIDENCE_URI
+      EVIDENCE_URI,
+      0 /* payerLine: PartD */
     );
   return contract.count();
 }
@@ -140,7 +141,8 @@ describe("CoverageNegotiation", () => {
           QUANTITY,
           DAYS_SUPPLY,
           JUSTIFICATION_HASH,
-          EVIDENCE_URI
+          EVIDENCE_URI,
+          0 /* payerLine: PartD */
         )
     )
       .to.emit(contract, "ContractCreated")
@@ -170,7 +172,8 @@ describe("CoverageNegotiation", () => {
           0n,
           DAYS_SUPPLY,
           JUSTIFICATION_HASH,
-          EVIDENCE_URI
+          EVIDENCE_URI,
+          0 /* payerLine: PartD */
         )
     ).to.be.revertedWith("qty: zero");
 
@@ -427,11 +430,14 @@ describe("CoverageNegotiation", () => {
     ).to.be.revertedWith("appeal: needs evidence");
 
     // appeal with new evidence (round 1 < maxRounds 2) → re-fires, round becomes 2.
+    expect((await contract.getNegotiation(reqId)).appealRound).to.equal(0); // before bump
     await expect(contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URI_2, REASON_HASH, { value: FEE }))
       .to.emit(contract, "Appealed")
       .withArgs(reqId, PROVIDER_ID, EVIDENCE_URI_2, 2n);
     expect(await contract.stateOf(reqId)).to.equal(State.UnderReview);
     expect(await contract.roundOf(reqId)).to.equal(2n);
+    // SPEC-0004 R13: appealRound advances the LADDER position on each successful appeal.
+    expect((await contract.getNegotiation(reqId)).appealRound).to.equal(1);
 
     // Resolve the re-fired round (deny again), then a further appeal at round>=maxRounds → Deadlocked.
     const rid2 = await platform.lastRequestId();
@@ -515,7 +521,8 @@ describe("CoverageNegotiation", () => {
           QUANTITY,
           DAYS_SUPPLY,
           JUSTIFICATION_HASH,
-          EVIDENCE_URI
+          EVIDENCE_URI,
+          0 /* payerLine: PartD */
         )
     ).to.be.revertedWith("auth: not provider");
 
@@ -574,7 +581,7 @@ describe("CoverageNegotiation", () => {
     const solo = provider; // one wallet plays both roles
     await contract
       .connect(solo)
-      .createContract(PROVIDER_ID, INSURER_ID, solo.address, solo.address, DRUG_REF, REQUESTED, QUANTITY, DAYS_SUPPLY, JUSTIFICATION_HASH, EVIDENCE_URI);
+      .createContract(PROVIDER_ID, INSURER_ID, solo.address, solo.address, DRUG_REF, REQUESTED, QUANTITY, DAYS_SUPPLY, JUSTIFICATION_HASH, EVIDENCE_URI, 0 /* payerLine: PartD */);
     const soloId = await contract.count();
     // same wallet engages (insurer side) and adjudicates (provider side).
     await contract.connect(solo).insurerEngage(soloId, POLICY_HASH, POLICY_URI);
@@ -664,6 +671,10 @@ describe("CoverageNegotiation", () => {
     expect(balBefore - balAfter).to.equal(gas);
     expect(await contract.stateOf(reqId)).to.equal(State.Deadlocked);
     expect(await ethers.provider.getBalance(target)).to.equal(0n);
+    // SPEC-0004 R13: `appealRound` MUST NOT bump on the deadlock-cap short-circuit
+    // path — the ladder advances only when an appeal actually fires the agent.
+    const n = await contract.getNegotiation(reqId);
+    expect(n.appealRound).to.equal(0);
   });
 
   it("R9 (deadlock submitEvidence): submitEvidence at the round cap deadlocks and refunds the full msg.value (no agent fires)", async () => {

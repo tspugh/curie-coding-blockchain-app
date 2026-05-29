@@ -14,6 +14,11 @@
  * to the on-chain record.
  */
 
+import { PayerLine } from "../protocol/ladders.js";
+
+/** Re-export for consumers that deep-import from this module. */
+export { PayerLine } from "../protocol/ladders.js";
+
 /**
  * Request lifecycle state. Numeric values match the Solidity `enum State`
  * declaration order EXACTLY (Open = 0 … Withdrawn = 10).
@@ -123,6 +128,10 @@ export interface Negotiation {
   readonly hasRuling: boolean;
   /** Adjudication round count (bounded to maxRounds — R6c). */
   readonly round: bigint;
+  /** Payer line governing the appeal ladder (SPEC-0004 R13). */
+  readonly payerLine: PayerLine;
+  /** Current position in the payer-line appeal ladder (0 = Initial Determination). */
+  readonly appealRound: number;
   /** Whether the provider has accepted the current ruling. */
   readonly providerAccepted: boolean;
   /** Whether the insurer has accepted the current ruling. */

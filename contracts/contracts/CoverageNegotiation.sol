@@ -63,6 +63,12 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     // ---------------------------------------------------------------------
     // State machine (SPEC-0001 §3 "State machine" table — implemented exactly)
     // ---------------------------------------------------------------------
+
+    /// @dev Payer line governing the appeal ladder (SPEC-0004 R13). Determines
+    ///      the regulatory stage names the UI renders against. Stored on the
+    ///      Negotiation struct; documented-only in v0 (R14b — not enforced on-chain).
+    enum PayerLine { PartD, Commercial, Medicaid }
+
     enum State {
         Open, // 0  provider filed; awaiting insurer policy attach
         Ready, // 1  insurer engaged (policy attached); adjudicable
@@ -109,14 +115,25 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         bytes32 standardRef; // public standard cited for a policy flag (R6b)
         Decision lastDecision; // latest agent decision (meaningful once ruled)
         bool hasRuling; // whether an agent decision has landed
-        // ROUND SEMANTICS (R6c): `round` counts TOTAL adjudication cycles, NOT appeals.
-        // It is SET to 1 at the first `requestAdjudication` and INCREMENTED by 1 on each
-        // subsequent agent fire (`submitEvidence` and `appeal`). So after the first
-        // ruling `round == 1`; the first successful appeal makes it 2, etc. The appeal
-        // cap is reached when `round >= maxRounds` (an appeal at that point Deadlocks
-        // instead of firing a new cycle). Read it as "how many times the agent has been
-        // asked to rule", never as "number of appeals so far" (off-by-one trap).
+        // ROUND SEMANTICS: this struct carries TWO related counters that are NOT
+        // interchangeable. Read both before reasoning about appeal state.
+        //
+        //   `round` (R6c) — TOTAL adjudication cycles. SET to 1 at the first
+        //   `requestAdjudication` and INCREMENTED on each subsequent agent fire
+        //   (`submitEvidence` AND `appeal`). The deadlock cap is `round >= maxRounds`.
+        //   Read as "how many times the agent has been asked to rule", NEVER as
+        //   "number of appeals so far".
+        //
+        //   `appealRound` (SPEC-0004 R13) — POSITION IN THE PAYER-LINE LADDER. 0 at
+        //   creation (Initial Determination); INCREMENTED in `appeal()` ONLY (NOT in
+        //   `submitEvidence`, since submitting more evidence stays in the same ladder
+        //   stage). On the deadlock-cap short-circuit path in `appeal()` the bump is
+        //   skipped, so a deadlock leaves `appealRound` at the last successfully-fired
+        //   value. `(payerLine, appealRound)` indexes the static `LADDERS` table the
+        //   UI/library renders against (R15/R16).
         uint256 round; // total adjudication cycles (bounded to maxRounds — R6c)
+        PayerLine payerLine; // payer line governing the appeal ladder (SPEC-0004 R13)
+        uint8 appealRound; // current position in the payer-line ladder (0 = Initial Determination)
         bool providerAccepted; // provider accepted the current ruling
         bool insurerAccepted; // insurer accepted the current ruling
         uint256 totalFees; // accumulated agent fees (50/50 split marker — R8)
@@ -282,7 +299,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         uint256 quantity,
         uint256 daysSupply,
         bytes32 justificationHash,
-        bytes32 evidenceUri
+        bytes32 evidenceUri,
+        PayerLine payerLine
     ) external returns (uint256 reqId) {
         require(providerAddr != address(0) && insurerAddr != address(0), "addr: zero");
         require(msg.sender == providerAddr, "auth: not provider");
@@ -300,6 +318,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         n.daysSupply = daysSupply;
         n.justificationHash = justificationHash;
         n.evidenceUri = evidenceUri;
+        n.payerLine = payerLine;
+        n.appealRound = 0;
         n.state = State.Open;
         n.createdAt = block.timestamp;
         n.exists = true;
@@ -415,6 +435,7 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         n.evidenceUri = evidenceUri;
         n.rationaleHash = reasonHash; // carry the appellant's stated reason ref
         n.round += 1;
+        n.appealRound += 1;
         emit Appealed(reqId, partyId, evidenceUri, n.round);
         _fireAgent(reqId, n, msg.sender);
     }

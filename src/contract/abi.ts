@@ -10,7 +10,7 @@
  */
 export const COVERAGE_NEGOTIATION_ABI = [
   // --- Lifecycle (writes) ---
-  "function createContract(uint256 providerId, uint256 insurerId, address providerAddr, address insurerAddr, bytes32 drugRef, uint256 requestedAmount, uint256 quantity, uint256 daysSupply, bytes32 justificationHash, bytes32 evidenceUri) external returns (uint256 reqId)",
+  "function createContract(uint256 providerId, uint256 insurerId, address providerAddr, address insurerAddr, bytes32 drugRef, uint256 requestedAmount, uint256 quantity, uint256 daysSupply, bytes32 justificationHash, bytes32 evidenceUri, uint8 payerLine) external returns (uint256 reqId)",
   "function insurerEngage(uint256 reqId, bytes32 policyHash, bytes32 policyUri) external",
   "function requestAdjudication(uint256 reqId) external payable",
   "function submitEvidence(uint256 reqId, bytes32 evidenceUri) external payable",
@@ -24,7 +24,7 @@ export const COVERAGE_NEGOTIATION_ABI = [
 
   // --- Views (reads) ---
   // Negotiation tuple: order matches struct Negotiation field order exactly.
-  "function getNegotiation(uint256 reqId) external view returns (tuple(uint256 providerId, uint256 insurerId, address providerAddr, address insurerAddr, bytes32 drugRef, uint256 requestedAmount, uint256 quantity, uint256 daysSupply, bytes32 justificationHash, bytes32 evidenceUri, bytes32 policyHash, bytes32 policyUri, uint256 coveredAmount, uint256 costPlusUnitPrice, uint256 nadacUnitPrice, bytes32 rationaleHash, bytes32 clauseRef, bytes32 standardRef, uint8 lastDecision, bool hasRuling, uint256 round, bool providerAccepted, bool insurerAccepted, uint256 totalFees, uint8 state, uint256 pendingRequestId, uint256 createdAt, uint256 rulingDeadline, bool exists))",
+  "function getNegotiation(uint256 reqId) external view returns (tuple(uint256 providerId, uint256 insurerId, address providerAddr, address insurerAddr, bytes32 drugRef, uint256 requestedAmount, uint256 quantity, uint256 daysSupply, bytes32 justificationHash, bytes32 evidenceUri, bytes32 policyHash, bytes32 policyUri, uint256 coveredAmount, uint256 costPlusUnitPrice, uint256 nadacUnitPrice, bytes32 rationaleHash, bytes32 clauseRef, bytes32 standardRef, uint8 lastDecision, bool hasRuling, uint256 round, uint8 payerLine, uint8 appealRound, bool providerAccepted, bool insurerAccepted, uint256 totalFees, uint8 state, uint256 pendingRequestId, uint256 createdAt, uint256 rulingDeadline, bool exists))",
   "function stateOf(uint256 reqId) external view returns (uint8)",
   "function coveredAmountOf(uint256 reqId) external view returns (uint256)",
   "function priceBasisOf(uint256 reqId) external view returns (uint256 requestedAmount, uint256 quantity, uint256 costPlusTotal, uint256 nadacFloorTotal, uint256 coveredAmount)",
