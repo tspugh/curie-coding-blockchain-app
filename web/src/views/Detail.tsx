@@ -480,6 +480,24 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                 <dd data-testid="ruling-covered">{fmtAmount(lastRuled.coveredAmount)}</dd>
                 <dt>Round</dt>
                 <dd data-testid="ruling-decision">{n.round.toString()}</dd>
+                {/* SPEC-0004 §3.5 R11: replay-anchor (cited packet entries). */}
+                {lastRuled.usedReferenceIndices.length > 0 && (
+                  <>
+                    <dt>Cited references</dt>
+                    <dd data-testid="ruling-used-refs">
+                      [{lastRuled.usedReferenceIndices.join(", ")}]
+                    </dd>
+                  </>
+                )}
+                {/* SPEC-0004 §3.5 R23: voided clauses (Approve-via-policy-void). */}
+                {lastRuled.policyVoidedClauseIndices.length > 0 && (
+                  <>
+                    <dt>Voided clauses</dt>
+                    <dd data-testid="ruling-voided-clauses">
+                      [{lastRuled.policyVoidedClauseIndices.join(", ")}]
+                    </dd>
+                  </>
+                )}
               </dl>
               {(lastRuled || settled) && (
                 <VerifyOnChain event={settled ?? lastRuled!} />
