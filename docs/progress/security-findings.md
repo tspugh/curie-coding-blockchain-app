@@ -1,3 +1,182 @@
+# Security findings — 2026-05-29 tick 10 (UNIT-3c medicaid-denied-then-appealed fixtures)
+
+**Verdict:** PASS (0 findings)
+
+## Diff scope
+
+Six new files in the worktree (mirror of tick 9, parameterised to the §3.2
+Medicaid discriminant + the §2.4 R14a / §2.5 R17 round-0 Deny → round-1
+Approve appeal arc):
+
+1. `demo-data/scenarios/medicaid-denied-then-appealed/note.md` — synthetic
+   Medicaid PA clinical narrative (Patient C / P-0003 / MRN 000-MED-003 /
+   year-only 1978; California Centene Medi-Cal MCO; dulaglutide / T2DM).
+2. `demo-data/scenarios/medicaid-denied-then-appealed/packet.json` —
+   EvidenceReference packet with three references (DailyMed FDA label for
+   Trulicity, DHCS Medi-Cal GLP-1 PA criteria, NADAC price benchmark);
+   `submittedBy: 0x0000000000000000000000000000000000000003`.
+3. `demo-data/scenarios/medicaid-denied-then-appealed/payer-profile.json` —
+   Medicaid profile + §3.2 Medicaid `formularyRelease` discriminant (`line`,
+   `state`, `mco`, `revision`, `sourceUrl`, `contentHash`).
+4. `demo-data/scenarios/medicaid-denied-then-appealed/requested-drug.json` —
+   NDC/RxNorm/dose record for dulaglutide 0.75 mg (Trulicity).
+5. `demo-data/scenarios/medicaid-denied-then-appealed/expected-outcome.md` —
+   round-0 Deny (missing SGLT2-i trial evidence) → round-1 Approve
+   (empagliflozin intolerance documented) narrative.
+6. `src/protocol/scenarios.medicaid-denied-then-appealed.test.ts` —
+   `node:test` + `node:assert` schema tests over the five fixture files (8
+   sub-tests, mirrors `scenarios.commercial-policy-void.test.ts` with the
+   §3.2 Medicaid discriminant + a positive R6c/R14a Deny-then-Approve
+   header-line invariant).
+
+## Per-concern verdict
+
+### 1. PHI leakage in note.md and expected-outcome.md (SPEC-0004 R1) — PASS
+
+`note.md` is clearly synthetic. The patient is referred to as "Patient C"
+(line 10) under an explicitly-labelled "Synthetic patient identifier: P-0003
+/ MRN 000-MED-003" header (line 3). The MRN `000-MED-003` is a
+synthetic-shaped token (leading zeros, payer-line tag "MED", sequence "003")
+and contains no run of 7+ contiguous digits — it cannot be confused for a
+real MRN. The only date marker is "Year of birth: 1978" (line 4), which is
+an HIPAA Safe-Harbor-permissible year-only value, not a full MM/DD/YYYY
+date. City is "Anytown, USA" (line 5 — synthetic placeholder). The
+"47-year-old" phrasing (line 10) is a categorical age statement, not an
+identifier. Quantitative clinical markers (A1c 7.6%, BMI 34.2, BID dosing,
+fill-history months, "10-year ASCVD risk 14%", 90-day SGLT2-i trial window
+in expected-outcome.md, 60-day appeal window) are categorical / time-window
+references, not patient identifiers. NDC `00002-1433-80` (5-4-2 grouping —
+not the 3-3-4 phone shape) and RxNorm CUI `1551291` are publicly-published
+drug codes. The DHCS PA criteria slice in packet.json embeds drug names
+(empagliflozin, dapagliflozin, canagliflozin, semaglutide, liraglutide,
+dulaglutide) and the "96-day" / "two office visits" mentions in
+expected-outcome.md are part of the synthetic clinical narrative, not real
+encounter records. A direct regex sweep across both `note.md` and
+`expected-outcome.md` returns **zero** matches for SSN markers
+(`\bSSN\b\s*[:#]?\s*\d{3}`), SSN-format digit strings
+(`\d{3}-\d{2}-\d{4}`), MM/DD/YYYY DOBs (`\b\d{2}/\d{2}/\d{4}\b`),
+driver-license shapes (`[A-Z]{2}\d{6,}`), phone shapes
+(`\b(?:\(\d{3}\)\s?|\d{3}[-.])\d{3}[-.\s]?\d{4}\b`), email shapes, and
+real-shaped MRNs (`\bMRN\s*[:#]?\s*\d{7,}\b`).
+
+The test at lines 26–63 codifies these same PHI-marker checks and is
+applied to **both** `note.md` (lines 72–86) **and** `expected-outcome.md`
+(lines 88–94) — closing the tick-9 scope expansion where expected-outcome
+narrative was authored alongside the note and shares the same exposure.
+The note's text passes all of them; the regex sweep at the shell confirms
+the same. R1 satisfied.
+
+### 2. Path traversal in the test — PASS (no risk)
+
+`src/protocol/scenarios.medicaid-denied-then-appealed.test.ts` builds
+filesystem paths via
+`path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")`
+(line 19) and then
+`path.join(PROJECT_ROOT, "demo-data", "scenarios", "medicaid-denied-then-appealed")`
+(line 20). The only variable input is the hard-coded array of five
+filenames at line 66 (`["note.md", "packet.json", "payer-profile.json",
+"requested-drug.json", "expected-outcome.md"]`) and the literal-string
+arguments to `scenarioFile(...)` throughout. **No user-supplied string
+flows into any `fs.readFileSync` or `fs.existsSync` call.** The anchor is
+derived from `import.meta.url` via `fileURLToPath` (line 19) — a trusted
+ESM-runtime value, not external input. No traversal surface.
+
+### 3. Real-key / credential leakage in fixtures — PASS
+
+Full sweep for `0x[0-9a-fA-F]{64}` across the diff returns exactly four
+matches, all identical:
+`0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470`
+(packet.json lines 5, 17, 29; payer-profile.json line 9). This is the
+**well-known keccak256 of the empty byte string** — a deterministic public
+constant, not a private key — and is the same v0 placeholder used in the
+tick-8 and tick-9 fixtures. It satisfies the `^0x[0-9a-fA-F]{64}$` regex
+(test lines 123, 164) without collapsing to a sentinel `0x000...0` that
+might be misread as "unset".
+
+The only other `0x` hex string is the synthetic `submittedBy` address
+`0x0000000000000000000000000000000000000003` (packet.json line 40) — a
+20-byte all-zero+3 EOA placeholder (deliberately distinct from
+partd-approvable `...0001` and commercial-policy-void `...0002`,
+acknowledged in the task brief as the per-scenario sentinel). Not a real
+wallet; explicitly pinned by the test at lines 180–184.
+
+Shell sweep with
+`grep -EniIr 'BEGIN|PRIVATE KEY|AKIA|sk-[A-Za-z0-9]|xoxb-|xoxp-|ghp_|github_pat|secret|password|api[_-]?key'`
+across all six new files returns **zero** matches. No
+`BEGIN ... PRIVATE KEY` blocks, no AWS / OpenAI / Stripe / Slack / GitHub
+token prefixes, no `secret` / `password` / `api_key` markers.
+
+### 4. URL allowlist (legitimate public sources) — PASS
+
+All three distinct URLs across the fixtures resolve to expected public
+reference sources matching the task brief:
+
+- `https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=a4c47592-1234-4abc-9def-0123456789ab`
+  (packet.json line 4) — NIH DailyMed FDA label entry for dulaglutide.
+  Expected (fda-label-indication reference; brief explicitly names
+  DailyMed). The setid is a synthetic placeholder GUID shape
+  (`...1234-4abc-9def-0123456789ab`) and will be replaced with the real
+  DailyMed setid at pin time; using a synthetic GUID rather than a real
+  one is the conservative choice for fixture content.
+- `https://www.dhcs.ca.gov/provgovpart/pharmacy/Documents/Medi-Cal-GLP1-PA-Criteria-2026-Q2.pdf`
+  (packet.json line 16, payer-profile.json line 8) — California
+  Department of Health Care Services (the state Medicaid agency that
+  oversees the Medi-Cal managed-care line that the Centene MCO operates
+  under) on the publicly-served `dhcs.ca.gov` domain. Expected (the brief
+  explicitly names `dhcs.ca.gov` or the MCO's published page as
+  acceptable for Medicaid formulary; DHCS is the upstream issuer the MCO
+  follows). The same URL appears twice (one in the packet slice as the
+  citation, one in the payer-profile as the `formularyRelease.sourceUrl`)
+  — consistent.
+- `https://www.nadac.cms.gov/app/nad-pricing-report.aspx` (packet.json
+  line 28) — CMS NADAC (National Average Drug Acquisition Cost) public
+  pricing report on the CMS-served `cms.gov` domain. Expected (the brief
+  explicitly names `costplusdrugs.com or NADAC` as acceptable price
+  references for the §3.4 price-benchmark slice).
+
+No bit.ly / t.co / IP-literal / `file://` / unexpected-domain URLs. No
+URLs pointing at attacker-controllable infrastructure. All three URLs are
+pinned by the empty-bytes-keccak placeholder `contentHash`, which
+`scripts/pin-formulary.ts` is expected to replace with real keccak256
+hashes at production-pin time. The v0 placeholder leaves the supply-chain
+binding **unenforced today** — inherited risk from tick 8, not introduced
+by tick 10.
+
+### 5. JSON parsing safety (test data integrity) — PASS
+
+`JSON.parse(fs.readFileSync(..., "utf-8"))` (test lines 101, 131, 151,
+188) is applied only to **local, repo-tracked, trusted** fixture files
+under `demo-data/scenarios/medicaid-denied-then-appealed/`. No network
+input, no user input, no `eval`, no `Function(...)` constructor. A
+malformed fixture would throw a `SyntaxError` and fail the test loudly —
+the correct failure mode. No prototype-pollution surface — the test reads
+properties with bracket notation against `Record<string, unknown>` casts
+and never spreads or `Object.assign`s the parsed object into another.
+Safe by inspection.
+
+## Overall verdict
+
+**PASS — zero findings.** Tick 10's six-file diff is fixtures + a schema
+test that mirrors tick 9's shape (the synthetic patient identifier is
+"Patient C" rather than "B", the MRN tag is MED rather than COMM, the
+discriminant is §3.2 Medicaid `{ line, state, mco, revision, sourceUrl,
+contentHash }` rather than §3.2 Commercial, the load-bearing scenario is
+the §2.4 R14a / §2.5 R17 round-0 Deny → round-1 Approve appeal arc rather
+than §2.6 R23 PolicyInvalidated, and the test grows from 6 to 8 sub-tests
+to cover both the new PHI-on-expected-outcome.md check and the
+Deny-then-Approve header-line invariant — all expected parameterisation).
+No new code paths, no new dependencies, no new network/IO surfaces beyond
+local trusted-fixture reads. Both synthetic narrative files
+(`note.md` and `expected-outcome.md`) are clearly fabricated and contain
+zero HIPAA-identifier patterns under direct regex sweep; the test
+enforces those same patterns as regression guards across both files. The
+keccak256 placeholder is the documented well-known empty-bytes hash,
+identical to ticks 8 and 9. All three URLs (DailyMed, dhcs.ca.gov,
+nadac.cms.gov) are the legitimate public sources called out in the task
+brief. UNIT-3c ships clean.
+
+---
+
 # Security findings — 2026-05-29 tick 9 (UNIT-3b commercial-policy-void fixtures)
 
 **Verdict:** PASS (0 findings)

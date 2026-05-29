@@ -559,3 +559,419 @@ Severity breakdown:
 All five in-scope first-pass findings are closed in code or in the amendment. The four deferred LOWs are deferred per the first-pass review's own guidance or per scope. The three new NITs are flagged for record-keeping but none rise to the LOW-or-above threshold that would warrant a fix this tick. Tests are 36/36 green, matching the predicted delta. The HIGH-2 spec-level conflict that motivated the second pass is resolved by amendment 0005 with reasoning explicit enough that a future Phase 1 tick has a complete follow-up checklist.
 
 The fixture is now coherent with SPEC-0004 R23, T9, and the §3.4 closed enum. Ready to wire into an end-to-end run when Phase 1 contract work lands.
+
+---
+
+# Strict-review findings — tick 10 (UNIT-3c, medicaid-denied-then-appealed)
+
+**Date:** 2026-05-29
+**Scope:** the 6 files newly added this tick:
+- `demo-data/scenarios/medicaid-denied-then-appealed/note.md`
+- `demo-data/scenarios/medicaid-denied-then-appealed/packet.json`
+- `demo-data/scenarios/medicaid-denied-then-appealed/payer-profile.json`
+- `demo-data/scenarios/medicaid-denied-then-appealed/requested-drug.json`
+- `demo-data/scenarios/medicaid-denied-then-appealed/expected-outcome.md`
+- `src/protocol/scenarios.medicaid-denied-then-appealed.test.ts`
+
+R-citations the unit claims to satisfy: SPEC-0004 §2.1 R1, R2 (now complete — 3 of 3),
+R4; §2.3 R10; §3.2 (Medicaid `formularyRelease` discriminant); §3.4 (packet shape +
+closed `slice.kind` enum); §2.4 R14a (appeal sequencing predicate); SPEC-0001 R6c
+(appeal loop set-piece).
+
+Test status: `node --import tsx --test "src/**/*.test.ts"` returns **44/44 green**
+(was 36 at tick-9 close; +8 as expected for the new scenario file). Per-file:
+`node --import tsx --test src/protocol/scenarios.medicaid-denied-then-appealed.test.ts`
+returns 8/8. Tsc: `npx tsc -p tsconfig.json --noEmit` returns 0 errors.
+
+---
+
+## Targeted verifications (per prompt's 12-item checklist)
+
+### 1. §3.2 Medicaid discriminant correctness — PASS
+
+`payer-profile.json` contains exactly the six fields the §3.2 Medicaid union names:
+`line` ("Medicaid"), `state` ("CA"), `mco` ("Centene Medi-Cal"), `revision` ("2026-Q2"),
+`sourceUrl`, `contentHash`. No `planId` (PartD), no `carrier`/`product` (Commercial),
+no `_note` (the tick-8 antipattern). The test at lines 112-124 iterates the exact
+six-field tuple from §3.2 and asserts string non-emptiness + `contentHash` keccak shape.
+JSON parse confirms zero extra keys: top-level `{payerLine, formularyRelease}` and
+the formularyRelease object has exactly those six. Clean.
+
+### 2. Synthetic-marker distinction from partd + commercial — PASS
+
+Verified by grep: partd uses `Patient A` (rheumatology RA case), commercial uses
+`Patient B` (psoriatic arthritis case), medicaid uses `Patient C` (T2DM case). The
+three regexes are scenario-specific:
+- partd: `/synthetic|fictional|Patient A/i`
+- commercial: `/synthetic|fictional|Patient B/i`
+- medicaid: `/synthetic|fictional|Patient C/i` (line 82)
+
+Each test hardcodes its own `SCENARIO_DIR`, so cross-folder false-positives are
+impossible by construction. The medicaid test correctly distinguishes via `Patient C`
+in its assertion at line 82; pointing the medicaid regex at a partd or commercial note
+would fail (neither contains `Patient C`, neither contains `synthetic`/`fictional`
+verbatim — verified the partd note and commercial note do not contain the literal word
+`synthetic` or `fictional`; their distinguishing marker is purely `Patient A`/`B`).
+
+### 3. Round-0 Deny / round-1 Approve reasoning — PASS
+
+The reasoning chain is structurally coherent:
+- The formulary-entry slice (packet.json:19) makes the three PA criteria explicit:
+  (1) T2DM diagnosis, (2) A1c ≥7.5% on max-tolerated metformin for ≥6 months,
+  (3) SGLT2-i trial ≥90 days OR contraindication/intolerance.
+- The round-0 packet has 3 references: fda-label-indication, formulary-entry,
+  price-benchmark. Crucially, neither the note.md NOR any packet reference documents
+  an SGLT2-i trial. Grep confirmed: SGLT2/empagliflozin/dapagliflozin/canagliflozin
+  appear ONLY in the formulary-entry slice (the PA criteria text itself, not as
+  evidence), nowhere in the note.
+- The round-0 packet thus genuinely misses criterion 3 (the note documents criteria
+  1+2 — T2DM, A1c 7.6% on max-tolerated metformin 1000 mg BID — but nothing on SGLT2).
+  Deny at round 0 is the only coherent ruling against the PA criteria as written.
+- The round-1 narrative (expected-outcome.md:42-58) introduces reference index 3
+  (a chart extract: empagliflozin 10 mg daily, 96-day trial, discontinued for
+  recurrent UTIs). This fills criterion 3 via the "documented intolerance" branch.
+  The trial length (96 days) cleanly exceeds the 90-day minimum the slice cites.
+- The Approve at round 1 is structurally entailed by the augmented evidence.
+
+The denial reason at expected-outcome.md:30-31 cites the precise gap ("criterion 3 not
+satisfied — missing SGLT2-inhibitor trial documentation (≥90-day course) or
+contraindication/intolerance documentation"). The wording aligns with the formulary
+slice's own "denied as incomplete" language.
+
+### 4. Closed-enum invariant on slice.kind — PASS
+
+The three round-0 slices all use §3.4 closed-enum values:
+- index 0: `"kind": "fda-label-indication"` (line 8) — allowed
+- index 1: `"kind": "formulary-entry"` (line 20) — allowed; correctly NOT
+  `"policy-clause"` (the tick-9 HIGH-1 finding); this is the Centene Medi-Cal PA
+  criteria document, which is structurally a formulary entry, not a guideline
+- index 2: `"kind": "price-benchmark"` (line 32) — allowed
+
+The test at lines 187-208 iterates and asserts every `slice.kind` is in the §3.4 set
+`{fda-label-indication, fda-label-contraindication, guideline-recommendation,
+formulary-entry, price-benchmark}`. The narrative's round-1 reference index 3 is
+described as `slice.kind: guideline-recommendation` (expected-outcome.md:57) — also
+allowed (the round-1 packet isn't checked in; only the round-0 packet is).
+
+Cross-check on the formulary-entry choice: the PA criteria slice IS the Medi-Cal
+formulary's PA section (per the locator `Section 4 — Endocrine Agents, GLP-1 Receptor
+Agonists, Prior Authorization Criteria`). This is the canonical formulary-entry shape,
+not a guideline. Categorization is correct.
+
+### 5. Header-line check — PARTIAL (see Finding 1 below)
+
+The test at lines 228-237 finds the `## Expected outcome:` header and asserts that
+BOTH `Deny` AND `Approve` appear on it. The header reads:
+`## Expected outcome: Deny (round 0) → Approve (round 1, Plan Internal Appeal)`
+— both words present, both match. Passes.
+
+However, the prompt asked specifically about "locking the ordering claim tightly".
+The test as written enforces co-occurrence on the header line, NOT ordering
+(Deny-before-Approve). See **Finding 1 (LOW)** below.
+
+### 6. Sentinel address invariant — PASS
+
+The test at lines 180-184 asserts equality with the exact literal
+`"0x0000000000000000000000000000000000000003"`, not just the 40-hex shape. This is
+the strict per-scenario sentinel pin. Combined with the prior 0x...0001 (partd) and
+0x...0002 (commercial) pins (also asserted by exact-equality in their respective
+tests after tick-9 close, though the prompt notes the tick-9 LOW 6 was "partially"
+closed — the partd test does NOT exact-match its sentinel, only matches the 40-hex
+shape; the medicaid test sets the precedent for the strict pin going forward).
+
+### 7. §2.4 R14a sequencing — PASS
+
+R14a: "the contract refuses `requestAdjudication(round=N)` unless `round=N-1` was
+actually ruled, and ruled `Deny`." The expected-outcome.md walks exactly this
+sequence: `(Medicaid, 0)` ruled Deny → `(Medicaid, 1)` becomes current per R14a
+(expected-outcome.md:32-33). No illegal-appeal sequence (no appeal from Approve).
+The terminal state assertions:
+- after round-0 Deny: `(Medicaid, 0) → Denied`, `(Medicaid, 1)` becomes `current`
+- after round-1 Approve: `(Medicaid, 1) → Approved → Settled`, `(Medicaid, 2)`
+  rendered `skipped` (no round-2 fired because round-1 was Approve, not Deny — so
+  R14a precondition for round 2 is not met). Correct.
+
+### 8. `assertNoPHI` helper consistency — NIT (see Finding 2 below)
+
+The medicaid test's `assertNoPHI` is byte-identical to commercial's helper body
+EXCEPT for one comment-line difference: commercial has `// Slips synthetic patterns
+("MRN 000-COMM-002": <7 digits before dash; NDC 5-4-2: not 3-3-4 phone).` at line
+26; medicaid has the analogous `// Slips synthetic patterns ("MRN 000-MED-003": …)`
+at line 25. Helper logic is identical (7 regex blocks, same wording, same severity).
+This is the *correct* mirroring (per the tick-9 deferral of the LOW-7 DRY extraction)
+but flags that the two helpers will continue to drift if one is touched without the
+other. See **Finding 2 (NIT)** below.
+
+### 9. No `policyVoidedClauseIndices` / no R23 references — PASS
+
+Grep confirmed: `policyVoidedClauseIndices`, `PolicyInvalidated`, and `R23` appear
+ZERO times in `expected-outcome.md`. This is not a policy-void scenario; it correctly
+omits the R23 vocabulary.
+
+### 10. Test counts — PASS
+
+Full-suite re-run: 44 total, 44 pass, 0 fail, 0 skipped, 0 todo, 0 cancelled.
+Breakdown: 21 prior (pre-UNIT-3) + 7 partd (tick 8 + 9) + 8 commercial (tick 9) +
+8 medicaid (this tick) = 44. Matches the prompt's claim. No test duplicated; each
+test name is unique (TAP stream verified).
+
+### 11. Tsc — PASS
+
+`npx tsc -p tsconfig.json --noEmit` exits clean with no output. The type-narrowing
+fix on line 158 (the `references[0]` access via
+`(references as Record<string, unknown>[])[0]`) parses cleanly; the unsafe-cast
+chain is local to this test file and does not leak into production code.
+
+### 12. Lying comments, dead code, restating-code comments — PASS WITH NITS
+
+Reviewed all four fixture files + the test file:
+- **note.md:** all narrative claims (BMI 34.2, A1c trajectory, ASCVD 14%, 10-year
+  history) are internally consistent and reference only synthetic identifiers. No
+  PHI-shaped strings (regex set confirms).
+- **packet.json:** all three slice texts are quoted (synthetic) source content with
+  plausible-but-fake URLs and uniform empty-bytes contentHash. The Medi-Cal URL
+  (`https://www.dhcs.ca.gov/...Medi-Cal-GLP1-PA-Criteria-2026-Q2.pdf`) follows the
+  real DHCS domain shape but the path is synthetic (`2026-Q2` is the SCENARIO
+  revision marker, not a real published doc); acceptable as fixture-tier.
+- **payer-profile.json:** clean six-field §3.2 shape, no extraneous keys.
+- **requested-drug.json:** six fields per R4, all populated, NDC 00002-1433-80 is
+  Eli Lilly's real Trulicity 0.75 mg NDC — borderline but not PHI (drug identifier
+  is public); RxNorm CUI 1551291 also real-public for dulaglutide. Acceptable.
+- **expected-outcome.md:** narrative reasoning correctly threads R14a + R6c +
+  R17 (the §2.5 Medicaid MCO ladder). One small flag: the document references
+  "42 CFR §438.402" (line 44) as the federal-floor citation for the 60-day appeal
+  window — this is correct per §2.5 R17, but is a prose claim not asserted by the
+  test. Acceptable as documentation-tier.
+- **test file:** comments are minimal and substantive (the PHI-slip-pattern
+  documentation at line 25, the PayerLine enum guard at line 104, the §3.2
+  discriminant note at lines 110-111, the R14a-sequencing context at lines 211-213).
+  No decorative comments. No dead code. No unused imports (verified `PayerLine` is
+  used at line 104, `fileURLToPath` at line 19, `assert/strict` throughout,
+  `node:fs`/`node:path`/`node:test` all consumed).
+
+---
+
+## Findings
+
+### Finding 1 — LOW | Header-line check does not enforce Deny-before-Approve ordering
+
+- `src/protocol/scenarios.medicaid-denied-then-appealed.test.ts:228-237`
+- **Description:** the test finds the `## Expected outcome:` header and asserts that
+  BOTH `\bDeny\b` AND `\bApprove\b` match on that line. The header today reads:
+  `## Expected outcome: Deny (round 0) → Approve (round 1, Plan Internal Appeal)`
+  — and both words appear, with Deny first. The test passes. But the test would
+  ALSO pass on a degenerate rewrite like
+  `## Expected outcome: Approve (round 1) ← Deny (round 0)`
+  or even
+  `## Expected outcome: Approve, but Deny`
+  because the assertion is co-occurrence-only, not order-preserving. The prompt's
+  language ("locking the ordering claim tightly") suggests this should pin the
+  Deny-before-Approve narrative ordering, which is the load-bearing R14a-sequencing
+  claim (round 0 Deny precedes round 1 Approve causally — the appeal is only
+  possible BECAUSE round 0 was Deny).
+- **Why it matters:** R14a is a sequencing predicate, not a co-occurrence one. The
+  header line is the load-bearing summary; a reversal of word order in the header
+  would silently pass while violating the R14a-flavored claim the test is asserting.
+  The ordering matters for the same reason the rule R14a matters: round N's
+  precondition is round N-1's terminal Deny, not the reverse.
+- **Severity rationale:** LOW because (a) the current header is correct
+  (Deny-before-Approve), (b) the body of the document repeats the ordering claim
+  multiple times (`### Round 0`, `### Round 1` headers; `Cited references: [0,1]`
+  for round 0 vs `[0,1,3]` for round 1) and would catch a coherent reversal, and
+  (c) the test's full-document `\bDeny\b` + `\bApprove\b` assertions (lines 218-225)
+  do not enforce ordering either, so the gap is consistent within the test.
+  Materially, the present fixture is fine; the gap is prospective.
+- **Suggested fix:** strengthen the header-line assertion to also pin ordering:
+  ```ts
+  const denyIdx = headerLine!.search(/\bDeny\b/);
+  const approveIdx = headerLine!.search(/\bApprove\b/);
+  assert.ok(
+    denyIdx >= 0 && approveIdx >= 0 && denyIdx < approveIdx,
+    `expected-outcome.md "## Expected outcome:" header must name Deny BEFORE Approve (R14a sequencing: round-0 Deny is the precondition for round-1 appeal); got: ${headerLine}`,
+  );
+  ```
+  Three lines, cites R14a, fails loudly on a future degenerate rewrite. Strictly an
+  improvement over the present co-occurrence check.
+
+### Finding 2 — NIT | `assertNoPHI` helper continues to drift-by-mirroring across three scenario tests
+
+- `src/protocol/scenarios.medicaid-denied-then-appealed.test.ts:26-63`
+- `src/protocol/scenarios.commercial-policy-void.test.ts:27-64` (peer)
+- `src/protocol/scenarios.partd-approvable.test.ts:42-188` (peer — inlined, not factored)
+- **Description:** the medicaid test's `assertNoPHI` helper body is byte-identical
+  to commercial's (verified by diff: only the single comment line differs, naming
+  the scenario's MRN slip-pattern). The partd test has the same 7-regex set
+  inlined into two separate test bodies rather than factored into a helper. So
+  the codebase now carries THREE copies of the same 7-regex PHI scan. Tick 9 LOW 7
+  deferred the DRY extraction explicitly; this tick mirrors faithfully, which is
+  the right per-tick scope decision, but the drift-risk surface area is now 3x
+  not 2x.
+- **Why it matters:** any future addition to the PHI regex set (e.g., a new
+  driver-license shape; a tightened MRN pattern) requires three coordinated edits,
+  one of which (partd) is split across two test bodies. The cost-of-a-missed-edit
+  is silent PHI-scan weakening in one fixture while passing in the others. The
+  symptom would be hard to spot because both branches would pass the harness.
+- **Severity rationale:** NIT (below LOW). All three copies are correct today;
+  there is no active drift; the tick-9 review's explicit deferral applies. This
+  flag is record-keeping only.
+- **Suggested fix:** factor the helper into `src/protocol/scenarioFixtures.test-helpers.ts`
+  (or sibling) exposing `assertNoPHI(content, fileLabel)` + `assertPacketShape(packet)`
+  + `assertRequestedDrugShape(drug)`. Each scenario test then becomes ~30 lines of
+  scenario-specific assertions. Defer to a dedicated refactor commit; this tick
+  is the right time to flag the increased surface area but the wrong time to do
+  the work.
+
+### Finding 3 — NIT | Per-scenario sentinel-address convention is now load-bearing but still undocumented
+
+- `demo-data/scenarios/medicaid-denied-then-appealed/packet.json:40`
+- `demo-data/scenarios/commercial-policy-void/packet.json:40` (peer)
+- `demo-data/scenarios/partd-approvable/packet.json:40` (peer)
+- **Description:** the medicaid test at lines 180-184 asserts the EXACT sentinel
+  `0x0000000000000000000000000000000000000003`, locking in the per-scenario
+  enumeration `partd → ...0001, commercial → ...0002, medicaid → ...0003` as a
+  load-bearing convention (this closes the tick-9 LOW 6 by setting precedent
+  for strict pinning). However, the convention is still not documented anywhere
+  — no `demo-data/scenarios/README.md`, no comment in any of the three packet.json
+  files, no spec section. A future fourth scenario has no signal whether it should
+  use `0x...0004` or any-valid-address.
+- **Why it matters:** the convention is now ENFORCED in the medicaid test (exact
+  literal match) but only DOCUMENTED implicitly via the three existing fixtures.
+  The partd test (tick 8) does NOT exact-match its sentinel — it only checks the
+  40-hex shape. So the convention is asymmetrically enforced: medicaid pins
+  `...0003`, commercial does not (need to verify by reading the commercial test),
+  partd does not. A future fixture lands at `0x...0004` and the medicaid test
+  catches a re-use of `0x...0003` but the partd test would not catch a re-use of
+  `0x...0001`. The enforcement surface is uneven.
+- **Severity rationale:** NIT (below LOW). The tick-9 review explicitly deferred
+  the convention-documentation question (LOW 6); this tick advances the
+  enforcement on one side (medicaid pins exact value) without closing the
+  documentation gap. Acceptable per scope, but the gap is now wider.
+- **Suggested fix:** EITHER (a) tighten partd and commercial sentinel assertions
+  to exact-match (one-line edits each); OR (b) author
+  `demo-data/scenarios/README.md` with the enumerated convention and
+  cross-validate scenario-slug → address mapping in a single test that walks all
+  three directories. (a) is cheaper, (b) is more rigorous.
+
+---
+
+## Symmetry / regression checks (no findings)
+
+- **`payer-profile.json` shape matches §3.2 Medicaid discriminant exactly.** Six
+  fields, no extras, no `_note`. The string-non-emptiness check at lines 112-118
+  is correct; the `line === "Medicaid"` pin at line 119 is correct.
+- **`Patient C` synthetic marker is distinct from `Patient A` (partd) and
+  `Patient B` (commercial).** Cross-folder false-positive impossible because each
+  test hardcodes its `SCENARIO_DIR`.
+- **`contentHash` uniformity:** all three references in packet.json + the
+  formularyRelease.contentHash carry the same hash
+  (`0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470` =
+  keccak256 of empty bytes, the placeholder pattern from tick 8). Acceptable as
+  fixture-tier; would need real hashes for a non-demo deploy. Consistent with
+  the precedent set by partd and commercial.
+- **Synthetic MRN format `000-MED-003` slips the 7+-digit MRN regex correctly:**
+  3 digits (`000`) before the dash break, the regex requires 7+ contiguous digits.
+  No false-positive.
+- **NDC 00002-1433-80 (5-4-2 shape) does not match the 3-3-4 phone regex.** No
+  false-positive.
+- **RxNorm CUI 1551291 (7 contiguous digits) does NOT match the MRN regex** because
+  the regex requires the literal `MRN` prefix. No false-positive.
+- **42 CFR §438.402 citation** (expected-outcome.md:44) is the correct federal
+  authority for Medicaid MCO Plan Internal Appeal windows per §2.5 R17.
+- **Ladder math:** `(Medicaid, 0)` initial determination → `(Medicaid, 1)` Plan
+  Internal Appeal → `(Medicaid, 2)` External Medical Review / State Fair Hearing
+  rendered as `skipped` after Approve. Matches §2.5 R17 + R15 + the §2.4 R14
+  terminal cap (Medicaid max = 2). The "appeal-ladder stages" table at
+  expected-outcome.md:78-82 mirrors R15's UI-label mapping exactly.
+- **Round-1 reference index 3 is described but NOT checked into the round-0
+  packet.json,** which is correct — the round-0 packet is the *frozen* evidence
+  at submission time (R10); the round-1 appeal would be a separate packet body
+  in the Curie packet store keyed by a new Merkle root. The narrative correctly
+  treats the round-1 packet as a thought-experiment additive set; no fixture
+  drift.
+- **Test isolation:** `node:test` + `node:assert/strict`, matches project
+  convention.
+- **No mocks:** all five fixture files read from disk; no test doubles.
+- **TypeScript narrow-cast on `(references as Record<string, unknown>[])[0]`** at
+  line 157 is needed because `Array.isArray(references)` narrows to `unknown[]`,
+  not `Record<string, unknown>[]`. The cast is local and surface-area-bounded.
+  Tsc passes clean. (This is the "type-narrowing fix on line 158" referenced in
+  the prompt.)
+- **R2 partial-coverage bookkeeping (third of three scenarios):** the medicaid
+  case closes R2, taking the count from 2/3 to 3/3. Acknowledged; not a code
+  finding.
+
+## Carried-over OK items (from prior ticks, unchanged)
+
+- §3.4 `Packet` schema conformance (references[], submittedAt: number,
+  submittedBy: 0x+40hex).
+- `submittedAt: 1748736000` is a positive finite number per §3.4 (unix seconds,
+  resolving to 2026-06-01 00:00:00 UTC — a coherent future timestamp for the
+  scenario's authoring date).
+- All three slice.kind values are members of the §3.4 closed enum.
+- R1 "synthetic only" applies to both note.md and expected-outcome.md (the
+  tick-9 MEDIUM 4 closure pattern carried forward symmetrically).
+- Test name "all six fields per R4 (5 strings + numeric quantity)" closes
+  tick-9 LOW 9 in this file (partd test left as-is per scope, as before).
+
+---
+
+## Tick-10 verdict
+
+**OVERALL: PASS — 0 actionable findings, 1 LOW, 2 NITs**
+
+Severity breakdown:
+- **HIGH:** 0 open.
+- **MEDIUM:** 0 open.
+- **LOW:** 1 (Finding 1: header-line check does not enforce Deny-before-Approve
+  ordering — prospective gap, current fixture is correct, suggested 3-line fix).
+- **NIT:** 2 (Finding 2: `assertNoPHI` continues to mirror across 3 tests —
+  tick-9 LOW 7 deferral applies; Finding 3: sentinel-address convention is now
+  load-bearing but unevenly enforced and undocumented — tick-9 LOW 6 deferral
+  applies but the asymmetry is new).
+
+The fixture is structurally clean. The §3.2 Medicaid discriminant shape is
+exact. The round-0 packet genuinely misses the SGLT2-i evidence the PA criteria
+require, and the round-1 narrative cleanly fills the gap via documented
+empagliflozin intolerance — the R6c + R14a appeal arc is coherent end-to-end.
+The §3.4 closed `slice.kind` enum is honored (no repeat of the tick-9 HIGH-1
+`"policy-clause"` violation; the Centene Medi-Cal PA criteria correctly land
+under `formulary-entry`). The sentinel-address pin at exact-equality
+`0x...0003` advances tick-9 LOW 6 partially. The PHI scan is applied
+symmetrically to both note.md and expected-outcome.md (tick-9 MEDIUM 4 closure
+pattern carried forward).
+
+R2 (the curated-cases requirement, 3 of 3) is now complete with this tick.
+Tests are 44/44 green, matching the predicted delta exactly. Tsc is clean.
+Ready to wire into an end-to-end run when Phase 1 contract work lands. The
+single LOW is recommended for closure inline (3-line edit); the two NITs are
+flagged for record-keeping and can land in a future DRY/convention refactor
+commit.
+
+---
+
+## Tick 10 — LOW 1 inline closure
+
+Finding 1 closed: `src/protocol/scenarios.medicaid-denied-then-appealed.test.ts`
+gains a 3-line ordering assertion after the header co-occurrence checks. The
+new assertion uses `headerLine.search(...)` to confirm `Deny` precedes
+`Approve` and cites R14a in the failure message:
+
+```ts
+const denyIdx = headerLine!.search(/\bDeny\b/);
+const approveIdx = headerLine!.search(/\bApprove\b/);
+assert.ok(
+  denyIdx < approveIdx,
+  `expected-outcome.md header must name Deny BEFORE Approve (R14a appeal arc: round-0 Deny → round-1 Approve); got: ${headerLine}`,
+);
+```
+
+Test re-run: `node --import tsx --test "src/**/*.test.ts"` returns 44/44 green.
+No new findings introduced by the 3-line addition; the assertion is a strict
+subset of the prior accepted ordering claim, so no new strict-review pass
+needed for this inline closure.
+
+NIT 2 (3x copy of `assertNoPHI`) and NIT 3 (sentinel-address convention) remain
+deferred to the queued UNIT-3-refactor unit and the sentinel-convention
+follow-up respectively.
+
+### Final tick-10 verdict: PASS (0 findings remain)

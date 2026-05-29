@@ -1,0 +1,11 @@
+{
+  "payerLine": "Medicaid",
+  "formularyRelease": {
+    "line": "Medicaid",
+    "state": "CA",
+    "mco": "Centene Medi-Cal",
+    "revision": "2026-Q2",
+    "sourceUrl": "https://www.dhcs.ca.gov/provgovpart/pharmacy/Documents/Medi-Cal-GLP1-PA-Criteria-2026-Q2.pdf",
+    "contentHash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+  }
+}

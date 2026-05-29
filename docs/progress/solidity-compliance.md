@@ -1,17 +1,20 @@
-# Solidity compliance — tick 9
+# Solidity compliance — tick 10
 
 **Date:** 2026-05-29
 **Scope:** no `contracts/` diff this tick — audit deferred to next contract-touching tick
 **Verdict:** PASS (no contracts/ diff → no new findings)
 
-## This tick's diff scope (UNIT-3b)
+## This tick's diff scope (UNIT-3c)
 
-Verified via `git diff --name-only HEAD~1..HEAD -- contracts/` (empty result) and
-`git diff --name-only HEAD~1..HEAD`:
+Verified via `git diff --name-only HEAD~1..HEAD -- contracts/` (empty result) plus
+`git status` against `contracts/` (clean — no staged, unstaged, or untracked
+changes). UNIT-3c is currently uncommitted/untracked, and consists of:
 
 - New this tick:
-  - `demo-data/scenarios/commercial-policy-void/` (5 fixture files)
-  - `src/protocol/scenarios.commercial-policy-void.test.ts`
+  - `demo-data/scenarios/medicaid-denied-then-appealed/` (5 fixture files:
+    `expected-outcome.md`, `note.md`, `packet.json`, `payer-profile.json`,
+    `requested-drug.json`)
+  - `src/protocol/scenarios.medicaid-denied-then-appealed.test.ts`
 - No changes to `contracts/contracts/CoverageNegotiation.sol`,
   `contracts/contracts/mocks/MockAgentPlatform.sol`, or
   `contracts/test/CoverageNegotiation.test.ts`.
@@ -32,10 +35,11 @@ From tick 4 (UNIT-2):
   `uint8 indexed round` width gap was explicitly noted as forward-compatible
   and accepted, not an open finding.
 
-Tick 8 (UNIT-3a, partd-approvable fixtures + scenario test) also touched no
-`contracts/` files and added no new findings.
+Ticks 8 (UNIT-3a, partd-approvable fixtures + scenario test) and 9 (UNIT-3b,
+commercial-policy-void fixtures + scenario test + amendment 0005) also touched
+no `contracts/` files and added no new findings.
 
-No unresolved compliance items carry into tick 9.
+No unresolved compliance items carry into tick 10.
 
 ## Tick 4 (UNIT-2) audit — preserved for reference
 

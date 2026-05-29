@@ -1,0 +1,41 @@
+{
+  "references": [
+    {
+      "url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=a4c47592-1234-4abc-9def-0123456789ab",
+      "contentHash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+      "slice": {
+        "text": "TRULICITY (dulaglutide) is indicated as an adjunct to diet and exercise to improve glycemic control in adults with type 2 diabetes mellitus.",
+        "kind": "fda-label-indication",
+        "locator": {
+          "section": "1 INDICATIONS AND USAGE",
+          "page": 1
+        }
+      }
+    },
+    {
+      "url": "https://www.dhcs.ca.gov/provgovpart/pharmacy/Documents/Medi-Cal-GLP1-PA-Criteria-2026-Q2.pdf",
+      "contentHash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+      "slice": {
+        "text": "GLP-1 receptor agonists (including dulaglutide, semaglutide, liraglutide) are covered under Medi-Cal managed care prior authorization when ALL of the following criteria are met: (1) diagnosis of type 2 diabetes mellitus; (2) HbA1c ≥7.5% documented within the past 6 months on maximum-tolerated metformin monotherapy; (3) documented trial of an SGLT2 inhibitor (e.g., empagliflozin, dapagliflozin, canagliflozin) for a minimum of 90 consecutive days OR documented contraindication or intolerance to all SGLT2 inhibitors. Requests that do not include SGLT2 inhibitor trial documentation or a documented contraindication will be denied as incomplete.",
+        "kind": "formulary-entry",
+        "locator": {
+          "section": "Section 4 — Endocrine Agents, GLP-1 Receptor Agonists, Prior Authorization Criteria",
+          "page": 12
+        }
+      }
+    },
+    {
+      "url": "https://www.nadac.cms.gov/app/nad-pricing-report.aspx",
+      "contentHash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+      "slice": {
+        "text": "Dulaglutide 0.75 mg/0.5 mL subcutaneous injection (4-pack, 28-day supply) — NADAC unit acquisition cost: $748.22 per pen (CMS NADAC weekly file, 2026-Q2). Cost Plus benchmark: $720.00 per pen.",
+        "kind": "price-benchmark",
+        "locator": {
+          "section": "Dulaglutide 0.75 mg/0.5 mL"
+        }
+      }
+    }
+  ],
+  "submittedAt": 1748736000,
+  "submittedBy": "0x0000000000000000000000000000000000000003"
+}
