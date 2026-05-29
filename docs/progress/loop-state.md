@@ -4,11 +4,12 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-29 (tick 6 — UNIT-2-followup-B landed; createContract guard ordering pinned)
-**Current mode:** `impl`
-**Current tick:** 6
-**Last focus:** UNIT-2-followup-B — R2b zero-address guard ordering test (DONE; 28/28 + 21/21)
-**Last commit:** *(set after tick 6 commit)*
+**Last updated:** 2026-05-29 (tick 7 — emergency-tag; loop session paused at clean stopping point)
+**Current mode:** `creativity` *(per emergency-tag procedure — operator should restart with a fresh session)*
+**Current tick:** 7 *(emergency tag; no new code landed this tick)*
+**Last focus:** Emergency-tag stop — UNIT-3 (curated scenarios × 5 files × 3) requires a dev subagent which is disallowed in the 75–90% token band per procedure
+**Last commit:** `1d0fcea` (tick 6 — UNIT-2-followup-B)
+**Emergency tag:** `tokens-emergency-2026-05-29-1`
 
 ## Work queue (priority order)
 
@@ -126,6 +127,7 @@
 
 ## Recent findings (rolling — newest first, last 20)
 
+- **2026-05-29 (tick 7 — emergency tag, loop session paused):** No new code landed this tick. Token budget assessed at ~80% (75–90% band per procedure). The next queued unit UNIT-3 (three curated scenario folders × five synthetic clinical files each = 15 files of medically-coherent demo content) cannot be completed cleanly without a dev subagent, and the procedure forbids dispatching subagents in this band. Per the loop's "don't grind near the cap" principle, this is the right stopping point. **Six commits landed across ticks 1–6**, all gates green at last commit (hardhat 28/28, vitest 21/21, tsc clean, secret-scan clean, Opus solidity-compliance + security + strict-review all PASS on the most recent strict-review iterations). Operator handoff: restart in a fresh session to land UNIT-3+ (web hooks, UI conformance, curated scenarios, browser-verify). The `tokens-emergency-2026-05-29-1` tag marks this stopping point; `git diff start..HEAD` shows the loop's full delivery.
 - **2026-05-29 (tick 6 — UNIT-2-followup-B landed, very-lean tick):** Closed the zero-address ordering gap from tick 4's strict-review LOW finding. Both UNIT-2 follow-ups now landed; SPEC-0004 Phase 1 contract work fully tested. Token budget after tick 6 estimated ~80% — clearly in the 75–90% band per procedure. Next tick must stop dispatching subagents, do small inline work only, and prepare for emergency tag if a non-trivial unit is next. UI units (UNIT-4+) will require a fresh session — they're too large to safely fit in remaining budget.
 - **2026-05-29 (tick 5 — UNIT-2-followup-A landed, lean tick):** Closed the appeal-state edge-coverage gap from tick 4's strict-review. Confirmed by exhaustive testing: the contract's `appeal()` state guard is ordered BEFORE auth + cap checks, so all 9 non-Denied states produce the identical `"appeal: prior ruling not Deny"` revert — no terminal-state guard ordering surprises. Lean tick: skipped Opus gates since change was test-only and the prescribed fix was already vetted. Sim/real parity maintained. Token budget after tick 5 estimated ~75% — next tick should be very lean (skip all subagents per procedure; commit whatever's coherent; prepare for emergency-tag if needed).
 - **2026-05-29 (tick 4 — UNIT-2 landed):** SPEC-0004 Phase 1 contracts landed. Initial strict-review caught 6 findings; 3 CRITICAL (lying R12 comment in contract header, runtime regressions in 3 consumers from the new R2b predicate, sim/real PacketSubmitted parity break) were release-blockers that I addressed inline. Net: contract change + 3 callsite updates + new TS event type + sim emission + real ABI mapping. Token budget after tick 4 estimated 70% — next tick is in the 60–75% band, so should skip non-essential subagents. Findings 4–6 deferred as UNIT-2-followup-A/B units in the queue (parameterized edge tests + zero-address ordering test).
