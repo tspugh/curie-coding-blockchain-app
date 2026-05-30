@@ -1,3 +1,58 @@
+## Tick 119 (iter-2 re-review) — R25 Tick B fixes
+
+**Date:** 2026-05-30
+**Scope:** Verify the iter-1 (tick 118) findings are CLOSED on commit `9db79d7`.
+
+**Verdict:** PASS (zero findings — all prior findings CLOSED)
+
+### MEDIUM status: CLOSED
+
+`_selfHostedNonce` is now declared at line 217 of `CoverageNegotiation.sol`, AFTER
+`_requestToNegotiation` (line 208), at the END of the storage block. `_nextId` (203),
+`_negotiations` (205), and `_requestToNegotiation` (208) all retain their pre-Tick-B
+slot indices — appending the new slot does not shift any existing slot. Storage-layout
+compat for upgrade-in-place is preserved. The docstring at lines 210-216 explicitly
+documents the placement rationale.
+
+### LOW status: CLOSED
+
+`orchestrator handleResponse round-trip: Approve ruling drives state → Approved`
+(test file lines 1186-1253) does exactly what the iter-1 LOW asked for: fires the
+self-hosted path, captures the synthetic `pendingRequestId`, the orchestrator EOA
+ABI-encodes the full 10-tuple ruling (`Decision.Approve, costPlus, NADAC, hashes,
+receipt, empty arrays`), wraps it in the Response struct + an empty Request, calls
+`handleResponse(requestId, [response], Success, request)`, asserts the `Ruled` event
+fires AND `stateOf(reqId) == State.Approved`. Round-trip is end-to-end.
+
+### NIT status: CLOSED
+
+Docstring at `CoverageNegotiation.sol:189-200` carries the Amendment 0006 exception
+block at lines 195-199: `"NOT set in the self-hosted path (`_fireAgentSelfHosted`)
+because there's no external `platform.createRequest` call for an observer to
+interleave with. Self-hosted observers should read the `RulingRequested` event
+instead..."`. Clear, explicit, points readers at the observable.
+
+### New findings: none
+
+Additional stickler checks all pass:
+- **CEI in `_fireAgentSelfHosted`** (lines 883-925): all state writes
+  (`n.totalFees` 891, `n.rulingDeadline` 896, `n.state` 897, `_selfHostedNonce` 904,
+  `n.pendingRequestId` 908, `_requestToNegotiation[requestId]` 909) commit before
+  EITHER external `.call{value}` (lines 918, 922). Events at 911-912 fire before
+  the calls, matching the platform-path ordering.
+- **Reentrancy**: `requestAdjudication` (420), `submitEvidence` (437), `appeal` (481)
+  — all three `_fireAgent` callers carry `nonReentrant`. Refund + orchestrator-fee
+  transfers in the self-hosted path are guarded.
+- **Nonce-then-keccak ordering**: line 904 `_selfHostedNonce += 1;` strictly precedes
+  the keccak at 905-907 — same-block fires get distinct nonces, distinct requestIds.
+- **`_fireAgent` branch** (lines 804-807): `if (selfHosted) { _fireAgentSelfHosted(...);
+  return; }` — clean early-return, no fallthrough into platform-path code.
+- **Test coverage**: all 5 new tests present and meaningful (selfHosted fire,
+  uniqueness, underfunded revert, overpayment refund, handleResponse round-trip).
+  Commit body reports 39/39 hardhat passing.
+
+---
+
 # Solidity compliance — tick 118
 
 **Date:** 2026-05-30

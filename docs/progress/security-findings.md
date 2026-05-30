@@ -1,3 +1,100 @@
+## Tick 119 — R25 Tick B (self-hosted _fireAgent) security review
+
+**Date:** 2026-05-30
+**Commit:** 9db79d7
+**Scope:** `contracts/contracts/CoverageNegotiation.sol` — `_fireAgent` branch on `selfHosted` → `_fireAgentSelfHosted`, plus 5 new tests in `contracts/test/CoverageNegotiation.test.ts`.
+**Verdict:** PASS (zero findings)
+
+### CRITICAL
+None.
+
+### HIGH
+None.
+
+### MEDIUM
+None.
+
+### LOW
+None.
+
+### NIT
+None.
+
+### Threat walk-through
+
+**T1 — Orchestrator-as-platform compromise.** Bounded by design. `handleResponse`
+still gates `require(msg.sender == address(platform), "callback: not platform")` and
+requires `_requestToNegotiation[requestId] != 0` AND `n.state == UnderReview`. A
+leaked orchestrator key can only substitute the ruling outcome on in-flight requests
+— it cannot drain funds (no `withdrawFunds` path opens, `totalFees` is settlement
+marker only), cannot escalate to terminal states beyond `Approved`/`Denied`/
+`PolicyInvalidated`/`EvidenceRequested` (the legitimate ruling outcomes), and cannot
+touch requests not currently in `UnderReview`. This is the documented self-hosted
+trust model.
+
+**T2 — Synthetic requestId predictability.** Confirmed fully predictable
+(`keccak256(block.number, address(this), reqId, nonce)`). Irrelevant because
+delivering a fake ruling requires `msg.sender == address(platform)`, which reduces
+to T1. No additional attack surface from predictability.
+
+**T3 — Reentrancy via `.call{value}`.** Verified. All three `_fireAgent` callers —
+`requestAdjudication` (line 420), `submitEvidence` (line 437), `appeal` (line 472
+area, confirmed via grep) — carry `nonReentrant`. In `_fireAgentSelfHosted`, all
+state effects (`n.totalFees`, `n.rulingDeadline`, `n.state = UnderReview`,
+`n.pendingRequestId`, `_requestToNegotiation[requestId] = reqId`,
+`PacketSubmitted` + `RulingRequested` emits) complete BEFORE either external call.
+CEI preserved.
+
+**T4 — Storage-layout corruption.** Verified. Pre-commit, the last storage slot is
+`_requestToNegotiation` (line 203 in parent). Post-commit, `_selfHostedNonce` is
+declared at line 217, AFTER `_requestToNegotiation` (line 208). `_nextId` (203),
+`_negotiations` (205), and `_requestToNegotiation` (208) retain their original slot
+indices. Iter-1 MEDIUM is correctly closed.
+
+**T5 — Fee transfer DoS.** Orchestrator is an EOA; EOAs have no code and cannot
+revert on receive. The `require(feeOk)` is belt-and-suspenders only. Even in the
+theoretical revert case, the caller's value is returned via the outer revert and
+no state commits. Safe.
+
+**T6 — `handleResponse` round-trip integrity.** Verified. The new test encodes the
+10-tuple matching the decoder at line 660: `(uint8, uint256, uint256, bytes32,
+bytes32, bytes32, uint256, uint16[], uint16[], bytes32[])`. It passes
+`Decision.Approve`, `costPlusUnitPrice=200n`, `nadacUnitPrice=NADAC_UNIT`, plus
+the rationale/clause/standard refs and receipt id; asserts state → `Approved` and
+event emission. The decode is non-trivial — the contract uses `costPlusUnitPrice`
+to compute the deterministic `coveredAmount` cap (R6a), so a malformed tuple would
+fail decode or produce a wrong cap. Test exercises the full happy path through
+the orchestrator EOA.
+
+**T7 — `setPlatform` clears `selfHosted`.** Intentional and documented (line 298:
+"reversible via `setPlatform` which clears the self-hosted flag"). The
+mid-operation foot-gun concern (owner flips mode while requests are
+`UnderReview`) only stalls in-flight requests — the old orchestrator's
+synthetic requestIds are still in `_requestToNegotiation`, but the new platform
+won't recognize them; the old orchestrator can no longer pass the msg.sender
+check. Recovery path: `onRulingTimeout` (existing) routes stalled requests to
+`EvidenceRequested`. Not a security defect — requires explicit owner action,
+no fund-loss path, no privilege escalation. Operational concern only;
+acceptable.
+
+**Additional checks performed:**
+- `currentlyFiringReqId` intentionally not set in self-hosted path; doc-comment
+  on storage var (lines 195-199) documents the exception and points observers
+  at the `RulingRequested` event (which fires synchronously). No CEI or
+  observability defect.
+- `agentReward=0` path verified: `if (fee > 0)` skips the orchestrator transfer
+  (free demo mode) but still fires the agent and populates `_requestToNegotiation`
+  — covered by the "synthetic requestId is unique across two same-block fires"
+  test using `agentReward=0n`.
+- `setPlatformSelfHosted` is `onlyOwner` (line 300). Confirmed.
+- No new external calls beyond the two documented (`.call{value: fee}` to
+  orchestrator, `.call{value: refund}` to payer).
+- Test count: 39/39 passing per commit message; 5 new tests cover the four
+  behavioral invariants (state transition, requestId uniqueness, underfund
+  revert, overpayment refund) plus the round-trip ruling test.
+
+---
+
 ## Tick 85 (re-review) — R23 cost-estimator fixes
 
 **Date:** 2026-05-30
