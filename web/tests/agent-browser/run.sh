@@ -552,6 +552,61 @@ scenario_demo_mode() {
   ev "(()=>{localStorage.removeItem('curie:demoMode'); return 'cleared'})()" >/dev/null
 }
 
+# ===========================================================================
+# Scenario K — Settings → Users key-paste derives the address (SPEC-0005 R11)
+#   Uses the well-known privkey 0x11..11 → 0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A.
+#   Asserts: derived address auto-fills, address field becomes read-only,
+#   submit persists the derived address (not the key).
+# ===========================================================================
+scenario_key_paste_derives() {
+  echo "Scenario K: key-paste derives address (R11)"
+
+  open_app
+  ev "(()=>{localStorage.removeItem('curie:users'); return 'cleared'})()" >/dev/null
+  open_app
+  ab find testid nav-settings click >/dev/null
+  ab wait 250 >/dev/null
+
+  # Fill label.
+  ev "(()=>{const el=document.querySelector('[data-testid=users-add-label]');const setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter.call(el,'Key-Paste Bob');el.dispatchEvent(new Event('input',{bubbles:true}));return 'ok'})()" >/dev/null
+
+  # Paste the well-known privkey.
+  ev "(()=>{const el=document.querySelector('[data-testid=users-add-key]');const setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter.call(el,'0x1111111111111111111111111111111111111111111111111111111111111111');el.dispatchEvent(new Event('input',{bubbles:true}));return 'ok'})()" >/dev/null
+  ab wait 100 >/dev/null
+
+  # The address field's *displayed value* must match the derived address.
+  assert_eq "R11: address auto-derives from pasted key" \
+    "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A" \
+    "$(ev "document.querySelector('[data-testid=users-add-address]').value")"
+
+  # The address field becomes read-only while the key is present.
+  assert_eq "R11: address field is read-only when key is set" "true" \
+    "$(ev "String(document.querySelector('[data-testid=users-add-address]').readOnly)")"
+
+  # Submit; the persisted DemoUser must carry the derived address — and
+  # nothing in localStorage may contain the private key.
+  ev "(()=>{document.querySelector('[data-testid=users-add-submit]').click();return 'ok'})()" >/dev/null
+  ab wait 200 >/dev/null
+  assert_eq "R11: derived pill present after submit" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-key-paste-bob]'))")"
+  assert_eq "R11: persisted address matches derived" \
+    "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A" \
+    "$(ev "JSON.parse(localStorage.getItem('curie:users'))[0].address")"
+  assert_eq "R11: private key NOT persisted under curie:users" "false" \
+    "$(ev "String((localStorage.getItem('curie:users')||'').includes('0x1111111111111111111111111111111111111111111111111111111111111111'))")"
+
+  # Invalid key keeps the address field editable (length 10 hex — too short).
+  ev "(()=>{document.querySelector('[data-testid=users-remove-key-paste-bob]').click();return 'ok'})()" >/dev/null
+  ab wait 150 >/dev/null
+  ev "(()=>{const el=document.querySelector('[data-testid=users-add-key]');const setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter.call(el,'0x1111111111');el.dispatchEvent(new Event('input',{bubbles:true}));return 'ok'})()" >/dev/null
+  ab wait 100 >/dev/null
+  assert_eq "R11: invalid key keeps address editable" "false" \
+    "$(ev "String(document.querySelector('[data-testid=users-add-address]').readOnly)")"
+
+  # Cleanup.
+  ev "(()=>{localStorage.removeItem('curie:users'); return 'cleared'})()" >/dev/null
+}
+
 # --- main -------------------------------------------------------------------
 
 start_server
@@ -569,6 +624,7 @@ scenario_observer;            echo
 scenario_cds_prefill;         echo
 scenario_persisted_users;     echo
 scenario_demo_mode;           echo
+scenario_key_paste_derives;   echo
 
 echo "──────────────────────────────────────────"
 echo "agent-browser E2E: $PASS passed, $FAIL failed"

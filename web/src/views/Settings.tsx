@@ -16,7 +16,8 @@
  *   - Chain ID:         SOMNIA_TESTNET.chainId (50312)
  *   - RPC host:         extracted from SOMNIA_TESTNET.rpcUrl
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Wallet } from "ethers";
 import {
   SOMNIA_TESTNET,
   addUser,
@@ -374,7 +375,25 @@ function UsersPanel() {
   const [newLabel, setNewLabel] = useState("");
   const [newRole, setNewRole] = useState<DemoRole>("provider");
   const [newAddress, setNewAddress] = useState("");
+  // SPEC-0005 R11: optional private-key paste. Never persisted — only used
+  // at form submit to derive the address via ethers. Cleared on success
+  // alongside the other fields.
+  const [newKey, setNewKey] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  // Derive the address from `newKey` when valid; falls back to the manual
+  // address field otherwise. `useMemo` keeps the (potentially throwing)
+  // ethers.Wallet construction off the render path when the key is
+  // incomplete or malformed.
+  const derivedAddress = useMemo<string | null>(() => {
+    const trimmed = newKey.trim();
+    if (!isValidHexKey(trimmed)) return null;
+    try {
+      return new Wallet(trimmed).address;
+    } catch {
+      return null;
+    }
+  }, [newKey]);
 
   // Load on mount; the storage layer degrades to [] in non-browser envs.
   useEffect(() => {
@@ -399,10 +418,16 @@ function UsersPanel() {
     e.preventDefault();
     setError(null);
     const label = newLabel.trim();
-    const address = newAddress.trim();
+    // SPEC-0005 R11: when a private key is pasted AND valid, the derived
+    // address wins over whatever's in the manual field. The key itself is
+    // discarded after derivation; per-user signer persistence is T75c.
+    const rawKey = newKey.trim();
+    if (rawKey.length > 0 && !isValidHexKey(rawKey))
+      return setError("Private key must be 0x + 64 hex.");
+    const address = derivedAddress ?? newAddress.trim();
     if (!label) return setError("Label is required.");
     if (!/^0x[0-9a-fA-F]{40}$/.test(address))
-      return setError("Address must be 0x + 40 hex.");
+      return setError("Address must be 0x + 40 hex (or paste a private key).");
     if (!isDemoRole(newRole)) return setError("Role is invalid.");
     const id = label
       .toLowerCase()
@@ -412,6 +437,7 @@ function UsersPanel() {
     persist(addUser(users, { id, label, role: newRole, address }));
     setNewLabel("");
     setNewAddress("");
+    setNewKey("");
     setNewRole("provider");
   }
 
@@ -427,6 +453,9 @@ function UsersPanel() {
         in localStorage. The seed roles (provider / insurer / observer) remain
         available in the picker above; entries added here appear as additional
         profile pills in the top-bar immediately (R12 — no page reload required).
+        R11 key-paste path: paste a 0x-prefixed 64-hex private key and the
+        address is derived automatically; the key itself is <strong>never</strong>{" "}
+        persisted — only the resulting address goes to localStorage.
       </p>
       <ul className="users-list" data-testid="users-list">
         {users.length === 0 && (
@@ -473,13 +502,32 @@ function UsersPanel() {
           </select>
         </label>
         <label>
+          Private key <span className="hint-inline">(optional — derives address)</span>
+          <input
+            type="text"
+            data-testid="users-add-key"
+            value={newKey}
+            onChange={(e) => setNewKey(e.target.value)}
+            placeholder="0x… (64 hex) — not stored"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </label>
+        <label>
           Address
           <input
             type="text"
             data-testid="users-add-address"
-            value={newAddress}
+            value={derivedAddress ?? newAddress}
             onChange={(e) => setNewAddress(e.target.value)}
             placeholder="0x… (40 hex)"
+            readOnly={derivedAddress !== null}
+            aria-readonly={derivedAddress !== null}
+            title={
+              derivedAddress !== null
+                ? "Derived from the pasted private key — clear the key field to edit manually."
+                : undefined
+            }
           />
         </label>
         {error && <p className="error" data-testid="users-add-error">{error}</p>}
