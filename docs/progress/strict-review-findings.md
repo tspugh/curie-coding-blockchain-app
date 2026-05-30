@@ -8475,3 +8475,85 @@ L69-76 docstring now explicitly says "This module is consumed by BOTH the Node-s
 ### Verdict: **PASS (zero findings)**
 
 All five iter-1 findings are closed by inline evidence; both tsc passes are clean; the lib test suite is 192/192; the integration script exits 2 honestly with the R18 funding diagnostic. No new findings surfaced during the re-read of the touched regions. Cleared for the next tick of work.
+
+
+---
+
+## Ticks 77-79 strict-review
+
+Scope: three commits — `b8c0e09` (tick 77 loop-state refresh, docs-only), `827ca0f` (tick 78 / T75b — wire `loadUsers()` through `ProfileRegistry` at boot in `web/src/client.ts`), `fdb77b5` (tick 79 — new harness Scenario I in `web/tests/agent-browser/run.sh`). Per the strict-review brief, scrutinized 11 specific points (boot-init throw safety, seed-collision policy, `partyIdFor` exhaustiveness, address-propagation honesty, two-client race, unit-test coverage of new helpers, R12 "extensible" wording vs closed switch, comment honesty for tick 78; cleanup-on-failure, localStorage-survives-reload, case-pattern looseness for tick 79).
+
+### Finding-by-finding scrutiny
+
+**Q1. Module-init throw safety (tick 78) — clean.**
+`loadUsers()` (`src/users/userStore.ts:91-113`) defends three failure modes — `storage === null` (L94), `getItem` throw (L98-101), and `JSON.parse` throw (L104-107) — each returning `[]`. The `Array.isArray(parsed)` guard (L109) defends against non-array JSON. The final `parsed.filter(isDemoUser)` (L112) silently drops malformed entries. The boot-path in `client.ts:144-154` is purely `new Set(...).has(...)` and `.filter(...).map(userToProfile)` over the returned `DemoUser[]` — `userToProfile` itself does only field reads + a switch on a narrowed-by-typeguard `role`, no `JSON.parse` / no `localStorage` access of its own. There is **no throw path** at module init from this layer; the tick-25 LOW 5 closure invariant ("don't brick React before Settings can fix it") is preserved.
+
+**Q2. Seed-collision filtering — drop-silent policy honest, comment names the future-work explicitly.**
+`client.ts:139-143` reads: "Saved entries that collide with a seed id (e.g. a user the operator added named 'provider') are dropped here so the seed semantics stay stable; the Settings UI can surface a future warning when collisions occur." That's an honest documentation of the gap — the policy is "silent drop now, surface in a future tick". The Settings UI's `addUser` callsite (`web/src/views/Settings.tsx:388-393`) slugs labels with `replace(/[^a-z0-9]+/g, "-")` and a 40-char cap, so an operator who tries to add a user labeled "Provider" gets `id="provider"` → boot-time drop → invisible from the UI. The slug-derivation does NOT check against the seed-id set at create time; the only collision-defense lives in client.ts on next reload. Mildly suboptimal UX, but the docstring at L142 explicitly names "the Settings UI can surface a future warning" as the gap, so the dishonesty bar is not crossed. **Not a finding** — just a deliberate scope-cut with a paper trail.
+
+**Q3. `partyIdFor` exhaustiveness — exhaustive, tsc-enforced.**
+The switch (`client.ts:117-124`) covers all three current `DemoRole` literal members. Return type is the bare `bigint` (not `bigint | undefined`), so even without `noImplicitReturns` in either `tsconfig.json` (verified — root + web both lack it under `strict: true`), TS enforces the all-paths-return contract: adding a 4th `DemoRole` member without extending the switch would leave a fallthrough path where the function returns `undefined`, which violates the declared `bigint` return. tsc catches it. Confirmed by running `npm run build` + `cd web && npx tsc --noEmit` against the current tree — both pass clean. The post-`isDemoUser` typeguard at `userStore.ts:64` already gates the role through `isDemoRole(o["role"])` (`ROLE_SET.has(...)`), so corrupt persisted values with a bad role string cannot reach `partyIdFor` — they're filtered out at `loadUsers()` time (`userStore.ts:112`).
+
+**Q4. Address propagation — honest, fully sourced.**
+Verified `Profile` (`src/profiles/profiles.ts:18-31`) has fields `{id, label, partyId, description?}` — **no address field**. `userToProfile` (`client.ts:134-136`) projects `{id, label, partyId: partyIdFor(u.role)}`, which is exactly what the registry can hold. The persisted `u.address` is currently consumed only at the Settings display layer (`web/src/views/Settings.tsx:422`, a `<code>` element showing a truncated form). The comment at `client.ts:127-133` explicitly names this gap: "The address isn't yet plumbed into the registry (the registry binds profiles to ONE wallet) … T75c will extend this to per-user signers when the underlying registry surface grows multi-wallet support." Documented future-work with a tracked task name (T75c), not a silent gap.
+
+**Q5. Two-client instance behavior — no divergence risk.**
+Real mode: `client.ts:252` (provider) and `:258` (insurer) each invoke `makeClient(...)`, each of which calls `loadUsers()`. Both reads target the SAME `localStorage.getItem("curie:users")` synchronously at module-init, no `await` between them, no `setItem` in between. The same string is parsed twice into two structurally-equal `DemoUser[]` arrays. Both `seeds` arrays are constructed from the same `DEFAULT_PROFILES` import + the same `{id:"observer",…}` literal. Both `seedIds` Sets are equal. Both `persisted` arrays filter+map identically. Hence both `profileConfig.profiles` arrays are deep-equal lists. No race (synchronous), no divergence. Simulated mode is even simpler — `insurerClient = providerClient` (`:261`) shares the single instance, so the second `loadUsers()` doesn't even run. Clean.
+
+**Q6. Unit-test coverage of new helpers — harness-only is acceptable per the file-local pattern.**
+`partyIdFor` and `userToProfile` are private (non-exported) helpers inside `web/src/client.ts`. The repo's `web/src/client.ts` has zero unit-test file (`find … -name 'client.test.ts'` returns nothing); historically this file has been tested end-to-end via the agent-browser harness because (a) it's the integration glue between Vite-only env vars (`import.meta.env.*`), `localStorage`, and the `@lib` API, and (b) every export is either a `setNext*` mutable setter, the `client` Proxy, or an `INSURER_ADDRESS` constant. The new helpers' coverage path is: Scenario I → seeds `curie:users` → reload → asserts the rendered `profile-pill-harness-bob` testid AND the Settings card label "Harness Bob". The pill testid is the App.tsx rendering of `p.id` from the registry (`web/src/App.tsx:158`, `data-testid={`profile-pill-${p.id}`}`), which means it only renders if `userToProfile({id:"harness-bob",…})` correctly produced `{id:"harness-bob",…}` AND the boot-path appended it. The label-card check covers `label`. The pill's `is-active` styling is `partyId`-independent so `partyIdFor` is NOT directly asserted by Scenario I — but it's also a 3-line `switch` whose error mode (a wrong literal) would be caught by tsc, not by tests. Harness-only is defensible for the wiring; a unit test would be ceremony. **Not a finding.**
+
+**Q7. R12 "extensible" wording vs closed switch — defensible scope-trim.**
+SPEC-0005 R12 (`docs/specs/0005-usability-and-integration.md:81-83`): "Roles are `provider` | `insurer` | `observer` (extensible). The Role pill row reflects the full registry, not a hardcoded list." `partyIdFor` is a closed switch over the three v0 roles. The `DemoRole` type itself (`src/users/userStore.ts:32`) is a closed literal union, and its comment reads "Extensible later, frozen for v0." Both the spec ("extensible") and the type ("Extensible later, frozen for v0") are aligned on "open for future change, closed today". The closed switch is the today-half of that contract. When v1 extends the union, `partyIdFor` will tsc-fail (Q3) and force the extender to think about partyId mapping — which is the right ergonomic. **Not a finding.**
+
+**Q8. Comment quality (tick 78) — honest, no restatement.**
+The L139-143 block ("seed the registry with the curated defaults, then append any localStorage-persisted DemoUser entries…") explains the WHY of seed-collision filtering — not a restatement of `seedIds.has(u.id)`. The L115 R12 citation, the L127-133 multi-wallet-deferral note, and the inline T75c reference are all forward-tracking; none lie about current state. The `walletSetupRequired` comment block at L155-162 (unchanged in this commit but adjacent context) still accurately references "MEDIUM 2, tick 25 strict-review". Clean.
+
+**Q9. Cleanup pattern (tick 79) — safe; `set -e` is NOT in effect.**
+`web/tests/agent-browser/run.sh:35` sets `set -uo pipefail` — pointedly NOT `set -e`. So a failing `assert_eq` (which only increments `FAIL`) or a failing `case … in` (which prints `✗` and increments `FAIL`) does NOT abort scenario execution; the L484 `removeItem('curie:users')` cleanup line always runs in normal flow. The `cleanup() { ab close … ; kill SERVER_PID }` `trap … EXIT` handler at L104-108 covers external interruption (Ctrl-C, harness crash) but explicitly does NOT touch localStorage — meaning if `run.sh` is killed mid-scenario, the seed survives in the user's browser-profile localStorage until they re-run the suite (which re-cleans at L464) or hand-clear it. Operationally fine for a dev-machine harness; not a finding. (A defensive trap-at-scenario-start would be nicer but is overkill for this surface.)
+
+**Q10. localStorage-survives-reload (tick 79) — correct.**
+The L50 comment ("Fresh page load → fresh JS state → new simulated client (reqId resets)") is talking about JS-runtime state (closures, module-level mutables, the SimulatedBackend's reqId counter). `localStorage` is per-origin browser storage and survives both reloads and tab-closes by spec (WebStorage MDN); only `sessionStorage` clears on tab-close. `open_app` calls `agent-browser open $URL`, which is a Chromium navigation, not a profile-wipe — so the L465 seed persists across the L469 reload exactly as Scenario I expects. Confirmed in the codebase: `userStore.ts:97` reads via `storage.getItem` on each `loadUsers()` call (no in-memory cache), and `client.ts:149` calls `loadUsers()` at module init — the natural reload boundary. Correct.
+
+**Q11. Case-pattern looseness (tick 79) — surfaces no false positive in scope, but the pattern is loose.**
+`*Harness*Bob*` (L479) would also match labels like `"CharnessBobble"` / `"Harnessing Robbery"` / `"Harness fooBob"`. In Scenario I's runtime, the only DOM labels are the three seeds ("Provider", "Insurer", "Observer") + the one seeded entry ("Harness Bob") + any operator-added entries (none in CI). None of those collide. The pattern works under the closed-set scenario assumption. Tightening to `*"Harness Bob"*` would be marginally stricter (preserves the space) — a NIT but not a finding. **Not a finding.**
+
+### New finding (tick 77)
+
+**LOW** — `docs/progress/loop-state.md:11-12` (duplicate `Last commit:` line, leftover from incomplete consolidation)
+
+Tick 77's stated purpose was to clean up a 16-tick drift in the "Last focus" block, which had drifted to tick 61 with "a duplicated stale tick-50 paragraph below it" (commit message verbatim). The diff (b8c0e09) removed the stale tick-49/50 focus paragraph but **left the stale `Last commit:` line that paired with it**. The current file head reads:
+
+```
+L11: **Last commit:** `657d7e7` (tick 76 — strict-review backlog closure)
+L12: **Last commit:** `<this tick>` (tick 50 — SPEC-0004 R11 decode)
+```
+
+`git log -L 12,12:docs/progress/loop-state.md` confirms L12 originated in commit `c7a0198` (tick 50 — the same SPEC-0004 R11 decode the L12 text references). The tick-77 cleanup was incomplete: it caught the duplicated focus paragraph but missed the paired duplicated commit line. The bug tick 77 set out to fix is still partially present in the file as of this commit.
+
+**Recommended fix:** delete L12 (the stranded stale `<this tick>` placeholder). One-line change, no semantics impact — the canonical `Last commit:` is now L11 (`657d7e7` / tick 76).
+
+**Severity rationale:** LOW because (a) the file is loop-state metadata, not code or contract; (b) the duplicate is obvious to a human reader (the same key appears twice with contradictory values), so it can't silently mislead a downstream consumer for long; (c) the commit message AND the new L7-L11 block are internally consistent — only the trailing artifact is wrong. Not NIT because the cleanup goal of tick 77 was literally "consolidate the drift" and the artifact directly contradicts that closure.
+
+### Summary findings table
+
+| Commit | Severity | File:line | Description |
+|---|---|---|---|
+| b8c0e09 | LOW | `docs/progress/loop-state.md:12` | Stale `**Last commit:** \`<this tick>\` (tick 50 …)` line was not removed by the tick-77 consolidation; duplicates the canonical L11 commit pointer with a contradictory value. |
+
+### Gates
+
+| Gate | Result |
+|---|---|
+| `npm run build` (root tsc) | PASS — clean exit, no diagnostics. |
+| `cd web && npx tsc --noEmit` | PASS — silent, no diagnostics. |
+| `git show --stat b8c0e09 827ca0f fdb77b5` | Three commits — 1 docs-only, 1 web/src/client.ts (+44 / −4), 1 web/tests/agent-browser/run.sh (+33). |
+| Scope-check: `web/src/client.ts` strict typing surface | `tsconfig.json` + `web/tsconfig.json` both have `strict:true` + `noUncheckedIndexedAccess:true` + `exactOptionalPropertyTypes:true`. Neither has `noImplicitReturns` — but `partyIdFor`'s `bigint` return type still forces exhaustiveness on a literal-union switch (Q3 confirmed). |
+
+### Verdict: **FAIL (1 LOW)**
+
+The ZERO-findings bar is broken by one LOW against tick 77 — the cleanup commit left a stranded `Last commit:` line that contradicts its own consolidation goal (`docs/progress/loop-state.md:12`). One-line delete to close.
+
+Ticks 78 and 79 separately are **PASS, zero findings**: the boot-path is throw-safe by inspection (Q1), the seed-collision policy is honestly documented (Q2), the closed switch is tsc-enforced-exhaustive (Q3), the address-propagation gap is named with a T75c forward pointer (Q4), the two-client read is race-free (Q5), the harness-only coverage of the new helpers is defensible against the file-local pattern (Q6), R12's "extensible" is honestly aligned with the type's "frozen for v0" (Q7), the comments don't lie or restate (Q8), the cleanup pattern is safe under `set -uo pipefail` without `-e` (Q9), localStorage survives the harness's `open_app` reload by spec (Q10), and the loose `*Harness*Bob*` case pattern doesn't surface a false positive in scenario scope (Q11).
+
+The tick-77 LOW is purely a docs artifact; it does not gate code, tests, or behavior — but a strict review against a "ZERO findings required" brief must surface it.

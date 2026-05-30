@@ -8,8 +8,7 @@
 **Current mode:** `impl` (T2b-2/3/4 + R1 mid-flow still blocked on operator wallet funding; deployed contract still needs redeploy with 10-arg Ruled ABI — see Operator notes)
 **Current tick:** 77
 **Last focus:** Major SPEC-0005 arc landed. Authored the spec (tick 63), addressed user-reported UI issues (R6 top-bar density / R7 insurer Detail single-column / R8 role-switch returns to Overview — ticks 64/65/67). Built the curated policy library + UI + R16 preview + R15 custom-policy override (ticks 69-72), the user-registry storage foundation + Settings → Users panel UI (R10/R11 — ticks 73, 75), the R1 integration-test skeleton with live-verified R2 pre-flight + R3 receipts plumbing (tick 74), the R17 "account does not exist" revert-reason mapping + R19 pre-flight balance gate in `useAction` (ticks 66, 68), and the strict-review backlog cleanup (tick 76 — 1 MEDIUM + 2 LOW + 2 NIT closed inline). **Cron switched from `*/15` to `*/7` mid-arc.** Lib suite 147 → **192/192** (+45 tests across content/cds-mapper/fixture/profile-registry/wallet/networks/policies/userStore); hardhat 30/30; harness **37/37** (Scenario C2 now drives populated R11/R23 paths since tick 52); web tsc + Node tsc both clean; `scripts/integration-test.ts` exits 2 cleanly with faucet hint when insurer wallet underfunded (R18 confirmed live: 0.0 STT). **SPEC-0005 done**: R6/R7/R8/R14 (data+UI)/R15/R16/R17/R19 + R10/R11 (storage+UI) + R1 skeleton. **SPEC-0005 open**: R1 mid-flow (T74b — operator-blocked on R18), R12 role-assignment wire-through, R13 demo-mode quick-switch, T75b ProfileRegistry hookup. Strict-review iter-2 zero findings on the latest batch.
-**Last commit:** `657d7e7` (tick 76 — strict-review backlog closure)
-**Last commit:** `<this tick>` (tick 50 — SPEC-0004 R11 decode)
+**Last commit:** `fdb77b5` (tick 79 — Scenario I: persisted DemoUser harness coverage)
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## Work queue (priority order)
@@ -329,3 +328,19 @@
 - **OPEN (ticks 49 + 50): Redeploy the contract.** Tick 49 extended `CoverageNegotiation`'s `Ruled` event from 7 args to 8 (added `uint16[] policyVoidedClauseIndices` per SPEC-0004 R23 / amendment 0005). **Tick 50 extended it further from 8 to 10** (added `uint16[] usedReferenceIndices` and `bytes32[] usedLeafHashes` per SPEC-0004 §3.5 R11). The currently-deployed contract at `0x1dC5bA6771A7f4426ABE5BB808a7d51BdEA33E1A` (tick 37) still carries the 7-arg ABI, so `real.ts` event decoding will NOT match its event topic hash. Required to unblock real-mode browser-verify of R11 + R23 paths: (a) redeploy with `viaIR: true` enabled (see `contracts/hardhat.config.ts`); (b) update `VITE_CONTRACT_ADDRESS` + `COVERAGE_CONTRACT_ADDRESS` in `.env`; (c) ensure the live Somnia agent's payload builder encodes the **8th, 9th, AND 10th** tuple elements (`uint16[] policyVoidedClauseIndices, uint16[] usedReferenceIndices, bytes32[] usedLeafHashes`) or every ruling will revert in `handleResponse` (clean revert, no fund loss, but no observable ruling). **Do not deploy the intermediate 8-arg shape from tick 49 — it would be wrong on arrival.** Tracked also in `docs/progress/solidity-compliance.md` ticks 49+50 OPEN items.
 - If the loop emergency-tags, restart after refill + a quick check of the latest `strict-review-findings.md`.
 - If the strict reviewer's bar feels unreachable, relax it via spec edit (not via prompt edit) — the loop reads specs as truth.
+
+## Ticks 77-79 strict-review iteration 2
+
+- **Scope:** re-verify the iter-1 LOW finding — stranded duplicate `Last commit:` line at `docs/progress/loop-state.md:12` left over from a tick-50 commit when the tick-77 refresh didn't strip it.
+- **Verification (lines 7-13 of `docs/progress/loop-state.md`):**
+  - Line 7: `**Last updated:** 2026-05-30 (tick 77 — refresh after 16-tick drift)` — header preamble intact.
+  - Line 8: `**Current mode:**` — intact.
+  - Line 9: `**Current tick:** 77` — intact.
+  - Line 10: `**Last focus:**` paragraph — intact.
+  - Line 11: `**Last commit:** \`fdb77b5\` (tick 79 — Scenario I: persisted DemoUser harness coverage)` — **canonical, points at `fdb77b5` (tick 79)** as expected. ✓
+  - Line 12: `**Emergency tag:** \`tokens-emergency-2026-05-29-1\` *(historical — superseded by the \`a68ffe5\` deprecation of token-budget gating)*` — **no longer the stale tick-50 duplicate**; it is now the Emergency tag line. ✓
+  - Line 13: blank separator before `## Work queue`. ✓
+- **Drift sweep:** ripgrep for `Last commit:` returns only the canonical line at 11 — no other stranded `Last commit:` occurrences anywhere else in the file. No new drift introduced.
+- **Iter-1 finding status:** LOW closed.
+
+**Verdict: PASS (zero findings)**
