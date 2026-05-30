@@ -214,6 +214,8 @@ scenario_happy_path() {
 # ===========================================================================
 scenario_no_phi() {
   echo "Scenario B: no PHI on-chain (R4 hard invariant)"
+  # SPEC-0005 R23 pre-flight: 1 write (createContract), 0 arbiter calls.
+  assert_wallet_sufficient "Scenario B" 1 0 || exit 2
   local token="ZZ_SECRET_PHI_TOKEN_99"
 
   # Arrange + Act: file a request whose justification contains a unique sentinel.
@@ -244,6 +246,10 @@ scenario_no_phi() {
 # ===========================================================================
 scenario_adjudication_gating() {
   echo "Scenario C: adjudication gated until insurer attaches a policy (R5/T3)"
+  # SPEC-0005 R23 pre-flight: 2 writes (createContract + the requestAdjudication
+  # attempt that must revert at the R5 gate), 0 arbiter calls (the revert
+  # short-circuits before any agent fire).
+  assert_wallet_sufficient "Scenario C" 2 0 || exit 2
 
   # Arrange: a fresh request with no policy attached (still Open).
   open_app
@@ -264,6 +270,10 @@ scenario_adjudication_gating() {
 # ===========================================================================
 scenario_policy_invalidated() {
   echo "Scenario C2: non-compliant policy -> PolicyInvalidated (R6b)"
+  # SPEC-0005 R23 pre-flight: 3 writes (createContract + insurerEngage +
+  # requestAdjudication) + 1 arbiter ruling (the agent fires and emits a
+  # void ruling).
+  assert_wallet_sufficient "Scenario C2" 3 1 || exit 2
 
   open_app
   ab find testid nav-create click >/dev/null
@@ -316,6 +326,10 @@ scenario_policy_invalidated() {
 # ===========================================================================
 scenario_observer() {
   echo "Scenario G: observer can view but not act; non-party attempt rejected (R6/R11)"
+  # SPEC-0005 R23 pre-flight: 2 writes (createContract + the insurerEngage
+  # attempt that must revert at the auth gate for an observer caller),
+  # 0 arbiter calls (revert short-circuits before agent fire).
+  assert_wallet_sufficient "Scenario G" 2 0 || exit 2
 
   open_app
   ab find testid nav-create click >/dev/null
@@ -399,6 +413,8 @@ scenario_profiles() {
 # ===========================================================================
 scenario_sample_case() {
   echo "Scenario E: 'Load sample case' prefills and drives Create (demo-data)"
+  # SPEC-0005 R23 pre-flight: 1 write (createContract), 0 arbiter calls.
+  assert_wallet_sufficient "Scenario E" 1 0 || exit 2
 
   # Arrange: fresh app, open Create, load the synthetic sample case.
   open_app
@@ -428,6 +444,8 @@ scenario_sample_case() {
 # ===========================================================================
 scenario_note_verify() {
   echo "Scenario F: verify an off-chain note copy against the on-chain hash (R3)"
+  # SPEC-0005 R23 pre-flight: 1 write (createContract), 0 arbiter calls.
+  assert_wallet_sufficient "Scenario F" 1 0 || exit 2
 
   # Arrange: file a request with a known justification, landing on Detail.
   open_app
