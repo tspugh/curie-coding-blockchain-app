@@ -1,5 +1,108 @@
 # Coverage — spec-4-implementation branch
 
+---
+
+## Tick 57 — full src/ coverage measurement
+
+**Date:** 2026-05-30 · **Branch:** `spec-4-implementation`
+**Tool:** `node --experimental-test-coverage` via `npx tsx --test "src/**/*.test.ts"`.
+**Tests run:** 85/85 PASS.
+
+### Raw tool output (coverage table)
+
+```
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# file                                              | line % | branch % | funcs % | uncovered lines
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# src                                               |        |          |         |
+#  contract                                         |        |          |         |
+#   simulated.auth.test.ts                          | 100.00 |   100.00 |  100.00 |
+#   simulated.ts                                    |  93.70 |    68.63 |   66.67 | 76 93-94 112 121-125 135-143 145 147-149 151 153-157 159-161 163-165 173-175 186 188-189 217-218 261 286-293
+#  profiles                                         |        |          |         |
+#   profiles.test.ts                                | 100.00 |    87.50 |  100.00 |
+#   profiles.ts                                     |  84.92 |    75.00 |   66.67 | 9-27
+#  protocol                                         |        |          |         |
+#   ladders.test.ts                                 | 100.00 |   100.00 |  100.00 |
+#   ladders.ts                                      | 100.00 |   100.00 |  100.00 |
+#   packet.test.ts                                  | 100.00 |   100.00 |  100.00 |
+#   packet.ts                                       | 100.00 |   100.00 |  100.00 |
+#   revertReasonMap.test.ts                         | 100.00 |   100.00 |  100.00 |
+#   revertReasonMap.ts                              | 100.00 |   100.00 |  100.00 |
+#   scenarioFixtures.test-helpers.ts                | 100.00 |    87.50 |  100.00 |
+#   scenarios.commercial-policy-void.test.ts        | 100.00 |    84.21 |  100.00 |
+#   scenarios.medicaid-denied-then-appealed.test.ts | 100.00 |    84.21 |  100.00 |
+#   scenarios.partd-approvable.test.ts              | 100.00 |   100.00 |  100.00 |
+#   somniaInterfaceDrift.test.ts                    | 100.00 |   100.00 |  100.00 |
+#  types                                            |        |          |         |
+#   coverage.types.ts                               | 100.00 |   100.00 |  100.00 |
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# all files                                         |  98.01 |    87.50 |   91.58 |
+# -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+```
+
+**Note on scope:** Node's `--experimental-test-coverage` only instruments files that
+are transitively imported by the test suite. Modules with no test importing them do
+not appear in the table — they carry an effective 0% coverage that the tool does not
+surface. These are assessed manually in the per-module table below.
+
+### Per-module coverage
+
+| Module | Line % | Branch % | Function % | Status | Notes |
+|---|---|---|---|---|---|
+| src/protocol/ladders.ts | 100 | 100 | 100 | PASS | |
+| src/protocol/packet.ts | 100 | 100 | 100 | PASS | Carried from tick 38; pinned formula tests |
+| src/protocol/revertReasonMap.ts | 100 | 100 | 100 | PASS | 9 assertions |
+| src/protocol/scenarioFixtures.test-helpers.ts | 100 | 87.5 | 100 | PASS | Test-helper; exercised via scenario test files |
+| src/contract/simulated.ts | 93.70 | 68.63 | 66.67 | GAP | Branch % below 85% threshold; uncovered lines include several event-emission branches for less-common transitions (postFeedback, onRulingTimeout, settle, withdraw, refuse) |
+| src/contract/real.ts | n/a | n/a | n/a | EXEMPT | Integration-tested against real chain; not unit-tested by design. Coverage not included in gap list per standing convention. |
+| src/profiles/profiles.ts | 84.92 | 75.00 | 66.67 | GAP | Line % just below 85%; branch % below threshold. Uncovered lines 9–27 are import + interface declarations counted by node coverage as non-executed. Uncovered functions: `addProfile`, `getProfile` (no test exercises them). |
+| src/content/content.ts | 0 | 0 | 0 | GAP | No test imports this module. `hashContent` and `ContentStore` class are completely untested. |
+| src/integrations/cds-hooks/fixture.ts | 0 | 0 | 0 | GAP | No test imports this module. |
+| src/integrations/cds-hooks/mapper.ts | 0 | 0 | 0 | GAP | No test imports this module. `mapOrderSign` pure function is fully testable without I/O. |
+| src/config/networks.ts | 0 | 0 | 0 | GAP | No test imports this module. Mostly typed constants; low risk but contributes to gap count. |
+| src/wallet/wallet.ts | 0 | 0 | 0 | GAP | No test imports this module. `SimulatedWallet` is exercised implicitly via `simulated.ts` tests but is not directly covered. |
+| src/index.ts | 0 | 0 | 0 | GAP | Top-level re-export barrel; not imported by any test. Zero executable lines — pure re-exports. Low-value gap. |
+| src/types/coverage.types.ts | 100 | 100 | 100 | PASS | Type-only + enum constants; imported by tested modules. |
+
+### Verdict
+
+The modules tracked by the tool produce:
+
+- **Aggregate (tool-measured files only):** 98.01% line / 87.50% branch / 91.58% function — above threshold.
+- **Holistic (including untested modules):** multiple files at 0% pull the true weighted average below 85%.
+
+Key gaps by severity:
+
+1. **`src/contract/simulated.ts` branch 68.63%** — below the 85% branch threshold. The uncovered branches correspond to lesser-exercised transitions: `postFeedback`, `onRulingTimeout`, `settle`, `withdraw`, `refuse`, and several guard-failure paths in `requestAdjudication`/`appeal`.
+2. **`src/profiles/profiles.ts` line 84.92% / branch 75%** — narrowly below threshold on both. `addProfile` and `getProfile` methods are untested.
+3. **`src/content/content.ts` 0%** — `hashContent` is a one-liner wrapping `ethers.keccak256`; trivial to test.
+4. **`src/integrations/cds-hooks/mapper.ts` 0%** — `mapOrderSign` is a pure function; high-value, easily testable.
+5. **`src/integrations/cds-hooks/fixture.ts` 0%** — fixture builder; testable without I/O.
+6. **`src/wallet/wallet.ts` 0%** — `SimulatedWallet` reachable without chain; `RealWallet` requires a provider.
+7. **`src/config/networks.ts` 0%** / **`src/index.ts` 0%** — typed constants + re-export barrel; low executable complexity.
+
+Weighted overall (all modules, including untested): estimated **~55% line / ~45% branch** once zero-coverage modules are counted proportionally by LOC.
+
+Steady-state threshold: ≥ 85% line + branch across all `src/` modules.
+
+**VERDICT: FAIL** — threshold not met holistically. The tool-measured subset passes (98% line / 87.5% branch), but `content.ts`, `cds-hooks/mapper.ts`, `cds-hooks/fixture.ts`, `wallet.ts`, `config/networks.ts` have no coverage at all, and `simulated.ts` branch coverage (68.63%) is below threshold even within the measured set.
+
+### Gaps queued
+
+| Priority | Module | Gap | Acceptance criterion |
+|---|---|---|---|
+| P1 | `src/contract/simulated.ts` | Branch 68.63% (below 85%) | Add tests for `postFeedback`, `onRulingTimeout`, `settle`, `withdraw`, `refuse` transitions and their guard-failure paths; branch % ≥ 85% |
+| P2 | `src/content/content.ts` | 0% — `hashContent` untested | Unit test: `hashContent` output matches `keccak256(utf8(input))` for at least 3 inputs; 100% line/branch |
+| P3 | `src/integrations/cds-hooks/mapper.ts` | 0% — `mapOrderSign` pure function untested | Unit test: at least one happy-path + one minimal-fields FHIR fixture round-trips through `mapOrderSign`; line ≥ 85% |
+| P4 | `src/integrations/cds-hooks/fixture.ts` | 0% | Unit test: fixture builder produces structurally valid `CdsHooksRequest`; line ≥ 85% |
+| P5 | `src/profiles/profiles.ts` | `addProfile`/`getProfile` untested; branch 75% | Add tests for `addProfile` (replace existing) and `getProfile` (found/not-found); line + branch ≥ 85% |
+| P6 | `src/wallet/wallet.ts` | 0% — `SimulatedWallet` untested directly | Unit test `SimulatedWallet` construction + address/mode accessors; line ≥ 85% (RealWallet exempt — requires live provider) |
+| P7 | `src/config/networks.ts` | 0% — typed constants | Smoke-import test confirming `SOMNIA_NETWORKS.testnet` has expected chainId; line ≥ 85% |
+
+`src/contract/real.ts` is **excluded** from the gap list per standing convention: it is covered by integration testing against a real Somnia testnet node, not by unit tests.
+
+---
+
 **Date:** 2026-05-29 · **Tick:** 38 (UNIT-9: packet.ts — Merkle-root helpers)
 **Branch:** `spec-4-implementation`
 **Last known test counts:** hardhat 28/28 ✓ · lib (node --test) 65/65 ✓ (+12)
