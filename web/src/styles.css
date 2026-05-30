@@ -108,7 +108,9 @@ a:hover {
 .header {
   display: flex;
   align-items: center;
-  height: 62px;
+  /* SPEC-0005 R6: 76px gives the 3-column wallet cluster (chip / balance /
+     role) room for label-on-top, content-below without crowding at 1280×800. */
+  height: 76px;
   padding: 0 40px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
@@ -179,21 +181,32 @@ a:hover {
   font-weight: 600;
 }
 
-/* Wallet info — pushed to the far right */
+/* Wallet cluster — pushed to the far right (SPEC-0005 R6). 3 stable columns
+   side-by-side at 1280×800: wallet chip / balance / role pills. Each child
+   uses a label-on-top, content-below stack so labels don't crowd the data.
+   ≥18px gutter between columns; left separator from the nav. */
 .wallet {
   margin-left: auto;
   display: flex;
-  flex-direction: column;
-  gap: 3px;
-  text-align: right;
+  flex-direction: row;
+  align-items: center;
+  gap: 18px;
   flex-shrink: 0;
+  padding-left: 24px;
+  border-left: 1px solid var(--border-lt);
+  height: 100%;
 }
 
+/* Each wallet-line is one of the 3 columns: small label on top, content
+   below. The text-align falls inside each column so values right-align by
+   default but the columns themselves sit on a row gap, not a stacked one. */
 .wallet-line {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  justify-content: flex-end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 3px;
+  white-space: nowrap;
 }
 
 .wallet .label {
@@ -202,6 +215,31 @@ a:hover {
   color: var(--muted-lt);
   text-transform: uppercase;
   letter-spacing: 0.07em;
+}
+
+/* SPEC-0005 R6: tabular-nums on the balance so the digits don't wobble as
+   the value polls. */
+.wallet-balance-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Content row inside each wallet-column: the label sits above, this is the
+   row of inline value(s) — chip + mode badge for Wallet; the value for
+   Balance; the pill row for Role. Right-aligned to match the cluster. */
+.wallet-line-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* The WalletBalance wrapper acts as a column itself when it's the only
+   child of a wallet-line. */
+.wallet-balance {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
 }
 
 .wallet select {

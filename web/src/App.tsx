@@ -120,11 +120,13 @@ export function App() {
         <div className="wallet">
           <span className="wallet-line">
             <span className="label">Wallet</span>
-            <code data-testid="wallet-address" title={client.wallet.address}>
-              {shortHex(client.wallet.address)}
-            </code>
-            <span className="badge mode" data-testid="wallet-mode">
-              {client.wallet.mode}
+            <span className="wallet-line-content">
+              <code data-testid="wallet-address" title={client.wallet.address}>
+                {shortHex(client.wallet.address)}
+              </code>
+              <span className="badge mode" data-testid="wallet-mode">
+                {client.wallet.mode}
+              </span>
             </span>
           </span>
           <span className="wallet-line">
@@ -132,29 +134,31 @@ export function App() {
           </span>
           <span className="wallet-line">
             <span className="label">Role</span>
-            <div
-              className="profile-switcher"
-              data-testid="profile-switcher"
-              role="radiogroup"
-              aria-label="Active profile"
-            >
-              {profiles.map((p) => {
-                const on = activeProfile.id === p.id;
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={on}
-                    className={`profile-pill${on ? " is-active" : ""}`}
-                    data-testid={`profile-pill-${p.id}`}
-                    onClick={() => onSwitchProfile(p.id)}
-                  >
-                    {p.label}
-                  </button>
-                );
-              })}
-            </div>
+            <span className="wallet-line-content">
+              <div
+                className="profile-switcher"
+                data-testid="profile-switcher"
+                role="radiogroup"
+                aria-label="Active profile"
+              >
+                {profiles.map((p) => {
+                  const on = activeProfile.id === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      className={`profile-pill${on ? " is-active" : ""}`}
+                      data-testid={`profile-pill-${p.id}`}
+                      onClick={() => onSwitchProfile(p.id)}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </span>
           </span>
         </div>
       </header>

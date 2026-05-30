@@ -7,7 +7,9 @@ import { formatStt } from "../format.js";
 
 export function WalletBalance(): JSX.Element | null {
   const { wei, refreshedAt } = useWalletBalance();
-  if (wei === null) return null;
+  // SPEC-0005 R6: always render a column even in sim mode so the top-bar
+  // keeps a stable 3-column shape; show "—" instead of going blank.
+  const display = wei === null ? "—" : `${formatStt(wei)} STT`;
   return (
     <span
       className="wallet-balance"
@@ -15,7 +17,9 @@ export function WalletBalance(): JSX.Element | null {
       title={refreshedAt ? `Refreshed ${new Date(refreshedAt).toLocaleTimeString()}` : ""}
     >
       <span className="label">Balance</span>
-      <code>{formatStt(wei)} STT</code>
+      <span className="wallet-line-content">
+        <code className="wallet-balance-value">{display}</code>
+      </span>
     </span>
   );
 }
