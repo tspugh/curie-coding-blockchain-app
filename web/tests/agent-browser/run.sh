@@ -895,6 +895,70 @@ scenario_payer_line() {
   assert_eq "L10: payerLine on-chain == 1 (Commercial)" "1" "$(field_of 1 payerLine)"
 }
 
+# ===========================================================================
+# Scenario L7 — custom-policy composer reaches Ready with a non-zero
+#   policyHash (SPEC-0005 R15 + R16; closes the L7 affordance-coverage gap)
+#   File -> insurer engage with the CUSTOM-policy path: select
+#   engage-policy-custom, fill custom-policy-name + custom-policy-clauses,
+#   inspect policy-preview (R16 hash readout), submit engage. The composed
+#   text is the canonical buildCustomPolicyText shape; the on-chain
+#   policyHash must be the keccak256 of that text — verified here just by
+#   asserting it lands as a NON-zero bytes32 (a tighter exact-hash check
+#   would require plumbing buildCustomPolicyText through the test API;
+#   non-zero confirms the composer's hash actually fired and the path
+#   isn't silently using a curated default).
+# ===========================================================================
+scenario_custom_policy() {
+  echo "Scenario L7: custom-policy composer engages with non-zero policyHash (R15/R16)"
+  # SPEC-0005 R23 pre-flight: 2 writes (createContract + insurerEngage),
+  # 0 arbiter calls.
+  assert_wallet_sufficient "Scenario L7" 2 0 || exit 2
+
+  # Provider files.
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Custom-policy composer round-trip test." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "L7: filed in Open" "0" "$(state_of 1)"
+
+  # Switch to insurer, reopen Detail (R8 nav rule), open the custom-policy path.
+  ab find testid profile-pill-insurer click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  eval_click engage-policy-custom
+  ab wait 100 >/dev/null
+
+  # Fill composer fields via the controlled-input DOM-set pattern.
+  ev "(()=>{const el=document.querySelector('[data-testid=custom-policy-name]');const s=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;s.call(el,'Plan-X PA criteria');el.dispatchEvent(new Event('input',{bubbles:true}));return el.value})()" >/dev/null
+  ev "(()=>{const el=document.querySelector('[data-testid=custom-policy-clauses]');const s=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;s.call(el,'Must approve under PA\nStep therapy required first');el.dispatchEvent(new Event('input',{bubbles:true}));return el.value.length})()" >/dev/null
+  ab wait 150 >/dev/null
+
+  # R16 policy-preview should report "2 clauses" (parsed from the textarea).
+  case "$(ab get text "[data-testid=policy-preview]" | tail -1)" in
+    *"2 clauses"*) echo "  ✓ L7: R16 policy-preview reports 2 clauses"; PASS=$((PASS + 1));;
+    *) echo "  ✗ L7: policy-preview did not show '2 clauses'"; FAIL=$((FAIL + 1));;
+  esac
+
+  # Submit engage → Ready (state=1) with a non-zero policyHash.
+  eval_click engage-submit
+  ab wait 400 >/dev/null
+  assert_eq "L7: engage with custom policy -> Ready" "1" "$(state_of 1)"
+  case "$(field_of 1 policyHash)" in
+    0x0000000000000000000000000000000000000000000000000000000000000000)
+      echo "  ✗ L7: policyHash is ZERO_HASH — composer didn't commit anything"; FAIL=$((FAIL + 1));;
+    0x[0-9a-fA-F]*)
+      echo "  ✓ L7: policyHash is non-zero (custom policy committed)"; PASS=$((PASS + 1));;
+    *)
+      echo "  ✗ L7: policyHash unexpected shape: $(field_of 1 policyHash)"; FAIL=$((FAIL + 1));;
+  esac
+}
+
 # --- main -------------------------------------------------------------------
 
 start_server
@@ -918,6 +982,7 @@ scenario_evidence_resubmit;   echo
 scenario_appeal;              echo
 scenario_withdraw;            echo
 scenario_payer_line;          echo
+scenario_custom_policy;       echo
 
 echo "──────────────────────────────────────────"
 echo "agent-browser E2E: $PASS passed, $FAIL failed"
