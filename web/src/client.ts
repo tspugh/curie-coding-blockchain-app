@@ -292,6 +292,82 @@ export function setActiveClientProfile(profileId: string): void {
 }
 
 /**
+ * Window-event name fired by Settings when the userStore changes (SPEC-0005
+ * R12). App listens for it and calls {@link syncProfilesFromUsers}. Same-tab
+ * dispatch only — cross-tab signalling would be the browser's native
+ * `storage` event on `curie:users`, which App also listens for.
+ */
+export const USERS_CHANGED_EVENT = "curie:users-changed";
+
+/** SPEC-0005 R12 — seed ids that are owned by `makeClient`, not by userStore. */
+const SEED_PROFILE_IDS: ReadonlySet<string> = new Set([
+  "provider",
+  "insurer",
+  "observer",
+]);
+
+/**
+ * Result of {@link syncProfilesFromUsers}: what changed, so App can decide
+ * whether to bump its re-render epoch + fall back to "provider" when the
+ * previously-active profile was an orphan that just got dropped.
+ */
+export interface ProfileSyncOutcome {
+  readonly added: readonly string[];
+  readonly removed: readonly string[];
+  /** True when the caller's currently-active id is no longer in the registry. */
+  readonly activeWasRemoved: boolean;
+}
+
+/**
+ * Reconcile the ProfileRegistry's non-seed entries against the supplied
+ * `users` list (SPEC-0005 R12 — reactive pill-row).
+ *
+ * Seed ids ("provider" / "insurer" / "observer") are owned by `makeClient` and
+ * never touched. For non-seed ids: anything in `users` but not in the registry
+ * is added; anything in the registry but not in `users` is removed. If the
+ * removal target is the currently-active profile, the helper switches to
+ * "provider" first (the registry refuses to drop the active id), and reports
+ * `activeWasRemoved: true` so App can update its React state.
+ *
+ * Idempotent: calling twice with the same `users` list is a no-op the second
+ * time.
+ */
+export function syncProfilesFromUsers(
+  users: ReadonlyArray<DemoUser>,
+): ProfileSyncOutcome {
+  const desired = new Map(
+    users.filter((u) => !SEED_PROFILE_IDS.has(u.id)).map((u) => [u.id, u]),
+  );
+  const currentNonSeed = client.profiles
+    .listProfiles()
+    .filter((p) => !SEED_PROFILE_IDS.has(p.id));
+
+  const removed: string[] = [];
+  let activeWasRemoved = false;
+  for (const p of currentNonSeed) {
+    if (!desired.has(p.id)) {
+      if (client.profiles.getActiveProfile().id === p.id) {
+        // Vacate the active slot before deletion (registry refuses otherwise).
+        client.profiles.setActiveProfile("provider");
+        setActiveClientProfile("provider");
+        activeWasRemoved = true;
+      }
+      client.profiles.removeProfile(p.id);
+      removed.push(p.id);
+    }
+  }
+
+  const added: string[] = [];
+  for (const [id, user] of desired) {
+    if (!client.profiles.getProfile(id)) {
+      client.profiles.addProfile(userToProfile(user));
+      added.push(id);
+    }
+  }
+  return { added, removed, activeWasRemoved };
+}
+
+/**
  * Address of the second-wallet signer. Create.tsx reads this to populate the
  * insurer field of the new negotiation so SPEC-0004 R2b (provider ≠ insurer)
  * is satisfied and the insurer's engage() can subsequently sign successfully.

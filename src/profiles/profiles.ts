@@ -119,6 +119,27 @@ export class ProfileRegistry {
     this.profiles.set(profile.id, profile);
   }
 
+  /**
+   * Drop a profile from the registry (SPEC-0005 R12 — reactive removal as
+   * the operator deletes runtime DemoUsers in Settings). Throws if `id` is
+   * unknown or is the currently active profile (caller must switch first to
+   * avoid an orphan activeId — that guard also implicitly protects the
+   * "last remaining profile" case, since a single-entry registry must
+   * have that entry active).
+   * @returns true when the entry was removed.
+   */
+  removeProfile(id: string): boolean {
+    if (!this.profiles.has(id)) {
+      throw new Error(`Unknown profile "${id}".`);
+    }
+    if (this.activeId === id) {
+      throw new Error(
+        `Cannot remove the active profile "${id}" — switch first.`,
+      );
+    }
+    return this.profiles.delete(id);
+  }
+
   /** Look up a profile by id, or `undefined`. */
   getProfile(id: string): Profile | undefined {
     return this.profiles.get(id);

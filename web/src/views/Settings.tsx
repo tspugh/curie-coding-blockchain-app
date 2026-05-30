@@ -27,7 +27,7 @@ import {
   type DemoRole,
   type DemoUser,
 } from "@lib";
-import { client } from "../client.js";
+import { USERS_CHANGED_EVENT, client } from "../client.js";
 import { formatStt, formatSttCompact } from "../format.js";
 import { useWalletBalance } from "../hooks/useWalletBalance.js";
 import { KEY_STORAGE_PREFIX, isValidHexKey } from "../walletKeys.js";
@@ -375,6 +375,15 @@ function UsersPanel() {
   function persist(next: DemoUser[]) {
     setUsers(next);
     saveUsers(next);
+    // SPEC-0005 R12: signal App.tsx so the top-bar pill row reactively
+    // re-syncs the ProfileRegistry against the new userStore list. The detail
+    // payload is the freshly-saved list; App reloads from the storage layer
+    // rather than trusting the event payload, so cross-tab signals (real
+    // `storage` events fired by a sibling tab) flow through the same code
+    // path uniformly.
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(USERS_CHANGED_EVENT));
+    }
   }
 
   function onAdd(e: React.FormEvent) {
@@ -405,10 +414,10 @@ function UsersPanel() {
     <div className="settings-panel" data-testid="users-panel">
       <div className="section-label">Users</div>
       <p className="hint">
-        SPEC-0005 R10/R11: arbitrary N users persisted to <code>curie:users</code> in
-        localStorage. The seed roles (provider / insurer / observer) remain available
-        in the picker above; entries here will replace them once T75b wires this list
-        through the runtime registry.
+        SPEC-0005 R10/R11/R12: arbitrary N users persisted to <code>curie:users</code>{" "}
+        in localStorage. The seed roles (provider / insurer / observer) remain
+        available in the picker above; entries added here appear as additional
+        profile pills in the top-bar immediately (R12 — no page reload required).
       </p>
       <ul className="users-list" data-testid="users-list">
         {users.length === 0 && (

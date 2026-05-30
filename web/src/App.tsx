@@ -3,7 +3,14 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { type CoverageEvent, type Profile } from "@lib";
-import { client, setActiveClientProfile, walletSetupRequired } from "./client.js";
+import {
+  USERS_CHANGED_EVENT,
+  client,
+  setActiveClientProfile,
+  syncProfilesFromUsers,
+  walletSetupRequired,
+} from "./client.js";
+import { USERS_STORAGE_KEY, loadUsers } from "@lib";
 import { shortHex } from "./shared.js";
 import { Overview } from "./views/Overview.js";
 import { Create } from "./views/Create.js";
@@ -26,6 +33,10 @@ export function App() {
   const [activeProfileId, setActiveProfileId] = useState<string>(
     client.profiles.getActiveProfile().id,
   );
+  // SPEC-0005 R12: bumped on every userStore change so `client.profiles.
+  // listProfiles()` is re-read and the pill row re-renders. Value is opaque;
+  // only the identity-change is observed by React.
+  const [profilesEpoch, setProfilesEpoch] = useState(0);
 
   useEffect(() => {
     const seen = new Set<string>();
@@ -49,11 +60,40 @@ export function App() {
     return unsubscribe;
   }, []);
 
+  // SPEC-0005 R12 — listen for userStore changes (same-tab CustomEvent fired
+  // by Settings, and the browser's native cross-tab `storage` event), reload
+  // the persisted users, and reconcile the registry. When sync removes the
+  // currently-active profile we fall back to "provider" and update React
+  // state to match.
+  useEffect(() => {
+    function reconcile() {
+      const outcome = syncProfilesFromUsers(loadUsers());
+      if (outcome.activeWasRemoved) {
+        setActiveProfileId("provider");
+      }
+      if (outcome.added.length || outcome.removed.length) {
+        setProfilesEpoch((n) => n + 1);
+      }
+    }
+    function onStorage(e: StorageEvent) {
+      if (e.key === USERS_STORAGE_KEY || e.key === null) reconcile();
+    }
+    window.addEventListener(USERS_CHANGED_EVENT, reconcile);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(USERS_CHANGED_EVENT, reconcile);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
+  // `profilesEpoch` is intentionally referenced so React re-renders the pill
+  // row after a sync mutates the registry in place.
+  void profilesEpoch;
   const profiles = client.profiles.listProfiles();
   const activeProfile = useMemo<Profile>(
     () => client.profiles.getActiveProfile(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeProfileId],
+    [activeProfileId, profilesEpoch],
   );
 
   const onSwitchProfile = useCallback((id: string) => {

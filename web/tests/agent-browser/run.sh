@@ -455,9 +455,10 @@ scenario_note_verify() {
 # ===========================================================================
 # Scenario I — persisted DemoUser → top-bar pill + Settings card
 #   (SPEC-0005 R10/R11 storage→registry→UI loop; T75b wiring)
+#   (SPEC-0005 R12 — same-tab reactive add/remove, no page reload)
 # ===========================================================================
 scenario_persisted_users() {
-  echo "Scenario I: persisted DemoUser → top-bar pill + Settings card (R10/R11)"
+  echo "Scenario I: persisted DemoUser → top-bar pill + Settings card (R10/R11/R12)"
 
   # Clean any prior state so the assertions read the seeded value.
   open_app
@@ -479,6 +480,22 @@ scenario_persisted_users() {
     *Harness*Bob*) echo "  ✓ persisted user appears as a Settings card"; PASS=$((PASS + 1));;
     *) echo "  ✗ persisted user missing from Settings cards"; FAIL=$((FAIL + 1));;
   esac
+
+  # ---- R12: add a user via Settings → pill row updates WITHOUT reload. ----
+  # Fill the add-user form, submit, then immediately re-query the top-bar.
+  ev "(()=>{const el=document.querySelector('[data-testid=users-add-label]');const setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter.call(el,'Harness Carla');el.dispatchEvent(new Event('input',{bubbles:true}));return 'set-label'})()" >/dev/null
+  ev "(()=>{const el=document.querySelector('[data-testid=users-add-address]');const setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter.call(el,'0xcccccccccccccccccccccccccccccccccccccccc');el.dispatchEvent(new Event('input',{bubbles:true}));return 'set-addr'})()" >/dev/null
+  ev "(()=>{const el=document.querySelector('[data-testid=users-add-role]');const setter=Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value').set;setter.call(el,'observer');el.dispatchEvent(new Event('change',{bubbles:true}));return 'set-role'})()" >/dev/null
+  ev "(()=>{document.querySelector('[data-testid=users-add-submit]').click();return 'submitted'})()" >/dev/null
+  ab wait 200 >/dev/null
+  assert_eq "R12: new pill appears without reload" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-harness-carla]'))")"
+
+  # ---- R12: remove the user → pill row drops it WITHOUT reload. ----
+  ev "(()=>{document.querySelector('[data-testid=users-remove-harness-carla]').click();return 'removed'})()" >/dev/null
+  ab wait 200 >/dev/null
+  assert_eq "R12: pill removed without reload" "false" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-harness-carla]'))")"
 
   # Cleanup so subsequent runs start from a known state.
   ev "(()=>{localStorage.removeItem('curie:users'); return 'cleared'})()" >/dev/null

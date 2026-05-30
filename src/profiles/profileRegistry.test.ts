@@ -138,3 +138,48 @@ test("getProfile returns undefined on a miss", () => {
   const reg = new ProfileRegistry(wallet());
   assert.equal(reg.getProfile("ghost"), undefined);
 });
+
+// ---------------------------------------------------------------------------
+// removeProfile (SPEC-0005 R12 — reactive removal from Settings)
+// ---------------------------------------------------------------------------
+
+test("removeProfile drops a registered non-active entry and returns true", () => {
+  const reg = new ProfileRegistry(wallet());
+  reg.addProfile(extra);
+  assert.equal(reg.listProfiles().length, DEFAULT_PROFILES.length + 1);
+  assert.equal(reg.removeProfile("observer"), true);
+  assert.equal(reg.getProfile("observer"), undefined);
+  assert.equal(reg.listProfiles().length, DEFAULT_PROFILES.length);
+});
+
+test("removeProfile throws on an unknown id", () => {
+  const reg = new ProfileRegistry(wallet());
+  assert.throws(() => reg.removeProfile("ghost"), /Unknown profile "ghost"/);
+});
+
+test("removeProfile refuses to drop the active profile", () => {
+  const reg = new ProfileRegistry(wallet());
+  reg.addProfile(extra);
+  reg.setActiveProfile("observer");
+  assert.throws(
+    () => reg.removeProfile("observer"),
+    /Cannot remove the active profile/,
+  );
+  // Registry is unchanged after the rejected delete.
+  assert.equal(reg.getProfile("observer")?.id, "observer");
+});
+
+test("removeProfile leaves the registry non-empty (single-entry stays active)", () => {
+  // The active-profile guard implicitly protects emptiness: in a one-entry
+  // registry that entry is necessarily active, so the active-profile check
+  // fires first. Verify that observation directly.
+  const reg = new ProfileRegistry(wallet(), {
+    profiles: [extra],
+    activeId: "observer",
+  });
+  assert.equal(reg.listProfiles().length, 1);
+  assert.throws(
+    () => reg.removeProfile("observer"),
+    /Cannot remove the active profile/,
+  );
+});
