@@ -16,8 +16,17 @@
  *   - Chain ID:         SOMNIA_TESTNET.chainId (50312)
  *   - RPC host:         extracted from SOMNIA_TESTNET.rpcUrl
  */
-import { useState } from "react";
-import { SOMNIA_TESTNET } from "@lib";
+import { useEffect, useState } from "react";
+import {
+  SOMNIA_TESTNET,
+  addUser,
+  isDemoRole,
+  loadUsers,
+  removeUser,
+  saveUsers,
+  type DemoRole,
+  type DemoUser,
+} from "@lib";
 import { client } from "../client.js";
 import { formatStt, formatSttCompact } from "../format.js";
 import { useWalletBalance } from "../hooks/useWalletBalance.js";
@@ -87,6 +96,9 @@ export function Settings({
           ))}
         </div>
       </div>
+
+      {/* ── Users panel (SPEC-0005 R10/R11) ── */}
+      <UsersPanel />
 
       {/* ── Wallet panel ── */}
       <div className="settings-panel">
@@ -334,6 +346,129 @@ function WalletKeysPanel() {
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * SPEC-0005 R10/R11 — Users panel.
+ *
+ * Lists the runtime user registry (loaded from `curie:users` via userStore)
+ * with per-user role + address chips and a Remove button. A small form below
+ * lets the operator add a new user with label + role + address; persisting
+ * to localStorage is automatic on each change. The list is purely
+ * presentational here — wiring through to ProfileRegistry / signers at boot
+ * is T75b (separate tick) so the foundation can land cleanly first.
+ */
+function UsersPanel() {
+  const [users, setUsers] = useState<DemoUser[]>([]);
+  const [newLabel, setNewLabel] = useState("");
+  const [newRole, setNewRole] = useState<DemoRole>("provider");
+  const [newAddress, setNewAddress] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  // Load on mount; the storage layer degrades to [] in non-browser envs.
+  useEffect(() => {
+    setUsers(loadUsers());
+  }, []);
+
+  function persist(next: DemoUser[]) {
+    setUsers(next);
+    saveUsers(next);
+  }
+
+  function onAdd(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const label = newLabel.trim();
+    const address = newAddress.trim();
+    if (!label) return setError("Label is required.");
+    if (!/^0x[0-9a-fA-F]{40}$/.test(address))
+      return setError("Address must be 0x + 40 hex.");
+    if (!isDemoRole(newRole)) return setError("Role is invalid.");
+    const id = label
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || `user-${Date.now()}`;
+    persist(addUser(users, { id, label, role: newRole, address }));
+    setNewLabel("");
+    setNewAddress("");
+    setNewRole("provider");
+  }
+
+  function onRemove(id: string) {
+    persist(removeUser(users, id));
+  }
+
+  return (
+    <div className="settings-panel" data-testid="users-panel">
+      <div className="section-label">Users</div>
+      <p className="hint">
+        SPEC-0005 R10/R11: arbitrary N users persisted to <code>curie:users</code> in
+        localStorage. The seed roles (provider / insurer / observer) remain available
+        in the picker above; entries here will replace them once T75b wires this list
+        through the runtime registry.
+      </p>
+      <ul className="users-list" data-testid="users-list">
+        {users.length === 0 && (
+          <li className="users-empty">No saved users yet — add one below.</li>
+        )}
+        {users.map((u) => (
+          <li key={u.id} className="users-row" data-testid={`users-row-${u.id}`}>
+            <div className="users-row-meta">
+              <strong>{u.label}</strong>
+              <span className="badge mode">{u.role}</span>
+              <code title={u.address}>{u.address.slice(0, 10)}…{u.address.slice(-4)}</code>
+            </div>
+            <button
+              type="button"
+              data-testid={`users-remove-${u.id}`}
+              onClick={() => onRemove(u.id)}
+            >
+              Remove
+            </button>
+          </li>
+        ))}
+      </ul>
+      <form className="users-add" onSubmit={onAdd} data-testid="users-add-form">
+        <label>
+          Label
+          <input
+            type="text"
+            data-testid="users-add-label"
+            value={newLabel}
+            onChange={(e) => setNewLabel(e.target.value)}
+            placeholder="e.g. Bob Insurer"
+          />
+        </label>
+        <label>
+          Role
+          <select
+            data-testid="users-add-role"
+            value={newRole}
+            onChange={(e) => setNewRole(e.target.value as DemoRole)}
+          >
+            <option value="provider">provider</option>
+            <option value="insurer">insurer</option>
+            <option value="observer">observer</option>
+          </select>
+        </label>
+        <label>
+          Address
+          <input
+            type="text"
+            data-testid="users-add-address"
+            value={newAddress}
+            onChange={(e) => setNewAddress(e.target.value)}
+            placeholder="0x… (40 hex)"
+          />
+        </label>
+        {error && <p className="error" data-testid="users-add-error">{error}</p>}
+        <button type="submit" className="primary" data-testid="users-add-submit">
+          Add user
+        </button>
+      </form>
     </div>
   );
 }
