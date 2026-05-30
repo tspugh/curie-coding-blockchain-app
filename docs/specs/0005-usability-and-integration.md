@@ -154,6 +154,50 @@ Selector `0x3c7aed52` corresponds to `insurerEngage(uint256 reqId,
 bytes32 policyHash, bytes32 policyUri)` — confirming the failing call is
 the insurer's engage from the insurer view.
 
+### 3.6 Per-affordance integration coverage (cross-spec)
+
+This section applies to every UI affordance landed under SPECs 0001-0005.
+It generalizes R1 from a single full-loop scenario into per-affordance
+coverage so no button silently regresses.
+
+- **R20 (MUST) Per-affordance integration scenario.** Every interactive
+  UI affordance whose effect crosses a layer boundary — contract write,
+  arbiter trigger, localStorage write, or route-resetting navigation —
+  has at least one named Scenario in
+  `web/tests/agent-browser/run.sh` that drives it through the live UI
+  and asserts both the on-chain/storage effect and the UI's post-action
+  state. Identification rule: every `<button>` / `<form onSubmit>` with
+  a `data-testid` that maps to a state-mutating action. Pure-navigation
+  links (route change with no state mutation) are exempt. New
+  affordances ship in the same commit as their Scenario; an affordance
+  without a Scenario fails strict-review.
+- **R21 (MUST) Both arbiter outcomes covered.** Every flow that runs
+  through an arbiter ruling — R1, the custom-case path (R2a), and each
+  curated case (R2) — has Scenarios covering **both** the approval path
+  (asserts `State.Settled` and settlement recipient = `providerAddr`)
+  and the denial path (asserts `State.Denied` and the appeal-or-close
+  branch behaves per `appeal-ladder-enforcement.md`). A flow that tests
+  only one outcome fails the requirement; mark the missing path with a
+  failing-test stub rather than skipping silently.
+- **R22 (MUST) Real on-chain arbiter call verified.** Any Scenario
+  claiming integration coverage for an arbiter step (R20 or R21) MUST
+  hit the live agent on Somnia testnet — the assertion is that a
+  `Ruled` event appears for the test-run's `reqId` with a non-zero
+  block hash AND the agent's tx `status === 1`. Sim-mode short-circuits
+  do NOT satisfy R22 (they remain valid for R5's parallel smoke check
+  only). Scenarios MUST distinguish their mode in the assertion message
+  so a regression that silently drops to sim is caught.
+- **R23 (MUST) Pre-flight wallet sufficiency per scenario.** Before
+  each integration Scenario fires its first write tx, the harness
+  computes the upper-bound cost of the Scenario as
+  `Σ(estimatedGas_i × maxFeePerGas) + agentFeeReserve × arbiterCallCount`
+  and asserts the active wallet's balance ≥ that sum. On shortfall the
+  Scenario fails loud with the message
+  `insufficient balance: needed X STT, have Y STT, short Z STT — fund <addr> at https://testnet.somnia.network/`
+  rather than running and reverting opaquely mid-flow. The estimator
+  helper lives in `web/tests/agent-browser/cost-estimator.sh` (new) and
+  is reused across Scenarios.
+
 ## 4. Deliverables
 
 1. `docs/specs/0005-usability-and-integration.md` — this file.
@@ -168,6 +212,12 @@ the insurer's engage from the insurer view.
    exist"` + `"could not coalesce error"` entries; surface the testnet
    faucet URL in the *What to do* hint. R19 — pre-flight balance check
    wired into every write-tx fire.
+7. R20-R23 — per-affordance Scenarios in `web/tests/agent-browser/run.sh`
+   (one per state-mutating affordance); approval AND denial Scenarios per
+   arbiter-reaching flow; `Ruled` event + block-hash assertions for every
+   real-mode arbiter Scenario; `web/tests/agent-browser/cost-estimator.sh`
+   helper for pre-flight wallet sufficiency, called at the top of each
+   Scenario that fires write txs.
 
 ## 5. Out of scope (v0)
 
@@ -187,3 +237,15 @@ the insurer's engage from the insurer view.
 - **OQ3**: how do the curated policies map to the existing R23
   policy-void path (amendment 0005)? Each policy declares which of its
   clauses are `voids=true`; the arbiter's R23 logic uses that flag.
+- **OQ4 (HIGH)**: this spec is missing the spec-author-standard §5 Test
+  cases and §6 Pass/fail criteria sections. R20-R23 increase the
+  surface area enough that the gap is now load-bearing — without an
+  explicit PASS gate, "every affordance has a Scenario" is unverifiable.
+  Next spec-touching tick should restructure the spec to add both
+  sections, indexed by R.
+- **OQ5 (MED)**: R22 requires real-chain arbiter calls; the deployed
+  agent at the contract `0x1dC5bA…3E1A` charges 0.35 STT per ruling.
+  A full R20+R21 sweep (~10 Scenarios × 2 outcomes × 1 arbiter call
+  per outcome with appeal paths possibly adding more) could cost
+  several STT per CI run. Decide before R20 lands whether to gate the
+  real-chain sweep to nightly only (per OQ1) or accept the per-PR cost.
