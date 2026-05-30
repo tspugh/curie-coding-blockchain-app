@@ -152,7 +152,21 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     // ---------------------------------------------------------------------
 
     /// @notice Somnia agent platform (IAgentRequester) this contract fires requests at.
+    /// @dev When `selfHosted == true`, this slot holds the orchestrator EOA's address
+    ///      cast to IAgentRequester. `_fireAgent` branches on `selfHosted` to skip the
+    ///      `platform.createRequest` / `platform.getRequestDeposit` external calls that
+    ///      would revert against an EOA (no code at the address). See Amendment 0006.
     IAgentRequester public platform;
+
+    /// @notice Amendment 0006: when true, the "platform" is actually a trusted EOA
+    ///         orchestrator we run; `_fireAgent` skips the `platform.createRequest`
+    ///         external call and emits the request event in its own; `handleResponse`
+    ///         still gates `msg.sender == address(platform)` so only our orchestrator
+    ///         can deliver a ruling. `_fireAgent` consumer not yet wired (tick 118+);
+    ///         this storage + setter (`setPlatformSelfHosted`) ships first as a safe
+    ///         additive surface so an Opus solidity-compliance reviewer can verify the
+    ///         contract diff in isolation before the behavior change lands.
+    bool public selfHosted;
 
     /// @notice Registered agent id to run for necessity arbitration.
     uint256 public agentId;
@@ -259,6 +273,19 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
     function setPlatform(address platform_) external onlyOwner {
         platform = IAgentRequester(platform_);
+        selfHosted = false;
+    }
+
+    /// @notice Amendment 0006: configure the contract for self-hosted-orchestrator mode.
+    ///         The `platform_` is treated as a trusted EOA we run; `_fireAgent`
+    ///         (once wired in a follow-up tick) will skip the `platform.createRequest`
+    ///         external call and just emit the request event. `handleResponse` still
+    ///         gates `msg.sender == address(platform)` — only our orchestrator EOA can
+    ///         deliver a ruling. Owner-only; reversible via `setPlatform` (which clears
+    ///         the self-hosted flag).
+    function setPlatformSelfHosted(address platform_) external onlyOwner {
+        platform = IAgentRequester(platform_);
+        selfHosted = true;
     }
 
     function setAgentId(uint256 agentId_) external onlyOwner {

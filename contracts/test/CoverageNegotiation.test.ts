@@ -1060,4 +1060,37 @@ describe("CoverageNegotiation", () => {
       expect(await contract.stateOf(reqId)).to.equal(State.Approved);
     });
   });
+
+  describe("Amendment 0006: self-hosted mode storage + setter", () => {
+    it("selfHosted defaults to false on a fresh deploy", async () => {
+      const { contract } = await deploy();
+      expect(await contract.selfHosted()).to.equal(false);
+    });
+
+    it("setPlatformSelfHosted flips selfHosted to true and updates platform", async () => {
+      const { contract } = await deploy();
+      const [, , orchestrator] = await ethers.getSigners();
+      await contract.setPlatformSelfHosted(orchestrator.address);
+      expect(await contract.selfHosted()).to.equal(true);
+      expect(await contract.platform()).to.equal(orchestrator.address);
+    });
+
+    it("setPlatform clears selfHosted back to false (reversibility)", async () => {
+      const { platform, contract } = await deploy();
+      const [, , orchestrator] = await ethers.getSigners();
+      await contract.setPlatformSelfHosted(orchestrator.address);
+      expect(await contract.selfHosted()).to.equal(true);
+      await contract.setPlatform(await platform.getAddress());
+      expect(await contract.selfHosted()).to.equal(false);
+      expect(await contract.platform()).to.equal(await platform.getAddress());
+    });
+
+    it("setPlatformSelfHosted is owner-only (non-owner reverts)", async () => {
+      const { contract } = await deploy();
+      const [, nonOwner, orchestrator] = await ethers.getSigners();
+      await expect(
+        contract.connect(nonOwner).setPlatformSelfHosted(orchestrator.address)
+      ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
+    });
+  });
 });
