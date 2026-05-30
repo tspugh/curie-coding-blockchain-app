@@ -63,6 +63,11 @@ export function App() {
     setActiveClientProfile(id);
     client.profiles.setActiveProfile(id);
     setActiveProfileId(id);
+    // SPEC-0005 R8: switching role returns to Overview. The Detail view's
+    // gating + content depend on which party you are; landing on Overview
+    // forces a fresh re-pick rather than implicitly carrying a stale Detail
+    // page across an identity change.
+    setView({ kind: "overview" });
   }, []);
 
   const goOverview = useCallback(() => setView({ kind: "overview" }), []);

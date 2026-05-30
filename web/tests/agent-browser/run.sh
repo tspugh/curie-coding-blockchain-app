@@ -70,6 +70,15 @@ eval_click() {
   ev "(()=>{const e=document.querySelector('[data-testid=$1]');if(!e)return 'not-found';e.click();return 'clicked'})()" >/dev/null
 }
 
+# SPEC-0005 R8: switching role returns to Overview. Many scenarios switch
+# profile mid-Detail and expect to stay on Detail — mirror the real user
+# journey by re-opening the request row after the switch. Argument is the
+# request id (e.g. 1) of the row to re-open.
+reopen_detail() {
+  ev "(()=>{const r=document.querySelector('[data-testid=contract-row][data-reqid=\"$1\"]');if(!r)return 'no-row';r.click();return 'clicked'})()" >/dev/null
+  "$AB" wait 150 >/dev/null 2>&1
+}
+
 # --- assertions -------------------------------------------------------------
 
 assert_eq() { # desc expected actual
@@ -146,6 +155,8 @@ scenario_happy_path() {
   # Act: switch to insurer, attach the compliant policy -> Ready (R5).
   ab find testid profile-pill-insurer click >/dev/null
   ab wait 200 >/dev/null
+  # SPEC-0005 R8: profile switch returns to Overview; re-open the row.
+  reopen_detail 1
   eval_click engage-load-compliant
   eval_click engage-submit
   ab wait 300 >/dev/null
@@ -176,6 +187,8 @@ scenario_happy_path() {
   ab wait 200 >/dev/null
   ab find testid profile-pill-provider click >/dev/null
   ab wait 200 >/dev/null
+  # SPEC-0005 R8: profile switch returns to Overview; re-open the row.
+  reopen_detail 1
   eval_click accept-submit
   ab wait 200 >/dev/null
   eval_click settle-submit
@@ -248,6 +261,8 @@ scenario_policy_invalidated() {
   # Insurer attaches the NON-compliant policy, then adjudicate with policy_invalid.
   ab find testid profile-pill-insurer click >/dev/null
   ab wait 200 >/dev/null
+  # SPEC-0005 R8: profile switch returns to Overview; re-open the row.
+  reopen_detail 1
   eval_click engage-noncompliant-toggle
   eval_click engage-submit
   ab wait 300 >/dev/null
@@ -298,6 +313,8 @@ scenario_observer() {
   # Switch to the observer (party 99) and assert mutating actions are hidden.
   ab find testid profile-pill-observer click >/dev/null
   ab wait 200 >/dev/null
+  # SPEC-0005 R8: profile switch returns to Overview; re-open the row.
+  reopen_detail 1
   assert_eq "active party is observer (99)" "99" "$(ev "String(window.__curie.profiles.getActivePartyId())")"
   assert_hidden "engage hidden for observer" "[data-testid=engage-submit]"
 
@@ -348,11 +365,15 @@ scenario_profiles() {
   # Act: switch to insurer -> active party id is 2.
   ab find testid profile-pill-insurer click >/dev/null
   ab wait 150 >/dev/null
+  # SPEC-0005 R8: profile switch returns to Overview; re-open the row.
+  reopen_detail 1
   assert_eq "active party is insurer (2)" "2" "$(ev "String(window.__curie.profiles.getActivePartyId())")"
 
   # Act: switch to provider -> active party id is 1.
   ab find testid profile-pill-provider click >/dev/null
   ab wait 150 >/dev/null
+  # SPEC-0005 R8: profile switch returns to Overview; re-open the row.
+  reopen_detail 1
   assert_eq "active party is provider (1)" "1" "$(ev "String(window.__curie.profiles.getActivePartyId())")"
 
   # Assert: the wallet address is unchanged across switches (one shared wallet — R13).
