@@ -1,7 +1,12 @@
 # Amendment 0006 — Self-hosted arbiter agent via off-chain orchestrator
 
 **Date:** 2026-05-30
-**Status:** Proposed (design — not yet implemented)
+**Status:** Adopted (2026-05-30, all Ticks A+B+C+D landed; deployed at
+`0x2c561f339a0A15cf0550cb9a0880Bb341488ac93` with
+`selfHosted == true` + `platform == 0x204031FA1ad46a2D453b7c54fC28Ff1787Bd9128`,
+the orchestrator EOA; setPlatformSelfHosted tx
+`0xff7918df8431f00c6cf289e3518d6eb4af0dbe34ae95462100d0542de051da42`
+on Somnia testnet)
 **Authored from:** SPEC-0004 §2.7 R25 + tick-98/99 research findings
 (`docs/research/agent-abi-drift-2026-05-30.md`). Probe of the live
 Somnia AgentRegistry concluded that the somnia-agent-kit ABI shape

@@ -38,13 +38,4 @@ For richer lifecycle notes see [`docs/reference/curie/amendments/README.md`](../
 | [A-0003](0003-ai-mediated-drug-coverage-exception-arbitration.md) | AI-mediated drug coverage-exception arbitration | Accepted |
 | [A-0004](0004-actors-are-workflow-teams-async-not-live-individuals.md) | Actors are workflow teams (async), not live individuals | Accepted |
 | [A-0005](0005-policy-void-r23-supersedes-r6b.md) | SPEC-0004 R23 supersedes SPEC-0001 R6b for the on-label policy-void case | Adopted |
-| [A-0006](0006-self-hosted-arbiter-agent.md) | Self-hosted arbiter agent via off-chain orchestrator | Proposed (design — not yet implemented) ¹ |
-
-¹ A-0006's own `Status:` field reads "Proposed (design — not yet implemented)"
-verbatim from when it was authored (tick 115). Most of the implementation has
-since landed across ticks 117-127 (orchestrator + contract `selfHosted` surface
-+ spec updates + R26 repurpose + R26 mirror linkage); only Tick C bundle
-redeploy remains, blocked on operator wallet STT funding. Flipping the
-amendment file's own status from "Proposed" → "Adopted" is the separate
-human-reviewed step called out in the Lifecycle rules above; this index reflects
-what the amendment file says today, not what the code has shipped.
+| [A-0006](0006-self-hosted-arbiter-agent.md) | Self-hosted arbiter agent via off-chain orchestrator | Adopted (2026-05-30; all Ticks A+B+C+D landed; deployed at `0x2c561f33…488ac93` on Somnia testnet, tick 139) |
