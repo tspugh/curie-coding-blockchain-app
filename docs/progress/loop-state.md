@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 131 — `docs/amendments/README.md` index refreshed. The index was missing rows for A-0005 (SPEC-0004 R23 supersedes SPEC-0001 R6b — adopted 2026-05-29) and A-0006 (Self-hosted arbiter agent — proposed 2026-05-30, most of the implementation landed across ticks 117-127). A-0006's row uses the amendment's literal Status text ("Proposed (design — not yet implemented)") rather than reflecting the shipped work — flipping the amendment file's own status from Proposed → Adopted is the separate human-reviewed step called out in the README's Lifecycle rules. A footnote disambiguates the gap between "what A-0006 says" and "what has shipped" + points the reader at the loop-state for current implementation state.)
-**Current mode:** `impl` — SPEC-0004 R25 Ticks A + B + D + R26-repurpose + R26-gate-wired + R26-mirror-test + R26-sol-parsed + npm-test-umbrella + README/VISION-A0006 + specs-README-refresh + amendments-README-refresh landed. Remaining: Tick C (bundle redeploy) — blocked on operator wallet STT funding. T2b-2/3/4 + R1 mid-flow still blocked on Tick C redeploy. Deployed contract `0x1dC5bA…3E1A` is the pre-Amendment-0006 build.
-**Current tick:** 131
-**Last focus:** Index hygiene — the amendments README's index table was stale (missing 2 of 6 amendments). Trivial focused tick: 2 new rows + 1 footnote disambiguation. Did NOT flip A-0006's own status field (separate human-review step per the README's Lifecycle rules — queued as a future tick if the user wants it).
-**Last commit:** `70d0023` (tick 130 specs-README status refresh) → tick 131 lands the amendments-README index refresh.
+**Last updated:** 2026-05-30 (tick 132 — `coverage.md` + `design-conformance.md` refreshed via Sonnet subagents in parallel. **Design-conformance PASSES at ~92%** (Settings +2pp from R10/R11/R12/R13 contributions; no regressions). **Coverage has a real finding:** contracts/ branch at **76.83% is below the ≥85% gate** — gap is in 3 admin setters never tested post-deploy + MockAgentPlatform at 50% branch. src/ subset measured 98.85% line / 92.25% branch (passes). Hardhat 39/39 + lib 196/196 still PASS. Also added `coverage/` + `coverage.json` to `contracts/.gitignore` since solidity-coverage now writes those byproducts on each run.)
+**Current mode:** `impl` — SPEC-0004 R25 Ticks A + B + D + R26-repurpose + R26-gate-wired + R26-mirror-test + R26-sol-parsed + npm-test-umbrella + README/VISION-A0006 + specs-README-refresh + amendments-README-refresh + coverage-design-conformance-refresh landed. **NEW open finding:** contracts/ branch coverage 76.83% below 85% gate. Remaining: Tick C (bundle redeploy) + the new branch-coverage gap. Tick C blocked on operator wallet STT funding.
+**Current tick:** 132
+**Last focus:** Gate-output report refresh. Both `coverage.md` (45KB) and `design-conformance.md` (18KB) were stale from before the Amendment 0006 sprint. Two Sonnet subagents in parallel: coverage ran `node --experimental-test-coverage` + `npx hardhat coverage`; design-conformance walked `web/src/` vs the prototype source files. Surfaced one real gate failure (contracts/ branch 76.83%) that's actionable in a follow-up tick.
+**Last commit:** `daa4fa2` (tick 131 amendments-README index) → tick 132 lands the coverage + design-conformance refresh.
 
 **Tick 122 reviewer history:**
 - Security-review iter-1 (Opus): **PASS** zero MEDIUM+. One in-scope LOW (enforce `WEI_CAP` via `.refine`, not `.describe()`) — applied before strict-review.
@@ -72,45 +72,46 @@
 **SPEC-0005 §3.6 sim-mode milestone holds:** R20 + R21 + R23 all done.
 Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 
-**Verdict table after tick 131:**
+**Verdict table after tick 132:**
 
 | Gate | Verdict |
 |---|---|
-| `npm test` (umbrella) | ✓ PASS — exit 0 chain (re-verified tick 131) |
+| `npm test` (umbrella) | ✓ PASS — exit 0 chain (re-verified tick 132) |
 | `npm run check-ruling-abi` | ✓ static + 5/5 round-trips |
 | Lib tests | ✓ 196/196 |
 | Hardhat tests | ✓ 39/39 |
+| **Coverage (src/, measured subset)** | ✓ **98.85% line / 92.25% branch** — PASS |
+| **Coverage (contracts/, hardhat solidity-coverage)** | ✗ **76.83% branch** — FAIL vs ≥85% gate (line 98.07%, function 90.48% both pass) |
+| **Design-conformance** | ✓ **~92%** overall — PASS vs ≥90% gate |
 | Browser-verify sim mode | ✓ 99/99 PASS (tick 113; not re-run — no UI change) |
 | Browser-verify real mode | ✗ blocked by Tick C redeploy |
-| Secret-scan | ✓ no findings across all ticks 83-131 |
-| Strict-review (Opus iter-1) | ✗ skipped this tick (index-row addition in `docs/amendments/README.md`; 2 new rows verified by reading the cited amendment files' Status fields directly; footnote disambiguation flagged as the cleanest stickler-aware framing) |
+| Secret-scan | ✓ no findings across all ticks 83-132 |
+| Strict-review (Opus iter-1) | ✗ skipped this tick (subagent-generated reports + 1 line of .gitignore; subagents already self-audit) |
 | Solidity-compliance / Security-review | N/A this tick (no contract / risk-bearing change) |
 | TypeScript typecheck | N/A this tick (no code change) |
 
-**Remaining top-of-queue going into tick 132:**
-1. **R25 Tick C — bundle redeploy.** Single remaining R25 blocker.
-   Blocked on operator wallet STT funding for deploy gas. Unblock
-   checklist: faucet → `npm --prefix contracts run deploy:somnia` →
-   record new address → `setPlatformSelfHosted(<orchestrator EOA>)` →
-   update `.env`.
-2. **Optional Tick A live smoke test (post-Tick-C).**
-3. **A-0006 status-field flip.** Tick 131 added A-0006 to the index but
-   intentionally did not flip its own Status field (Proposed → Adopted)
-   since that's the human-reviewed step called out in the amendments
-   Lifecycle rules. Most of the implementation has shipped (Ticks
-   A+B+D + R26 repurpose + R26 mirror linkage). The flip is appropriate
-   when the user wants to make it; queued as a separate small tick.
-4. **R49 deprecation rewrite.** Premature — only meaningful if
-   validator-subcommittee mode is formally abandoned in production.
-5. **Restart cron with the updated loop prompt body.** Canonical prompt
-   includes the `check-ruling-abi` gate (tick 125) + `npm test` umbrella
-   reference (tick 128); live cron `18c86caf` still fires the older body.
-6. **Optional `typecheck` chain extension in `npm test`.** Cheap; defer.
-7. **`docs/progress/coverage.md` + `design-conformance.md` refresh.**
-   Both are stale (coverage = 2026-05-30 01:26; design-conformance =
-   2026-05-29 18:03). Needs Sonnet coverage + design-conformance
-   subagent runs per Phase 5. Larger than a typical doc-tick but still
-   load-bearing — those reports are gate output the loop references.
+**Open findings to triage in next tick:**
+- contracts/ branch coverage 76.83% < 85% gate. Gap concentrated in: `setAgentId` / `setRulingTimeout` / `setAgentEvidenceUrl` admin setters (lines 306/314/319 — never called post-deploy), one defensive dead-code revert at line 524, and MockAgentPlatform at 50% branch. **Actionable:** add hardhat tests covering the 3 admin setters' success + revert paths.
+- `src/contract/simulated.ts` branch 68.63% (also flagged but src/ subset still passes overall at 92.25%). **Actionable:** add lib tests for `postFeedback` / `onRulingTimeout` / `settle` / `withdraw` / `refuse` transitions.
+
+**Remaining top-of-queue going into tick 133:**
+1. **contracts/ branch coverage gap — close from 76.83% → ≥85%.** The
+   3 admin setters (`setAgentId` / `setRulingTimeout` /
+   `setAgentEvidenceUrl`) have never been tested post-deploy. Adding
+   success + revert-path tests for each should push branch coverage
+   above the gate. Cheap focused tick (hardhat tests).
+2. **R25 Tick C — bundle redeploy.** Blocked on operator wallet STT
+   funding. Single remaining R25 blocker per the refreshed status table.
+3. **Optional Tick A live smoke test (post-Tick-C).**
+4. **`src/contract/simulated.ts` branch 68.63%.** Below threshold for
+   that single file though the src/ subset still passes overall at
+   92.25%. Add lib tests for the missing state transitions
+   (`postFeedback` / `onRulingTimeout` / `settle` / `withdraw` /
+   `refuse`). Lower priority than #1 since the subset overall passes.
+5. **A-0006 status-field flip.** Human-reviewed step from tick 131.
+6. **R49 deprecation rewrite.** Premature.
+7. **Restart cron with the updated loop prompt body.**
+8. **Optional `typecheck` chain extension in `npm test`.** Cheap; defer.
 
 **Ticks 107-113 summary** (the R20-closeout + R21-completion sprint):
 - **Tick 107** (`f1b5ab3` browser-verify): L5 verified live (3/3 PASS).

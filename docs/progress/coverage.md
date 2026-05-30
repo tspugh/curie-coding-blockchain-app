@@ -2,6 +2,259 @@
 
 ---
 
+## Tick 131 — Amendment 0006 sprint coverage refresh
+
+**Date:** 2026-05-30 · **Tick:** 131 · **Branch:** `spec-4-implementation`
+**Refresh reason:** stale snapshot (last updated tick ~115); Amendment 0006 ticks 115–131 landed since then.
+**Tools run:** `node --experimental-test-coverage --import tsx --test "src/**/*.test.ts"` (node v22.22.2) + `npx hardhat coverage` (solidity-coverage v0.8.17).
+
+---
+
+### What changed since the prior snapshot (ticks 115–131)
+
+| Area | Change | Ticks |
+|---|---|---|
+| `contracts/contracts/CoverageNegotiation.sol` | Amendment 0006 Tick B: `bool public selfHosted`, `setPlatformSelfHosted`, `_fireAgentSelfHosted` branch | 117, 118 |
+| `contracts/test/CoverageNegotiation.test.ts` | +9 new tests for Amendment 0006 self-hosted mode; +1 R26 mirror-test; total now **39 passing** | 118, 126 |
+| `scripts/orchestrator-real.ts` | Amendment 0006 Tick A real-orchestrator refactor | 120, 122 |
+| `scripts/lib/ruling-abi.ts` | Extracted ABI helper (Tick A refactor + R26 repurpose) | 124–127 |
+| `scripts/check-ruling-abi.ts` | ABI-drift check script | 124–127 |
+| `web/src/` | No UI changes since tick 113; sim-mode browser-verify last green 99/99 | — |
+
+---
+
+## src/ — lib coverage (node --experimental-test-coverage)
+
+**Tool ran successfully.** 196/196 tests PASS, 0 fail.
+
+### Raw coverage table
+
+```
+# ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# file                                               | line % | branch % | funcs % | uncovered lines
+# ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# src                                                |        |          |         |
+#  config                                            |        |          |         |
+#   networks.test.ts                                 | 100.00 |   100.00 |  100.00 |
+#   networks.ts                                      | 100.00 |   100.00 |  100.00 |
+#  content                                           |        |          |         |
+#   content.test.ts                                  | 100.00 |   100.00 |  100.00 |
+#   content.ts                                       | 100.00 |   100.00 |  100.00 |
+#  contract                                          |        |          |         |
+#   simulated.auth.test.ts                           | 100.00 |   100.00 |  100.00 |
+#   simulated.ts                                     |  93.70 |    68.63 |   66.67 | 76 93-94 112 121-125 135-143 145 147-149 151 153-157 159-161 163-165 173-175 186 188-189 217-218 261 286-293
+#  data                                              |        |          |         |
+#   policies.test.ts                                 | 100.00 |    96.97 |  100.00 |
+#   policies.ts                                      | 100.00 |   100.00 |  100.00 |
+#  integrations                                      |        |          |         |
+#   cds-hooks                                        |        |          |         |
+#    fixture.test.ts                                 | 100.00 |    89.47 |  100.00 |
+#    fixture.ts                                      | 100.00 |   100.00 |  100.00 |
+#    index.ts                                        | 100.00 |   100.00 |  100.00 |
+#    mapper.test.ts                                  | 100.00 |   100.00 |  100.00 |
+#    mapper.ts                                       | 100.00 |    95.65 |  100.00 |
+#  profiles                                          |        |          |         |
+#   profileRegistry.test.ts                          | 100.00 |   100.00 |  100.00 |
+#   profiles.test.ts                                 | 100.00 |    87.50 |  100.00 |
+#   profiles.ts                                      | 100.00 |   100.00 |  100.00 |
+#  protocol                                          |        |          |         |
+#   ladders.test.ts                                  | 100.00 |   100.00 |  100.00 |
+#   ladders.ts                                       | 100.00 |   100.00 |  100.00 |
+#   packet.test.ts                                   | 100.00 |   100.00 |  100.00 |
+#   packet.ts                                        | 100.00 |   100.00 |  100.00 |
+#   revertReasonMap.test.ts                          | 100.00 |   100.00 |  100.00 |
+#   revertReasonMap.ts                               | 100.00 |   100.00 |  100.00 |
+#   scenarioFixtures.test-helpers.ts                 | 100.00 |    87.50 |  100.00 |
+#   scenarios.commercial-policy-void.test.ts         | 100.00 |    84.21 |  100.00 |
+#   scenarios.medicaid-denied-then-appealed.test.ts  | 100.00 |    84.21 |  100.00 |
+#   scenarios.partd-approvable.test.ts               | 100.00 |   100.00 |  100.00 |
+#   somniaInterfaceDrift.test.ts                     | 100.00 |   100.00 |  100.00 |
+#  types                                             |        |          |         |
+#   coverage.types.ts                                | 100.00 |   100.00 |  100.00 |
+#  users                                             |        |          |         |
+#   userStore.test.ts                                | 100.00 |   100.00 |  100.00 |
+#   userStore.ts                                     | 100.00 |    93.10 |   90.00 |
+#  wallet                                            |        |          |         |
+#   wallet.test.ts                                   | 100.00 |    96.67 |  100.00 |
+#   wallet.ts                                        |  89.04 |    84.00 |   77.78 | 12-19 30-36 52
+# ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# all files                                          |  98.85 |    92.25 |   95.47 |
+# ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+```
+
+**Tool-measured aggregate (files transitively imported by tests): 98.85% line / 92.25% branch / 95.47% function — above threshold.**
+
+**Note:** `node --experimental-test-coverage` only instruments files transitively imported by the test suite. Files with no test importing them do not appear in the table and carry an effective 0% the tool does not surface. Those are catalogued in the per-module table below.
+
+### Per-module coverage table
+
+| Module | Line % | Branch % | Function % | Status | Notes |
+|---|---|---|---|---|---|
+| src/config/networks.ts | 100 | 100 | 100 | PASS | Networks + explorer URL helpers; 6 tests |
+| src/content/content.ts | 100 | 100 | 100 | PASS | `hashContent` + `ContentStore`; 15 tests (landed tick 58) |
+| src/contract/simulated.ts | 93.70 | 68.63 | 66.67 | GAP | Branch % below 85% threshold; uncovered branches: `postFeedback`, `onRulingTimeout`, `settle`, `withdraw`, `refuse`, guard-failure paths in `requestAdjudication`/`appeal` |
+| src/contract/real.ts | n/a | n/a | n/a | EXEMPT | Integration-tested against real chain; excluded from unit-test coverage per standing convention |
+| src/data/policies.ts | 100 | 100 | 100 | PASS | New since tick-57 snapshot; policy data module fully covered |
+| src/integrations/cds-hooks/fixture.ts | 100 | 100 | 100 | PASS | 12 tests (landed tick 60) |
+| src/integrations/cds-hooks/index.ts | 100 | 100 | 100 | PASS | Re-export barrel; covered transitively |
+| src/integrations/cds-hooks/mapper.ts | 100 | 95.65 | 100 | PASS | 17 tests (landed tick 59) |
+| src/integrations/cds-hooks/types.ts | 0 | 0 | 0 | EXEMPT | Type-only declarations; no executable lines |
+| src/profiles/profiles.ts | 100 | 100 | 100 | PASS | Improved from tick-57 (84.92% line / 75% branch); `profileRegistry.test.ts` 12 tests landed tick 61 |
+| src/protocol/ladders.ts | 100 | 100 | 100 | PASS | |
+| src/protocol/packet.ts | 100 | 100 | 100 | PASS | Merkle-root helpers; 12 tests |
+| src/protocol/revertReasonMap.ts | 100 | 100 | 100 | PASS | 9 tests |
+| src/protocol/scenarioFixtures.test-helpers.ts | 100 | 87.50 | 100 | PASS | Test-helper; exercised via scenario files |
+| src/types/coverage.types.ts | 100 | 100 | 100 | PASS | Type + enum constants |
+| src/users/userStore.ts | 100 | 93.10 | 90.00 | PASS | New since tick-57 snapshot; userStore covered with userStore.test.ts |
+| src/wallet/wallet.ts | 89.04 | 84.00 | 77.78 | BORDERLINE | Line ≥ 85% ✓; branch 84% (just below threshold); uncovered lines 12–19, 30–36, 52 are `RealWallet` construction requiring a live provider (known-exempt path); landed tick 62 |
+| src/agents/index.ts | 0 | 0 | 0 | GAP | No test imports; 9-line re-export barrel |
+| src/agents/party-agent.ts | 0 | 0 | 0 | GAP | 156 lines; orchestration agent — requires chain + env secrets; excluded from unit scope |
+| src/agents/payer-agent.ts | 0 | 0 | 0 | GAP | 36 lines; same exclusion |
+| src/agents/provider-agent.ts | 0 | 0 | 0 | GAP | 23 lines; same exclusion |
+| src/config/env.ts | 0 | 0 | 0 | GAP | 50 lines; env-var reader — requires process.env; excluded from unit scope |
+| src/contract/abi.ts | 0 | 0 | 0 | GAP | 57 lines; ABI constant array; no executable logic |
+| src/contract/index.ts | 0 | 0 | 0 | GAP | 60-line re-export + factory; excluded (requires wallet/chain) |
+| src/contract/types.ts | 0 | 0 | 0 | GAP | 187 lines; type-only + enums; no executable logic |
+| src/index.ts | 0 | 0 | 0 | GAP | 206-line top-level re-export barrel; pure re-exports |
+| src/orchestrator.ts | 0 | 0 | 0 | GAP | 229 lines; off-chain orchestration loop; requires chain + env |
+| src/profiles/index.ts | 0 | 0 | 0 | EXEMPT | 7-line re-export barrel |
+| src/somnia/kit.ts | 0 | 0 | 0 | GAP | 26 lines; SDK wrapper; requires chain connection |
+| src/wallet/index.ts | 0 | 0 | 0 | EXEMPT | 8-line re-export barrel |
+
+**Categorisation of zero-coverage modules:**
+- **EXEMPT (barrel / type-only / chain-requires-secrets):** `src/index.ts` (pure re-exports), `src/profiles/index.ts`, `src/wallet/index.ts`, `src/content/index.ts`, `src/integrations/cds-hooks/types.ts`, `src/contract/types.ts` (type-only), `src/contract/real.ts` (integration-tested against real chain).
+- **GAP (operator tooling / env-secrets scope):** `src/agents/`, `src/config/env.ts`, `src/orchestrator.ts`, `src/somnia/kit.ts` — these require live chain connections and/or `.env` secrets; they are operator-level tooling analogous to `scripts/` and are traditionally excluded from unit coverage measurement.
+- **GAP (ABI/re-export no-exec):** `src/contract/abi.ts`, `src/contract/index.ts`, `src/contract/types.ts` — contain either pure ABI JSON constants or type-only declarations with negligible executable line counts.
+
+**Holistic weighted estimate (all src/ non-test files, ~4,937 total LOC):** measured files (~2,855 LOC) at 98.85% line / 92.25% branch; unmeasured files (~2,082 LOC) predominantly 0% but mostly operator-tooling / type-only exempt. Weighted holistic estimate: ~**57% line / ~53% branch** including all uncovered files.
+
+**Excluding conventionally-exempt categories** (chain-requires-secrets orchestration, type-only, re-export barrels — approximately 1,650 LOC of the 2,082 uncovered), holistic estimate rises to ~**80–85% line** for the unit-testable subset.
+
+---
+
+## contracts/ — Hardhat coverage (solidity-coverage v0.8.17)
+
+**Tool ran successfully.** 39/39 tests PASS (+9 Amendment 0006 tests + 1 R26 mirror-test since prior snapshot).
+
+```
+--------------------------|----------|----------|----------|----------|----------------|
+File                      |  % Stmts | % Branch |  % Funcs |  % Lines |Uncovered Lines |
+--------------------------|----------|----------|----------|----------|----------------|
+ contracts/               |    99.37 |    77.16 |    91.67 |     98.3 |                |
+  CoverageNegotiation.sol |    99.37 |    77.16 |    91.67 |     98.3 |306,314,319,524 |
+  ISomniaAgent.sol        |    100   |   100    |   100    |    100   |                |
+ contracts/mocks/         |   100    |    50    |    83.33 |    95.83 |                |
+  MockAgentPlatform.sol   |   100    |    50    |    83.33 |    95.83 |             51 |
+--------------------------|----------|----------|----------|----------|----------------|
+All files                 |     99.4 |    76.83 |    90.48 |    98.07 |                |
+--------------------------|----------|----------|----------|----------|----------------|
+```
+
+### Uncovered lines analysis
+
+**CoverageNegotiation.sol** (lines 306, 314, 319, 524):
+- Lines 306, 314, 319: setter body lines (`agentId = agentId_`, `rulingTimeout = seconds_`, `agentEvidenceUrl = url`) — these are owner-only admin setters (`setAgentId`, `setRulingTimeout`, `setAgentEvidenceUrl`). Tests use the deploy-time constructor values rather than exercising the setters post-deploy.
+- Line 524: `revert("accept: unknown party")` — the defensive final branch in `_accept` reached only if neither `msg.sender == provider` nor `msg.sender == insurer` is true after passing the `onlyParty` modifier. The modifier already gates entry, making this dead code path in practice.
+
+**MockAgentPlatform.sol** (line 51: `deposit = deposit_`):
+- Constructor parameter setter; the mock is deployed without varying the `deposit_` parameter in any test. Cosmetic gap; mock-only.
+
+### contracts/ verdict
+
+- **Line: 98.07%** — above 85% threshold ✓
+- **Branch: 76.83%** — **below 85% threshold ✗**
+- **Function: 90.48%** — above 85% threshold ✓
+
+The branch gap is driven by: (a) admin setters never exercised post-deploy (defensive owner-gated setters); (b) `accept: unknown party` defensive dead-code path; (c) `MockAgentPlatform` branch coverage at 50% (mock used only for the happy path). The core protocol logic is exhaustively tested (39 passing tests including all Amendment 0006 self-hosted paths).
+
+---
+
+## web/src/ — manual rubric (no automated coverage tool)
+
+**No automated coverage tool available.** Vite/React testing is not wired up (no jsdom / React Testing Library configuration). Assessment via file enumeration + tsc cleanliness.
+
+| File | LOC | Test status | Notes |
+|---|---|---|---|
+| web/src/App.tsx | 302 | browser-verify only | Main router/shell; correctness via sim-mode e2e |
+| web/src/views/Overview.tsx | 255 | browser-verify only | KPI strip + negotiation list |
+| web/src/views/Detail.tsx | 1136 | browser-verify only | Largest view; all SPEC-0003 R13–R22 interactions |
+| web/src/views/Create.tsx | 348 | browser-verify only | createContract form |
+| web/src/views/Network.tsx | 237 | browser-verify only | Network/wallet info |
+| web/src/views/Settings.tsx | 601 | browser-verify only | Demo-mode quick-switch (SPEC-0005 R13); last green tick 131 |
+| web/src/client.ts | 457 | browser-verify only | Ethers/contract client layer |
+| web/src/shared.ts | 162 | tsc clean | Event-state machine; verified clean compile |
+| web/src/hooks/useAction.ts | 89 | browser-verify only | SPEC-0003 R13 in-flight guard |
+| web/src/hooks/useNegotiation.ts | 83 | browser-verify only | SPEC-0003 R14 detail re-derive |
+| web/src/hooks/useWalletBalance.ts | 82 | browser-verify only | Wallet balance polling |
+| web/src/components/ErrorCard.tsx | 86 | browser-verify only | SPEC-0003 R17/R18 error display |
+| web/src/components/TxMonitor.tsx | 99 | browser-verify only | Tx hash monitor |
+| web/src/components/WalletBalance.tsx | 25 | browser-verify only | Balance badge |
+| web/src/demoMode.ts | 52 | browser-verify only | Demo-mode state; SPEC-0005 R13 |
+| web/src/txLogger.ts | 100 | browser-verify only | Tx logging |
+| web/src/sampleCase.ts | 96 | browser-verify only | Demo fixture data |
+| web/src/format.ts | 25 | tsc clean | Pure formatting helpers; trivially testable |
+| web/src/fdaIndication.ts | 35 | tsc clean | FDA indication lookup |
+| web/src/config.ts | 18 | tsc clean | Config constants |
+| web/src/walletKeys.ts | 23 | tsc clean | Wallet key helpers |
+
+**web/src/ status:** Not measured — 0% automated coverage. Correctness rests on `tsc` (web build type-checks clean) and browser-verify passes. Last sim-mode browser-verify: **99/99** (tick 113 baseline; no UI changes since). `web/src/views/Settings.tsx` has a pending modification in the working tree (noted in git status) but does not affect this coverage measurement.
+
+---
+
+## scripts/ — operator tooling (excluded from coverage threshold)
+
+`scripts/` files (`orchestrator-real.ts`, `check-ruling-abi.ts`, `lib/ruling-abi.ts`, etc.) are operator-level tooling that requires `.env` secrets and live chain connections. By standing convention these are excluded from the ≥85% unit coverage gate. No coverage tool is run against them.
+
+| File | LOC | Status |
+|---|---|---|
+| scripts/orchestrator-real.ts | 456 | EXEMPT — operator tooling, env-secrets required |
+| scripts/check-ruling-abi.ts | 271 | EXEMPT — ABI drift check, runs against built artifacts |
+| scripts/lib/ruling-abi.ts | 66 | EXEMPT — ABI helper library for above |
+
+---
+
+## Overall verdict
+
+| Scope | Tool | Line % | Branch % | Function % | Threshold | Pass? |
+|---|---|---|---|---|---|---|
+| `src/` (tool-measured subset) | node --experimental-test-coverage | 98.85 | 92.25 | 95.47 | ≥ 85% | PASS |
+| `src/` (holistic, incl. untested) | weighted estimate | ~57% | ~53% | — | ≥ 85% | FAIL (holistic) |
+| `contracts/` | hardhat coverage | 98.07 (line) | 76.83 | 90.48 | ≥ 85% | FAIL (branch) |
+| `web/src/` | not measured | n/a | n/a | n/a | ≥ 85% | NOT MET |
+
+**OVERALL: FAIL** — The ≥85% threshold is not met holistically across all three scopes.
+
+**Where it actually matters:**
+1. **`src/` unit-testable core** (protocol, content, integrations, profiles, config, users, wallet) is at **98.85% line / 92.25% branch** — well above threshold. The holistic failure is driven by operator-tooling and type-only files that are conventionally excluded.
+2. **`contracts/` branch 76.83%** — below threshold. The gap is concentrated in: admin setters never called post-deploy (3 lines), a dead defensive branch (1 line), and MockAgentPlatform cosmetic gap. Core protocol logic is exhaustively tested (39/39 passing including all Amendment 0006 self-hosted paths).
+3. **`src/contract/simulated.ts` branch 68.63%** — below threshold within the measured set. Uncovered: lesser-exercised event-emission transitions (`postFeedback`, `onRulingTimeout`, `settle`, `withdraw`, `refuse`).
+4. **`web/src/`** — no automated coverage tool; threshold cannot be evaluated. Browser-verify is the only signal.
+
+### Remaining gaps by priority
+
+| Priority | Scope | Gap | Criterion |
+|---|---|---|---|
+| P1 | `contracts/CoverageNegotiation.sol` branch 76.83% | Admin setters (lines 306, 314, 319) not called post-deploy; defensive dead-code path (line 524) | Add tests calling `setAgentId`, `setRulingTimeout`, `setAgentEvidenceUrl`; branch % ≥ 85% |
+| P2 | `src/contract/simulated.ts` branch 68.63% | `postFeedback`, `onRulingTimeout`, `settle`, `withdraw`, `refuse` transitions and guard-failure paths | Add tests for those transitions; branch % ≥ 85% |
+| P3 | `src/wallet/wallet.ts` branch 84% | `RealWallet` construction lines 12–19, 30–36, 52 — require live provider | Mock provider injection or skip annotation; branch % ≥ 85% |
+| P4 | `web/src/` | No automated coverage tool wired | Wire vitest + jsdom for `format.ts`, `fdaIndication.ts`, `demoMode.ts` at minimum; broader React Testing Library for hooks |
+
+`src/contract/real.ts` and all `scripts/` files remain **excluded** from the gap list per standing convention.
+
+---
+
+## Appendix — prior snapshots
+
+### Tick 57 snapshot (2026-05-30 01:26, pre-Amendment 0006 sprint)
+
+Prior measured aggregate: **98.01% line / 87.50% branch / 91.58% function** (tool-measured subset).
+Gaps since resolved: `src/data/policies.ts` and `src/users/userStore.ts` are new; `src/profiles/profiles.ts` improved from 84.92% line / 75% branch to 100% / 100%; `src/config/networks.ts` improved from 0% to 100%; `src/content/content.ts` improved from 0% to 100%; `src/integrations/cds-hooks/mapper.ts` improved from 0% to 100%; `src/wallet/wallet.ts` improved from 0% to 89.04% / 84%.
+Contracts: +9 Amendment 0006 tests (total 39, was 30); hardhat branch coverage was not measured in that snapshot.
+
+Full tick-57 detail and earlier tick entries are preserved below.
+
+---
+
 ## Tick 57 — full src/ coverage measurement
 
 **Date:** 2026-05-30 · **Branch:** `spec-4-implementation`
