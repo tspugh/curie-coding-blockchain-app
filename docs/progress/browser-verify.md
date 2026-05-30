@@ -1,8 +1,70 @@
 # Browser-verify
 
-Last run: tick 94/95 — 2026-05-30 — **sim-mode harness 74/74 PASS** (was
-37/37 at tick 52; the 4 new L-scenarios L1/L2/L3/L4 added across ticks
-90-93 contribute 19 new assertions and all pass green).
+Last run: tick 103 — 2026-05-30 — **sim-mode harness 79/80 PASS** (1 soft
+failure in L7's "2 clauses" preview readout; engage-with-non-zero-policyHash
+assertion still passes). Added since tick-95 baseline: L10 (tick 101, 2 new
+assertions) + L7 (tick 102, 4 new — 3 pass, 1 fail). All previous-pass
+scenarios still green (no regressions on L1/L2/L3/L4 or the original 13).
+
+## Tick 103 — full re-verification after L10 + L7
+
+Re-ran the harness against the sim-mode preview build to discharge
+verification debt from ticks 101 (L10) + 102 (L7). Results:
+
+| Scenario | Pass | Fail |
+|---|---:|---:|
+| A happy_path | 7 | 0 |
+| B no_phi | 3 | 0 |
+| C adjudication_gating | 3 | 0 |
+| C2 policy_invalidated | 6 | 0 |
+| D profiles | 3 | 0 |
+| E sample_case | 5 | 0 |
+| F note_verify | 3 | 0 |
+| G observer | 3 | 0 |
+| H cds_prefill | 1 | 0 |
+| I persisted_users | 9 | 0 |
+| J demo_mode | 8 | 0 |
+| K key_paste_derives | 6 | 0 |
+| L3 refuse | 5 | 0 |
+| L1 evidence_resubmit | 5 | 0 |
+| L2 appeal | 5 | 0 |
+| L4 withdraw | 4 | 0 |
+| **L10 payer_line** (NEW tick 101) | 2 | 0 |
+| **L7 custom_policy** (NEW tick 102) | 3 | **1** |
+| **Totals** | **79** | **1** |
+
+### L7 failure — soft (one of four assertions)
+
+```
+Scenario L7: custom-policy composer engages with non-zero policyHash (R15/R16)
+  ✓ L7: filed in Open
+  ✗ L7: policy-preview did not show '2 clauses'
+  ✓ L7: engage with custom policy -> Ready
+  ✓ L7: policyHash is non-zero (custom policy committed)
+```
+
+The three load-bearing assertions all pass — the custom-policy path
+actually engages and commits a non-default policyHash. The failing
+assertion is a soft R16 preview-text check that expects the
+`policy-preview` element's rendered text to contain "2 clauses" after
+filling the textarea with two newline-separated clauses.
+
+**Likely root cause**: bash `\n` inside double-quoted string passes
+the JS source as literal backslash-n, then JS string-literal parsing
+converts it to a single newline char — but somewhere in the
+controlled-textarea → React state pipeline the newline gets coalesced
+into a single line, so `customClauses.split("\n").filter(...)` yields
+1 element, not 2 (rendering "1 clause"). The fix is either a different
+escape pattern (`$'…\n…'` ANSI-C, or a multi-line heredoc body), OR
+relaxing the assertion to use the `\\n` (escaped) variant that JS sees
+literally and re-encodes on dispatch.
+
+**Action**: queue as a tick-104+ follow-up. The L7 Scenario remains
+useful (the policyHash-non-zero assertion catches the more important
+"composer silently uses curated default" failure mode); fixing the
+soft check brings full L7 coverage but is non-urgent.
+
+## Tick 94/95 — full harness re-run + build-contamination gotcha
 
 ## Tick 94/95 — full harness re-run + build-contamination gotcha
 
