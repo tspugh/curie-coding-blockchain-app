@@ -1014,6 +1014,63 @@ scenario_feedback() {
     "$(ev "String(!!document.querySelector('[data-testid=error-card]'))")"
 }
 
+# ===========================================================================
+# Scenario M1 — Approve-twin for Scenario A: full Deny -> both accept ->
+#   Settled happy path (SPEC-0005 §3.6 R21 — every arbiter-reaching flow
+#   covers both approval AND denial paths). Mirrors A's flow with sim
+#   decision = Deny; settle() accepts both Approved AND Denied per
+#   CoverageNegotiation.sol:settle(), and coveredAmount on a Denied
+#   ruling is 0 — assert both.
+# ===========================================================================
+scenario_happy_path_denial() {
+  echo "Scenario M1: denial happy-path (file -> engage -> Deny -> both accept -> Settled)"
+  # SPEC-0005 R23 pre-flight: 6 writes (createContract + insurerEngage +
+  # requestAdjudication + accept × 2 + settle) + 1 arbiter ruling.
+  assert_wallet_sufficient "Scenario M1" 6 1 || exit 2
+
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Identical setup to Scenario A — only the ruling flips." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "M1: filed in Open" "0" "$(state_of 1)"
+
+  # Insurer engages compliant policy -> Ready.
+  ab find testid profile-pill-insurer click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  eval_click engage-load-compliant
+  eval_click engage-submit
+  ab wait 300 >/dev/null
+  assert_eq "M1: insurer engaged -> Ready" "1" "$(state_of 1)"
+
+  # Sim Deny ruling -> Denied (state=5). coveredAmount stays 0.
+  eval_click decision-deny
+  eval_click adjudicate-submit
+  ab wait 1800 >/dev/null
+  assert_eq "M1: Deny ruling routes to Denied" "5" "$(state_of 1)"
+  assert_eq "M1: covered=0 on Denied" "0" "$(field_of 1 coveredAmount)"
+
+  # Both parties accept the Denied ruling. settle() accepts both
+  # Approved AND Denied (CoverageNegotiation.sol:settle require).
+  eval_click accept-submit                         # insurer still active
+  ab wait 200 >/dev/null
+  ab find testid profile-pill-provider click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  eval_click accept-submit                         # provider accepts
+  ab wait 200 >/dev/null
+  eval_click settle-submit
+  ab wait 300 >/dev/null
+  assert_eq "M1: settle on Denied -> Settled (terminal)" "6" "$(state_of 1)"
+  assert_eq "M1: covered=0 carries through to Settled" "0" "$(field_of 1 coveredAmount)"
+}
+
 # --- main -------------------------------------------------------------------
 
 start_server
@@ -1039,6 +1096,7 @@ scenario_withdraw;            echo
 scenario_payer_line;          echo
 scenario_custom_policy;       echo
 scenario_feedback;            echo
+scenario_happy_path_denial;   echo
 
 echo "──────────────────────────────────────────"
 echo "agent-browser E2E: $PASS passed, $FAIL failed"
