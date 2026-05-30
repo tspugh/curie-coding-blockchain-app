@@ -4,11 +4,83 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 114 — refresh after a 7-commit run closing SPEC-0005 R20 (final mis-classification) + R21 (all 3 arbiter-reaching twins live-verified). **Browser-verify: 99/99 sim-mode PASS** as of tick 113. SPEC-0005 §3.6 R20+R21 sim-mode chunk is feature-complete; R22 (real-chain LLM verification) remains gated on SPEC-0004 R25.)
-**Current mode:** `impl` — **new top-priority blocker SPEC-0004 R25** (live agent ABI drift; real-mode adjudication is currently a no-op because the registered `IParseWebsiteAgent` ABI no longer recognises selector `0x4be9280f` that the deployed contract emits). T2b-2/3/4 + R1 mid-flow still blocked on operator wallet funding; deployed contract still needs redeploy with 10-arg Ruled ABI — see Operator notes.
-**Current tick:** 114
-**Last focus:** Tick 85 landed SPEC-0005 R23 (pre-flight wallet sufficiency: `web/tests/agent-browser/cost-estimator.sh` helper + 9-test suite + Scenario A wired as the proof-of-concept — `feat(test): c07c05d`). Iter-1 Opus security-review caught HIGH H1 (RCE via attacker-controlled RPC interpolating into `python -c` source), MEDIUM M1 (private key in `argv` → `/proc/<pid>/cmdline`), LOW L1 (`set -x` echoed key), LOW L2 (caller address body-injection in JSON-RPC payload). All four fixed inline (regex+env-var-only python, `printf`-builtin stdin pipe for key, `set +x` save/restore wrapper, strict `0x+40-hex` address validator); iter-2 PASS zero findings. Opus strict-review PASS zero findings with 5 NITs documented. Then PR #14 merged in (`merge: 063ce0b`) bringing SPEC-0004 §2.7 R25/R26/R27 + SPEC-0003 §2.10 R48/R49 (renumbered from PR #14's `§2.9 R42/R43` to avoid collision with the already-landed UNIT-7a `§2.9 R42-R47` wallet-config decision). PR #14 task `TASK-3` renumbered to `TASK-4` for the same collision. **PR #14 remains OPEN against `main`** on GitHub; merged into `spec-4-implementation` only. **SPEC-0005 done (key-paste arm)**: R6/R7/R8/R10/R11 (key-paste arm)/R12/R13/R14/R15/R16/R17/R19/R23 + R1 skeleton. **SPEC-0005 open**: R1 mid-flow (T74b — operator-blocked on R18), R20/R21/R22 (NEW), R23 broader-scenario-rollout (1 of N scenarios wired). **SPEC-0004 open (new from merge)**: R25 (regenerate IParseWebsiteAgent / switch AGENT_ID / self-deploy), R26 (CI ABI drift check), R27 (responsible-claim gate on demos). **SPEC-0003 open (new from merge)**: R48 (real-mode adjudication success gate before Decision 1), R49 (R4 attribution distinguishes fee-burned-no-work from fee-paid-LLM-ran).
-**Last commit:** `b1fb89d` (tick 113 browser-verify R21-done at 99/99) → tick 114 lands this refresh.
+**Last updated:** 2026-05-30 (tick 121 — refresh after a 6-commit Amendment 0006 sprint that landed the contract `selfHosted` mode + the orchestrator script skeleton. R25 Tick B fully cleared by iter-2 Opus reviews; Tick A skeleton in place with stub ruling; Ticks A LLM-swap + C (bundle redeploy) + D (spec updates) remain. Browser-verify 99/99 sim-mode PASS unchanged.)
+**Current mode:** `impl` — SPEC-0004 R25 partially landed (contract + orchestrator skeleton); remaining R25 work is the LLM swap, redeploy, and spec updates. T2b-2/3/4 + R1 mid-flow still blocked on operator wallet funding; deployed contract `0x1dC5bA…3E1A` is the pre-Amendment-0006 build and still needs redeploy with 10-arg Ruled ABI + selfHosted mode — see Operator notes.
+**Current tick:** 121
+**Last focus:** R25 Tick A skeleton landed at `scripts/orchestrator-real.ts` (251 lines, tsc clean). Reads VITE_PRIVATE_KEY + VITE_CONTRACT_ADDRESS, sanity-checks contract.selfHosted() == true && platform == orchestrator wallet, subscribes to RulingRequested events, encodes the 10-tuple ruling, calls handleResponse. STUB ruling logic (always Approve with deterministic costPlus/NADAC) — next-tick swap replaces with Anthropic SDK call (per Amendment 0006 OQ-0006-1; needs `claude-api` skill invocation per project CLAUDE.md). Wired as `npm run orchestrator:real`.
+**Last commit:** `d578716` (tick 120 R25 Tick A orchestrator-real.ts skeleton) → tick 121 lands this refresh.
+
+**Ticks 115-120 summary** (the Amendment 0006 sprint):
+- **Tick 115** (`3cfd52a` amendment 0006): authored
+  `docs/amendments/0006-self-hosted-arbiter-agent.md`. Decision: option
+  (c) self-deploy via off-chain orchestrator (per ticks-98/99 R25
+  research). Ticks A-D plan: orchestrator script (A), contract change
+  (B), redeploy (C), spec updates (D).
+- **Tick 116** (`5ce5db3` amendment revision): contract inspection
+  revealed _fireAgent calls `platform.createRequest` /
+  `getRequestDeposit` — EOA-as-platform reverts. Revised Tick B to add
+  a `selfHosted` flag + branch + synthetic-requestId path.
+- **Tick 117** (`2b410ea` tick B part 1): additive `bool public
+  selfHosted` storage + `setPlatformSelfHosted(address)` owner-only
+  setter. `setPlatform` clears selfHosted for reversibility. 4 setter
+  tests; 34/34 hardhat PASS (no behavior change).
+- **Tick 118** (`9db79d7` tick B part 2): `_fireAgent` branch on
+  `selfHosted` → `_fireAgentSelfHosted`. Skips platform.createRequest;
+  generates synthetic requestId via keccak256(block.number, contract,
+  reqId, ++nonce); transfers fee to orchestrator EOA. 5 new tests
+  including handleResponse round-trip → Approved. 39/39 hardhat PASS.
+  Iter-1 Opus solidity-compliance FAIL (MEDIUM storage slot inserted
+  + LOW no round-trip test + NIT currentlyFiringReqId docstring) all
+  fixed before commit.
+- **Tick 119** (`413962b` iter-2 reviewer verdicts): both Opus iter-2
+  reviewers PASS zero findings. All iter-1 findings CLOSED. R25 Tick B
+  fully cleared.
+- **Tick 120** (`d578716` tick A skeleton): `scripts/orchestrator-real.ts`
+  (251 lines) — env loading, RPC connection, contract sanity checks
+  (selfHosted == true && platform == orchestrator), RulingRequested
+  event subscription, 10-tuple ruling encoding, handleResponse calls.
+  STUB ruling logic (always Approve with deterministic costPlus/NADAC);
+  LLM swap is the next sub-tick. Standalone tsc clean. Wired as
+  `npm run orchestrator:real`.
+
+**SPEC-0005 §3.6 sim-mode milestone holds:** R20 + R21 + R23 all done.
+Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
+
+**Verdict table after tick 120:**
+
+| Gate | Verdict |
+|---|---|
+| Lib tests (`npm run test:lib`) | ✓ 196/196 (last verified tick 83) |
+| Hardhat tests | ✓ **39/39** (was 30/30 pre-Amendment-0006; +9 new tests for selfHosted) |
+| Browser-verify sim mode | ✓ 99/99 PASS (tick 113) |
+| Browser-verify real mode | ✗ blocked by Tick C redeploy (and Tick A LLM swap) |
+| Secret-scan | ✓ no findings across all ticks 83-120 |
+| Solidity-compliance | ✓ iter-2 PASS (tick 119) |
+| Security-review | ✓ iter-2 PASS (tick 119) |
+| Strict-review | ✓ all diffs PASS or N/A |
+
+**Remaining top-of-queue going into tick 122:**
+1. **R25 Tick A — LLM swap.** Replace `computeStubRuling` in
+   `scripts/orchestrator-real.ts` with an Anthropic SDK call. Per
+   project CLAUDE.md, invoke the `claude-api` skill BEFORE adding
+   `@anthropic-ai/sdk` imports. Needs:
+   - Install `@anthropic-ai/sdk`
+   - Design arbiter prompt (TASK-3 OPEN per
+     `docs/specs/0004-data-and-evidence-model.md`)
+   - Parse LLM output to the 10-tuple ruling shape
+   - Add `ANTHROPIC_API_KEY` to `.env.example` (not committed)
+2. **R25 Tick C — bundle redeploy.** Redeploy `CoverageNegotiation`
+   with the 10-arg `Ruled` ABI (tick-49/50 debt) + Amendment 0006
+   selfHosted mode. Update `.env`: `AGENT_PLATFORM_ADDRESS` = orchestrator
+   EOA; `COVERAGE_CONTRACT_ADDRESS` = new addr; call
+   `setPlatformSelfHosted` post-deploy.
+3. **R25 Tick D — spec updates.** Mark R25 resolved; unblock R22 in
+   SPEC-0005; rethink SPEC-0003 R49 (executionCost meaningless in
+   self-hosted; we paid LLM provider out-of-band).
+4. **SPEC-0003 R49** — has spec inconsistency (claims "reads exclusively
+   from callback payload" but handleResponse only carries reqId). Even
+   more deprecation-worthy under Amendment 0006 — no validator
+   executionCost flows in self-hosted mode at all.
 
 **Ticks 107-113 summary** (the R20-closeout + R21-completion sprint):
 - **Tick 107** (`f1b5ab3` browser-verify): L5 verified live (3/3 PASS).
