@@ -390,6 +390,79 @@ acceptable for a testnet-keys-only dev affordance and is consistent with the
 MetaMask + SIWE as the primary path; R42–R47 is the *demo-loop* convenience,
 not the production wallet model.
 
+### 2.10 (2026-05-30) Real-mode adjudication blocked by live agent ABI drift (Decision 10)
+
+*(Merged from PR #14 — `spec-amendments-agent-selector` branch — 2026-05-30.
+Originally numbered §2.9 / R42-R43 on that branch; renumbered to §2.10 /
+R48-R49 here to avoid collision with the already-landed UNIT-7a wallet-config
+decision above. Cross-spec ladder fix references that point at "R25" still
+point at SPEC-0004 R25 — unchanged.)*
+
+Token-flow visibility (Decision 1) is only meaningful if the agent fee escrow
+we display actually pays for executed agent work. A stand-alone isolation test
+on 2026-05-30 (evidence below) confirmed that **every real-mode
+`requestAdjudication` against the deployed `CoverageNegotiation` on Somnia
+testnet currently terminates with `ResponseStatus.Failed (3)`** — not because
+the LLM disagreed, but because every validator in the subcommittee rejects our
+calldata at viem ABI-decode *before any LLM or HTTP work begins*. Each
+validator's `executionCost` is effectively zero; the entire 0.30 STT per-fire
+"agent reward" portion ends up not paying for any LLM cycle.
+
+The selector our contract sends is `0x4be9280f` — derived from
+`ExtractANumber(string,string,uint256,uint256,string,string,bool,uint8)` per
+`docs.somnia.network`. The live registered ABI for agent
+`12875401142070969085` does not contain that selector. The deployed
+`contracts/contracts/CoverageNegotiation.sol:759` calls
+`IParseWebsiteAgent.ExtractANumber.selector` against this same agent id, so
+this drift hits the production contract verbatim — not just the isolation
+test that surfaced it.
+
+**Why this matters for THIS spec:** if R4 attribution labels the escrow as
+"Outbound to agent (fee escrow)" without surfacing that the fee paid for a
+parse-time crash rather than an LLM ruling, the token-flow visibility is
+*actively misleading*. A real-mode user would see "fee paid → Failed ruling"
+and reasonably conclude the LLM ran and disagreed — when in fact no LLM ran
+at all.
+
+- **R48 (MUST — blocker) Real-mode adjudication MUST produce at least one
+  `ResponseStatus.Success` ruling end-to-end against the live agent before
+  Decision 1 (§2.1) can be marked Implemented.** Today every fire returns
+  `Failed (3)` for the ABI-decode reason above; the cause is upstream of this
+  spec but the token-flow demo cannot legitimately ship without resolution.
+  Acceptable resolutions include: (a) regenerate `IParseWebsiteAgent` from
+  the *live* registered ABI (see SPEC-0004 §2.7 R25), (b) switch the
+  configured `AGENT_ID` to one whose registered ABI matches what the contract
+  emits, or (c) deploy a new contract that targets a verified
+  selector + agent pair.
+- **R49 (MUST) When `ResponseStatus.Failed` lands, R4 attribution MUST
+  distinguish "fee burned (no work executed)" from "fee paid (LLM ran but
+  consensus failed)".** Concretely, sum `executionCost` across the validator
+  `Response[]` carried by the callback: if it is approximately zero, render
+  "fee burned (no agent work)"; if it equals roughly
+  `perAgentBudget × subcommitteeSize`, render "fee paid (LLM ran, consensus
+  failed)". Same UI affordance + cost number — different copy, different
+  treatment. Reads exclusively from the existing callback payload; no new
+  RPC or contract changes.
+
+**Evidence (Somnia testnet, captured 2026-05-30):**
+
+| Item | Value |
+|---|---|
+| isolation contract | `0x063c9E322971E162D943fd36Ca59299ffB889b21` |
+| fire tx | `0x34b2b8eeb443a3638cc8c460066fc17d0bcb5fea668bd60bf7e181e1fdbd7813` |
+| validator-1 response tx | `0xc45e34b5cce8fb5d2fe02fd332c16b491386e12a3f7db1569102e2d94ae2c24e` |
+| validator-2 response tx | `0x63e85dedb6ffea96e0edbeecb03826b571bde5d57ba5af70905a3794df2cdfc9` |
+| validator-3 response tx | `0x13161d853098c8beeb22e819f485a7c6ef19a54944f2e54418e1404a0ea07912` |
+| agent id | `12875401142070969085` (LLM Parse Website) |
+| selector sent | `0x4be9280f` (`ExtractANumber(string,string,uint256,uint256,string,string,bool,uint8)`) |
+| validator error | `"ABI decode failed (selector=0x4be9280f): … not found on ABI. … viem@2.46.1"` |
+| final status | `RequestFinalized(requestId=3183908, status=3 Failed)` |
+
+**Cross-spec.** The root-cause fix lives in SPEC-0004 §2.7 R25 (the on-chain
+agent-call edge); this spec covers the visibility consequences and the demo
+gate. R48 (this spec) renumbered from PR #14's `R42` on merge; SPEC-0004's
+R25/R26/R27 numbers are unchanged.
+
 ## Implementation plan (auxiliary)
 
 > Non-normative. Phases the polish work into landable PRs against the spec
@@ -565,3 +638,8 @@ sent without the user being able to see its expected and realized cost from the 
   attribution names the right "Outbound to contract" cases (or removes that label).
 - **Q2.** Do we want a **funding-flow shortcut** in the UI ("send X STT from `0xdD4a…6CEA`
   to `0x2040…9128`") for the dev experience, or is that out-of-scope tooling?
+- **Q3 (blocking R42).** Which resolution path do we take for the agent-ABI drift
+  documented in §2.9 — regenerate `IParseWebsiteAgent` from the live registry, switch
+  the configured `AGENT_ID` to one whose ABI matches the docs example, or deploy a fresh
+  contract against a verified selector + agent pair? Choice belongs to SPEC-0004 §2.7
+  R25's resolution; recorded here because R42 cannot close until that lands.
