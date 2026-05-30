@@ -121,7 +121,18 @@ start_server() {
     # VITE_EXPOSE_TEST_API=1 opts the production preview bundle into the
     # `window.__curie.{negotiation,content,wallet,profiles}` test surface
     # client.ts gates behind this flag (see tick-40 e2e-harness-api-shape).
-    ( cd "$REPO_ROOT" && npm run build && VITE_EXPOSE_TEST_API=1 npm run web:build ) >/dev/null 2>&1 \
+    #
+    # VITE_WALLET_MODE=simulated explicitly overrides anything in .env
+    # (which carries VITE_WALLET_MODE=real for live-chain integration
+    # testing). Without this override Vite picks up the .env value at
+    # build time, embeds real mode in the bundle, and every sim-only
+    # scenario in this suite silently fails (tick-94 finding: 29/74
+    # assertions broke that way). Set HARNESS_WALLET_MODE on the shell
+    # to override (only when you've added real-mode-only Scenarios).
+    local mode="${HARNESS_WALLET_MODE:-simulated}"
+    ( cd "$REPO_ROOT" \
+        && VITE_WALLET_MODE="$mode" npm run build \
+        && VITE_WALLET_MODE="$mode" VITE_EXPOSE_TEST_API=1 npm run web:build ) >/dev/null 2>&1 \
       || { echo "BUILD FAILED"; exit 2; }
   fi
   echo "Serving $URL …"
