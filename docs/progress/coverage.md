@@ -92,7 +92,7 @@ Steady-state threshold: ≥ 85% line + branch across all `src/` modules.
 | Priority | Module | Gap | Acceptance criterion |
 |---|---|---|---|
 | P1 | `src/contract/simulated.ts` | Branch 68.63% (below 85%) | Add tests for `postFeedback`, `onRulingTimeout`, `settle`, `withdraw`, `refuse` transitions and their guard-failure paths; branch % ≥ 85% |
-| P2 | `src/content/content.ts` | 0% — `hashContent` untested | Unit test: `hashContent` output matches `keccak256(utf8(input))` for at least 3 inputs; 100% line/branch |
+| P2 | `src/content/content.ts` | **LANDED tick 58** — `content.test.ts` 15 tests; 100% line/branch/function | Done. |
 | P3 | `src/integrations/cds-hooks/mapper.ts` | 0% — `mapOrderSign` pure function untested | Unit test: at least one happy-path + one minimal-fields FHIR fixture round-trips through `mapOrderSign`; line ≥ 85% |
 | P4 | `src/integrations/cds-hooks/fixture.ts` | 0% | Unit test: fixture builder produces structurally valid `CdsHooksRequest`; line ≥ 85% |
 | P5 | `src/profiles/profiles.ts` | `addProfile`/`getProfile` untested; branch 75% | Add tests for `addProfile` (replace existing) and `getProfile` (found/not-found); line + branch ≥ 85% |
