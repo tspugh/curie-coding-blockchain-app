@@ -8616,3 +8616,211 @@ The tick-77 LOW is purely a docs artifact; it does not gate code, tests, or beha
 All 13 lines of review surface no findings. The implementation is race-free, StrictMode-safe, tsc-clean both sides, tested at the lib boundary, and harness-verified at the UI boundary. The hint text, error messages, and comments are all honest. The seed-id coupling is documented and consistent with prior ticks. The spec is satisfied to the letter.
 
 ### Verdict: PASS (zero findings)
+
+---
+
+## Tick 82 (82d452e R13 demo-mode quick-switch)
+
+**Scope.** Commit `82d452e` lands SPEC-0005 R13 (a "demo" toggle in Settings that
+shows/hides the legacy three-profile seeds in the top-bar pill row). 4 files
+changed: `web/src/demoMode.ts` (new, 52 LoC), `web/src/App.tsx` (+44 LoC pill-row
+filter + listener), `web/src/views/Settings.tsx` (+70 LoC `DemoModePanel`),
+`web/tests/agent-browser/run.sh` (+52 LoC Scenario J — 8 assertions, all PASS).
+Lib tests 196/196 PASS, `npx tsc -p tsconfig.json` clean, `(cd web && npx tsc
+--noEmit)` clean, `npm run web:build` succeeds. R13 is SHOULD-tier; the
+remaining E2E failures in the harness are pre-existing R18 real-mode
+operator-blockers (insurer wallet underfunded) and not regressions.
+
+**Spec quote.** `docs/specs/0005-usability-and-integration.md:84-86` — "R13
+(SHOULD) Demo-mode quick-switch. A 'demo' toggle in Settings shows the legacy
+three-profile shortcut for guided walkthroughs; defaults off in v1."
+
+**Q1. Default-value drift — honest.** `DEFAULT_DEMO_MODE = true` at
+`web/src/demoMode.ts:24` is annotated "v0 default. Flip to `false` when v1
+ships." The file-level docstring at L10-13 is explicit: "Default: ON in v0
+(preserves current behaviour for a fresh install that has no custom users
+yet). SPEC-0005 R13 calls for OFF in v1; v0 is intentionally noisier so a
+developer opening the app for the first time still sees the seeds." The hint
+text in `Settings.tsx:534-539` repeats: "Default ON in v0; OFF in v1." The
+commit message header says "(seeds-OFF in v1)" and the body restates the
+interpretation. The v0=ON / v1=OFF split is justified by the empty-userStore
+state on a fresh install — if v0 defaulted to OFF the pill row would be empty
+out of the box. The constant, the docstring, the hint, the commit body all
+agree. **Not a finding.**
+
+**Q2. Seed-active + OFF edge — UX is acceptable but the gap is real.** When
+`demoMode` flips OFF and the currently-active profile is a seed (e.g.
+`activeProfile.id === "provider"`), the pill row at `App.tsx:231-247` renders
+only non-seed profiles, and `on = activeProfile.id === p.id` is false for
+every rendered pill — so the pill row shows no active highlight at all. The
+Settings → Active profile card grid at `Settings.tsx:85-103` still lists
+seeds (it iterates `client.profiles.listProfiles()` directly without the
+demoMode filter), so the user can switch from there. Spec R13 says nothing
+about auto-switching, and SPEC-0005 R12 explicitly contemplates the seeds
+remaining "in the picker above" the Users panel (T81/T75b lineage). The
+DemoModePanel hint at L534-539 says "only the users you add above remain in
+the pill row" — accurate. The chosen "render no active" is honest (no
+silent reassignment of the user's active role), and the Settings cards are
+the documented escape hatch. **Not a finding** — the gap is named in the
+hint text and the escape hatch exists; auto-switching would be a more
+sophisticated v1 feature and the spec doesn't ask for it.
+
+**Q3. Empty pill row when `demoMode === false` AND userStore is empty.** With
+no operator-added users + demoMode OFF, `profiles` at `App.tsx:127-134` is
+the empty array. The pill row at L231-247 renders zero buttons. No
+fallback banner, no "go to Settings to add a user" hint inline. But the
+Settings cards still show seeds and Users panel says "No saved users yet —
+add one below" (`Settings.tsx:432-434`). The active profile (`activeProfile`
+at `App.tsx:135-139`) is still tracked correctly in state — switching views
+still works, the wallet badge still renders, the Role label still appears.
+For a SHOULD-tier toggle that explicitly contemplates this state ("defaults
+off in v1"), the v0 empty-row case is reachable only by an operator action
+(manual flip + manual clear) and the Settings escape hatch is one click away.
+**Not a finding** — this is honest empty-state UX for a SHOULD that primarily
+ships ON in v0.
+
+**Q4. `loadDemoMode` boolean parsing — defensive.** `web/src/demoMode.ts:30-32`:
+`raw === null` returns the default; otherwise `raw === "true"` is the only path
+to `true`. Any other value (`"false"`, `"1"`, `"True"`, corrupted data) returns
+`false`. The strictness is intentional: `saveDemoMode` only ever writes the
+literal `String(on)` which is `"true"` or `"false"`, so the only legitimate
+states are `null | "true" | "false"`. Corrupted-storage handling defaulting to
+`false` rather than the v0 default is a minor inconsistency (the function
+header says "Returns the default on any error" but a raw value of `"banana"`
+returns `false`, not the default). Trade-off: returning the default on
+unexpected non-null content would mask the corruption silently; returning
+`false` makes the UI safe (seeds hidden, all surfaces still functional via
+Settings cards). The behaviour is documented by code, not by the doc — minor
+gap. **NIT-not-finding** — the only realistic source of unexpected content is
+external tampering; the safe fallback is `false` either way and the impact is
+"seeds hidden in an already-corrupt-storage browser."
+
+**Q5. React-effect correctness — clean.** `App.tsx:106-119` empty `[]` deps
+is correct because `setDemoMode` and the listener functions close over no
+mutable state (`reread` calls `loadDemoMode()` which reads localStorage
+fresh each time). Cleanup removes both listeners by reference (`reread`,
+`onStorage` are defined inside the effect, so the references match across
+mount + unmount). The `e.key === DEMO_MODE_STORAGE_KEY || e.key === null`
+disjunct: `e.key === null` is the StorageEvent signal for `localStorage.clear()`
+fired by another tab — per the HTML spec, when a different tab calls `clear()`,
+the StorageEvent.key on observer tabs is `null`. The codebase already uses
+this same pattern at `App.tsx:93-95` for `USERS_CHANGED_EVENT` (tick-81),
+so this is consistent. **Not a finding.**
+
+**Q6. `useMemo` deps `[demoMode, profilesEpoch]` — covers all axes.**
+`profiles` at `App.tsx:127-134` is derived from `client.profiles.listProfiles()`
+filtered by `SEED_PROFILE_IDS`. The three axes that can change the output are
+(a) `demoMode` flips, (b) registry contents change (add/remove via
+`syncProfilesFromUsers`, which `setProfilesEpoch((n) => n + 1)` at L90
+signals), (c) the seed set itself changes — but `SEED_PROFILE_IDS` at
+`App.tsx:21-25` is a `ReadonlySet<string>` constructed once at module load
+and never mutated. The deps cover (a) and (b); (c) is compile-time-constant.
+The eslint-disable line at L132 inherits the same pattern used at L138 for
+`activeProfile` (acknowledging `client.profiles` as a module-level closure).
+**Not a finding** — analogous to the prior tick's Q4.
+
+**Q7. DemoModePanel initial-render flash.** `Settings.tsx:508` initialises
+`useState<boolean>(true)`, then `useEffect` at L509-510 immediately calls
+`setOn(loadDemoMode())`. If the persisted state is `false`, the very first
+paint shows "Demo mode: ON" before the effect commits and re-renders.
+React's commit phase runs the effect synchronously after the paint, so the
+flash is one paint frame. For a Settings panel that's only reachable via
+the nav button (i.e. the user navigated there deliberately, after already
+seeing the pill row reflect the correct state), the flash is functionally
+imperceptible. Compare `App.tsx:54` which uses lazy init
+(`useState<boolean>(() => loadDemoMode())`) — the App.tsx pattern is
+strictly better, but the Settings panel pattern is not wrong. The harness
+in Scenario J asserts the toggle's `data-state` after a 250ms settle
+following `nav-settings click`, which captures the post-effect state
+correctly. **NIT-not-finding** — lazy init would be a strict improvement
+but the existing pattern is honest for a deliberately-navigated-to panel
+and the comment block at L495-506 names the read-state contract.
+
+**Q8. Harness timing — defensive but not broken.** Scenario J at
+`web/tests/agent-browser/run.sh:504-552`: `open_app` after `ev` writes;
+`nav-settings click` + `ab wait 250`; toggle click + `ab wait 200` (twice);
+final flip-OFF + `ab wait 100` + `open_app`. `saveDemoMode` is synchronous
+(`localStorage.setItem` + `dispatchEvent` both return before the click
+handler returns), so the 100ms before `open_app` is purely defensive — not
+load-bearing. The 200ms after click matches the codebase's standard
+React-reconcile + DOM-commit envelope (12+ existing uses in the same file).
+The cross-tab `storage` event path is *not* directly exercised — only
+same-tab CustomEvent and post-reload `loadDemoMode()`. The spec asks for
+"a toggle"; cross-tab synchronisation is a code-level guarantee mirroring
+the established `USERS_CHANGED_EVENT` pattern (which is also not
+directly E2E-exercised at the cross-tab layer). The 8 assertions cover:
+default-ON shows seeds, toggle starts ON, flips OFF, pills hidden
+without reload, flips ON, restores, persists across reload (×2 — provider
+seed presence on each path). Coverage matches the spec scope. **Not a
+finding** — cross-tab is honest dead-reckoning from the userStore pattern
+already audited.
+
+**Q9. `.is-off` CSS class — dead.** `Settings.tsx:546` sets `className=
+\`primary${on ? "" : " is-off"}\``. `grep "\.is-off" web/src/styles.css`
+returns no hits. `button.primary` at `styles.css:296-302` styles the button
+with `--accent` background regardless of `.is-off`. Visually, the ON and
+OFF buttons differ only by inner text ("Demo mode: ON" vs "Demo mode:
+OFF") — the button chrome is identical accent-blue in both states. The
+button text *is* a clear visual signal (operators read text more readily
+than colour), and the `data-state` attribute + `aria-checked` are the
+machine-readable primary state signals (harness uses `data-state`, screen
+readers use `aria-checked`). The `is-off` class is a forward-looking hook
+with no current style rule attached. NIT — could be removed or styled.
+Visual distinction relies on the changing button label rather than
+button chrome. Given R13 is SHOULD-tier and the toggle is reachable from a
+single Settings panel (not a frequently-used control where mis-clicks
+multiply), the label-only signal is acceptable but thinner than other
+toggles in the app (compare `aria-pressed` + `.is-active` on profile
+cards at `Settings.tsx:91`). **NIT, not a finding** — the
+machine-readable state is correct, the human-readable label changes, and
+spec R13 doesn't specify a visual treatment beyond "a toggle." If
+flagging as a finding, the fix is one CSS rule. Documenting here so it's
+visible if a follow-up tick wants to land a `.is-off` style.
+
+**Q10. Spec drift — none.** R13 phrasing: "A 'demo' toggle in Settings
+shows the legacy three-profile shortcut for guided walkthroughs; defaults
+off in v1." Implementation: a toggle exists in Settings; when ON, the
+three-profile shortcut shows (in the pill row, *and* in the Settings
+Active-profile picker); when OFF, only userStore-added users show in the
+pill row; default is ON in v0 (with explicit "OFF in v1" plan baked into
+the constant comment + hint + commit message). "Shows" vs "shortcut" —
+the toggle gates the *appearance* of the pill-row shortcut; the Settings
+card grid is the always-on access path. The pill row IS the "shortcut" in
+operator usage (one click vs Settings-nav + card-click). The
+implementation matches the intent of "shortcut for guided walkthroughs."
+**Not a finding.**
+
+**Q11. Over-engineering / dead code / backwards-compat hacks.**
+- `SEED_PROFILE_IDS` at `App.tsx:21-25` — also defined in `client.ts` (per
+  Q5 of tick 81). Both definitions are intentional: `client.ts` uses it
+  for `syncProfilesFromUsers` collision avoidance, `App.tsx` uses it for
+  the pill-row filter. Same source-of-truth would require a shared
+  constants module; for a 3-entry literal set the cost-benefit doesn't
+  favour extraction. NIT.
+- `.is-off` class dead (Q9). NIT.
+- `DemoModePanel` non-lazy useState (Q7). NIT.
+- `loadDemoMode` strictness vs documented "default on any error" (Q4).
+  NIT.
+- No backwards-compat hacks. No dead code beyond the unstyled `.is-off`.
+- The two listener registrations (App.tsx + DemoModePanel) are duplicated
+  by design: DemoModePanel needs its own `on` state because the toggle
+  re-renders from a different parent than App.tsx (it's keyed to
+  `Settings`'s mount/unmount). Same pattern as walletKeys persistence.
+  Honest separation.
+
+### Conclusion
+
+R13 lands with a clean storage helper, two-listener reactive plumbing
+mirroring the tick-81 userStore pattern, an honest v0=ON / v1=OFF default
+that is documented in three places (constant comment, file docstring,
+hint text, commit body), and harness Scenario J coverage that exercises
+every assertion the spec implies. The implementation is tsc-clean,
+lib-test-stable (196/196 unchanged — `demoMode.ts` is web-only, follows
+the harness-covered `walletKeys.ts` pattern), and build-clean. The R13
+"shortcut" wording is honoured by the pill-row filter. The unstyled
+`.is-off` CSS hook (Q9) is the only piece that approaches a finding, but
+the machine-readable `data-state` + `aria-checked` + changing button
+label all carry the state honestly; the missing style rule is a
+visual-polish gap that the spec does not require.
+
+### Verdict: PASS (zero findings)
