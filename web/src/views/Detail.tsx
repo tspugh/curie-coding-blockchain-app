@@ -651,6 +651,36 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                   );
                 })}
               </div>
+              {/* SPEC-0005 R16: read-only preview of the selected policy
+                  before submit. Mirrors Create.tsx's .hash-preview pattern
+                  so the insurer sees exactly what will be committed
+                  on-chain (the keccak256 of the rendered text body). */}
+              {policyChoice && (() => {
+                const chosen = policiesForLine(n.payerLine).find(
+                  (p) => p.id === policyChoice,
+                );
+                if (!chosen) return null;
+                const previewHash = hashContent(policyText);
+                return (
+                  <div className="policy-preview" data-testid="policy-preview">
+                    <div className="policy-preview-head">
+                      <strong>{chosen.name}</strong>
+                      <span className="policy-preview-clauses">
+                        {chosen.clauses.length} clause{chosen.clauses.length === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                    <p className="policy-preview-summary">{chosen.summary}</p>
+                    <div className="hash-preview">
+                      <span className="hash-preview-chars">
+                        {policyText.length} chars · stays in your wallet / agent
+                      </span>
+                      <code className="hash-preview-hash" title={previewHash}>
+                        hash {shortHex(previewHash)}
+                      </code>
+                    </div>
+                  </div>
+                );
+              })()}
               {policyChoice && (
                 <button
                   type="button"
