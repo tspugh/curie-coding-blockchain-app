@@ -466,6 +466,41 @@ data-flow edge for this spec.
 *root-cause fix*; once R25 lands, R48 can be verified, R49 becomes a polish
 hardening. Renumbered from PR #14's `R42/R43` on merge.
 
+**Amendment 0006 status (2026-05-30, ticks 115-122).** Resolution path (c) from
+R25 above was selected over (a) regenerate-interface and (b) switch-agent-id —
+see [`../amendments/0006-self-hosted-arbiter-agent.md`](../amendments/0006-self-hosted-arbiter-agent.md)
+for the rationale (option (a2) was probed live in tick 98/99 and found
+infeasible due to an EIP-1967 proxy at the `AgentRegistry` address that
+prevents on-chain ABI discovery). Implementation breakdown:
+
+- **Tick A — orchestrator with LLM ruling.** Done. `scripts/orchestrator-real.ts`
+  (commits `d578716` skeleton + `95156a3` LLM swap) subscribes to
+  `RulingRequested`, calls `claude-opus-4-7` via the Anthropic SDK with a
+  Zod-validated structured-output schema, hashes free-text rationale +
+  clause/standard refs via `ethers.id` (SPEC-0004 R1 PHI backstop), and submits
+  the 10-tuple ruling via `handleResponse`. Falls back to a deterministic stub
+  when `ANTHROPIC_API_KEY` is unset.
+- **Tick B — contract `selfHosted` surface.** Done. Additive `bool public
+  selfHosted` storage + `setPlatformSelfHosted(address)` owner-only setter
+  (commit `2b410ea`); `_fireAgent` branch on `selfHosted` →
+  `_fireAgentSelfHosted` with synthetic `requestId` via `keccak256(block.number,
+  contract, reqId, ++nonce)` (commit `9db79d7`). Hardhat: +9 tests, 39/39 PASS;
+  both Opus iter-2 reviewers PASS zero findings (commit `413962b`).
+- **Tick C — bundle redeploy.** Open. Redeploy `CoverageNegotiation` with the
+  selfHosted-capable code + tick-49/50 10-arg `Ruled` ABI debt. Post-deploy,
+  call `setPlatformSelfHosted(<orchestrator EOA>)`; update `.env`'s
+  `VITE_CONTRACT_ADDRESS` + `AGENT_PLATFORM_ADDRESS`. Blocked on operator wallet
+  STT funding for deploy gas.
+
+**R25 status:** design-complete + code-complete (Ticks A + B); live-verification
+pending Tick C. R26 (build-time ABI drift check) loses its original target
+under self-hosted mode — the orchestrator's ABI is the orchestrator's own code,
+not an external registry — and SHOULD be repurposed to assert the
+orchestrator's encoder matches `_fireAgentSelfHosted`'s decoder shape. R27
+(no-end-to-end-claim gate) remains in force until Tick C lands and live
+verification on Somnia testnet produces at least one `Settled` from an
+orchestrator-submitted ruling.
+
 ## 3. Technical documentation
 
 ### 3.1 Scenario storage
@@ -716,8 +751,12 @@ the same inputs; **the live-agent selector check is missing or failing (§2.7 R2
   ABI of agent `12875401142070969085`; pick a resolution path (regenerate
   `IParseWebsiteAgent`, switch `AGENT_ID`, or self-deploy an agent); land R26's
   build-time drift check. Blocks SPEC-0003 §2.10 R48 and the SPEC-0004 PASS
-  criterion above. **OPEN.** *(Renumbered from PR #14's `TASK-3` on merge to
-  avoid collision with the arbiter-prompt-design TASK-3 above.)*
+  criterion above. **IN PROGRESS** (per Amendment 0006 status block in §2.7):
+  resolution path (c) self-deploy selected; Ticks A + B landed in commits
+  `d578716` / `95156a3` (orchestrator) and `2b410ea` / `9db79d7` (contract
+  selfHosted surface); Tick C bundle redeploy remains, blocked on operator
+  wallet STT funding. *(Renumbered from PR #14's `TASK-3` on merge to avoid
+  collision with the arbiter-prompt-design TASK-3 above.)*
 
 ## Implementation plan (auxiliary)
 

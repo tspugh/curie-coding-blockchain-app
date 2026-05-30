@@ -4,16 +4,22 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 122 — R25 Tick A LLM swap landed. `scripts/orchestrator-real.ts` now calls `claude-opus-4-7` via the Anthropic SDK with `messages.parse` + `zodOutputFormat` for schema-validated structured output, prompt caching on the static arbiter system prompt, and adaptive thinking at `effort: high`. Falls back to the deterministic stub when `ANTHROPIC_API_KEY` is unset — CI / dev still works. Iter-1 strict-review caught MEDIUM-1 (missing adaptive thinking) + MEDIUM-2 (unguarded null `input_tokens`) + 2 LOWs; all 4 fixed and iter-2 PASS.)
-**Current mode:** `impl` — SPEC-0004 R25 Ticks A + B fully landed. Remaining: Tick C (bundle redeploy with selfHosted-capable contract + 10-arg Ruled ABI) + Tick D (spec updates). T2b-2/3/4 + R1 mid-flow still blocked on Tick C redeploy. Deployed contract `0x1dC5bA…3E1A` is the pre-Amendment-0006 build.
-**Current tick:** 122
-**Last focus:** R25 Tick A LLM swap at `scripts/orchestrator-real.ts:165-378` — `@anthropic-ai/sdk@^0.100.1` + `zod@^4.4.3` deps added. `LLM_RULING_SCHEMA` (Zod) mirrors the contract's 10-tuple with bounded wei amounts (≤ 10^30 enforced via `.refine`), enum decision, 2000-char rationale, 500-char clause/standard refs, and a `superRefine` rejecting non-empty `policyVoidedClauseIndices` on non-`PolicyInvalid` decisions. `computeRuling()` calls `claude.messages.parse({ thinking: { type: "adaptive" }, output_config: { format: zodOutputFormat(...), effort: "high" }, system: [{ text, cache_control: { type: "ephemeral" } }], ... })`. Orchestrator hashes the LLM's free-text rationale/clause/standard refs via `ethers.id` (keccak256) before chain encoding — SPEC-0004 R1 PHI-off-chain backstop. Graceful fallback to `computeStubRuling` on missing key, parse failure, or thrown error. `.env.example` documents new `ANTHROPIC_API_KEY` + optional `ANTHROPIC_MODEL` override.
-**Last commit:** `7301125` (tick 121 loop-state refresh) → tick 122 lands the LLM swap.
+**Last updated:** 2026-05-30 (tick 123 — R25 Tick D spec updates landed. Three additive amendments: SPEC-0004 §2.7 + TASK-4 now carry an "Amendment 0006 status" block citing the Tick A/B/C breakdown with commit SHAs; SPEC-0005 §3.6 R22 carries a self-hosted note clarifying the orchestrator is the "live agent" under Amendment 0006; SPEC-0003 §2.10 R49 carries a 3-state self-hosted attribution model since `executionCost` is always 0 with no validator subcommittee. All R-numbers unchanged; all PASS criteria untouched; R27 + R48 + R25 still gated on Tick C. Iter-1 strict-review PASS with zero MEDIUM+ findings.)
+**Current mode:** `impl` — SPEC-0004 R25 Ticks A + B + D landed. Remaining: Tick C (bundle redeploy with selfHosted-capable contract + 10-arg Ruled ABI) — blocked on operator wallet STT funding for deploy gas. T2b-2/3/4 + R1 mid-flow still blocked on Tick C redeploy. Deployed contract `0x1dC5bA…3E1A` is the pre-Amendment-0006 build.
+**Current tick:** 123
+**Last focus:** R25 Tick D — three additive italic-note edits across SPECs 0003/0004/0005 capturing the Amendment 0006 status without disturbing requirement numbers or pass criteria. The R49 (SPEC-0003) edit is the heaviest: degrades the validator-`executionCost` dichotomy into a 3-state model (orchestrator Success / orchestrator Failed / silent past `rulingDeadline`) — chain-only payload cannot distinguish fee-burned-no-work from fee-paid-LLM-ran in self-hosted mode (orchestrator pays Anthropic off-chain). SPEC-0004 R26 reframed from "moot" to "loses its original target; SHOULD be repurposed to assert orchestrator-encoder matches `_fireAgentSelfHosted` decoder" per strict-review LOW. SPEC-0004 TASK-4 downgraded OPEN → IN PROGRESS with the four Amendment 0006 commit SHAs.
+**Last commit:** `95156a3` (tick 122 R25 Tick A LLM swap) → tick 123 lands the spec updates.
 
 **Tick 122 reviewer history:**
 - Security-review iter-1 (Opus): **PASS** zero MEDIUM+. One in-scope LOW (enforce `WEI_CAP` via `.refine`, not `.describe()`) — applied before strict-review.
 - Strict-review iter-1 (Opus): **FAIL**. MEDIUM-1 missing adaptive thinking. MEDIUM-2 `usage.input_tokens` unguarded null. LOW-1 weak `WEI_CAP` comment. LOW-2 `policyVoidedClauseIndices` rubric only in prose. All 4 fixed inline.
 - Strict-review iter-2 (Opus): **PASS**. All 4 iter-1 findings CLOSED. Two cosmetic NITs (indentation, `daysSupply` could be number not bigint) — indentation fixed; bigint kept (`.toString()` in user message is correct).
+
+**Tick 123 reviewer history:**
+- Strict-review iter-1 (Opus, doc-only): **PASS** zero MEDIUM+. Three LOW/NIT findings: LOW-1 ("R26 moot" overstated) — applied (rephrased to "loses its original target; SHOULD be repurposed"). LOW-2 (R49 "always 0" leaves no room for future Anthropic billing telemetry) — accepted as-is (current code matches, future-proofing out of scope for v1). NIT-1 (em-dash punctuation in §2.7 amendment block) — left as-is (reads cleanly).
+- All commit SHAs verified to exist (`d578716`, `95156a3`, `2b410ea`, `9db79d7`, `413962b`).
+- R-number integrity: all R20-R23, R25-R27, R48-R49 retain original IDs and normative `MUST`/`SHOULD` text unchanged.
+- §6 PASS/FAIL criteria untouched (SPEC-0004 still demands "R25 has landed green … real `ResponseStatus.Success` ruling against the live agent on testnet" — correctly remains gated on Tick C).
 
 **Ticks 115-120 summary** (the Amendment 0006 sprint):
 - **Tick 115** (`3cfd52a` amendment 0006): authored
@@ -51,40 +57,46 @@
 **SPEC-0005 §3.6 sim-mode milestone holds:** R20 + R21 + R23 all done.
 Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 
-**Verdict table after tick 122:**
+**Verdict table after tick 123:**
 
 | Gate | Verdict |
 |---|---|
-| Lib tests (`npm run test:lib`) | ✓ **196/196** (re-verified tick 122) |
-| Hardhat tests | ✓ **39/39** (re-verified tick 122; unchanged from tick 118 — no contract change this tick) |
+| Lib tests (`npm run test:lib`) | ✓ **196/196** (re-verified tick 123 — spec-only diff) |
+| Hardhat tests | ✓ **39/39** (re-verified tick 123 — spec-only diff) |
 | Browser-verify sim mode | ✓ 99/99 PASS (tick 113; not re-run — no UI change) |
 | Browser-verify real mode | ✗ blocked by Tick C redeploy |
-| Secret-scan | ✓ no findings across all ticks 83-122 |
+| Secret-scan | ✓ no findings across all ticks 83-123 |
 | Solidity-compliance | ✓ iter-2 PASS (tick 119); N/A this tick (no contract change) |
-| Security-review | ✓ **iter-1 PASS** tick 122 (one in-scope LOW applied) |
-| Strict-review | ✓ **iter-2 PASS** tick 122 (all 4 iter-1 MEDIUM/LOW findings CLOSED) |
-| TypeScript typecheck | ✓ root `npm run typecheck` clean + standalone `tsc` on script clean |
+| Security-review | ✓ iter-1 PASS (tick 122); N/A this tick (spec-only) |
+| Strict-review | ✓ **iter-1 PASS** tick 123 (spec-only; zero MEDIUM+; one LOW applied) |
+| TypeScript typecheck | N/A this tick (no code change) |
 
-**Remaining top-of-queue going into tick 123:**
+**Remaining top-of-queue going into tick 124:**
 1. **R25 Tick C — bundle redeploy.** Redeploy `CoverageNegotiation`
    with the 10-arg `Ruled` ABI (tick-49/50 debt) + Amendment 0006
    selfHosted mode. Update `.env`: `AGENT_PLATFORM_ADDRESS` = orchestrator
    EOA; `COVERAGE_CONTRACT_ADDRESS` = new addr; call
    `setPlatformSelfHosted` post-deploy. **Blocked on operator wallet
-   STT funding for the deploy gas.**
-2. **R25 Tick D — spec updates.** Mark R25 resolved in SPEC-0004 §2.7;
-   unblock R22 in SPEC-0005; rethink SPEC-0003 R49 (executionCost
-   meaningless in self-hosted; LLM provider was paid out-of-band, not
-   per chain-tx).
+   STT funding for the deploy gas.** Once unblocked, this is a single
+   focused tick: `npm --prefix contracts run deploy:somnia`, capture
+   the new address, run `setPlatformSelfHosted` via the admin script,
+   update `.env` + `.env.example` defaults, commit + push.
+2. **R26 repurpose (per Tick D rephrasing).** Add a build-time check
+   that asserts the orchestrator's `encodeRuling` tuple shape matches
+   `_fireAgentSelfHosted`'s decoder — e.g. a `scripts/check-ruling-abi.ts`
+   that decodes a sample-encoded ruling and asserts every field
+   round-trips. Cheap, doc-aligned, no chain dependency.
 3. **Optional Tick A follow-up (post-Tick-C):** end-to-end smoke test
    of the LLM path against the redeployed contract — requires
    `ANTHROPIC_API_KEY` + funded orchestrator wallet. Currently exercised
    only via the deterministic stub fallback (which is the gate-passing
    default for CI).
-4. **SPEC-0003 R49** — has spec inconsistency (claims "reads exclusively
-   from callback payload" but handleResponse only carries reqId). Even
-   more deprecation-worthy under Amendment 0006 — no validator
-   executionCost flows in self-hosted mode at all.
+4. **Old SPEC-0003 R49 deprecation pass.** Tick 123 added a self-hosted
+   attribution note but kept the original validator-subcommittee R49
+   normative text. If we abandon validator-subcommittee mode entirely
+   (i.e. `selfHosted` becomes the only supported mode in production),
+   R49 should be rewritten — not just annotated — to drop the
+   `executionCost` dichotomy.
 
 **Ticks 107-113 summary** (the R20-closeout + R21-completion sprint):
 - **Tick 107** (`f1b5ab3` browser-verify): L5 verified live (3/3 PASS).

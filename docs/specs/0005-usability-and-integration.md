@@ -187,6 +187,16 @@ coverage so no button silently regresses.
   do NOT satisfy R22 (they remain valid for R5's parallel smoke check
   only). Scenarios MUST distinguish their mode in the assertion message
   so a regression that silently drops to sim is caught.
+
+  *Amendment 0006 (2026-05-30): under self-hosted mode the "live agent"
+  is the orchestrator at `scripts/orchestrator-real.ts` calling
+  `claude-opus-4-7` and submitting via `handleResponse` from the
+  configured platform EOA — see SPEC-0004 §2.7 Amendment 0006 status
+  block. The R22 assertion shape (`Ruled` event + non-zero block hash +
+  `status === 1`) is unchanged; only the agent identity changes. Tick A
+  (orchestrator with LLM ruling) + Tick B (contract `selfHosted`
+  surface) are landed; live R22 exercise still requires Tick C bundle
+  redeploy + `setPlatformSelfHosted` configuration on Somnia testnet.*
 - **R23 (MUST) Pre-flight wallet sufficiency per scenario.** Before
   each integration Scenario fires its first write tx, the harness
   computes the upper-bound cost of the Scenario as

@@ -444,6 +444,27 @@ at all.
   treatment. Reads exclusively from the existing callback payload; no new
   RPC or contract changes.
 
+  *Amendment 0006 (2026-05-30) — semantics under self-hosted mode: when
+  `selfHosted == true` (see SPEC-0004 §2.7 Amendment 0006 status block),
+  there is no validator subcommittee and no per-validator
+  `executionCost` — the orchestrator pays the LLM provider (Anthropic)
+  off-chain and submits a single synthetic-`requestId` response via
+  `handleResponse`. `executionCost` is always 0 in that response.
+  R49's chain-only distinction therefore DEGRADES to two on-chain
+  states + one off-chain state: (i) **orchestrator submitted Success**
+  → render "ruling delivered"; (ii) **orchestrator submitted Failed**
+  → render "orchestrator reported failure" (no fee-burned vs
+  fee-paid split possible without orchestrator telemetry); (iii)
+  **`rulingDeadline` elapsed with no submission** (no `Ruled` /
+  `RequestFinalized` event) → render "orchestrator silent — fee held
+  by contract pending operator action". The chain-only payload alone
+  cannot resolve the original R49 dichotomy under self-hosted; any
+  finer-grained fee-accounting attribution requires a new
+  orchestrator-emitted off-chain telemetry channel, which is out of
+  scope for v1. Implementations MAY surface "self-hosted mode" as a
+  UI badge so the user understands the attribution model is different
+  from validator-subcommittee mode.*
+
 **Evidence (Somnia testnet, captured 2026-05-30):**
 
 | Item | Value |
