@@ -1,7 +1,83 @@
 # Browser-verify
 
-Last run: tick 83 — 2026-05-30 — **R11 key-paste verified live** via the
-just-installed `agent-browser` skill (`.claude/skills/agent-browser/SKILL.md`).
+Last run: tick 94/95 — 2026-05-30 — **sim-mode harness 74/74 PASS** (was
+37/37 at tick 52; the 4 new L-scenarios L1/L2/L3/L4 added across ticks
+90-93 contribute 19 new assertions and all pass green).
+
+## Tick 94/95 — full harness re-run + build-contamination gotcha
+
+Two runs back-to-back against the deployed preview build:
+
+| Run | Build env | Result | Notes |
+|---|---|---|---|
+| 1 (tick-94 initial) | implicit `VITE_WALLET_MODE=real` (from `.env`) | 45 passed, 29 failed | Five original scenarios (A/B/C2/D/F) and all 4 new L-scenarios (L1/L2/L3/L4) failed at engage / write-tx steps |
+| 2 (tick-94/95 after fix) | explicit `VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run web:build` | **74/74 PASS** | All 17 scenarios green |
+
+### Root cause of the first-run failures (DOCUMENT FOR FUTURE TICKS)
+
+The tick-83 R23 preview build was built without explicitly setting
+`VITE_WALLET_MODE`. Vite's default behavior is to read `.env` from
+`process.cwd()`, which in this repo carries `VITE_WALLET_MODE=real`
+(set for live-chain integration testing). The bundle therefore embedded
+`VITE_WALLET_MODE=real` at build time, and the preview server served a
+REAL-mode bundle to the harness — which runs default sim-mode scenarios
+(using `window.__curie.setNextDecision`, sim-only setters). All
+scenarios that exercise write txs failed because real-mode talks to the
+deployed Somnia testnet contract while sim-only assertions assume the
+in-memory SimulatedBackend's state.
+
+**The R23 cost-estimator helper landed in tick 85 already documents the
+correct mode-gate** (`VITE_WALLET_MODE != "real"` returns 0 silently),
+mirroring `web/src/client.ts:38`'s `IS_REAL` gate. The bug was at the
+BUILD layer, not the harness layer.
+
+**Operational rule for future browser-verify ticks:**
+
+- Sim-mode harness runs (the default 17-scenario suite): explicitly set
+  `VITE_WALLET_MODE=simulated` on both the lib build and the web build:
+
+  ```bash
+  VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run build
+  VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run web:build
+  ```
+
+- Real-mode integration runs (SPEC-0001 R2 / R2a / R2b suite per loop
+  prompt Phase 5 gate 8): leave `.env` as-is so `VITE_WALLET_MODE=real`
+  carries through, AND add real-mode-only Scenarios that don't depend
+  on sim-only setters. The current 17-scenario suite is sim-only and
+  is NOT a substitute for the real-mode R2 / R2a / R2b suite.
+
+### Indirect SPEC-0004 R25 evidence (real-mode run 1)
+
+The tick-94 real-mode run failure pattern (`state_of 1` returning 0
+after engage / write txs) is consistent with PR #14's finding that the
+deployed contract's calldata reaches the agent platform but every
+validator rejects at viem ABI-decode, so the underlying
+`requestAdjudication` never advances state. This is independent
+evidence for SPEC-0004 §2.7 R25 (live agent ABI drift) gating R22 +
+the SPEC-0005 R1 full-loop integration test.
+
+### Sim-mode scenario inventory (74/74 PASS)
+
+| Scenario | Assertions | Coverage |
+|---|---:|---|
+| A happy_path | 7 | R5, R6, R6a, R8, R15, R16 |
+| B no_phi | 3 | R4/T1 |
+| C adjudication_gating | 3 | R5/T3 |
+| C2 policy_invalidated | 6 | R6b/T5, R11/R23 ruling-meta |
+| D profiles | 3 | R12, R13 |
+| E sample_case | 5 | demo-data §4 |
+| F note_verify | 3 | R3 |
+| G observer | 3 | R6, R11 (auth-revert) |
+| H cds_prefill | 1 | SPEC-0002 R7 |
+| I persisted_users | 9 | SPEC-0005 R10/R11/R12 |
+| J demo_mode | 8 | SPEC-0005 R13 |
+| K key_paste_derives | 6 | SPEC-0005 R11 (key-paste arm) |
+| **L3 refuse** (NEW tick 90) | 5 | SPEC-0001 R7/T7 |
+| **L1 evidence_resubmit** (NEW tick 91) | 5 | SPEC-0001 R9 |
+| **L2 appeal** (NEW tick 92) | 5 | SPEC-0001 R12 |
+| **L4 withdraw** (NEW tick 93) | 4 | SPEC-0001 Withdrawn terminal |
+| **R23 cost-estimator** (in-line, all write scenarios) | (gate, not asserted) | SPEC-0005 R23 sim-mode bypass returns 0 silent in all 7 wired Scenarios |
 
 ## Tick 83 — R11 key-paste live verification
 
