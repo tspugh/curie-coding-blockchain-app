@@ -47,7 +47,7 @@ focused-unit's worth of follow-up.
 | `engage-policy-custom` + `custom-policy-name` + `custom-policy-clauses` | **OPEN (L7)** | Custom-policy composer path: insurer toggles `engage-policy-custom`, fills name + ≥1 clause, hits `engage-submit`; the resulting `policyHash` on chain matches `hashContent(<composed-string>)`. Closes SPEC-0005 R15 + R16 visibility. |
 | `load-demo-evidence` | **MIS-CLASSIFIED — exempt** | `onClick={() => setEvidenceText(SAMPLE_CASE.additionalEvidenceRef)}` — pure local React state mutation; no contract write, no localStorage write, no route change. Re-categorize as R20-exempt per the "crosses a layer boundary" criterion. |
 | `error-card-dismiss` | **MIS-CLASSIFIED — exempt** | The ErrorCard's `onDismiss` callback (passed from parent) typically just clears React error state. No chain write, no storage. Re-categorize as R20-exempt. |
-| `error-card-retry` | **OPEN (L9-retry only)** | The ErrorCard's `onRetry` callback re-fires whatever action just failed — may include a chain write. Real R20 gap. Scenario should: induce a deterministic failure (e.g. underflow on `accept` from non-party), assert ErrorCard renders, click retry, assert the re-fire reaches the next observable state. |
+| `error-card-retry` | **MIS-CLASSIFIED — exempt (tick 108 revision)** | `ErrorCard` is rendered at `Detail.tsx:391` with `<ErrorCard error={error} onDismiss={() => setError(null)} />` — `onRetry` is NOT passed. Per `ErrorCard.tsx`'s contract ("the button is hidden when omitted"), the retry button never renders in the live UI. The testid exists in the component but is dead from the caller's perspective. Re-categorize as R20-exempt — there is no actual UI affordance to drive. *(If a future tick wires `onRetry` to re-fire the last action, re-open this gap as L9-retry.)* |
 | `users-remove-<id>` (Settings) | **PARTIALLY DONE** | Scenarios I + K already exercise `users-remove-key-paste-bob` indirectly. The generic "remove arbitrary user" path is covered by the same code path; no further Scenario needed unless we add a specific edge case (removing the *active* user — known to be blocked per `userStore`). |
 | `create-payer-line` | **OPEN (L10)** | Select which payer-line on `createContract`; verify `getNegotiation(reqId).payerLine` round-trips. Closes the ladder-selection sliver of SPEC-0004 §2.5. |
 
@@ -60,6 +60,29 @@ focused-unit's worth of follow-up.
 The other 8 originally-listed items either landed (L1/L2/L3/L4) or are
 mis-classified (verify-onchain container, load-demo-evidence pure-React,
 error-card-dismiss pure-React, users-remove already covered).
+
+**Tally after tick-108 revision: 4 → 0 — R20 fully closed.**
+
+| L-item | Status | Commit |
+|---|---|---|
+| L1 (evidence-submit) | ✅ landed | tick 91 `07fa2ba` |
+| L2 (appeal-submit) | ✅ landed | tick 92 `18f5d81` |
+| L3 (refuse-submit) | ✅ landed | tick 90 `6e11b88` |
+| L4 (withdraw-submit) | ✅ landed | tick 93 `6d3dc23` |
+| L5 (feedback-submit) | ✅ landed | tick 106 `004d17f`; verified tick 107 `f1b5ab3` |
+| L7 (custom-policy composer) | ✅ landed | tick 102 `a053bad`; fixed tick 105 `d29ed21` |
+| **L9-retry (ErrorCard re-fire)** | **exempt — no UI affordance** | retry button never renders (onRetry not wired by Detail.tsx); re-open as a real gap only if a future tick wires `onRetry` |
+| L10 (create-payer-line) | ✅ landed | tick 101 `1aa5915` |
+
+**SPEC-0005 R20 status: DONE.** Every state-mutating UI affordance that
+the live UI exposes has a named agent-browser Scenario asserting it
+end-to-end. Tick-107 harness: 83/83 PASS.
+
+R21 (approval+denial paths) now becomes the natural next R20-family
+unit: for each arbiter-reaching Scenario (A, C2, L1, L2 — 4 total per
+the tick-100 audit revision), add the OPPOSITE-outcome twin (e.g. A
+runs Approve → Settled; need a parallel "happy path with Deny → Denied
+→ provider accepts terminal denial" twin).
 
 ## R20-exempt — pure-display / read-only testids (no Scenario required)
 
