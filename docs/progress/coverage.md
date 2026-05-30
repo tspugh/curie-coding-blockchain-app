@@ -93,7 +93,7 @@ Steady-state threshold: ≥ 85% line + branch across all `src/` modules.
 |---|---|---|---|
 | P1 | `src/contract/simulated.ts` | Branch 68.63% (below 85%) | Add tests for `postFeedback`, `onRulingTimeout`, `settle`, `withdraw`, `refuse` transitions and their guard-failure paths; branch % ≥ 85% |
 | P2 | `src/content/content.ts` | **LANDED tick 58** — `content.test.ts` 15 tests; 100% line/branch/function | Done. |
-| P3 | `src/integrations/cds-hooks/mapper.ts` | 0% — `mapOrderSign` pure function untested | Unit test: at least one happy-path + one minimal-fields FHIR fixture round-trips through `mapOrderSign`; line ≥ 85% |
+| P3 | `src/integrations/cds-hooks/mapper.ts` | **LANDED tick 59** — `mapper.test.ts` 17 tests; 100% line / 95.65% branch / 100% function | Done. |
 | P4 | `src/integrations/cds-hooks/fixture.ts` | 0% | Unit test: fixture builder produces structurally valid `CdsHooksRequest`; line ≥ 85% |
 | P5 | `src/profiles/profiles.ts` | `addProfile`/`getProfile` untested; branch 75% | Add tests for `addProfile` (replace existing) and `getProfile` (found/not-found); line + branch ≥ 85% |
 | P6 | `src/wallet/wallet.ts` | 0% — `SimulatedWallet` untested directly | Unit test `SimulatedWallet` construction + address/mode accessors; line ≥ 85% (RealWallet exempt — requires live provider) |
