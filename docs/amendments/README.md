@@ -37,3 +37,4 @@ For richer lifecycle notes see [`docs/reference/curie/amendments/README.md`](../
 | [A-0002](0002-architecture-brainstorm-2026-04-05.md) | Original architecture brainstorm | Superseded by Somnia chain-native pivot (2026-05-14) |
 | [A-0003](0003-ai-mediated-drug-coverage-exception-arbitration.md) | AI-mediated drug coverage-exception arbitration | Accepted |
 | [A-0004](0004-actors-are-workflow-teams-async-not-live-individuals.md) | Actors are workflow teams (async), not live individuals | Accepted |
+| [A-0006](0006-relationship-channels-vs-per-case-negotiations.md) | Reframe contracts as provider↔insurer channels; cases flow as evidence under them | Proposed |
