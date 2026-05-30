@@ -100,6 +100,60 @@ hand-driven workarounds and no UI artefacts that obscure the state.
   `engage-submit`, with a hash preview of what will be committed
   (mirroring the Create form's hash-preview pattern).
 
+### 3.5 Known errors + operator blockers (production-mode)
+
+Captured 2026-05-30 from a user-reported insurer-view failure with the
+raw payload below. These are the exact symptoms when R2 isn't met and
+they MUST be handled gracefully in the UI before R1 can be claimed.
+
+- **R17 (MUST) Map the "account does not exist" revert family.** When the
+  active signer attempts a write transaction from an address that has
+  zero on-chain history on Somnia testnet (never received funds), the RPC
+  rejects with `{ "code": -32000, "data": "0x02", "message": "account does
+  not exist" }`. ethers v6 wraps this as
+  `could not coalesce error (... UNKNOWN_ERROR ...)`. The current
+  `ErrorCard` renders the raw technical text as the headline. Required:
+  `src/protocol/revertReasonMap.ts` gains a match for the
+  `"account does not exist"` substring AND for the wrapping `"could not
+  coalesce error"` text; the friendly headline is **"Wallet has no funds
+  on Somnia testnet"** and the *What to do* hint points the user to the
+  testnet faucet (`https://testnet.somnia.network/`) with the active
+  address inlined. The ErrorCard should NOT show a Retry button for this
+  family — retrying without funding will produce the same error.
+- **R18 (KNOWN BLOCKER) Insurer wallet `0x140e…8C62` is unfunded.** Until
+  it receives ≥ 0.1 STT it has zero on-chain history and every insurer
+  write tx (engage, requestAdjudication, accept, settle) reverts with
+  R17's error. R1 (the full-loop integration test) cannot run; T2b-2/3/4
+  in the existing harness stay blocked. Tracked also in
+  `docs/progress/loop-state.md` Operator notes. Resolution is operator-only.
+- **R19 (SHOULD) Pre-flight balance check at write-tx fire.** The web layer
+  should call `provider.getBalance(signerAddress)` before every write
+  transaction and short-circuit with a friendly inline error (the
+  `balance-block` testid from R31, recycled) when balance is below
+  `agentFeeReserve + estimatedGas` so the user never reaches the raw RPC
+  error. Sim mode bypasses (no provider).
+
+**Raw payload (user-reported 2026-05-30):**
+
+```
+could not coalesce error (error={
+  "code": -32000,
+  "data": "0x02",
+  "message": "account does not exist"
+}, payload={
+  "id": 12,
+  "jsonrpc": "2.0",
+  "method": "eth_sendRawTransaction",
+  "params": [
+    "0x02f8cf82c488… (raw tx to contract 0x1dc5ba…3E1A, selector 0x3c7aed52)"
+  ]
+}, code=UNKNOWN_ERROR, version=6.16.0)
+```
+
+Selector `0x3c7aed52` corresponds to `insurerEngage(uint256 reqId,
+bytes32 policyHash, bytes32 policyUri)` — confirming the failing call is
+the insurer's engage from the insurer view.
+
 ## 4. Deliverables
 
 1. `docs/specs/0005-usability-and-integration.md` — this file.
@@ -110,6 +164,10 @@ hand-driven workarounds and no UI artefacts that obscure the state.
 4. UI changes per R6-R8, R10-R16. Each landed under a UNIT-NNN under the
    spec-4 loop with its strict-review gate.
 5. `docs/progress/browser-verify.md` gains a SPEC-0005 section indexed by R.
+6. R17 — extend `src/protocol/revertReasonMap.ts` with `"account does not
+   exist"` + `"could not coalesce error"` entries; surface the testnet
+   faucet URL in the *What to do* hint. R19 — pre-flight balance check
+   wired into every write-tx fire.
 
 ## 5. Out of scope (v0)
 

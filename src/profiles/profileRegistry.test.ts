@@ -33,7 +33,7 @@ test("ProfileRegistry defaults to DEFAULT_PROFILES + first id active", () => {
     reg.listProfiles().map((p) => p.id),
     DEFAULT_PROFILES.map((p) => p.id),
   );
-  assert.equal(reg.getActiveProfile().id, DEFAULT_PROFILES[0].id);
+  assert.equal(reg.getActiveProfile().id, DEFAULT_PROFILES[0]!.id);
 });
 
 test("ProfileRegistry honors a custom initial profile list + activeId", () => {

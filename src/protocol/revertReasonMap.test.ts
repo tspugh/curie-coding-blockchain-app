@@ -194,3 +194,35 @@ test("extractRevertReason + mapRevertReason: end-to-end on a typical ethers v6 e
   assert.equal(entry.headline, "Only the insurer can attach a policy");
   assert.ok(entry.details.length > 0);
 });
+
+// SPEC-0005 R17: wrapper-error substring matching for RPC / wallet errors
+// that don't come from the contract's require strings but still need a
+// friendly headline.
+
+test("mapRevertReason: maps 'account does not exist' to the no-funds headline", () => {
+  const entry = mapRevertReason("account does not exist");
+  assert.equal(entry.headline, "Wallet has no funds on Somnia testnet");
+  assert.ok(/faucet/i.test(entry.details));
+  assert.ok(/testnet\.somnia\.network/i.test(entry.details));
+});
+
+test("mapRevertReason: maps the ethers v6 'could not coalesce error' wrapper", () => {
+  // This is the exact form the user pastes from ErrorCard's tech details.
+  const raw =
+    'could not coalesce error (error={ "code": -32000, "data": "0x02", "message": "account does not exist" }, code=UNKNOWN_ERROR, version=6.16.0)';
+  const entry = mapRevertReason(raw);
+  assert.equal(entry.headline, "Wallet has no funds on Somnia testnet");
+});
+
+test("mapRevertReason: maps 'insufficient funds for gas' to the gas headline", () => {
+  const entry = mapRevertReason("insufficient funds for gas * price + value");
+  assert.equal(entry.headline, "Wallet balance too low to pay gas");
+});
+
+test("mapRevertReason: explicit contract revert wins over wrapper substring match", () => {
+  // If the raw revert is an exact contract message, the exact-string map
+  // should win even if a wrapper substring could also match. Guard against
+  // future wrapper patterns shadowing real reverts.
+  const entry = mapRevertReason("auth: not insurer");
+  assert.equal(entry.headline, "Only the insurer can attach a policy");
+});

@@ -83,7 +83,7 @@ test("R1 NO-PHI: no real-shape SSN / DOB / phone / email patterns", () => {
 function firstOrder() {
   const entries = SAMPLE_ORDER_SIGN_REQUEST.context.draftOrders!.entry;
   assert.ok(entries && entries.length >= 1, "expected ≥ 1 draft order entry");
-  const resource = entries[0].resource;
+  const resource = entries[0]!.resource;
   assert.ok(resource);
   assert.equal(resource.resourceType, "MedicationRequest");
   return resource as Extract<

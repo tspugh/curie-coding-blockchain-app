@@ -259,6 +259,42 @@ export const REVERT_REASON_MAP: Readonly<Record<RevertReason, RevertReasonEntry>
 const FALLBACK_HEADLINE = "Transaction reverted";
 
 /**
+ * Substring-matched entries for RPC / wallet wrapper errors that DON'T come
+ * from the contract's `require`/`revert` strings but still need a friendly
+ * surface (SPEC-0005 R17). The patterns are scanned AFTER the exact-string
+ * map below misses, so any explicit contract revert wins.
+ */
+const WRAPPER_REASON_PATTERNS: ReadonlyArray<{
+  readonly pattern: RegExp;
+  readonly entry: RevertReasonEntry;
+}> = Object.freeze([
+  {
+    // Somnia testnet's RPC rejects writes from addresses with zero on-chain
+    // history with this exact code. ethers v6 surfaces it inside a wrapping
+    // "could not coalesce error" envelope. Both forms route here.
+    pattern: /account does not exist|could not coalesce error/i,
+    entry: {
+      headline: "Wallet has no funds on Somnia testnet",
+      details:
+        "Your wallet has never received any STT, so the chain treats it " +
+        'as "not existing" yet. Top it up at the Somnia testnet faucet ' +
+        "(https://testnet.somnia.network/) and try again.",
+    },
+  },
+  {
+    // Generic insufficient-funds — common form across providers.
+    pattern: /insufficient funds for (gas|intrinsic transaction cost)/i,
+    entry: {
+      headline: "Wallet balance too low to pay gas",
+      details:
+        "The wallet has some STT but not enough to cover the gas + agent " +
+        "fee for this transaction. Top it up at the Somnia testnet faucet " +
+        "(https://testnet.somnia.network/) and try again.",
+    },
+  },
+]);
+
+/**
  * Map a raw revert string from a wallet error to a {@link RevertReasonEntry}.
  *
  * If `reasonRaw` matches a key in {@link REVERT_REASON_MAP} exactly, returns
@@ -274,6 +310,12 @@ export function mapRevertReason(reasonRaw: string | undefined): RevertReasonEntr
     const entry = REVERT_REASON_MAP[reasonRaw as RevertReason];
     if (entry !== undefined) {
       return entry;
+    }
+    // SPEC-0005 R17 fall-through: scan for RPC/wallet-wrapper substrings.
+    for (const { pattern, entry: wrapperEntry } of WRAPPER_REASON_PATTERNS) {
+      if (pattern.test(reasonRaw)) {
+        return wrapperEntry;
+      }
     }
   }
   return {
