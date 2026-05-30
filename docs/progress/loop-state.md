@@ -4,11 +4,16 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 121 — refresh after a 6-commit Amendment 0006 sprint that landed the contract `selfHosted` mode + the orchestrator script skeleton. R25 Tick B fully cleared by iter-2 Opus reviews; Tick A skeleton in place with stub ruling; Ticks A LLM-swap + C (bundle redeploy) + D (spec updates) remain. Browser-verify 99/99 sim-mode PASS unchanged.)
-**Current mode:** `impl` — SPEC-0004 R25 partially landed (contract + orchestrator skeleton); remaining R25 work is the LLM swap, redeploy, and spec updates. T2b-2/3/4 + R1 mid-flow still blocked on operator wallet funding; deployed contract `0x1dC5bA…3E1A` is the pre-Amendment-0006 build and still needs redeploy with 10-arg Ruled ABI + selfHosted mode — see Operator notes.
-**Current tick:** 121
-**Last focus:** R25 Tick A skeleton landed at `scripts/orchestrator-real.ts` (251 lines, tsc clean). Reads VITE_PRIVATE_KEY + VITE_CONTRACT_ADDRESS, sanity-checks contract.selfHosted() == true && platform == orchestrator wallet, subscribes to RulingRequested events, encodes the 10-tuple ruling, calls handleResponse. STUB ruling logic (always Approve with deterministic costPlus/NADAC) — next-tick swap replaces with Anthropic SDK call (per Amendment 0006 OQ-0006-1; needs `claude-api` skill invocation per project CLAUDE.md). Wired as `npm run orchestrator:real`.
-**Last commit:** `d578716` (tick 120 R25 Tick A orchestrator-real.ts skeleton) → tick 121 lands this refresh.
+**Last updated:** 2026-05-30 (tick 122 — R25 Tick A LLM swap landed. `scripts/orchestrator-real.ts` now calls `claude-opus-4-7` via the Anthropic SDK with `messages.parse` + `zodOutputFormat` for schema-validated structured output, prompt caching on the static arbiter system prompt, and adaptive thinking at `effort: high`. Falls back to the deterministic stub when `ANTHROPIC_API_KEY` is unset — CI / dev still works. Iter-1 strict-review caught MEDIUM-1 (missing adaptive thinking) + MEDIUM-2 (unguarded null `input_tokens`) + 2 LOWs; all 4 fixed and iter-2 PASS.)
+**Current mode:** `impl` — SPEC-0004 R25 Ticks A + B fully landed. Remaining: Tick C (bundle redeploy with selfHosted-capable contract + 10-arg Ruled ABI) + Tick D (spec updates). T2b-2/3/4 + R1 mid-flow still blocked on Tick C redeploy. Deployed contract `0x1dC5bA…3E1A` is the pre-Amendment-0006 build.
+**Current tick:** 122
+**Last focus:** R25 Tick A LLM swap at `scripts/orchestrator-real.ts:165-378` — `@anthropic-ai/sdk@^0.100.1` + `zod@^4.4.3` deps added. `LLM_RULING_SCHEMA` (Zod) mirrors the contract's 10-tuple with bounded wei amounts (≤ 10^30 enforced via `.refine`), enum decision, 2000-char rationale, 500-char clause/standard refs, and a `superRefine` rejecting non-empty `policyVoidedClauseIndices` on non-`PolicyInvalid` decisions. `computeRuling()` calls `claude.messages.parse({ thinking: { type: "adaptive" }, output_config: { format: zodOutputFormat(...), effort: "high" }, system: [{ text, cache_control: { type: "ephemeral" } }], ... })`. Orchestrator hashes the LLM's free-text rationale/clause/standard refs via `ethers.id` (keccak256) before chain encoding — SPEC-0004 R1 PHI-off-chain backstop. Graceful fallback to `computeStubRuling` on missing key, parse failure, or thrown error. `.env.example` documents new `ANTHROPIC_API_KEY` + optional `ANTHROPIC_MODEL` override.
+**Last commit:** `7301125` (tick 121 loop-state refresh) → tick 122 lands the LLM swap.
+
+**Tick 122 reviewer history:**
+- Security-review iter-1 (Opus): **PASS** zero MEDIUM+. One in-scope LOW (enforce `WEI_CAP` via `.refine`, not `.describe()`) — applied before strict-review.
+- Strict-review iter-1 (Opus): **FAIL**. MEDIUM-1 missing adaptive thinking. MEDIUM-2 `usage.input_tokens` unguarded null. LOW-1 weak `WEI_CAP` comment. LOW-2 `policyVoidedClauseIndices` rubric only in prose. All 4 fixed inline.
+- Strict-review iter-2 (Opus): **PASS**. All 4 iter-1 findings CLOSED. Two cosmetic NITs (indentation, `daysSupply` could be number not bigint) — indentation fixed; bigint kept (`.toString()` in user message is correct).
 
 **Ticks 115-120 summary** (the Amendment 0006 sprint):
 - **Tick 115** (`3cfd52a` amendment 0006): authored
@@ -46,37 +51,36 @@
 **SPEC-0005 §3.6 sim-mode milestone holds:** R20 + R21 + R23 all done.
 Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 
-**Verdict table after tick 120:**
+**Verdict table after tick 122:**
 
 | Gate | Verdict |
 |---|---|
-| Lib tests (`npm run test:lib`) | ✓ 196/196 (last verified tick 83) |
-| Hardhat tests | ✓ **39/39** (was 30/30 pre-Amendment-0006; +9 new tests for selfHosted) |
-| Browser-verify sim mode | ✓ 99/99 PASS (tick 113) |
-| Browser-verify real mode | ✗ blocked by Tick C redeploy (and Tick A LLM swap) |
-| Secret-scan | ✓ no findings across all ticks 83-120 |
-| Solidity-compliance | ✓ iter-2 PASS (tick 119) |
-| Security-review | ✓ iter-2 PASS (tick 119) |
-| Strict-review | ✓ all diffs PASS or N/A |
+| Lib tests (`npm run test:lib`) | ✓ **196/196** (re-verified tick 122) |
+| Hardhat tests | ✓ **39/39** (re-verified tick 122; unchanged from tick 118 — no contract change this tick) |
+| Browser-verify sim mode | ✓ 99/99 PASS (tick 113; not re-run — no UI change) |
+| Browser-verify real mode | ✗ blocked by Tick C redeploy |
+| Secret-scan | ✓ no findings across all ticks 83-122 |
+| Solidity-compliance | ✓ iter-2 PASS (tick 119); N/A this tick (no contract change) |
+| Security-review | ✓ **iter-1 PASS** tick 122 (one in-scope LOW applied) |
+| Strict-review | ✓ **iter-2 PASS** tick 122 (all 4 iter-1 MEDIUM/LOW findings CLOSED) |
+| TypeScript typecheck | ✓ root `npm run typecheck` clean + standalone `tsc` on script clean |
 
-**Remaining top-of-queue going into tick 122:**
-1. **R25 Tick A — LLM swap.** Replace `computeStubRuling` in
-   `scripts/orchestrator-real.ts` with an Anthropic SDK call. Per
-   project CLAUDE.md, invoke the `claude-api` skill BEFORE adding
-   `@anthropic-ai/sdk` imports. Needs:
-   - Install `@anthropic-ai/sdk`
-   - Design arbiter prompt (TASK-3 OPEN per
-     `docs/specs/0004-data-and-evidence-model.md`)
-   - Parse LLM output to the 10-tuple ruling shape
-   - Add `ANTHROPIC_API_KEY` to `.env.example` (not committed)
-2. **R25 Tick C — bundle redeploy.** Redeploy `CoverageNegotiation`
+**Remaining top-of-queue going into tick 123:**
+1. **R25 Tick C — bundle redeploy.** Redeploy `CoverageNegotiation`
    with the 10-arg `Ruled` ABI (tick-49/50 debt) + Amendment 0006
    selfHosted mode. Update `.env`: `AGENT_PLATFORM_ADDRESS` = orchestrator
    EOA; `COVERAGE_CONTRACT_ADDRESS` = new addr; call
-   `setPlatformSelfHosted` post-deploy.
-3. **R25 Tick D — spec updates.** Mark R25 resolved; unblock R22 in
-   SPEC-0005; rethink SPEC-0003 R49 (executionCost meaningless in
-   self-hosted; we paid LLM provider out-of-band).
+   `setPlatformSelfHosted` post-deploy. **Blocked on operator wallet
+   STT funding for the deploy gas.**
+2. **R25 Tick D — spec updates.** Mark R25 resolved in SPEC-0004 §2.7;
+   unblock R22 in SPEC-0005; rethink SPEC-0003 R49 (executionCost
+   meaningless in self-hosted; LLM provider was paid out-of-band, not
+   per chain-tx).
+3. **Optional Tick A follow-up (post-Tick-C):** end-to-end smoke test
+   of the LLM path against the redeployed contract — requires
+   `ANTHROPIC_API_KEY` + funded orchestrator wallet. Currently exercised
+   only via the deterministic stub fallback (which is the gate-passing
+   default for CI).
 4. **SPEC-0003 R49** — has spec inconsistency (claims "reads exclusively
    from callback payload" but handleResponse only carries reqId). Even
    more deprecation-worthy under Amendment 0006 — no validator
