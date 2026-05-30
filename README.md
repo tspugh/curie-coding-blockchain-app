@@ -120,10 +120,19 @@ npm --prefix contracts run deploy:somnia  # deploy to Somnia testnet (chain 5031
 **Wallet modes (R11), one code path:**
 
 - **Simulated** (default) — `SOMNIA_WALLET_MODE=simulated`. No funds; the agent
-  ruling is mocked. Used by the web app, the library, and CI.
+  ruling is mocked. Used by the web app, the library, and CI. *(All current
+  demos / videos / recorded artefacts run in this mode per SPEC-0004 §2.7 R27.)*
 - **Real** — `SOMNIA_WALLET_MODE=real` + a funded `PRIVATE_KEY`. The library's
-  `RealBackend` talks to the deployed contract over ethers and a **real** native
-  agent produces the ruling (the per-request fee is charged on execution — R9).
+  `RealBackend` talks to the deployed contract over ethers and submits the
+  `requestAdjudication` call to the Somnia agent platform. **Currently a no-op
+  end-to-end:** every real-mode adjudication terminates with
+  `ResponseStatus.Failed (3)` because the live registered ABI for agent
+  `12875401142070969085` does not recognise the selector our contract emits
+  (`0x4be9280f` from `ExtractANumber(string,string,uint256,uint256,string,string,bool,uint8)`).
+  Tracked as SPEC-0004 §2.7 R25 (root-cause fix), SPEC-0003 §2.10 R48 (visibility
+  blocker), SPEC-0003 §2.10 R49 (fee-burned-vs-fee-paid attribution). Until R25
+  lands, no demo / video / deck may claim end-to-end real-mode arbitration
+  (SPEC-0004 §2.7 R27 — responsible-claim gate).
 
 **Deploying + wiring the real path** (all via [`.env`](./.env.example)):
 
