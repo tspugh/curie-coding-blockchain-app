@@ -124,15 +124,42 @@ npm --prefix contracts run deploy:somnia  # deploy to Somnia testnet (chain 5031
   demos / videos / recorded artefacts run in this mode per SPEC-0004 §2.7 R27.)*
 - **Real** — `SOMNIA_WALLET_MODE=real` + a funded `PRIVATE_KEY`. The library's
   `RealBackend` talks to the deployed contract over ethers and submits the
-  `requestAdjudication` call to the Somnia agent platform. **Currently a no-op
-  end-to-end:** every real-mode adjudication terminates with
+  `requestAdjudication` call to the Somnia agent platform. **The currently
+  deployed contract is a no-op end-to-end:** every real-mode adjudication
+  against `0x1dC5bA6771A7f4426ABE5BB808a7d51BdEA33E1A` terminates with
   `ResponseStatus.Failed (3)` because the live registered ABI for agent
   `12875401142070969085` does not recognise the selector our contract emits
   (`0x4be9280f` from `ExtractANumber(string,string,uint256,uint256,string,string,bool,uint8)`).
   Tracked as SPEC-0004 §2.7 R25 (root-cause fix), SPEC-0003 §2.10 R48 (visibility
   blocker), SPEC-0003 §2.10 R49 (fee-burned-vs-fee-paid attribution). Until R25
-  lands, no demo / video / deck may claim end-to-end real-mode arbitration
-  (SPEC-0004 §2.7 R27 — responsible-claim gate).
+  lands fully (Tick C), no demo / video / deck may claim end-to-end real-mode
+  arbitration (SPEC-0004 §2.7 R27 — responsible-claim gate).
+
+**Amendment 0006 — self-hosted arbiter (code complete, redeploy pending).**
+[`docs/amendments/0006-self-hosted-arbiter-agent.md`](./docs/amendments/0006-self-hosted-arbiter-agent.md)
+chose option (c) — self-deploy the arbiter via an off-chain orchestrator —
+after the live `AgentRegistry` lookup needed for options (a)/(b) was found
+infeasible (an EIP-1967 proxy hides the registered ABI). Two of three sub-ticks
+are landed:
+
+- **Tick A** — `scripts/orchestrator-real.ts` calls Claude (`claude-opus-4-7`)
+  via the Anthropic SDK with a Zod-validated structured-output schema,
+  hashes free-text rationale/clause/standard refs via `ethers.id` (SPEC-0004
+  R1 PHI backstop), submits the 10-tuple ruling via `handleResponse`. Falls
+  back to a deterministic stub when `ANTHROPIC_API_KEY` is unset.
+- **Tick B** — `CoverageNegotiation.sol` gained `bool public selfHosted` +
+  `setPlatformSelfHosted(address)` owner-only setter + an `_fireAgent` branch
+  that skips the external platform call when self-hosted, generates a
+  synthetic `requestId` via keccak256, and lets the orchestrator EOA deliver
+  the ruling. 39/39 hardhat PASS.
+- **Tick C — pending operator wallet STT funding.** Redeploy
+  `CoverageNegotiation` with the selfHosted-capable code + tick-49/50
+  10-arg `Ruled` ABI debt, then `setPlatformSelfHosted(<orchestrator EOA>)`.
+
+The `npm run check-ruling-abi` build-time gate (SPEC-0004 R26 repurposed)
+asserts the orchestrator's encoder shape matches the contract decoder both
+statically (parsed from `CoverageNegotiation.sol` at runtime) and via 5
+sample-ruling round-trips through the ethers ABI codec.
 
 **Deploying + wiring the real path** (all via [`.env`](./.env.example)):
 
@@ -141,18 +168,28 @@ npm --prefix contracts run deploy:somnia  # deploy to Somnia testnet (chain 5031
 2. Record the printed address in `COVERAGE_CONTRACT_ADDRESS` (and below) — this
    is what `RealBackend` reads.
 3. Run with `SOMNIA_WALLET_MODE=real`.
+4. **For Amendment 0006 self-hosted mode:** post-deploy, call
+   `setPlatformSelfHosted(<orchestrator EOA>)` (the orchestrator's signing
+   address). Set `ANTHROPIC_API_KEY` in `.env`. Launch
+   `npm run orchestrator:real` as a long-running process; it subscribes to
+   `RulingRequested` events and delivers Claude-driven rulings.
 
-**Deployed testnet address:** _not yet deployed — requires a funded testnet
-wallet. Record the Shannon address here and in `.env` once deployed._
+**Deployed testnet address:**
+`0x1dC5bA6771A7f4426ABE5BB808a7d51BdEA33E1A` (pre-Amendment-0006 build —
+no-op end-to-end per the note above; redeploy pending under Tick C).
 
 ## Scripts
 
 | Script | Purpose |
 |---|---|
+| `npm test` | Umbrella — chains `check-ruling-abi` → `test:lib` → hardhat (fastest-first, fail-fast). One-command CI parity with the spec-4 loop's Phase 5 #1 gate. |
+| `npm run check-ruling-abi` | R26 build-time ABI shape check (SPEC-0004 R26 repurposed under Amendment 0006). Parses `CoverageNegotiation.sol` at runtime + round-trips 5 sample rulings. |
+| `npm run test:lib` | Library unit tests (`node --import tsx --test` over `src/**/*.test.ts`). |
+| `npm run test:e2e` | agent-browser end-to-end suite over the web app (see [`web/tests/agent-browser/`](./web/tests/agent-browser/)). Not in `npm test` (requires a running dev server). |
 | `npm run build` | Type-check the library and emit JS to `dist/` (the web app imports it). |
 | `npm run typecheck` | Type-check without emitting. |
 | `npm run web:dev` / `web:build` / `web:preview` | Run / build / preview the web app. |
-| `npm run test:e2e` | agent-browser end-to-end suite over the web app (see [`web/tests/agent-browser/`](./web/tests/agent-browser/)). |
+| `npm run orchestrator:real` | Amendment 0006 self-hosted necessity-arbiter orchestrator. Long-running; subscribes to `RulingRequested` and delivers Claude-driven rulings via `handleResponse`. Falls back to deterministic stub when `ANTHROPIC_API_KEY` is unset. |
 | `npm run dev` / `start` | Legacy chain smoke test (`src/index.ts`). |
 | `npm --prefix contracts run compile` / `test` / `deploy:somnia` | Hardhat compile / test / deploy. |
 
@@ -165,8 +202,8 @@ wallet. Record the Shannon address here and in `.env` once deployed._
 ├── .mcp.json              # Context7 MCP server (live Somnia docs)
 ├── .env.example
 ├── contracts/             # Hardhat workspace
-│   ├── contracts/         # CoverageNegotiation.sol, ISomniaAgent.sol, mocks/
-│   ├── test/              # CoverageNegotiation.test.ts (T1–T10 + security)
+│   ├── contracts/         # CoverageNegotiation.sol (incl. Amendment 0006 selfHosted), ISomniaAgent.sol, mocks/
+│   ├── test/              # CoverageNegotiation.test.ts (T1–T10 + security + Amendment 0006 selfHosted = 39 tests)
 │   └── scripts/deploy.ts  # deploy to Somnia testnet (chain 50312)
 ├── src/                   # framework-agnostic TS library (the app surface)
 │   ├── index.ts           # createClient(config): wallet + profiles + content + negotiation
@@ -176,12 +213,17 @@ wallet. Record the Shannon address here and in `.env` once deployed._
 │   ├── contract/          # CoverageNegotiationClient: SimulatedBackend + RealBackend + ABI
 │   ├── config/            # networks.ts (typed source of truth) + env.ts
 │   └── somnia/kit.ts      # SomniaAgentKit factory
+├── scripts/               # operator tooling outside the lib
+│   ├── orchestrator-real.ts  # Amendment 0006 self-hosted necessity-arbiter
+│   ├── check-ruling-abi.ts   # SPEC-0004 R26 build-time ABI shape gate
+│   └── lib/ruling-abi.ts     # shared 10-tuple encoder (orchestrator + check + hardhat mirror)
 ├── web/                   # Vite + React SPA (Overview / Create / Maintain)
 │   └── tests/agent-browser/  # end-to-end browser suite (npm run test:e2e)
 ├── demo-data/             # synthetic sample case + Part D formulary fixtures (no PHI)
 ├── docs/
 │   ├── specs/             # fleshed-out build specs (requirements, tests, acceptance)
-│   ├── progress/          # implementation progress log
+│   ├── amendments/        # ADR-style decision records (A-0001 through A-0006)
+│   ├── progress/          # implementation progress log + loop state
 │   ├── research/          # research notes (pre-decision)
 │   └── documentation/     # hard Somnia API/code docs, copied down
 ├── package.json

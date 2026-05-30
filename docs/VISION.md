@@ -65,7 +65,13 @@ Somnia provides **the chain and the agent layer in one place** — high-throughp
 sub-second finality fast enough that an asynchronous exchange still resolves quickly,
 plus native agent primitives the mediator runs on. The AI Mediator's reasoning is
 **consensus-verified** by the same validators that order the transactions, and its
-ruling receipt is public on-chain.
+ruling receipt is public on-chain. *(Operationally, until the live Somnia
+agent-platform ABI drift is resolved upstream, the project runs the mediator under
+the alternative "self-hosted" mode from
+[A-0006](amendments/0006-self-hosted-arbiter-agent.md) — an off-chain orchestrator
+calls Claude and delivers the ruling via the same contract callback. The chain
+remains the system of record either way; the trust model differs in who signs the
+ruling.)*
 
 A smart contract holds the coverage-exception lifecycle state machine, the
 de-identified-note hash commitment, and the settlement escrow. Provider and payer
@@ -86,7 +92,7 @@ obligation; current development uses **synthetic notes**.
 
 - Specs: [`docs/specs/`](specs/) — current build target is
   [`SPEC-0001 — MVP0 Coverage Negotiation`](specs/0001-mvp0-coverage-negotiation.md).
-- Decisions: [`docs/amendments/`](amendments/) — A-0001 through A-0004.
+- Decisions: [`docs/amendments/`](amendments/) — A-0001 through A-0006 (A-0006 is the self-hosted-arbiter pivot referenced above).
 - Domain reference: [`docs/domain/payer-architecture.md`](domain/payer-architecture.md).
 - Reference material: [`docs/reference/`](reference/).
 - Tech-stack and persona constraints for coding agents: [`AGENTS.md`](../AGENTS.md).
