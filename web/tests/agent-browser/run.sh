@@ -814,6 +814,40 @@ scenario_appeal() {
   esac
 }
 
+# ===========================================================================
+# Scenario L4 — provider withdraws an open request (SPEC-0001 Withdrawn state)
+#   Closes the L4 affordance-coverage gap. The withdraw-submit button is the
+#   only path to State.Withdrawn (10, terminal); contract guard is just
+#   _onlyParty + !_terminal, so this fires from Open without an insurer engage.
+# ===========================================================================
+scenario_withdraw() {
+  echo "Scenario L4: provider withdraws open request -> Withdrawn"
+  # SPEC-0005 R23 pre-flight: 2 writes (createContract + withdraw), 0 arbiter.
+  assert_wallet_sufficient "Scenario L4" 2 0 || exit 2
+
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Provider files then immediately withdraws." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "L4: filed in Open" "0" "$(state_of 1)"
+
+  # Withdraw is available to either party from any non-terminal state.
+  eval_click withdraw-submit
+  ab wait 300 >/dev/null
+  assert_eq "L4: withdraw -> Withdrawn (terminal)" "10" "$(state_of 1)"
+  case "$(ab get text "[data-testid=state-badge]" | tail -1)" in
+    *Withdrawn*) echo "  ✓ L4: UI badge reflects Withdrawn"; PASS=$((PASS + 1));;
+    *) echo "  ✗ L4: UI badge did not contain 'Withdrawn'"; FAIL=$((FAIL + 1));;
+  esac
+  assert_hidden "L4: withdraw-submit hidden after terminal" "[data-testid=withdraw-submit]"
+}
+
 # --- main -------------------------------------------------------------------
 
 start_server
@@ -835,6 +869,7 @@ scenario_key_paste_derives;   echo
 scenario_refuse;              echo
 scenario_evidence_resubmit;   echo
 scenario_appeal;              echo
+scenario_withdraw;            echo
 
 echo "──────────────────────────────────────────"
 echo "agent-browser E2E: $PASS passed, $FAIL failed"
