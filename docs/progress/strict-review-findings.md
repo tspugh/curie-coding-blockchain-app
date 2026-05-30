@@ -1,3 +1,38 @@
+## Tick 83 — R11 key-paste derived-address (strict-review)
+
+**Date:** 2026-05-30
+**Scope:** working-tree mods to `web/src/views/Settings.tsx` (UsersPanel)
+and `web/tests/agent-browser/run.sh` (Scenario K).
+
+**Verdict:** PASS (zero findings)
+
+### CRITICAL
+- (none)
+
+### MEDIUM
+- (none)
+
+### LOW
+- (none)
+
+### NITs (not promoted)
+- `Settings.tsx:386` — comment claims `useMemo` "keeps the (potentially throwing) ethers.Wallet construction off the render path." Strictly, `useMemo` runs *during* render; it only avoids re-running on unchanged deps. Wording is mildly imprecise but not lying — the practical effect (avoid recomputing on every render) holds. Not promoted.
+- `Settings.tsx:521` — when a user types a manual address then pastes a key then clears the key, the address field reverts to the stale manual value rather than emptying. Probably intended (preserves user input); not asserted in Scenario K. Not a defect.
+- `run.sh:599-604` — invalid-key branch resets state via Remove + re-fill but doesn't directly assert the address `value` re-binds to `newAddress` state (only `readOnly === false`). Coverage is acceptable given submit-path is already exercised.
+- `Settings.tsx:430` — error string "Address must be 0x + 40 hex (or paste a private key)." is reachable only when the key-paste path *also* failed validation (in which case the earlier guard at line 425 already returned). The "(or paste a private key)" hint is therefore slightly misleading in the only branch that can show it (manual address, no key). Cosmetic.
+
+### Cross-checks performed
+- SPEC-0005 R11 (line 77-80): "address from a private key paste OR derived from a seed in simulated mode." — key-paste arm satisfied; seed-derive arm is a separate path (out of this tick's scope per the spec's OR).
+- Privkey `0x11..11` → `0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A` verified locally via `ethers.Wallet` — matches the asserted constant in `run.sh:579,593`.
+- `isValidHexKey` (walletKeys.ts:21) is `^0x[0-9a-fA-F]{64}$` — exactly what the new `useMemo` and the `onAdd` guard call. No drift.
+- `addUser`/`saveUsers` (userStore.ts:119-145) write the user verbatim; the EIP-55 mixed-case checksum from `Wallet.address` round-trips intact (validated against `isDemoUser`'s case-insensitive 40-hex regex at userStore.ts:65).
+- "Key never persisted" claim in panel description (Settings.tsx:456-458) confirmed: `newKey` is local React state; only `address` enters `addUser(...)`. Scenario K's substring-search assertion (`run.sh:595-596`) is a strong negative test.
+- DRY check: the key-paste path reuses the existing `isValidHexKey` + `KEY_STORAGE_PREFIX` module — no duplicated regexes. The two `newKey.trim()` calls in `onAdd` + `useMemo` are intentional (different lifetimes) and not worth factoring.
+- No new dead code; `Wallet` import is used exactly once; `useMemo` is used exactly once.
+- Form-reset on success clears `newKey` (Settings.tsx:440), preventing key bleed across submissions.
+
+---
+
 # Strict-review findings — tick 8 (UNIT-3, partd-approvable)
 
 **Date:** 2026-05-29

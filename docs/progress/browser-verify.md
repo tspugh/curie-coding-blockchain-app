@@ -1,6 +1,35 @@
 # Browser-verify
 
-Last run: tick 52 — 2026-05-29 — **🎉 37/37 pass = 100%** (was 9/35 at tick 39; 35/35 since tick 46)
+Last run: tick 83 — 2026-05-30 — **R11 key-paste verified live** via the
+just-installed `agent-browser` skill (`.claude/skills/agent-browser/SKILL.md`).
+
+## Tick 83 — R11 key-paste live verification
+
+Drove the production preview build (`VITE_EXPOSE_TEST_API=1`) through
+`agent-browser` directly (not via `run.sh`) using the skill's
+snapshot-and-ref workflow. Settings → Users add-user form:
+
+| R11 assertion | Result | Evidence |
+|---|---|---|
+| Derived address auto-fills from key paste | PASS | `get value @e26` → `0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A` (matches expected for privkey `0x11…11`) |
+| Address field becomes `readOnly` while key is valid | PASS | `eval document.querySelector(...).readOnly` → `"true"` |
+| Submit persists the derived address | PASS | `localStorage["curie:users"][0].address` = `0x19E7…ff2A` |
+| Private key is NOT persisted to `curie:users` | PASS | substring check returns `"false"` |
+
+**Operator finding (skill-PATH gotcha):** the CLI lives at
+`~/.npm-global/bin/agent-browser` which is NOT on the default shell PATH.
+`run.sh` already calls it as `$AB="agent-browser"`; without
+`PATH=$HOME/.npm-global/bin:$PATH`, every command silently exits 127 and
+agent-browser's `2>/dev/null` swallowing hides the failure. Recorded in
+`docs/loop-prompts/spec-4-implementation-loop.md` Phase 5 gate 8.
+
+**Snapshot-click vs DOM-click finding (re-confirmation of tick 42):**
+`agent-browser click @e22` (where `@e22` is the submit button) does NOT
+fire React's form submit reliably. The form's onSubmit only runs when the
+click is dispatched via the DOM, e.g.
+`document.querySelector('[data-testid=users-add-submit]').click()`. The
+existing `eval_click` helper in `run.sh:69-71` already encapsulates this
+workaround — any new R20-R23 scenario MUST use it for form-submit buttons.
 
 ## Tick 52 update — 37/37 (Scenario C2 grew +2)
 

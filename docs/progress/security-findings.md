@@ -1,3 +1,121 @@
+## Tick 83 — R11 key-paste derived-address (security-review)
+
+**Date:** 2026-05-30
+**Verdict:** PASS (zero findings)
+
+### Scope
+
+- `web/src/views/Settings.tsx` — new `useState` for `newKey`, new `useMemo`
+  `derivedAddress` calling `new Wallet(key).address` (ethers v6), updated
+  `onAdd` to prefer `derivedAddress` over the manual address field, address
+  input becomes `readOnly` while a valid key is present, key field cleared on
+  successful submit alongside the other inputs.
+- `web/tests/agent-browser/run.sh` — new `scenario_key_paste_derives`
+  (Scenario K) asserting address auto-derives, read-only is applied, persisted
+  user carries the derived address, and the key string is NOT present in
+  `curie:users`.
+
+### Per-threat analysis
+
+#### 1. Does the private key ever escape the form? — PASS
+
+Traced every read of `newKey` in `Settings.tsx`:
+
+- `useMemo` derivation (line 388-396): calls `new Wallet(trimmed).address`,
+  returns the address only. The key never escapes the closure.
+- `onAdd` (line 424-427): trims, validates, then uses `derivedAddress` (the
+  memo'd address) as the persisted value. The raw key is never put on the
+  `DemoUser` object that gets passed to `addUser` / `saveUsers`.
+- `<input value={newKey} ...>` (line 506-514): one-way React-controlled input
+  — value flows from state INTO the DOM via React's value-prop reconciliation
+  (which uses property assignment, not textContent / innerHTML), and is GC'd
+  when the component unmounts. No `defaultValue`, no `ref` capture, no other
+  reader.
+
+Verified absence (`grep -rn "console\.\|fetch\|axios\|XMLHttpRequest"` in
+Settings.tsx → no hits). No exception re-throw path — the only `throw` site
+(`new Wallet(...)`) is inside a `try/catch` that returns `null` without
+referencing the error (`catch {}` form discards the error object entirely,
+so it cannot bubble to a React error boundary, `window.onerror`, or
+`unhandledrejection`).
+
+#### 2. Does the useMemo swallow errors safely? — PASS
+
+`catch { return null }` — the caught Error is never bound to a variable, so
+its `.message` (which under some ethers builds includes a sanitized excerpt
+of the input) cannot leak via logging, re-throw, or attach-to-state. The
+fallthrough is a pure null return.
+
+#### 3. readOnly bypass via devtools — PASS
+
+The `readOnly={derivedAddress !== null}` attribute is **UX-only**. The submit
+path (`onAdd`, line 427) computes `const address = derivedAddress ??
+newAddress.trim()` — `derivedAddress` is the React-state memo of
+`newKey.trim()`, NOT the live DOM input `.value`. If a user removes
+`readOnly` via devtools and types into the address field, the `onChange`
+handler updates `newAddress`, but because `newKey` still holds a valid key,
+`derivedAddress` is non-null and wins via the `??` operator. The security
+boundary (which address gets persisted) is enforced at submit-time from
+state, not from the DOM input. PASS.
+
+#### 4. localStorage exposure — PASS
+
+The `DemoUser` shape persisted by `saveUsers` is `{id, label, role, address}`
+(see `src/users/userStore.ts:35-40`). `addUser` (`onAdd` line 437) passes
+only `{id, label, role, address}` — no key field. JSON.stringify of that
+object cannot include `newKey`.
+
+Adjacent `WalletKeysPanel` (lines 213-361) DOES write to localStorage, but
+under a wholly separate key prefix (`curie:VITE_PRIVATE_KEY` /
+`curie:VITE_PRIVATE_KEY_INSURER`), with its own isolated state
+(`providerKey` / `insurerKey`) — no shared writer, no shared event, no
+incidental coupling. Operator intent is explicit (Save button) in that
+panel; nothing in the UsersPanel flow ever touches those slots.
+
+Test Scenario K explicitly asserts the key string is absent from
+`curie:users` (line 595-596). It does NOT assert absence from `curie:` more
+broadly, but the static analysis above shows no other write site exists in
+the diff or the UsersPanel surface.
+
+#### 5. XSS / DOM injection — PASS
+
+Derived address sinks: `<input value={derivedAddress ?? newAddress}>` (React
+attribute, escaped), `<code>{u.address}</code>` (text node, escaped),
+`title={u.address}` (React attribute, escaped). No `dangerouslySetInnerHTML`,
+no `innerHTML`, no `href` interpolation, no `eval` / `Function()`. The
+derived address is constrained by `ethers.Wallet` to `^0x[0-9a-fA-F]{40}$`
+anyway; even if a sink were vulnerable, the value shape is non-exploitable.
+
+#### 6. Other surfaces — PASS
+
+- **New dependency:** `import { Wallet } from "ethers"`. Ethers is an
+  existing project dependency (already imported in `web/src/client.ts`). No
+  new third-party package, no version bump.
+- **Network calls:** none added.
+- **WalletKeysPanel behaviour:** unchanged.
+- **Test key choice:** `0x11..11` is a well-known public test vector
+  (Ethereum testing canon, address `0x19E7E376...`). Appropriate for a
+  public fixture; not a leak.
+
+### NIT (non-finding, noted for future polish)
+
+The new key input uses `type="text"`. The sibling `WalletKeysPanel` uses
+`type="password"` for the provider/insurer key inputs. Switching to
+`type="password"` would prevent shoulder-surfing / accidental screenshot
+leaks during demos. This is stylistic consistency, not a security issue —
+the key is never persisted from this field regardless. Out of scope for this
+tick.
+
+### Verdict
+
+**PASS — zero findings.** The key-paste path keeps the private key strictly
+ephemeral: it lives only in component state, flows only into a memo'd
+address derivation, is never persisted, never logged, never networked, never
+attached to an Error or rendered as raw HTML. The `readOnly` UX hint is not
+relied upon as the security boundary — submit derivation is state-based.
+
+---
+
 # Tick 38 — UNIT-9 packet.ts security review
 
 **Verdict:** PASS (0 findings).
