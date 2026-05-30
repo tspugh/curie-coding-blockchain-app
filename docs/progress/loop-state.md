@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 132 — `coverage.md` + `design-conformance.md` refreshed via Sonnet subagents in parallel. **Design-conformance PASSES at ~92%** (Settings +2pp from R10/R11/R12/R13 contributions; no regressions). **Coverage has a real finding:** contracts/ branch at **76.83% is below the ≥85% gate** — gap is in 3 admin setters never tested post-deploy + MockAgentPlatform at 50% branch. src/ subset measured 98.85% line / 92.25% branch (passes). Hardhat 39/39 + lib 196/196 still PASS. Also added `coverage/` + `coverage.json` to `contracts/.gitignore` since solidity-coverage now writes those byproducts on each run.)
-**Current mode:** `impl` — SPEC-0004 R25 Ticks A + B + D + R26-repurpose + R26-gate-wired + R26-mirror-test + R26-sol-parsed + npm-test-umbrella + README/VISION-A0006 + specs-README-refresh + amendments-README-refresh + coverage-design-conformance-refresh landed. **NEW open finding:** contracts/ branch coverage 76.83% below 85% gate. Remaining: Tick C (bundle redeploy) + the new branch-coverage gap. Tick C blocked on operator wallet STT funding.
-**Current tick:** 132
-**Last focus:** Gate-output report refresh. Both `coverage.md` (45KB) and `design-conformance.md` (18KB) were stale from before the Amendment 0006 sprint. Two Sonnet subagents in parallel: coverage ran `node --experimental-test-coverage` + `npx hardhat coverage`; design-conformance walked `web/src/` vs the prototype source files. Surfaced one real gate failure (contracts/ branch 76.83%) that's actionable in a follow-up tick.
-**Last commit:** `daa4fa2` (tick 131 amendments-README index) → tick 132 lands the coverage + design-conformance refresh.
+**Last updated:** 2026-05-30 (tick 133 — partial close on the contracts/ branch coverage gap. Added 8 new hardhat tests: success + onlyOwner-revert pairs for the 3 admin setters (`setAgentId`, `setRulingTimeout`, `setAgentEvidenceUrl`) + MockAgentPlatform.setDeposit success + MockAgentPlatform.createRequest underfunded-revert. **Branch coverage went 76.83% → 81.10%** (+4.27pp); MockAgentPlatform now 100% on every metric; function coverage now 100% overall. Hardhat count 39 → 47. Still below the 85% gate by 3.9pp — remaining gap is in CoverageNegotiation.sol's state-machine branches (80.86% branch on that file alone, mostly defensive). Honest partial improvement; remaining branches queued for a follow-up tick.)
+**Current mode:** `impl` — SPEC-0004 R25 Ticks A + B + D + R26 work + npm-test-umbrella + doc updates + admin-setter coverage landed. Open findings: contracts/ branch still 81.10% < 85% gate (improved from 76.83%); Tick C bundle redeploy blocked on operator wallet STT funding. T2b-2/3/4 + R1 mid-flow still blocked on Tick C redeploy.
+**Current tick:** 133
+**Last focus:** Coverage gap close. Single focused unit — 8 new tests in one new describe block. Pattern mirrors the existing `setPlatformSelfHosted` tests at `contracts/test/CoverageNegotiation.test.ts:1088-1094`. Iter-1 strict-review PASS zero MEDIUM+; 2 LOWs applied (comment accuracy + magic-number provenance) + 1 NIT applied (redundant `.connect(signer)`).
+**Last commit:** `d5772c8` (tick 132 coverage + design-conformance refresh) → tick 133 lands the admin-setter coverage tests.
 
 **Tick 122 reviewer history:**
 - Security-review iter-1 (Opus): **PASS** zero MEDIUM+. One in-scope LOW (enforce `WEI_CAP` via `.refine`, not `.describe()`) — applied before strict-review.
@@ -72,42 +72,44 @@
 **SPEC-0005 §3.6 sim-mode milestone holds:** R20 + R21 + R23 all done.
 Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 
-**Verdict table after tick 132:**
+**Verdict table after tick 133:**
 
 | Gate | Verdict |
 |---|---|
-| `npm test` (umbrella) | ✓ PASS — exit 0 chain (re-verified tick 132) |
+| `npm test` (umbrella) | ✓ PASS — exit 0 chain (re-verified tick 133) |
 | `npm run check-ruling-abi` | ✓ static + 5/5 round-trips |
 | Lib tests | ✓ 196/196 |
-| Hardhat tests | ✓ 39/39 |
-| **Coverage (src/, measured subset)** | ✓ **98.85% line / 92.25% branch** — PASS |
-| **Coverage (contracts/, hardhat solidity-coverage)** | ✗ **76.83% branch** — FAIL vs ≥85% gate (line 98.07%, function 90.48% both pass) |
-| **Design-conformance** | ✓ **~92%** overall — PASS vs ≥90% gate |
+| Hardhat tests | ✓ **47/47** (+8 admin-setter/mock tests since tick 132) |
+| Coverage (src/, measured subset) | ✓ 98.85% line / 92.25% branch — PASS |
+| **Coverage (contracts/, hardhat solidity-coverage)** | ✗ **81.10% branch** — FAIL vs ≥85% gate (improved from 76.83%; line 99.57%, function **100%** both pass) |
+| Coverage (MockAgentPlatform.sol) | ✓ 100% on every metric (was 100/50/83.33/95.83) |
+| Design-conformance | ✓ ~92% overall — PASS vs ≥90% gate |
 | Browser-verify sim mode | ✓ 99/99 PASS (tick 113; not re-run — no UI change) |
 | Browser-verify real mode | ✗ blocked by Tick C redeploy |
-| Secret-scan | ✓ no findings across all ticks 83-132 |
-| Strict-review (Opus iter-1) | ✗ skipped this tick (subagent-generated reports + 1 line of .gitignore; subagents already self-audit) |
+| Secret-scan | ✓ no findings across all ticks 83-133 |
+| Strict-review (Opus iter-1) | ✓ **PASS** zero MEDIUM+; 2 LOWs + 1 NIT applied (comment accuracy, magic-number provenance, redundant `.connect`) |
 | Solidity-compliance / Security-review | N/A this tick (no contract / risk-bearing change) |
-| TypeScript typecheck | N/A this tick (no code change) |
+| TypeScript typecheck | N/A this tick (test-only edit) |
 
 **Open findings to triage in next tick:**
-- contracts/ branch coverage 76.83% < 85% gate. Gap concentrated in: `setAgentId` / `setRulingTimeout` / `setAgentEvidenceUrl` admin setters (lines 306/314/319 — never called post-deploy), one defensive dead-code revert at line 524, and MockAgentPlatform at 50% branch. **Actionable:** add hardhat tests covering the 3 admin setters' success + revert paths.
-- `src/contract/simulated.ts` branch 68.63% (also flagged but src/ subset still passes overall at 92.25%). **Actionable:** add lib tests for `postFeedback` / `onRulingTimeout` / `settle` / `withdraw` / `refuse` transitions.
+- **contracts/ branch coverage 81.10% < 85% gate (improved 4.27pp this tick).** Remaining gap is in `CoverageNegotiation.sol` state-machine branches (still at 80.86% for that single file). The 3 admin setters + mock branches are now fully covered. Closing further needs targeted state-machine tests + identification of specific uncovered branches via the HTML report; defensive dead-code revert at line 524 (unreachable through `_onlyParty`) will permanently stay uncovered.
+- `src/contract/simulated.ts` branch 68.63% (also flagged but src/ subset still passes overall at 92.25%). Actionable: add lib tests for `postFeedback` / `onRulingTimeout` / `settle` / `withdraw` / `refuse` transitions.
 
-**Remaining top-of-queue going into tick 133:**
-1. **contracts/ branch coverage gap — close from 76.83% → ≥85%.** The
-   3 admin setters (`setAgentId` / `setRulingTimeout` /
-   `setAgentEvidenceUrl`) have never been tested post-deploy. Adding
-   success + revert-path tests for each should push branch coverage
-   above the gate. Cheap focused tick (hardhat tests).
+**Remaining top-of-queue going into tick 134:**
+1. **contracts/ branch coverage gap — continue closing from 81.10% → ≥85%.**
+   Tick 133 closed the admin-setter + mock branches; the remaining
+   gap is in CoverageNegotiation.sol state-machine branches. Needs
+   targeted inspection of the HTML coverage report (`contracts/coverage/`)
+   to identify the specific uncovered branches, then add tests. Likely
+   candidates: error paths in `_fireAgent`, `handleResponse`, `settle`,
+   `withdraw` — branches the existing test suite reaches but doesn't
+   exercise the fail side of.
 2. **R25 Tick C — bundle redeploy.** Blocked on operator wallet STT
-   funding. Single remaining R25 blocker per the refreshed status table.
+   funding.
 3. **Optional Tick A live smoke test (post-Tick-C).**
 4. **`src/contract/simulated.ts` branch 68.63%.** Below threshold for
    that single file though the src/ subset still passes overall at
-   92.25%. Add lib tests for the missing state transitions
-   (`postFeedback` / `onRulingTimeout` / `settle` / `withdraw` /
-   `refuse`). Lower priority than #1 since the subset overall passes.
+   92.25%. Add lib tests for the missing state transitions.
 5. **A-0006 status-field flip.** Human-reviewed step from tick 131.
 6. **R49 deprecation rewrite.** Premature.
 7. **Restart cron with the updated loop prompt body.**

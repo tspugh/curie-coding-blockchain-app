@@ -1273,4 +1273,89 @@ describe("CoverageNegotiation", () => {
       expect(await contract.stateOf(reqId)).to.equal(State.Approved);
     });
   });
+
+  describe("admin setters: success + onlyOwner branch coverage (tick 133)", () => {
+    // Narrows the contracts/ branch-coverage gap surfaced by the tick-132
+    // `npx hardhat coverage` run (76.83% → 81.10% after this block). The 3
+    // setters below had only the assignment branch tested transitively; the
+    // `onlyOwner` revert branch was uncovered. One success + one revert test
+    // per setter. The remaining gap (81.10% → ≥85%) is deferred to a
+    // follow-up tick — `CoverageNegotiation.sol`'s state-machine branches
+    // outside the setters need targeted tests of their own.
+
+    it("setAgentId: owner updates value", async () => {
+      const { contract } = await deploy();
+      const newAgentId = 42n; // arbitrary nonzero; setter has no input validation
+      await contract.setAgentId(newAgentId);
+      expect(await contract.agentId()).to.equal(newAgentId);
+    });
+
+    it("setAgentId: non-owner reverts with OwnableUnauthorizedAccount", async () => {
+      const { contract } = await deploy();
+      const [, nonOwner] = await ethers.getSigners();
+      await expect(
+        contract.connect(nonOwner).setAgentId(42n)
+      ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
+    });
+
+    it("setRulingTimeout: owner updates value", async () => {
+      const { contract } = await deploy();
+      const newTimeout = 3600n; // 1 hour; setter has no input validation
+      await contract.setRulingTimeout(newTimeout);
+      expect(await contract.rulingTimeout()).to.equal(newTimeout);
+    });
+
+    it("setRulingTimeout: non-owner reverts with OwnableUnauthorizedAccount", async () => {
+      const { contract } = await deploy();
+      const [, nonOwner] = await ethers.getSigners();
+      await expect(
+        contract.connect(nonOwner).setRulingTimeout(3600n)
+      ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
+    });
+
+    it("setAgentEvidenceUrl: owner updates value", async () => {
+      const { contract } = await deploy();
+      const newUrl = "https://example.test/evidence";
+      await contract.setAgentEvidenceUrl(newUrl);
+      expect(await contract.agentEvidenceUrl()).to.equal(newUrl);
+    });
+
+    it("setAgentEvidenceUrl: non-owner reverts with OwnableUnauthorizedAccount", async () => {
+      const { contract } = await deploy();
+      const [, nonOwner] = await ethers.getSigners();
+      await expect(
+        contract.connect(nonOwner).setAgentEvidenceUrl("https://attacker.test")
+      ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
+    });
+
+    it("MockAgentPlatform.setDeposit: new value reflected by getRequestDeposit", async () => {
+      // Closes the mock's function-coverage gap (5/6 → 6/6) per the tick-132
+      // report. Cheap; MockAgentPlatform is a test double, no owner gate.
+      const { platform } = await deploy();
+      await platform.setDeposit(0n);
+      expect(await platform.getRequestDeposit()).to.equal(0n);
+      await platform.setDeposit(ethers.parseEther("0.5"));
+      expect(await platform.getRequestDeposit()).to.equal(ethers.parseEther("0.5"));
+    });
+
+    it("MockAgentPlatform.createRequest: underfunded msg.value reverts with 'mock: underfunded'", async () => {
+      // Closes the mock's revert-branch coverage (50% → 100% branch). The
+      // existing tests all pay the required deposit; this one calls direct
+      // with msg.value=0 (< platform.deposit) and asserts the require fires.
+      // callbackAddress isn't dereferenced before the deposit check (verified
+      // against MockAgentPlatform.sol:61 — require is the first statement),
+      // so any address works.
+      const { platform } = await deploy();
+      const [signer] = await ethers.getSigners();
+      await expect(
+        platform.createRequest(
+          0n,
+          signer.address,
+          "0x00000000",
+          "0x",
+          { value: 0n },
+        )
+      ).to.be.revertedWith("mock: underfunded");
+    });
+  });
 });
