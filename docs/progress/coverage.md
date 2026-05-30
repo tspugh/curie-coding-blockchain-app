@@ -95,7 +95,7 @@ Steady-state threshold: ≥ 85% line + branch across all `src/` modules.
 | P2 | `src/content/content.ts` | **LANDED tick 58** — `content.test.ts` 15 tests; 100% line/branch/function | Done. |
 | P3 | `src/integrations/cds-hooks/mapper.ts` | **LANDED tick 59** — `mapper.test.ts` 17 tests; 100% line / 95.65% branch / 100% function | Done. |
 | P4 | `src/integrations/cds-hooks/fixture.ts` | **LANDED tick 60** — `fixture.test.ts` 12 tests; 100% line/branch/function | Done. |
-| P5 | `src/profiles/profiles.ts` | `addProfile`/`getProfile` untested; branch 75% | Add tests for `addProfile` (replace existing) and `getProfile` (found/not-found); line + branch ≥ 85% |
+| P5 | `src/profiles/profiles.ts` | **LANDED tick 61** — `profileRegistry.test.ts` 12 tests; 100% line/branch/function | Done. |
 | P6 | `src/wallet/wallet.ts` | 0% — `SimulatedWallet` untested directly | Unit test `SimulatedWallet` construction + address/mode accessors; line ≥ 85% (RealWallet exempt — requires live provider) |
 | P7 | `src/config/networks.ts` | 0% — typed constants | Smoke-import test confirming `SOMNIA_NETWORKS.testnet` has expected chainId; line ≥ 85% |
 
