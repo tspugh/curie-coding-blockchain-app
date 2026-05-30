@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 84 — loop-state refresh covering ticks 83 + skill install + SPEC-0005 R20-R23 spec edit + R11 live agent-browser verification)
-**Current mode:** `impl` (T2b-2/3/4 + R1 mid-flow still blocked on operator wallet funding; deployed contract still needs redeploy with 10-arg Ruled ABI — see Operator notes)
-**Current tick:** 84
-**Last focus:** Tick 83 landed SPEC-0005 R11 key-paste arm in Settings → Users (`feat(web): 553930a`); the inline mid-session work then (a) authored SPEC-0005 R20-R23 (per-affordance integration coverage, approval+denial path coverage, real-chain LLM verification, pre-flight wallet sufficiency — `spec(0005): 6d28851`), (b) installed the official `agent-browser` skill from `vercel-labs/agent-browser` into `.claude/skills/agent-browser/SKILL.md` and wired it into the loop-prompt Phase-5 gate 8 (`skill: 331f08b`; .gitignore got `!.claude/skills/` so the skill commits), (c) actually drove the live UI via the skill to verify R11 end-to-end (all 4 assertions PASS — derived `0x19E7…ff2A` matches expected, address `readOnly=true` when key set, persisted address = derived, private key NOT leaked to `curie:users`; `chore(progress): 0dd9d0b`). Tick 84 is a bookkeeping tick: refreshes this loop-state file, queues R20-R23 as next priority. **SPEC-0005 done**: R6/R7/R8/R10/R11 (key-paste arm)/R12/R13/R14/R15/R16/R17/R19 + R1 skeleton. **SPEC-0005 open**: R1 mid-flow (T74b — operator-blocked on R18), R20/R21/R22/R23 (NEW this session), T75c per-user signer plumbing (R11 seed-derive arm still open in sim mode).
-**Last commit:** `0dd9d0b` (tick 83 — browser-verify R11 live run + tick-83 review verdicts) plus tick 84 chore landing this refresh.
+**Last updated:** 2026-05-30 (tick 86 — refresh after tick-85 R23 cost-estimator landing + PR #14 merge bringing SPEC-0004 R25/R26/R27 + SPEC-0003 §2.10 R48/R49 into the impl-loop read set)
+**Current mode:** `impl` — **new top-priority blocker SPEC-0004 R25** (live agent ABI drift; real-mode adjudication is currently a no-op because the registered `IParseWebsiteAgent` ABI no longer recognises selector `0x4be9280f` that the deployed contract emits). T2b-2/3/4 + R1 mid-flow still blocked on operator wallet funding; deployed contract still needs redeploy with 10-arg Ruled ABI — see Operator notes.
+**Current tick:** 86
+**Last focus:** Tick 85 landed SPEC-0005 R23 (pre-flight wallet sufficiency: `web/tests/agent-browser/cost-estimator.sh` helper + 9-test suite + Scenario A wired as the proof-of-concept — `feat(test): c07c05d`). Iter-1 Opus security-review caught HIGH H1 (RCE via attacker-controlled RPC interpolating into `python -c` source), MEDIUM M1 (private key in `argv` → `/proc/<pid>/cmdline`), LOW L1 (`set -x` echoed key), LOW L2 (caller address body-injection in JSON-RPC payload). All four fixed inline (regex+env-var-only python, `printf`-builtin stdin pipe for key, `set +x` save/restore wrapper, strict `0x+40-hex` address validator); iter-2 PASS zero findings. Opus strict-review PASS zero findings with 5 NITs documented. Then PR #14 merged in (`merge: 063ce0b`) bringing SPEC-0004 §2.7 R25/R26/R27 + SPEC-0003 §2.10 R48/R49 (renumbered from PR #14's `§2.9 R42/R43` to avoid collision with the already-landed UNIT-7a `§2.9 R42-R47` wallet-config decision). PR #14 task `TASK-3` renumbered to `TASK-4` for the same collision. **PR #14 remains OPEN against `main`** on GitHub; merged into `spec-4-implementation` only. **SPEC-0005 done (key-paste arm)**: R6/R7/R8/R10/R11 (key-paste arm)/R12/R13/R14/R15/R16/R17/R19/R23 + R1 skeleton. **SPEC-0005 open**: R1 mid-flow (T74b — operator-blocked on R18), R20/R21/R22 (NEW), R23 broader-scenario-rollout (1 of N scenarios wired). **SPEC-0004 open (new from merge)**: R25 (regenerate IParseWebsiteAgent / switch AGENT_ID / self-deploy), R26 (CI ABI drift check), R27 (responsible-claim gate on demos). **SPEC-0003 open (new from merge)**: R48 (real-mode adjudication success gate before Decision 1), R49 (R4 attribution distinguishes fee-burned-no-work from fee-paid-LLM-ran).
+**Last commit:** `063ce0b` (tick 85 merge of PR #14) plus tick 86 chore landing this refresh.
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## New findings the next planner MUST act on
@@ -19,6 +19,40 @@
 2. `agent-browser click @ref` (the snapshot-ref click) does NOT reliably trigger React form submit. The form's `onSubmit` only runs when the click is dispatched via the DOM, e.g. `document.querySelector('[data-testid=X]').click()`. The existing `eval_click` helper in `run.sh:69-71` already encapsulates this — any new R20-R23 scenario MUST use it for form-submit buttons.
 
 ## Work queue (priority order)
+
+### SPEC-0004 R25 (NEW top-priority blocker — merged from PR #14 in tick 85)
+**Resolve live agent ABI drift so real-mode adjudication actually invokes the LLM**
+- Files (depending on resolution path): `contracts/contracts/ISomniaAgent.sol` (regen `IParseWebsiteAgent`), `contracts/contracts/CoverageNegotiation.sol:759` (selector update if signature changes), `.env` + deployment constants (if `AGENT_ID` changes), `contracts/scripts/deploy.ts` (redeploy).
+- R-citations: SPEC-0004 §2.7 R25 (root-cause fix), SPEC-0003 §2.10 R48 (visibility blocker), SPEC-0003 §2.10 R49 (R4 attribution copy).
+- Diagnosis (from PR #14 isolation test 2026-05-30): contract emits selector `0x4be9280f` from canonical `ExtractANumber(string,string,uint256,uint256,string,string,bool,uint8)`, but agent `12875401142070969085`'s LIVE registered ABI doesn't contain it. Every validator returns `Failed (3)` at viem ABI-decode BEFORE any LLM cycle runs. Authoritative live ABI source: `AgentRegistry @ 0x08D1Fc808f1983d2Ea7B63a28ECD4d8C885Cd02A` (Somnia agent explorer).
+- Acceptance criterion: at least one real-mode `requestAdjudication` against the redeployed contract returns `ResponseStatus.Success` with a non-empty `result`; SPEC-0003 §2.10 R48 verifiable; SPEC-0005 R22 unblocked.
+- First sub-unit suggestion: research-only tick to query the AgentRegistry for the registered ABI of agent `12875401142070969085` and write `docs/research/agent-abi-drift-2026-05-30.md` documenting the registered signature(s) + selectors. THEN pick a resolution path (regenerate vs switch vs self-deploy) as the next implementation tick.
+
+### SPEC-0004 R26 (NEW — merged from PR #14; queue after R25)
+**Build-time / CI agent-ABI drift check**
+- Files: `contracts/scripts/check-agent-abi.ts` (new) OR extend hypothetical `scripts/check-somnia-interface.ts` (referenced by SPEC-0001 R19 but not yet implemented).
+- R-citations: SPEC-0004 §2.7 R26; extends SPEC-0001 R19 (Solidity-mirror posture for the platform interface) to also cover the agent interface.
+- Acceptance criterion: a script fetches the registered ABI for the configured `AGENT_ID` from `AgentRegistry @ 0x08D1Fc808f1983d2Ea7B63a28ECD4d8C885Cd02A`, recomputes the selector for the function the contract calls, and exits non-zero on mismatch — wireable into CI / a `predeploy` hook.
+- Open question for next planner: AgentRegistry's exact method name + return shape for "give me the ABI of agent N" isn't in this repo. Need to query it via context7-mcp (Somnia docs) or read the registry's verified bytecode on the Shannon Explorer (`0x08D1…Cd02A`) first.
+
+### SPEC-0004 R27 (NEW — merged from PR #14; responsible-claim gate)
+**Demo / video / deck labelling**
+- Files: README.md, docs/demo/ artefacts.
+- R-citation: SPEC-0004 §2.7 R27.
+- Acceptance criterion: until R25 is green, every demo / recorded artefact carries the label `(simulated — real-mode currently blocked by SPEC-0004 §2.7 R25)`. Audit existing demo artefacts; add the disclaimer where missing.
+
+### SPEC-0003 R49 (NEW — merged from PR #14; companion to R48)
+**R4 attribution distinguishes "fee burned (no work executed)" from "fee paid (LLM ran, consensus failed)"**
+- Files: `web/src/views/Detail.tsx` (or wherever the R4 attribution row renders), the helpers it imports.
+- R-citation: SPEC-0003 §2.10 R49 (renumbered from PR #14's `R43`).
+- Acceptance criterion: when `ResponseStatus.Failed` lands, sum `executionCost` across the validator `Response[]`; if ~0 render "fee burned (no agent work)"; if ~ `perAgentBudget × subcommitteeSize` render "fee paid (LLM ran, consensus failed)". Same UI affordance + cost number, different copy/treatment. Reads exclusively from the existing callback payload — no new RPC or contract changes.
+
+### SPEC-0005 R23 cost-estimator (LANDED tick 85 — pre-flight wallet sufficiency)
+**`assert_wallet_sufficient` helper + Scenario A pre-flight wired as the R23 proof-of-concept**
+- What landed: `web/tests/agent-browser/cost-estimator.sh` (sourceable helper, ~140 lines after security hardening), `web/tests/agent-browser/cost-estimator.test.sh` (9 tests, all PASS), Scenario A in `run.sh` now calls `assert_wallet_sufficient "Scenario A" 6 1 || exit 2` at function entry.
+- Test: 9 tests covering sim-mode bypass, sufficient balance, short balance + exact spec message format, zero-arbiter math, zero-writes math, STT formatting precision, invalid-address rejection (L2 hardening), negative writes rejection (H1/M1 hardening), shell-injection-shaped writes rejection.
+- Gate verdict: Opus security-review iter-1 returned HIGH H1 + MEDIUM M1 + LOW L1 + L2. **All four fixed inline**, iter-2 returned PASS zero findings. Opus strict-review returned PASS zero findings with 5 NITs documented. Lib tests + hardhat tests not re-run (no JS / Solidity diff in this commit).
+- Open follow-up: wire `assert_wallet_sufficient` into Scenarios B/C/D/etc. as R23 broader rollout. Cheap mechanical follow-up — could be one tick covering all curated cases + the R2a custom-case path.
 
 ### SPEC-0005 R11 key-paste arm (LANDED tick 83 — addr derives from pasted privkey)
 **Settings → Users add-user form now derives the on-chain address from a pasted private key via `ethers.Wallet`**
