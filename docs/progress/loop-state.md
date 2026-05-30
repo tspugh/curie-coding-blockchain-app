@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 149 — SPEC-0003 §8 Q1 + Q3 closures + line-605 propagation. Tick 148 closed SPEC-0005 OQ4; tick 149 swept SPEC-0003 §8 for closable items. Two open Qs were code-verifiable answerable without external action: Q1 ("does createContract require a deposit?") — confirmed via grep that `createContract` at `CoverageNegotiation.sol:354` is `external returns (uint256 reqId)` with no payable + no msg.value; only `requestAdjudication` at line 420 is payable. Q3 (originally "blocking R42") — A-0006 path (c) self-deploy adopted (tick 140); R42 was renumbered to R48 per the §2.10 merge note; R48 unblocked from deploy side as of tick 139. Both marked RESOLVED with evidence; Q1's answer also tightened the R4 attribution conditional at line 605 ("`createContract` (if it requires a deposit) → ...") to its concrete form ("`createContract` → `Burned (gas)` only"). Q2 (UX funding-flow shortcut) intentionally left open — genuine user-preference question. SPEC-0004 §8 was already 3-of-4 RESOLVED (Q2/Q3/Q4) + TASK-4 DONE; remaining TASK-1/TASK-2/TASK-3 are separate workstreams (research corpus / case-research / arbiter-prompt-design) not closable from current code state. SPEC-0005 §8 OQ5 was updated in tick 147 with the self-hosted fee model; remains a decision-pending OQ. Secret-scan clean. No code touched. Wallet: 5.50 STT — no change.)
+**Last updated:** 2026-05-30 (tick 150 — **SKIP-TICK** per the loop's Phase-8 "gate could not run → skip for THIS tick only and note in loop-state.md" provision. Tick 149 noted the closable-without-external-action queue was empty; tick 150 confirmed via a tight ≤5-tool-use Sonnet planning-subagent sweep. External state unchanged: wallet 5.50 STT, ANTHROPIC_API_KEY unset, both real-mode paths blocked. Remaining open OQs are either user-preference decisions (SPEC-0003 Q2, SPEC-0005 OQ1, OQ5 gating-cadence) or separate workstreams (SPEC-0004 TASK-1 real de-id'd corpus / TASK-2 case-research outputs / TASK-3 arbiter prompt design) or already-deferred (SPEC-0005 OQ2 → v1.5). All gates passing where applicable. The honest move per the loop's "On token budget — IGNORE" clause ("if a tick can't complete a step ... let next tick pick up") and Phase-8 ("Gate could not run → skip for this tick only") is to record the skip rather than manufacture diminishing-returns polish. Working tree clean; no new commit beyond this loop-state note. Counter advanced 149 → 150.)
 **Current mode:** `impl` — steady state still gated on real-mode browser-verify against `0x2c561f33…488ac93` (wallet 5.50 STT < ~7.35 needed for full sweep; or `ANTHROPIC_API_KEY` for smaller Tick A smoke).
-**Current tick:** 149
-**Last focus:** SPEC-0003 §8 Q1 + Q3 closures. Q1 (createContract deposit?) → RESOLVED via contract grep — non-payable, only requestAdjudication is value-bearing. Q3 (ABI-drift resolution path?) → RESOLVED — path (c) self-deploy adopted via A-0006; R42 renumbered to R48; R48 unblocked from deploy side. Line 605 R4 attribution conditional tightened to follow from Q1's answer.
-**Last commit:** `7d8f131` (tick 148 SPEC-0005 §5+§6) → tick 149 lands SPEC-0003 Q1/Q3 closures.
+**Current tick:** 150
+**Last focus:** Skip-tick. Planning subagent confirmed no closable item remains without external action (wallet refund or `ANTHROPIC_API_KEY`). Recording per Phase-8 to maintain audit trail.
+**Last commit:** `510ecd8` (tick 149 SPEC-0003 Q1/Q3 closures) → tick 150 commits this skip-note only.
 
 > **History rotation note (tick 145):** earlier reviewer-history blocks (ticks
 > 122-128), tick-summary blocks (115-120, 107-113, 98-106, and the older 90-96
@@ -48,7 +48,7 @@ contract**, blocked on either wallet refund (need ~8 STT total; current 5.50)
 OR `ANTHROPIC_API_KEY` for a smaller-scope Tick A live smoke (current STT
 sufficient for that).
 
-**Top-of-queue going into tick 150:**
+**Top-of-queue going into tick 151:**
 1. **Tick A live smoke test** — single requestAdjudication via orchestrator
    + Claude SDK on `0x2c561f33…`. Affordable (~0.5 STT). Requires
    `ANTHROPIC_API_KEY`.
