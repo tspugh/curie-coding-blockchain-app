@@ -28,6 +28,12 @@ import {
   type DemoUser,
 } from "@lib";
 import { USERS_CHANGED_EVENT, client } from "../client.js";
+import {
+  DEMO_MODE_CHANGED_EVENT,
+  DEMO_MODE_STORAGE_KEY,
+  loadDemoMode,
+  saveDemoMode,
+} from "../demoMode.js";
 import { formatStt, formatSttCompact } from "../format.js";
 import { useWalletBalance } from "../hooks/useWalletBalance.js";
 import { KEY_STORAGE_PREFIX, isValidHexKey } from "../walletKeys.js";
@@ -99,6 +105,9 @@ export function Settings({
 
       {/* ── Users panel (SPEC-0005 R10/R11) ── */}
       <UsersPanel />
+
+      {/* ── Demo-mode toggle (SPEC-0005 R13) ── */}
+      <DemoModePanel />
 
       {/* ── Wallet panel ── */}
       <div className="settings-panel">
@@ -478,6 +487,67 @@ function UsersPanel() {
           Add user
         </button>
       </form>
+    </div>
+  );
+}
+
+/**
+ * SPEC-0005 R13 — Demo-mode quick-switch.
+ *
+ * When ON, the top-bar pill row includes the legacy provider/insurer/
+ * observer seeds. When OFF, only operator-added userStore entries appear.
+ * Default ON in v0; the spec calls for OFF in v1 so the toggle is the
+ * forward-compatible escape hatch.
+ *
+ * Reads + writes go through {@link loadDemoMode} / {@link saveDemoMode};
+ * the save path fires `DEMO_MODE_CHANGED_EVENT` for same-tab listeners.
+ * Cross-tab parity comes from the browser's native `storage` event, which
+ * App.tsx also listens for.
+ */
+function DemoModePanel() {
+  const [on, setOn] = useState<boolean>(true);
+  useEffect(() => {
+    setOn(loadDemoMode());
+    function reread() {
+      setOn(loadDemoMode());
+    }
+    function onStorage(e: StorageEvent) {
+      if (e.key === DEMO_MODE_STORAGE_KEY || e.key === null) reread();
+    }
+    window.addEventListener(DEMO_MODE_CHANGED_EVENT, reread);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(DEMO_MODE_CHANGED_EVENT, reread);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
+  function toggle() {
+    const next = !on;
+    setOn(next);
+    saveDemoMode(next);
+  }
+
+  return (
+    <div className="settings-panel" data-testid="demo-mode-panel">
+      <div className="section-label">Demo mode</div>
+      <p className="hint">
+        SPEC-0005 R13: when ON, the legacy three-profile seeds (Provider /
+        Insurer / Observer) appear as top-bar pills for guided
+        walkthroughs. When OFF, only the users you add above remain in the
+        pill row. Default ON in v0; OFF in v1.
+      </p>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        data-testid="demo-mode-toggle"
+        data-state={on ? "on" : "off"}
+        className={`primary${on ? "" : " is-off"}`}
+        onClick={toggle}
+      >
+        Demo mode: {on ? "ON" : "OFF"}
+      </button>
     </div>
   );
 }

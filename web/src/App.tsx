@@ -11,6 +11,18 @@ import {
   walletSetupRequired,
 } from "./client.js";
 import { USERS_STORAGE_KEY, loadUsers } from "@lib";
+import {
+  DEMO_MODE_CHANGED_EVENT,
+  DEMO_MODE_STORAGE_KEY,
+  loadDemoMode,
+} from "./demoMode.js";
+
+/** SPEC-0005 R13 — ids the demoMode toggle hides when OFF. */
+const SEED_PROFILE_IDS: ReadonlySet<string> = new Set([
+  "provider",
+  "insurer",
+  "observer",
+]);
 import { shortHex } from "./shared.js";
 import { Overview } from "./views/Overview.js";
 import { Create } from "./views/Create.js";
@@ -37,6 +49,9 @@ export function App() {
   // listProfiles()` is re-read and the pill row re-renders. Value is opaque;
   // only the identity-change is observed by React.
   const [profilesEpoch, setProfilesEpoch] = useState(0);
+  // SPEC-0005 R13: gates whether the legacy three-profile seeds appear in
+  // the top-bar pill row. Defaults ON in v0; OFF in v1 per spec.
+  const [demoMode, setDemoMode] = useState<boolean>(() => loadDemoMode());
 
   useEffect(() => {
     const seen = new Set<string>();
@@ -86,10 +101,37 @@ export function App() {
     };
   }, []);
 
+  // SPEC-0005 R13 — listen for demo-mode flips (same-tab CustomEvent + the
+  // browser's native cross-tab `storage` event) and re-read state.
+  useEffect(() => {
+    function reread() {
+      setDemoMode(loadDemoMode());
+    }
+    function onStorage(e: StorageEvent) {
+      if (e.key === DEMO_MODE_STORAGE_KEY || e.key === null) reread();
+    }
+    window.addEventListener(DEMO_MODE_CHANGED_EVENT, reread);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(DEMO_MODE_CHANGED_EVENT, reread);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
   // `profilesEpoch` is intentionally referenced so React re-renders the pill
   // row after a sync mutates the registry in place.
   void profilesEpoch;
-  const profiles = client.profiles.listProfiles();
+  // SPEC-0005 R13: when demoMode is OFF, hide the legacy seeds from the
+  // pill row. The registry still holds them (Settings cards remain the
+  // full escape-hatch for switching) — they just don't appear up top.
+  const profiles = useMemo<readonly Profile[]>(
+    () => {
+      const all = client.profiles.listProfiles();
+      return demoMode ? all : all.filter((p) => !SEED_PROFILE_IDS.has(p.id));
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [demoMode, profilesEpoch],
+  );
   const activeProfile = useMemo<Profile>(
     () => client.profiles.getActiveProfile(),
     // eslint-disable-next-line react-hooks/exhaustive-deps

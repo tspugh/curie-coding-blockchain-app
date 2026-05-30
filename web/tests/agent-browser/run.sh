@@ -501,6 +501,57 @@ scenario_persisted_users() {
   ev "(()=>{localStorage.removeItem('curie:users'); return 'cleared'})()" >/dev/null
 }
 
+# ===========================================================================
+# Scenario J — demo-mode quick-switch hides + restores the legacy seed pills
+#   (SPEC-0005 R13)
+# ===========================================================================
+scenario_demo_mode() {
+  echo "Scenario J: demo-mode toggle hides/shows legacy seed pills (R13)"
+
+  # Reset to known state: demoMode unset (defaults ON), no custom users.
+  open_app
+  ev "(()=>{localStorage.removeItem('curie:demoMode'); localStorage.removeItem('curie:users'); return 'cleared'})()" >/dev/null
+  open_app
+
+  # With demoMode default ON, the legacy seed pills are rendered.
+  assert_eq "default demoMode ON: provider pill rendered" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-provider]'))")"
+  assert_eq "default demoMode ON: insurer pill rendered" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-insurer]'))")"
+
+  # Toggle OFF via the Settings panel (no page reload).
+  ab find testid nav-settings click >/dev/null
+  ab wait 250 >/dev/null
+  assert_eq "Settings: demo-mode toggle starts ON" "on" \
+    "$(ev "document.querySelector('[data-testid=demo-mode-toggle]').getAttribute('data-state')")"
+  ev "(()=>{document.querySelector('[data-testid=demo-mode-toggle]').click();return 'toggled'})()" >/dev/null
+  ab wait 200 >/dev/null
+  assert_eq "Settings: demo-mode toggle flipped OFF" "off" \
+    "$(ev "document.querySelector('[data-testid=demo-mode-toggle]').getAttribute('data-state')")"
+
+  # Seed pills must disappear from the top bar without a reload.
+  assert_eq "demoMode OFF: provider pill hidden" "false" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-provider]'))")"
+  assert_eq "demoMode OFF: insurer pill hidden" "false" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-insurer]'))")"
+
+  # Toggle back ON; seed pills reappear.
+  ev "(()=>{document.querySelector('[data-testid=demo-mode-toggle]').click();return 'toggled'})()" >/dev/null
+  ab wait 200 >/dev/null
+  assert_eq "demoMode ON again: provider pill restored" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-provider]'))")"
+
+  # Persistence across reload: flip OFF, reload, OFF survives.
+  ev "(()=>{document.querySelector('[data-testid=demo-mode-toggle]').click();return 'toggled'})()" >/dev/null
+  ab wait 100 >/dev/null
+  open_app
+  assert_eq "demoMode OFF persists across reload" "false" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-provider]'))")"
+
+  # Cleanup.
+  ev "(()=>{localStorage.removeItem('curie:demoMode'); return 'cleared'})()" >/dev/null
+}
+
 # --- main -------------------------------------------------------------------
 
 start_server
@@ -517,6 +568,7 @@ scenario_note_verify;         echo
 scenario_observer;            echo
 scenario_cds_prefill;         echo
 scenario_persisted_users;     echo
+scenario_demo_mode;           echo
 
 echo "──────────────────────────────────────────"
 echo "agent-browser E2E: $PASS passed, $FAIL failed"
