@@ -21,7 +21,8 @@
     "test:lib": "node --import tsx --test \"src/**/*.test.ts\"",
     "test:e2e": "bash web/tests/agent-browser/run.sh",
     "test:real-local": "bash scripts/real-backend-localnode.sh",
-    "demo:orchestrator": "node scripts/orchestrator-demo.mjs"
+    "demo:orchestrator": "node scripts/orchestrator-demo.mjs",
+    "orchestrator:real": "tsx scripts/orchestrator-real.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
