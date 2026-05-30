@@ -31,4 +31,9 @@ public/curie-live-demo.webm
 scripts/record-live-demo.mjs
 remotion/*
 .claude/*
+# …but DO commit agents/skills/hooks (see comment above; matches what
+# .claude/skills/{context7-mcp,spec-author} already shipped with).
+!.claude/agents/
+!.claude/skills/
+!.claude/hooks/
 contracts/scripts/restore-real-platform.ts

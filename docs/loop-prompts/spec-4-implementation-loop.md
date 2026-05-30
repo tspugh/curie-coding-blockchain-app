@@ -65,7 +65,7 @@ the cron. The harness will summarize context as needed.
 | TDD | **Sonnet** | Write the failing test first; verify dev's pass |
 | coverage | **Sonnet** | Run coverage; report per-spec gaps |
 | design-conformance | **Sonnet** | Compare UI tree to prototype; queue gaps |
-| browser-verify | **Sonnet** | Drive live UI via agent-browser; assert scenarios |
+| browser-verify | **Sonnet** | Drive live UI via the `agent-browser` skill (`.claude/skills/agent-browser/SKILL.md`); assert scenarios. The subagent MUST load the skill (and run `agent-browser skills get core` for the version-matched workflow guide) before issuing any browser commands. `agent-browser` lives at `~/.npm-global/bin/agent-browser` and is NOT on the default PATH — prepend it explicitly. |
 | solidity-compliance | **Opus** | Critical gate — reentrancy, access control, gas, OZ patterns |
 | security-review | **Opus** | Critical gate — `/security-review` skill on diff |
 | strict-review | **Opus** | **Critical gatekeeper — total stickler. Zero findings required for steady state.** |
@@ -123,7 +123,7 @@ Creativity mode: dispatch one **dev** subagent on a freshly-created `creativity/
    - Backwards-compat hacks introduced without explicit justification
    - "Three similar lines" copy-paste that should have been DRY'd; OR premature abstractions
    Writes `docs/progress/strict-review-findings.md`. **Zero findings required.**
-8. **Browser-verify subagent** (Sonnet) — uses agent-browser to drive the live web UI against the contract on Somnia testnet. Scenarios:
+8. **Browser-verify subagent** (Sonnet) — invokes the `agent-browser` skill (`.claude/skills/agent-browser/SKILL.md`) and follows its snapshot-and-ref workflow (`agent-browser skills get core` for the live guide) to drive the web UI against the deployed contract on Somnia testnet. Existing scenarios live in `web/tests/agent-browser/run.sh`; new R20-R23 per-affordance scenarios extend that file. The CLI is at `~/.npm-global/bin/agent-browser` — export `PATH="$HOME/.npm-global/bin:$PATH"` before invoking. Scenarios:
    - **R2:** all 3 curated cases — `partd-approvable`, `commercial-policy-void`, `medicaid-denied-then-appealed` — full end-to-end (create → submit evidence → arbiter ruling → settlement/appeal).
    - **R2a:** custom-case path — autofill from a curated case, edit at least 2 fields, create real on-chain contract.
    - **R2b T2b suite:**
