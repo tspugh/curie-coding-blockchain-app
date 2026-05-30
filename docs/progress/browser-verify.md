@@ -1,9 +1,35 @@
 # Browser-verify
 
-Last run: tick 107 — 2026-05-30 — **sim-mode harness 83/83 PASS**. Added
-since tick-103 (79/80): L7 fix (tick 105 — 80/80) + L5 (tick 106, 3 new
-assertions, all green tick 107). All 17 sim-mode scenarios green; no
-regressions on the original 13 or the 4 ticks-90-93 L scenarios.
+Last run: tick 110 — 2026-05-30 — **sim-mode harness 89/89 PASS**. Added
+since tick-107 (83/83): M1 (tick 109, R21 first arbiter-twin — Scenario A's
+denial mirror, 6 new assertions, all green). All 19 sim-mode scenarios
+green; no regressions on the previous 18.
+
+## Tick 110 — M1 verification re-run
+
+Final re-run after M1 added in tick 109. Increment vs tick-107 baseline:
+
+```
+Scenario M1: denial happy-path (file -> engage -> Deny -> both accept -> Settled)
+  ✓ M1: filed in Open
+  ✓ M1: insurer engaged -> Ready
+  ✓ M1: Deny ruling routes to Denied
+  ✓ M1: covered=0 on Denied
+  ✓ M1: settle on Denied -> Settled (terminal)
+  ✓ M1: covered=0 carries through to Settled
+```
+
+Confirms `settle()` accepts Denied as well as Approved (per the
+require at `CoverageNegotiation.sol`); coveredAmount of 0 carries
+through to the Settled terminal state unchanged. Closes the
+"Denied is permanently stuck pre-terminal" misread that some readers
+might have of the state machine.
+
+Total: **89 passed, 0 failed** across 19 scenarios. Up from 83/83
+(tick 107). R21 status: 1 of 4 arbiter-reaching twins complete (M1 done;
+L1-twin and L2-twin remaining; C2 doesn't need a twin).
+
+## Tick 107 — L5 verification re-run
 
 ## Tick 107 — L5 verification re-run
 
