@@ -36,23 +36,30 @@ links … are exempt") vs **already-covered indirectly**.
 These each need a named Scenario in `run.sh` per R20. Each is a single
 focused-unit's worth of follow-up.
 
-| testid | View | Effect | Suggested Scenario |
-|---|---|---|---|
-| `evidence-text` + `evidence-submit` | Detail.tsx | provider submits evidence on an EvidenceRequested state | "L1: evidence resubmission re-fires arbiter (R9 follow-up round)" |
-| `appeal-evidence` + `appeal-submit` | Detail.tsx | losing party appeals with new public evidence | "L2: appeal advances round counter + re-fires arbiter (R12 / appeal-ladder-enforcement)" |
-| `refuse-submit` | Detail.tsx | provider refuses insurer terms → ProviderRefused | "L3: provider-refuse from Ready → ProviderRefused terminal (R7/T7)" |
-| `withdraw-submit` | Detail.tsx | (TBD — verify intended effect) | "L4: withdraw flow asserts terminal state" |
-| `feedback-text` + `feedback-submit` | Detail.tsx | post-ruling feedback capture | "L5: feedback submit persists / displays per spec" |
-| `verify-onchain` | Detail.tsx (button) | provider/insurer re-verifies note hash on chain | "L6: verify-onchain round-trip succeeds for a known-good note" |
-| `engage-policy-custom` | Detail.tsx (insurer engage panel) | toggles the custom-policy composer ON (vs library pick) | "L7: custom-policy path — name + 1 clause + voids flag → engage; asserts policyHash matches custom" |
-| `custom-policy-name` + `custom-policy-clauses` | Detail.tsx | inputs in the custom-policy composer | covered by L7 |
-| `load-demo-evidence` | Create.tsx (assumed) | populates evidence-text from a demo file | "L8: load-demo-evidence prefills evidence-text" |
-| `error-card-dismiss` + `error-card-retry` | Detail.tsx ErrorCard | dismisses / retries a failed action | "L9: ErrorCard dismiss clears; retry re-fires last action" |
-| `users-remove-<id>` (Settings) | Settings.tsx (template) | removes a registered DemoUser | partially in I/K via remove-key-paste-bob; need generic "users-remove flow" Scenario |
-| `create-payer-line` | Create.tsx | selects which payer-line the request targets (drives ladder) | "L10: payer-line selection round-trips on createContract; verified in negotiation.payerLine" |
+| testid | Status | Notes |
+|---|---|---|
+| `evidence-text` + `evidence-submit` | **DONE (L1, tick 91, `07fa2ba`)** | Full follow-up-round Scenario; R9 covered |
+| `appeal-evidence` + `appeal-submit` | **DONE (L2, tick 92, `18f5d81`)** | Appeal from Denied; R12 / appeal-ladder covered |
+| `refuse-submit` | **DONE (L3, tick 90, `6e11b88`)** | ProviderRefused terminal; R7/T7 covered |
+| `withdraw-submit` | **DONE (L4, tick 93, `6d3dc23`)** | Withdrawn terminal; no engage required |
+| `feedback-text` + `feedback-submit` | **OPEN (L5)** | `client.negotiation.postFeedback(reqId, hashContent(text), ZERO_HASH)` — real chain action. Scenario should fire after a Settled state (post-ruling capture). Verify event emit + state read-back. |
+| `verify-onchain` (the div container) | **MIS-CLASSIFIED — exempt** | `<div className="verify-onchain">` is a display container that shows a Somnia Explorer anchor (`verify-onchain-link`); not a clickable affordance. Re-categorize as pure-display. The anchor is exempt per the "pure-navigation" carve-out. |
+| `engage-policy-custom` + `custom-policy-name` + `custom-policy-clauses` | **OPEN (L7)** | Custom-policy composer path: insurer toggles `engage-policy-custom`, fills name + ≥1 clause, hits `engage-submit`; the resulting `policyHash` on chain matches `hashContent(<composed-string>)`. Closes SPEC-0005 R15 + R16 visibility. |
+| `load-demo-evidence` | **MIS-CLASSIFIED — exempt** | `onClick={() => setEvidenceText(SAMPLE_CASE.additionalEvidenceRef)}` — pure local React state mutation; no contract write, no localStorage write, no route change. Re-categorize as R20-exempt per the "crosses a layer boundary" criterion. |
+| `error-card-dismiss` | **MIS-CLASSIFIED — exempt** | The ErrorCard's `onDismiss` callback (passed from parent) typically just clears React error state. No chain write, no storage. Re-categorize as R20-exempt. |
+| `error-card-retry` | **OPEN (L9-retry only)** | The ErrorCard's `onRetry` callback re-fires whatever action just failed — may include a chain write. Real R20 gap. Scenario should: induce a deterministic failure (e.g. underflow on `accept` from non-party), assert ErrorCard renders, click retry, assert the re-fire reaches the next observable state. |
+| `users-remove-<id>` (Settings) | **PARTIALLY DONE** | Scenarios I + K already exercise `users-remove-key-paste-bob` indirectly. The generic "remove arbitrary user" path is covered by the same code path; no further Scenario needed unless we add a specific edge case (removing the *active* user — known to be blocked per `userStore`). |
+| `create-payer-line` | **OPEN (L10)** | Select which payer-line on `createContract`; verify `getNegotiation(reqId).payerLine` round-trips. Closes the ladder-selection sliver of SPEC-0004 §2.5. |
 
-(12 gaps. Each is a 1-tick atomic unit. Suggested labels L1-L10 keep
-naming aligned with the existing A-K Scenario letters.)
+**Tally after tick-100 revision: 12 → 4 actual open R20 gaps:**
+1. **L5** — feedback-submit (chain action, real Scenario needed)
+2. **L7** — custom-policy composer (closes SPEC-0005 R15 + R16)
+3. **L9-retry** — ErrorCard retry path (re-fires chain action)
+4. **L10** — create-payer-line round-trip
+
+The other 8 originally-listed items either landed (L1/L2/L3/L4) or are
+mis-classified (verify-onchain container, load-demo-evidence pure-React,
+error-card-dismiss pure-React, users-remove already covered).
 
 ## R20-exempt — pure-display / read-only testids (no Scenario required)
 
