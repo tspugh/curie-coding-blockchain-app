@@ -935,14 +935,23 @@ scenario_custom_policy() {
   ab wait 100 >/dev/null
 
   # Fill composer fields via the controlled-input DOM-set pattern.
+  # Single-clause body sidesteps the bash → JS newline-escape coalescing
+  # that the tick-103 multi-line variant tripped on (see
+  # docs/progress/browser-verify.md tick-103 L7 finding). The R15 + R16
+  # spec text only requires "name + 1..N clauses" — one clause exercises
+  # the composer + the policy-preview hash readout end-to-end.
   ev "(()=>{const el=document.querySelector('[data-testid=custom-policy-name]');const s=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;s.call(el,'Plan-X PA criteria');el.dispatchEvent(new Event('input',{bubbles:true}));return el.value})()" >/dev/null
-  ev "(()=>{const el=document.querySelector('[data-testid=custom-policy-clauses]');const s=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;s.call(el,'Must approve under PA\nStep therapy required first');el.dispatchEvent(new Event('input',{bubbles:true}));return el.value.length})()" >/dev/null
+  ev "(()=>{const el=document.querySelector('[data-testid=custom-policy-clauses]');const s=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;s.call(el,'Must approve under PA');el.dispatchEvent(new Event('input',{bubbles:true}));return el.value.length})()" >/dev/null
   ab wait 150 >/dev/null
 
-  # R16 policy-preview should report "2 clauses" (parsed from the textarea).
-  case "$(ab get text "[data-testid=policy-preview]" | tail -1)" in
-    *"2 clauses"*) echo "  ✓ L7: R16 policy-preview reports 2 clauses"; PASS=$((PASS + 1));;
-    *) echo "  ✗ L7: policy-preview did not show '2 clauses'"; FAIL=$((FAIL + 1));;
+  # R16 policy-preview should report "1 clause" (singular per
+  # Detail.tsx:766 `clause${clauseCount === 1 ? "" : "s"}`). Read the
+  # element's textContent via eval — `ab get text` returns only one
+  # descendant node, not the full subtree (verified during the tick-104
+  # debug; it would return just the hash-preview footer here).
+  case "$(ev "(document.querySelector('[data-testid=policy-preview]')||{}).textContent||''")" in
+    *"1 clause"*) echo "  ✓ L7: R16 policy-preview reports 1 clause"; PASS=$((PASS + 1));;
+    *) echo "  ✗ L7: policy-preview did not show '1 clause' — textContent=[$(ev "(document.querySelector('[data-testid=policy-preview]')||{}).textContent||''")]"; FAIL=$((FAIL + 1));;
   esac
 
   # Submit engage → Ready (state=1) with a non-zero policyHash.
