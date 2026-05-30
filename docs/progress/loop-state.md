@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 142 — Added `scripts/verify-deploy.ts` read-only operator tool + `npm run verify-deploy` script. Reads VITE_CONTRACT_ADDRESS from .env, calls 8 view functions on the deployed contract, asserts expected state for Amendment 0006 self-hosted mode. **Ran against the live Tick C deployment: 8/8 checks PASS** — selfHosted=true ✓, platform==orchestrator EOA ✓, owner==orchestrator EOA ✓, agentId set, agentReward/rulingTimeout/maxRounds sane, bytecode present (12,723 bytes). Zero STT cost (read-only). Reusable for any future deploy.)
-**Current mode:** `impl` — Tick C deployment now ASSERTED-CORRECT via read-only verification. Steady state still gated on: real-mode browser-verify (wallet has 5.50 STT, needs ~7.35 for full sweep) OR Tick A live smoke with real Claude (needs ANTHROPIC_API_KEY).
-**Current tick:** 142
-**Last focus:** Operator tooling. Built `verify-deploy.ts` (chain-live, RPC-only, no transactions, no secrets) that anyone can run to confirm an Amendment-0006 deploy is correctly wired. Caught nothing wrong with the current deploy — all 8 checks pass against `0x2c561f33…488ac93`. Doubles as durable smoke evidence: the new contract has the expected post-Tick-C state, verified by an independent read path.
-**Last commit:** `98d9ceb` (tick 141 R49 rewrite) → tick 142 lands the verify-deploy operator tool.
+**Last updated:** 2026-05-30 (tick 143 — Loop-prompt deployed-contract address updated from the stale pre-Amendment-0006 `0x1dC5bA…3E1A` to the post-Tick-C `0x2c561f33…488ac93`. Also points readers at `npm run verify-deploy` (tick 142) for a chain-live sanity check. Trivial 1-line edit but load-bearing: future cron restarts pick up the canonical loop-prompt body, so the address citation needs to be accurate.)
+**Current mode:** `impl` — All canonical loop-prompt references now reflect the Tick C deploy. Steady state still gated on real-mode browser-verify or Tick A live smoke with real Claude.
+**Current tick:** 143
+**Last focus:** Canonical-source-of-truth hygiene. Loop-prompt is the version-controlled source that future cron restarts (and any human reader) will consult; an out-of-date address there silently sends operators to the wrong contract. Now consistent with README.md (tick 139) + loop-state.md.
+**Last commit:** `2ae6da2` (tick 142 verify-deploy) → tick 143 lands the loop-prompt address refresh.
 
 **Tick 122 reviewer history:**
 - Security-review iter-1 (Opus): **PASS** zero MEDIUM+. One in-scope LOW (enforce `WEI_CAP` via `.refine`, not `.describe()`) — applied before strict-review.
@@ -72,7 +72,7 @@
 **SPEC-0005 §3.6 sim-mode milestone holds:** R20 + R21 + R23 all done.
 Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 
-**Verdict table after tick 142:**
+**Verdict table after tick 143:**
 
 | Gate | Verdict |
 |---|---|

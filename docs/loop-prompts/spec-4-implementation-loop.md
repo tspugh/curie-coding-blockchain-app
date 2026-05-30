@@ -175,7 +175,7 @@ deprecated (see "On token budget" at the top). All of:
 ## Where the wallet + chain config live
 
 - Dev wallet address: `0x204031FA1ad46a2D453b7c54fC28Ff1787Bd9128` (refill at https://testnet.somnia.network/ or via the Discord faucet; check balance at https://shannon-explorer.somnia.network/address/0x204031FA1ad46a2D453b7c54fC28Ff1787Bd9128).
-- Deployed contract: `0x1dC5bA6771A7f4426ABE5BB808a7d51BdEA33E1A`.
+- Deployed contract: `0x2c561f339a0A15cf0550cb9a0880Bb341488ac93` (Amendment 0006 selfHosted build, deployed 2026-05-30 in R25 Tick C; verify via `npm run verify-deploy`). Previous build `0x1dC5bA6771A7f4426ABE5BB808a7d51BdEA33E1A` is no longer the active address — pre-Amendment-0006 no-op end-to-end.
 - Agent fee: `350000000000000000` wei (0.35 STT per ruling).
 - RPC: `https://api.infra.testnet.somnia.network/`. WebSocket: `wss://api.infra.testnet.somnia.network/ws`.
 - Explorer: https://shannon-explorer.somnia.network/.
