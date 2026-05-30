@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 145 — loop-state rotated. Moved 681 lines of historical content (reviewer-history blocks 122-128, tick-summary blocks 115-120/107-113/98-106/90-96, stale verdict tables, old queues) to `loop-state-archive.md`. Active loop-state file shrinks from 693 lines / 108KB → 65 lines / ~4KB (94% reduction). Reduces per-tick context-load burn meaningfully. Wallet check at tick start: 5.50 STT — no change since tick 142 (no funding refresh).)
+**Last updated:** 2026-05-30 (tick 146 — specs/README.md status refresh. The index had three stale "blocked on Tick C" references and a "To do next" paragraph that described Tick C as upcoming work. Tick C shipped in tick 139; all downstream doc updates (amendments, loop-prompts, loop-state) already reflected this, but the spec index was not updated. Fixed: correct blockers (wallet/API key, not Tick C), correct browser-verify count (22 scenarios not 21), correct "To do next" (real-mode run, not Tick C deploy). No code change; doc hygiene only. Wallet: 5.50 STT — no change.)
 **Current mode:** `impl` — steady state still gated on real-mode browser-verify against `0x2c561f33…488ac93` (wallet 5.50 STT < ~7.35 needed for full sweep; or `ANTHROPIC_API_KEY` for smaller Tick A smoke).
-**Current tick:** 145
-**Last focus:** Loop infrastructure maintenance. Rotated old reviewer-history + tick-summary blocks to a dedicated archive file. Active loop-state now scoped to: current header + verdict table + queue + a pointer at the archive. Historical record preserved verbatim in `loop-state-archive.md`.
-**Last commit:** `36ec316` (tick 144 simulated.ts transition tests) → tick 145 lands the loop-state rotation.
+**Current tick:** 146
+**Last focus:** Spec index hygiene. `docs/specs/README.md` had stale "blocked on Tick C" text in three places (SPEC-0003, SPEC-0004, SPEC-0005 entries + "To do next" paragraph). Updated to reflect that Tick C is done (tick 139), verify-deploy is 8/8 (tick 142), and the real-mode blocker is now wallet balance + API key.
+**Last commit:** `61323a1` (tick 145 loop-state rotation) → tick 146 lands the spec README update.
 
 > **History rotation note (tick 145):** earlier reviewer-history blocks (ticks
 > 122-128), tick-summary blocks (115-120, 107-113, 98-106, and the older 90-96
@@ -48,7 +48,7 @@ contract**, blocked on either wallet refund (need ~8 STT total; current 5.50)
 OR `ANTHROPIC_API_KEY` for a smaller-scope Tick A live smoke (current STT
 sufficient for that).
 
-**Top-of-queue going into tick 145:**
+**Top-of-queue going into tick 147:**
 1. **Tick A live smoke test** — single requestAdjudication via orchestrator
    + Claude SDK on `0x2c561f33…`. Affordable (~0.5 STT). Requires
    `ANTHROPIC_API_KEY`.
