@@ -77,7 +77,55 @@ require either:
 | **(a1) Reverse-engineer validator-accepted ABI** | Heavy (need access to validator runtime or empirical fire-and-observe) | High — even if found, the upstream operator can change it again | Not recommended. |
 | **(a2) Fetch IPFS metadata** | Light (read AgentRegistry, follow IPFS hash) | Medium — depends on whether agent owner kept metadata current | Worth attempting as a quick check before committing to (c). |
 
-## Recommended next implementation tick
+## Tick-99 probe results (option a2 ATTEMPTED, RESULT: infeasible without further reverse-engineering)
+
+Ran `contracts/scripts/probe-agent-abi.ts` against the live Somnia testnet
+registry at `0x08D1Fc808f1983d2Ea7B63a28ECD4d8C885Cd02A`:
+
+```
+registry getTotalAgents() reverted: execution reverted
+registry getAgent(12875401142070969085) reverted: deferred error during ABI decoding triggered accessing index 0
+```
+
+Both calls reverted. The somnia-agent-kit AgentRegistry ABI shape does
+NOT match what's actually deployed at that address. Follow-up probes
+revealed:
+
+- The address is an **EIP-1967 proxy** (130 bytes of code, starting with
+  the standard `0x608…7f360894…` shim). Implementation address read from
+  the EIP-1967 implementation slot: `0xC0D5aaF9C2E2f87f94AFf8B77C44891f99A1d764`
+  (5939 bytes — `contracts/scripts/read-1967-impl.ts` for the probe).
+- Even with the proxy correctly forwarding to the implementation, the
+  somnia-agent-kit-shaped calls fail. So either: (i) the implementation
+  uses different function names / signatures than the
+  somnia-agent-kit doc, OR (ii) base agents like the LLM Parse Website
+  (id `12875401142070969085`) are NOT registered through this contract
+  at all — they may be platform-built-in primitives registered through
+  a different surface.
+
+**Conclusion: option (a2) is infeasible from here without more
+investigation.** Continuing to probe would require either: open-source
+the platform's actual registry impl (search the verified contract code
+on the Shannon Explorer for `0xC0D5…d764`), reverse-engineer the live
+ABI from validator runtime sources, or accept that base agents have
+no on-chain ABI we can read.
+
+## Updated recommended next implementation tick
+
+**Pivot to option (c) self-deploy.** Write
+`contracts/contracts/agents/CurieLLMAgent.sol` that implements the
+`IAgentRequester` callback contract directly (the platform interface
+we already mirror at `contracts/contracts/ISomniaAgent.sol`). Deploy
+it, point `AGENT_ID` / `AGENT_PLATFORM_ADDRESS` at the new contract,
+redeploy `CoverageNegotiation` to call our own selector. Bundle with
+the pre-existing tick-49+50 redeploy debt (the 10-arg `Ruled` ABI):
+one operator action, all three wins.
+
+The diagnostic scripts (`probe-agent-abi.ts`, `check-registry-bytecode.ts`,
+`read-1967-impl.ts`) stay in `contracts/scripts/` as reusable tooling
+for future drift sweeps.
+
+## Original recommended next implementation tick — SUPERSEDED by probe results above
 
 **1. Quick check — option (a2):** call `AgentRegistry.getAgent(12875401142070969085)`
 via RPC, fetch `ipfsMetadata`, see if it carries a current ABI. Cheap — one
