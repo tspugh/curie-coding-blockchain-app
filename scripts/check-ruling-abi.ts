@@ -16,33 +16,78 @@
  *
  *   1. STATIC: the orchestrator-side `RULING_ABI_TYPES` (from
  *      `scripts/lib/ruling-abi.ts`) must match the contract decoder type list
- *      hardcoded here as `CONTRACT_DECODER_TYPES` — itself copied verbatim
- *      from `contracts/contracts/CoverageNegotiation.sol:661`. If a future
- *      contract change reorders or retypes a field, this check fires before
- *      any orchestrator submission can deliver a wrong-shape ruling on chain.
+ *      extracted at run time from `contracts/contracts/CoverageNegotiation.sol`
+ *      via `extractContractDecoderTypes()` below. Parsing the .sol file
+ *      directly removes the dual-update failure mode of a hand-copied literal
+ *      (closes tick-124 strict-review NIT-1): if the Solidity decoder is
+ *      edited, the extractor pulls the new shape automatically and this check
+ *      compares against current truth, not a stale snapshot.
  *
- *   2. ROUND-TRIP: four sample rulings (one per Decision enum value) are
- *      encoded with the orchestrator path, then decoded with the contract's
- *      type list. Every field must equal the original. Exercises the actual
- *      ethers ABI codec — catches subtler issues than the static check alone
- *      (e.g. uint16[] empty arrays, bytes32 padding, bigint→uint256 boundary).
+ *   2. ROUND-TRIP: five sample rulings (one per Decision enum value plus a
+ *      schema-ceiling sample) are encoded with the orchestrator path, then
+ *      decoded with the contract's type list. Every field must equal the
+ *      original. Exercises the actual ethers ABI codec — catches subtler
+ *      issues than the static check alone (e.g. uint16[] empty arrays,
+ *      bytes32 padding, bigint→uint256 boundary).
  *
  * Wire as `npm run check-ruling-abi`; runnable standalone as
  * `tsx scripts/check-ruling-abi.ts`. Exit code 0 = match, 1 = mismatch.
  */
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { ethers } from "ethers";
 import { Decision, encodeRuling, RULING_ABI_TYPES, type Ruling, ZERO_HASH } from "./lib/ruling-abi.js";
 
-// Source: contracts/contracts/CoverageNegotiation.sol :661 (handleResponse
-// `abi.decode` call). If you edit the on-chain decoder, edit this literal too;
-// the diff between this and RULING_ABI_TYPES will fail check #1 below.
-const CONTRACT_DECODER_TYPES: readonly string[] = [
-  "uint8", "uint256", "uint256",
-  "bytes32", "bytes32", "bytes32",
-  "uint256",
-  "uint16[]", "uint16[]", "bytes32[]",
-];
+// Source path resolved relative to this script: scripts/check-ruling-abi.ts →
+// ../contracts/contracts/CoverageNegotiation.sol. Holds whether tsx is invoked
+// from repo root, from contracts/, or anywhere else.
+const SOL_PATH = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "contracts",
+  "contracts",
+  "CoverageNegotiation.sol",
+);
+
+/**
+ * Extract the canonical contract decoder type list by parsing the
+ * `abi.decode(responses[0].result, (TYPES))` call in CoverageNegotiation.sol.
+ * Fails loud if the call cannot be located or the tuple cannot be parsed —
+ * a regression that moves or renames the decoder MUST surface as a check
+ * failure rather than a silent fall-through to a stale literal.
+ */
+function extractContractDecoderTypes(solSource: string): string[] {
+  // Matches: abi.decode(<whitespace>responses[0].result,<whitespace>(<TYPES>))
+  // The TYPES capture group is `[^)]*` — correct as long as the tuple does
+  // not nest another `)`-bearing type (none of our types do; the loud
+  // failure mode here is exactly what we want if that ever changes).
+  const pattern = /\babi\.decode\s*\(\s*responses\[0\]\.result\s*,\s*\(\s*([^)]*)\s*\)\s*\)/;
+  const match = solSource.match(pattern);
+  if (!match || !match[1]) {
+    throw new Error(
+      `could not locate 'abi.decode(responses[0].result, (...))' in CoverageNegotiation.sol — ` +
+      `the decoder may have been renamed, moved, or wrapped in a struct. ` +
+      `Update the extractor pattern in scripts/check-ruling-abi.ts and re-run.`,
+    );
+  }
+  const types = match[1].split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  if (types.length === 0) {
+    throw new Error("extracted contract decoder tuple is empty");
+  }
+  return types;
+}
+
+let CONTRACT_DECODER_TYPES: readonly string[];
+try {
+  const solSource = readFileSync(SOL_PATH, "utf8");
+  CONTRACT_DECODER_TYPES = extractContractDecoderTypes(solSource);
+} catch (err) {
+  console.error(`✗ check-ruling-abi: failed to load contract decoder types from ${SOL_PATH}`);
+  console.error(`  ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
+}
 
 function fail(msg: string): never {
   console.error(`✗ check-ruling-abi: ${msg}`);
@@ -58,7 +103,7 @@ function checkTypeListsMatch(): void {
       fail(`tuple element ${i} mismatch: encoder="${RULING_ABI_TYPES[i]}", contract="${CONTRACT_DECODER_TYPES[i]}"`);
     }
   }
-  console.log(`✓ static check: encoder type list matches contract decoder (10 elements)`);
+  console.log(`✓ static check: encoder type list matches contract decoder (${RULING_ABI_TYPES.length} elements)`);
 }
 
 function roundTrip(r: Ruling, label: string): void {
@@ -128,16 +173,17 @@ function roundTrip(r: Ruling, label: string): void {
       fail(`[${label}] usedLeafHashes[${i}] mismatch: encoded=${r.usedLeafHashes[i]}, decoded=${usedLeafHashes[i]}`);
     }
   }
-  console.log(`✓ round-trip [${label}]: ${(encoded.length - 2) / 2} bytes; all 10 fields preserved`);
+  console.log(`✓ round-trip [${label}]: ${(encoded.length - 2) / 2} bytes; all ${RULING_ABI_TYPES.length} fields preserved`);
 }
 
 function main(): void {
   // Check 1: static type-list equality.
   checkTypeListsMatch();
 
-  // Check 2: round-trip four sample rulings (one per Decision enum value).
-  // Each sample exercises a different mix of empty vs populated arrays to
-  // hit the dynamic-tail boundary in the ethers ABI codec.
+  // Check 2: round-trip five sample rulings (one per Decision enum value
+  // plus a schema-ceiling sample). Each sample exercises a different mix of
+  // empty vs populated arrays to hit the dynamic-tail boundary in the ethers
+  // ABI codec.
   roundTrip(
     {
       decision: Decision.Approve,

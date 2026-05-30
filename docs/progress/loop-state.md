@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 126 — R26 mirror linkage strengthened: existing hardhat round-trip test now uses the orchestrator's actual `encodeRuling` via dynamic import. Any orchestrator-encoder drift from the Solidity decoder fails the hardhat test loud (not just the TS-literal check). Dev caught a subtle gap: trivial value choices (Decision=0, 200 wei, all-empty arrays) made type-list corruptions byte-invisible since uint8/uint256/uint16[]/bytes32[] all encode identically for low-value/empty inputs. Upgraded to costPlus=10^18 + populated uint16[]/bytes32[] arrays; 3-corruption negative test confirmed: clean → exit 0, uint8↔uint256 swap → exit 1, uint16[]↔bytes32[] swap → exit 1.)
-**Current mode:** `impl` — SPEC-0004 R25 Ticks A + B + D + R26-repurpose + R26-gate-wired + R26-mirror-test landed. Remaining: Tick C (bundle redeploy) — blocked on operator wallet STT funding. T2b-2/3/4 + R1 mid-flow still blocked on Tick C redeploy. Deployed contract `0x1dC5bA…3E1A` is the pre-Amendment-0006 build.
-**Current tick:** 126
-**Last focus:** Hardhat-side R26 mirror linkage. `contracts/test/CoverageNegotiation.test.ts:1217` now `await import("../../scripts/lib/ruling-abi.ts")` to pull the orchestrator's real encoder — the Solidity decoder is the source of truth for shape, the TS literal in `check-ruling-abi.ts` is the static cross-check. CJS/ESM boundary handled via dynamic import (root pkg is `type: module`, hardhat ts-node is CJS). Comment block documents the byte-sensitivity reasoning per strict-review LOW-1.
-**Last commit:** `eaabcd7` (tick 125 wire check-ruling-abi into Phase 5) → tick 126 lands R26 mirror test.
+**Last updated:** 2026-05-30 (tick 127 — `check-ruling-abi.ts` provenance linkage upgraded from hardcoded TS literal to runtime parse of `CoverageNegotiation.sol`. New `extractContractDecoderTypes()` reads the .sol file, regex-matches the `abi.decode(responses[0].result, (TYPES))` call, splits + trims the type list. Closes tick-124 strict-review NIT-1 (provenance fragility). Loud-fail mode if the abi.decode call is moved/renamed/wrapped — the error message includes the file path + remediation hint. Verified via 4-way negative-test matrix: A baseline → exit 0, B corrupt .sol decoder → exit 1, C corrupt encoder lib → exit 1, D rename abi.decode → exit 1 with extractor-not-found message.)
+**Current mode:** `impl` — SPEC-0004 R25 Ticks A + B + D + R26-repurpose + R26-gate-wired + R26-mirror-test + R26-sol-parsed landed. Remaining: Tick C (bundle redeploy) — blocked on operator wallet STT funding. T2b-2/3/4 + R1 mid-flow still blocked on Tick C redeploy. Deployed contract `0x1dC5bA…3E1A` is the pre-Amendment-0006 build.
+**Current tick:** 127
+**Last focus:** Provenance linkage tightening. `scripts/check-ruling-abi.ts` previously held a hand-copied literal of the Solidity decoder type list, which would silently go stale on any contract-decoder change. Replaced with `readFileSync` + regex parse of the .sol source — the script's source-of-truth IS now the compiled-Solidity-adjacent source file, not a TS snapshot. Three LOW stickler items (stale "10 elements" + "10 fields" magic numbers + "four sample rulings" comment) cleaned up to derive from `RULING_ABI_TYPES.length`.
+**Last commit:** `c78209c` (tick 126 R26 hardhat mirror linkage) → tick 127 lands the .sol-parsed provenance upgrade.
 
 **Tick 122 reviewer history:**
 - Security-review iter-1 (Opus): **PASS** zero MEDIUM+. One in-scope LOW (enforce `WEI_CAP` via `.refine`, not `.describe()`) — applied before strict-review.
@@ -62,22 +62,22 @@
 **SPEC-0005 §3.6 sim-mode milestone holds:** R20 + R21 + R23 all done.
 Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 
-**Verdict table after tick 126:**
+**Verdict table after tick 127:**
 
 | Gate | Verdict |
 |---|---|
-| Hardhat tests | ✓ **39/39** (re-verified tick 126; mirror-test refactor PASS) |
-| `npm run check-ruling-abi` | ✓ PASS (re-verified tick 126) |
-| Lib tests | ✓ 196/196 (re-verified tick 126) |
-| R26 negative-path test | ✓ 2/2 corruptions detected (uint8↔uint256, uint16[]↔bytes32[]) |
+| `npm run check-ruling-abi` | ✓ **PASS** — static + 5/5 round-trips (re-verified tick 127) |
+| Hardhat tests | ✓ 39/39 (re-verified tick 127) |
+| Lib tests | ✓ 196/196 (re-verified tick 127) |
+| R26 negative-path matrix | ✓ 3/3 corruptions detected (baseline + corrupt .sol decoder + corrupt encoder lib + extractor-cannot-find) |
 | Browser-verify sim mode | ✓ 99/99 PASS (tick 113; not re-run — no UI change) |
 | Browser-verify real mode | ✗ blocked by Tick C redeploy |
-| Secret-scan | ✓ no findings across all ticks 83-126 |
-| Strict-review (Opus iter-1) | ✓ **PASS** zero MEDIUM+; LOW-1 comment accuracy applied |
+| Secret-scan | ✓ no findings across all ticks 83-127 |
+| Strict-review (Opus iter-1) | ✓ **PASS** zero MEDIUM+; 3 LOW stale-count cleanups applied |
 | Solidity-compliance / Security-review | N/A this tick (no contract / risk-bearing change) |
-| TypeScript typecheck | N/A this tick (test-only edit; project tsc unchanged) |
+| TypeScript typecheck | ✓ standalone strict `tsc` on script clean |
 
-**Remaining top-of-queue going into tick 127:**
+**Remaining top-of-queue going into tick 128:**
 1. **R25 Tick C — bundle redeploy.** Redeploy `CoverageNegotiation`
    with the 10-arg `Ruled` ABI (tick-49/50 debt) + Amendment 0006
    selfHosted mode. Update `.env`: `AGENT_PLATFORM_ADDRESS` = orchestrator
@@ -86,25 +86,23 @@ Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
    STT funding for the deploy gas.**
 2. **Optional Tick A follow-up (post-Tick-C):** end-to-end smoke test
    of the LLM path against the redeployed contract — requires
-   `ANTHROPIC_API_KEY` + funded orchestrator wallet. Currently exercised
-   only via the deterministic stub fallback (which is the gate-passing
-   default for CI).
+   `ANTHROPIC_API_KEY` + funded orchestrator wallet.
 3. **Old SPEC-0003 R49 deprecation pass.** Tick 123 added a self-hosted
    attribution note but kept the original validator-subcommittee R49
    normative text. If we abandon validator-subcommittee mode entirely,
-   R49 should be rewritten — not just annotated — to drop the
-   `executionCost` dichotomy.
-4. **Restart the cron with the updated loop prompt body.** The canonical
-   loop prompt now includes the `check-ruling-abi` gate (tick 125), but
-   the live cron `18c86caf` was created with the pre-tick-125 prompt
-   body and continues to fire that older version. Restart whenever the
-   user is in-session and willing to interrupt the loop.
-5. **Operational gotcha worth a comment block:** tick 126 nearly shipped
-   a byte-invisible mirror test (uint8↔uint256 + uint16[]↔bytes32[]
-   swaps don't change encoding for low values + empty arrays). The
-   value-choice reasoning is now documented in the test comment block.
-   A future tick could optionally extract a small "byte-sensitive test
-   fixture" helper if more contract decoders need similar mirror tests.
+   R49 should be rewritten — not just annotated.
+4. **Restart the cron with the updated loop prompt body.** Canonical loop
+   prompt now includes the `check-ruling-abi` gate (tick 125); live cron
+   `18c86caf` still fires the pre-tick-125 prompt body until restarted.
+5. **README / VISION update for Amendment 0006.** The repo's top-level
+   README + docs/VISION.md likely still describe the validator-subcommittee
+   architecture from before Amendment 0006. Updating either would make
+   the self-hosted reality visible to first-time readers. Doc-only,
+   low-risk, doesn't require any other unblock.
+6. **`check-ruling-abi` already-fires-on-test umbrella.** The check is
+   wired into the loop prompt but not into `npm test`. A future tick
+   could create a `test` umbrella script that chains hardhat + lib + e2e
+   + check-ruling-abi for one-command CI parity with the loop.
 
 **Ticks 107-113 summary** (the R20-closeout + R21-completion sprint):
 - **Tick 107** (`f1b5ab3` browser-verify): L5 verified live (3/3 PASS).
