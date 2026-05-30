@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 125 — `check-ruling-abi` wired into the canonical loop-prompt Phase 5 #1 Tests gate. Appended to the existing tests bullet with a one-line rationale citing SPEC-0004 R26 + Amendment 0006. Doc-only edit to `docs/loop-prompts/spec-4-implementation-loop.md`. Gate verified still PASS — static check + 5/5 round-trips. Note: the live cron prompt body is a snapshot from before this edit, so cron-fired ticks will continue using the old prompt until the cron is restarted; the canonical file is now authoritative for future ticks and for human reference.)
-**Current mode:** `impl` — SPEC-0004 R25 Ticks A + B + D + R26-repurpose + R26-wired-into-gate landed. Remaining: Tick C (bundle redeploy with selfHosted-capable contract + 10-arg Ruled ABI) — blocked on operator wallet STT funding for deploy gas. T2b-2/3/4 + R1 mid-flow still blocked on Tick C redeploy. Deployed contract `0x1dC5bA…3E1A` is the pre-Amendment-0006 build.
-**Current tick:** 125
-**Last focus:** Tiny doc-only tick — added `npm run check-ruling-abi` to the canonical loop-prompt Phase 5 #1 Tests gate so future ticks (and cron restarts) enforce the R26-repurposed ABI shape check. Rationale link points to the Amendment 0006 doc.
-**Last commit:** `3e87f97` (tick 124 R26 repurpose build-time check) → tick 125 lands the loop-prompt wiring.
+**Last updated:** 2026-05-30 (tick 126 — R26 mirror linkage strengthened: existing hardhat round-trip test now uses the orchestrator's actual `encodeRuling` via dynamic import. Any orchestrator-encoder drift from the Solidity decoder fails the hardhat test loud (not just the TS-literal check). Dev caught a subtle gap: trivial value choices (Decision=0, 200 wei, all-empty arrays) made type-list corruptions byte-invisible since uint8/uint256/uint16[]/bytes32[] all encode identically for low-value/empty inputs. Upgraded to costPlus=10^18 + populated uint16[]/bytes32[] arrays; 3-corruption negative test confirmed: clean → exit 0, uint8↔uint256 swap → exit 1, uint16[]↔bytes32[] swap → exit 1.)
+**Current mode:** `impl` — SPEC-0004 R25 Ticks A + B + D + R26-repurpose + R26-gate-wired + R26-mirror-test landed. Remaining: Tick C (bundle redeploy) — blocked on operator wallet STT funding. T2b-2/3/4 + R1 mid-flow still blocked on Tick C redeploy. Deployed contract `0x1dC5bA…3E1A` is the pre-Amendment-0006 build.
+**Current tick:** 126
+**Last focus:** Hardhat-side R26 mirror linkage. `contracts/test/CoverageNegotiation.test.ts:1217` now `await import("../../scripts/lib/ruling-abi.ts")` to pull the orchestrator's real encoder — the Solidity decoder is the source of truth for shape, the TS literal in `check-ruling-abi.ts` is the static cross-check. CJS/ESM boundary handled via dynamic import (root pkg is `type: module`, hardhat ts-node is CJS). Comment block documents the byte-sensitivity reasoning per strict-review LOW-1.
+**Last commit:** `eaabcd7` (tick 125 wire check-ruling-abi into Phase 5) → tick 126 lands R26 mirror test.
 
 **Tick 122 reviewer history:**
 - Security-review iter-1 (Opus): **PASS** zero MEDIUM+. One in-scope LOW (enforce `WEI_CAP` via `.refine`, not `.describe()`) — applied before strict-review.
@@ -62,52 +62,49 @@
 **SPEC-0005 §3.6 sim-mode milestone holds:** R20 + R21 + R23 all done.
 Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 
-**Verdict table after tick 125:**
+**Verdict table after tick 126:**
 
 | Gate | Verdict |
 |---|---|
-| `npm run check-ruling-abi` | ✓ **PASS** — static + 5/5 round-trips (re-verified tick 125) |
-| Lib tests | ✓ 196/196 (tick 124; not re-run — doc-only diff) |
-| Hardhat tests | ✓ 39/39 (tick 124; not re-run — doc-only diff) |
+| Hardhat tests | ✓ **39/39** (re-verified tick 126; mirror-test refactor PASS) |
+| `npm run check-ruling-abi` | ✓ PASS (re-verified tick 126) |
+| Lib tests | ✓ 196/196 (re-verified tick 126) |
+| R26 negative-path test | ✓ 2/2 corruptions detected (uint8↔uint256, uint16[]↔bytes32[]) |
 | Browser-verify sim mode | ✓ 99/99 PASS (tick 113; not re-run — no UI change) |
 | Browser-verify real mode | ✗ blocked by Tick C redeploy |
-| Secret-scan | ✓ no findings across all ticks 83-125 |
-| Solidity-compliance / Security-review / Strict-review | N/A this tick (doc-only edit to loop-prompt + loop-state) |
-| TypeScript typecheck | N/A this tick (no code change) |
+| Secret-scan | ✓ no findings across all ticks 83-126 |
+| Strict-review (Opus iter-1) | ✓ **PASS** zero MEDIUM+; LOW-1 comment accuracy applied |
+| Solidity-compliance / Security-review | N/A this tick (no contract / risk-bearing change) |
+| TypeScript typecheck | N/A this tick (test-only edit; project tsc unchanged) |
 
-**Remaining top-of-queue going into tick 126:**
+**Remaining top-of-queue going into tick 127:**
 1. **R25 Tick C — bundle redeploy.** Redeploy `CoverageNegotiation`
    with the 10-arg `Ruled` ABI (tick-49/50 debt) + Amendment 0006
    selfHosted mode. Update `.env`: `AGENT_PLATFORM_ADDRESS` = orchestrator
    EOA; `COVERAGE_CONTRACT_ADDRESS` = new addr; call
    `setPlatformSelfHosted` post-deploy. **Blocked on operator wallet
-   STT funding for the deploy gas.** Once unblocked, this is a single
-   focused tick: `npm --prefix contracts run deploy:somnia`, capture
-   the new address, run `setPlatformSelfHosted` via the admin script,
-   update `.env` + `.env.example` defaults, commit + push.
-2. **R26 mirror-test in hardhat.** The TS-side check-ruling-abi tests
-   the orchestrator's encoder against a hand-copied literal of the
-   contract decoder type list. A stronger linkage would be a hardhat
-   test that uses a Solidity helper to ABI-decode the orchestrator's
-   actual output bytes — that way the test source-of-truth IS the
-   compiled Solidity ABI, not a TS literal. Captured as NIT-1 from the
-   tick-124 strict-review.
-3. **Optional Tick A follow-up (post-Tick-C):** end-to-end smoke test
+   STT funding for the deploy gas.**
+2. **Optional Tick A follow-up (post-Tick-C):** end-to-end smoke test
    of the LLM path against the redeployed contract — requires
    `ANTHROPIC_API_KEY` + funded orchestrator wallet. Currently exercised
    only via the deterministic stub fallback (which is the gate-passing
    default for CI).
-4. **Old SPEC-0003 R49 deprecation pass.** Tick 123 added a self-hosted
+3. **Old SPEC-0003 R49 deprecation pass.** Tick 123 added a self-hosted
    attribution note but kept the original validator-subcommittee R49
-   normative text. If we abandon validator-subcommittee mode entirely
-   (i.e. `selfHosted` becomes the only supported mode in production),
+   normative text. If we abandon validator-subcommittee mode entirely,
    R49 should be rewritten — not just annotated — to drop the
    `executionCost` dichotomy.
-5. **Restart the cron with the updated loop prompt body.** The canonical
+4. **Restart the cron with the updated loop prompt body.** The canonical
    loop prompt now includes the `check-ruling-abi` gate (tick 125), but
    the live cron `18c86caf` was created with the pre-tick-125 prompt
    body and continues to fire that older version. Restart whenever the
    user is in-session and willing to interrupt the loop.
+5. **Operational gotcha worth a comment block:** tick 126 nearly shipped
+   a byte-invisible mirror test (uint8↔uint256 + uint16[]↔bytes32[]
+   swaps don't change encoding for low values + empty arrays). The
+   value-choice reasoning is now documented in the test comment block.
+   A future tick could optionally extract a small "byte-sensitive test
+   fixture" helper if more contract decoders need similar mirror tests.
 
 **Ticks 107-113 summary** (the R20-closeout + R21-completion sprint):
 - **Tick 107** (`f1b5ab3` browser-verify): L5 verified live (3/3 PASS).

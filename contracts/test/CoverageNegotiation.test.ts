@@ -1198,23 +1198,44 @@ describe("CoverageNegotiation", () => {
       await contract.connect(provider).requestAdjudication(reqId);
       const requestId = (await contract.getNegotiation(reqId)).pendingRequestId;
 
-      // Build the 10-tuple result the contract decodes (mirrors MockAgentPlatform's
-      // triggerRuling encoding). Approve with costPlus=200, NADAC=180, no
-      // policy-void / used-ref payloads (Approve is the simplest happy path).
-      const result = ethers.AbiCoder.defaultAbiCoder().encode(
-        [
-          "uint8",   "uint256", "uint256",
-          "bytes32", "bytes32", "bytes32",
-          "uint256",
-          "uint16[]", "uint16[]", "bytes32[]",
-        ],
-        [
-          Decision.Approve, 200n, NADAC_UNIT,
-          RATIONALE_HASH, CLAUSE_REF, STANDARD_REF,
-          RECEIPT_ID,
-          [], [], [],
-        ],
-      );
+      // Build the 10-tuple result via the orchestrator's actual encoder
+      // (`scripts/lib/ruling-abi.ts`) — this is the R26 mirror linkage. If the
+      // orchestrator's encoder shape ever drifts from `_fireAgentSelfHosted`'s
+      // decoder, this `handleResponse` call reverts inside the Solidity
+      // `abi.decode` and the test fails loud. Dynamic import sidesteps the
+      // CJS/ESM boundary (hardhat ts-node uses CJS; the lib lives under root
+      // package.json `type: module`).
+      //
+      // **Values are chosen to make the linkage byte-sensitive.** A trivial
+      // Approve with 200 wei + all-empty arrays encodes identically under
+      // many type-list permutations (Decision=0 fits any uint width; empty
+      // arrays encode as a single length=0 word regardless of element type).
+      // The values below exercise: (a) costPlusUnitPrice = 10^18, so any
+      // encoder-type-list permutation that maps this field to a narrow uint
+      // (e.g. uint8) either throws `value out-of-bounds` at encode time or
+      // decodes to a wrong value the contract logic rejects; (b) populated
+      // uint16[] and bytes32[] so element-type drift in the dynamic tail
+      // produces a decoder revert. Adjacent bytes32-vs-bytes32 swaps (rows
+      // 3/4/5) remain byte-invisible to this test by construction — those
+      // are covered by the static type-list check in
+      // `scripts/check-ruling-abi.ts`.
+      const ruleMod = await import("../../scripts/lib/ruling-abi.ts");
+      const orchestratorEncodeRuling = ruleMod.encodeRuling;
+      const result = orchestratorEncodeRuling({
+        decision: Decision.Approve,
+        costPlusUnitPrice: 10n ** 18n, // 1 ether; doesn't fit in uint8/uint16
+        nadacUnitPrice: NADAC_UNIT,
+        rationaleHash: RATIONALE_HASH,
+        clauseRef: CLAUSE_REF,
+        standardRef: STANDARD_REF,
+        receiptId: RECEIPT_ID,
+        policyVoidedClauseIndices: [], // Approve → must be empty per Zod superRefine
+        usedReferenceIndices: [1, 7, 42, 65535], // populated uint16[]
+        usedLeafHashes: [
+          ethers.id("leaf:r26-mirror:a"),
+          ethers.id("leaf:r26-mirror:b"),
+        ], // populated bytes32[]
+      });
       const response = {
         validator: orchestrator.address,
         result,
