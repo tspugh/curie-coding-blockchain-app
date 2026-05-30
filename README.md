@@ -123,17 +123,26 @@ npm --prefix contracts run deploy:somnia  # deploy to Somnia testnet (chain 5031
   ruling is mocked. Used by the web app, the library, and CI. *(All current
   demos / videos / recorded artefacts run in this mode per SPEC-0004 §2.7 R27.)*
 - **Real** — `SOMNIA_WALLET_MODE=real` + a funded `PRIVATE_KEY`. The library's
-  `RealBackend` talks to the deployed contract over ethers and submits the
-  `requestAdjudication` call to the Somnia agent platform. **The currently
-  deployed contract is a no-op end-to-end:** every real-mode adjudication
-  against `0x1dC5bA6771A7f4426ABE5BB808a7d51BdEA33E1A` terminates with
+  `RealBackend` talks to the deployed contract over ethers. Under Amendment
+  0006 (since R25 Tick C, 2026-05-30, contract address above), `_fireAgent`
+  routes through `_fireAgentSelfHosted` — the orchestrator EOA is the
+  contract's `platform`, and `scripts/orchestrator-real.ts` (Claude SDK)
+  delivers the ruling via `handleResponse`. Run the orchestrator as a
+  long-running process (`npm run orchestrator:real`) alongside the web app
+  to complete the end-to-end flow.
+
+  The previous build at `0x1dC5bA6771A7f4426ABE5BB808a7d51BdEA33E1A` was a
+  no-op end-to-end: every real-mode adjudication terminated with
   `ResponseStatus.Failed (3)` because the live registered ABI for agent
-  `12875401142070969085` does not recognise the selector our contract emits
+  `12875401142070969085` did not recognise the selector our contract emitted
   (`0x4be9280f` from `ExtractANumber(string,string,uint256,uint256,string,string,bool,uint8)`).
-  Tracked as SPEC-0004 §2.7 R25 (root-cause fix), SPEC-0003 §2.10 R48 (visibility
-  blocker), SPEC-0003 §2.10 R49 (fee-burned-vs-fee-paid attribution). Until R25
-  lands fully (Tick C), no demo / video / deck may claim end-to-end real-mode
-  arbitration (SPEC-0004 §2.7 R27 — responsible-claim gate).
+  That blocker is resolved under Amendment 0006 (self-hosted path) — see
+  `docs/amendments/0006-self-hosted-arbiter-agent.md`. SPEC-0004 §2.7 R25
+  is now design-complete + code-complete + live-deployed. SPEC-0004 §2.7
+  R27 (responsible-claim gate) still requires end-to-end smoke verification
+  on Somnia testnet with a real Claude call before demos can claim real-mode
+  arbitration; the orchestrator + ANTHROPIC_API_KEY round-trip is the
+  immediate next verification.
 
 **Amendment 0006 — self-hosted arbiter (code complete, redeploy pending).**
 [`docs/amendments/0006-self-hosted-arbiter-agent.md`](./docs/amendments/0006-self-hosted-arbiter-agent.md)
@@ -175,8 +184,12 @@ sample-ruling round-trips through the ethers ABI codec.
    `RulingRequested` events and delivers Claude-driven rulings.
 
 **Deployed testnet address:**
-`0x1dC5bA6771A7f4426ABE5BB808a7d51BdEA33E1A` (pre-Amendment-0006 build —
-no-op end-to-end per the note above; redeploy pending under Tick C).
+`0x2c561f339a0A15cf0550cb9a0880Bb341488ac93` (Amendment 0006 build,
+deployed 2026-05-30 in R25 Tick C; `selfHosted == true`, `platform == 0x204031FA1ad46a2D453b7c54fC28Ff1787Bd9128`
+— the orchestrator EOA). Previous build `0x1dC5bA6771A7f4426ABE5BB808a7d51BdEA33E1A`
+remains on-chain but is no longer the active address — kept here for historical
+reference; the `setPlatformSelfHosted` tx that flipped the new contract into
+selfHosted mode is `0xff7918df8431f00c6cf289e3518d6eb4af0dbe34ae95462100d0542de051da42`.
 
 ## Scripts
 

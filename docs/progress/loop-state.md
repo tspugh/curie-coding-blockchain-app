@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 138 — **browser-verify sim mode re-verified 99/99 PASS** via Sonnet subagent dispatch. Refreshes the tick-113-era verdict that had been cited as "stale 22+ ticks; no UI change". The 22 intervening ticks (114-137) touched contracts/, tests, scripts/, and docs/ exclusively — no web/ or src/ source changes that would affect the compiled sim bundle. All 21 scenarios green: A/B/C/C2/D/E/F/G/H/I/J/K core lifecycle; L1-L10 evidence/appeal/refuse/withdraw/feedback/policy/payer-line; M1-M3 denial twins. `docs/progress/browser-verify.md` updated with full per-scenario table; historical entries preserved.)
-**Current mode:** `impl` — sim-mode browser-verify NOW FRESH; real-mode still blocked. Only remaining blocker for steady state: real-mode browser-verify, which is blocked on Tick C bundle redeploy → operator wallet STT funding.
-**Current tick:** 138
-**Last focus:** Verification freshness. Dispatched the Sonnet browser-verify subagent to re-run the 99/99 sim-mode harness end-to-end against HEAD (`e28ec81`). The subagent confirmed no regressions: every scenario passes, scenario list unchanged from tick 113. Cost: one Sonnet subagent dispatch (~3 minutes). Value: discharges a long-standing verification-staleness concern; future steady-state self-assessment can cite a current verdict rather than a 22-tick-old one.
-**Last commit:** `e28ec81` (tick 137 state-guard coverage polish) → tick 138 lands the browser-verify refresh.
+**Last updated:** 2026-05-30 (tick 139 — **R25 TICK C BUNDLE REDEPLOY COMPLETE.** Operator wallet checked via RPC at tick start: 5.77 STT available (was unfunded for ~10 prior ticks). Deployed fresh CoverageNegotiation with Amendment 0006 selfHosted-capable code + 10-arg Ruled ABI at **`0x2c561f339a0A15cf0550cb9a0880Bb341488ac93`**. Called `setPlatformSelfHosted(0x204031FA1ad46a2D453b7c54fC28Ff1787Bd9128)` post-deploy via setup-selfhosted-2026-05-30.ts (tx `0xff7918df8431f00c6cf289e3518d6eb4af0dbe34ae95462100d0542de051da42`); verified contract.selfHosted() == true && contract.platform() == orchestrator EOA. Updated `.env` (gitignored — kept secret-clean) + README's deployed address line + the "Real" wallet-mode framing. The single steady-state blocker that has held up many ticks is NOW UNBLOCKED.)
+**Current mode:** `impl` — R25 ALL FOUR TICKS LANDED (A + B + C + D + R26 work). Last remaining gates to claim steady state: re-run browser-verify against the new contract (`0x2c561f33…`) + optionally exercise the LLM smoke (Tick A post-Tick-C).
+**Current tick:** 139
+**Last focus:** Tick C — the load-bearing on-chain action that has been queued for ~10 ticks. Wallet funding check via RPC unblocked the path; deploy + setPlatformSelfHosted both succeeded in-tick. README + loop-state updated with new addr + Amendment-0006-as-live framing.
+**Last commit:** `2b70853` (tick 138 browser-verify refresh) → tick 139 lands R25 Tick C.
 
 **Tick 122 reviewer history:**
 - Security-review iter-1 (Opus): **PASS** zero MEDIUM+. One in-scope LOW (enforce `WEI_CAP` via `.refine`, not `.describe()`) — applied before strict-review.
@@ -72,7 +72,7 @@
 **SPEC-0005 §3.6 sim-mode milestone holds:** R20 + R21 + R23 all done.
 Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 
-**Verdict table after tick 138:**
+**Verdict table after tick 139:**
 
 | Gate | Verdict |
 |---|---|
@@ -87,7 +87,8 @@ Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 | Coverage (mocks) | ✓ 100% on every metric |
 | Design-conformance | ✓ ~92% overall — PASS ≥90% gate |
 | Browser-verify sim mode | ✓ **99/99 PASS — re-verified tick 138 against HEAD `e28ec81`** (was tick 113 stale) |
-| **Browser-verify real mode** | ✗ **STILL BLOCKED on Tick C redeploy** — last remaining steady-state blocker |
+| **Browser-verify real mode** | ⚠ **Tick C UNBLOCKED tick 139** — contract redeployed at `0x2c561f33…`; re-run real-mode browser-verify against new addr is the next step toward steady state |
+| **R25 Tick C deploy** | ✓ **DONE** tick 139 — deploy tx onchain, `setPlatformSelfHosted` tx `0xff7918df…` confirmed `selfHosted==true` |
 | Secret-scan | ✓ no findings across all ticks 83-137 |
 | Strict-review / Solidity-compliance / Security-review | N/A this tick (mechanical state-guard test additions; same pattern as tick-133/135 which were iter-1 PASS'd) |
 
@@ -97,16 +98,24 @@ Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 - **R25 Tick C bundle redeploy.** The single remaining steady-state blocker. Operator wallet STT funding is the only thing holding it back. Once funded, this is a single focused tick.
 - `src/contract/simulated.ts` branch 68.63% (src/ subset still passes overall at 92.25%). Lower priority polish — does not block steady state.
 
-**Remaining top-of-queue going into tick 139:**
-1. **R25 Tick C — bundle redeploy.** The single remaining steady-state
-   blocker. Blocked on operator wallet STT funding for deploy gas.
-2. **Optional Tick A live smoke test (post-Tick-C).**
+**Remaining top-of-queue going into tick 140:**
+1. **Re-run browser-verify real mode against the new contract
+   `0x2c561f33…`.** This is the final steady-state criterion. Should
+   pass since the contract is now selfHosted-capable + the orchestrator
+   path is wired. Requires the orchestrator to be running during the
+   test (so it can deliver rulings to handleResponse).
+2. **Tick A live smoke test (the optional follow-up that's now
+   actionable).** End-to-end: web app fires an adjudication → orchestrator
+   subscribes → Claude returns a ruling → handleResponse delivers it →
+   web app sees Settled. Requires `ANTHROPIC_API_KEY` in `.env`.
 3. **`src/contract/simulated.ts` branch 68.63%.** Lower-priority polish.
-4. **A-0006 status-field flip.** Human-reviewed step.
+4. **A-0006 status-field flip** Proposed → Adopted (now defensible
+   given Tick C is live; still human-reviewed step per the README
+   Lifecycle rules).
 5. **R49 deprecation rewrite.** Premature.
 6. **Restart cron with the updated loop prompt body.** Operational.
 7. **Further state-machine branch coverage polish** — diminishing
-   returns relative to the load-bearing Tick C blocker.
+   returns.
 
 **Ticks 107-113 summary** (the R20-closeout + R21-completion sprint):
 - **Tick 107** (`f1b5ab3` browser-verify): L5 verified live (3/3 PASS).
