@@ -115,6 +115,14 @@ export {
 // --- Re-exports: appeal-ladder helpers (UNIT-UI-3) ---
 export { LADDERS, stageNameFor } from "./protocol/ladders.js";
 
+// --- Re-exports: SPEC-0005 R14 curated policy library ---
+export {
+  POLICY_LIBRARY,
+  getCuratedPolicy,
+  policiesForLine,
+} from "./data/policies.js";
+export type { CuratedPolicy, PolicyClause } from "./data/policies.js";
+
 // --- Re-exports: revert-reason mapping (UNIT-4c — Detail wire-up) ---
 export {
   extractRevertReason,
