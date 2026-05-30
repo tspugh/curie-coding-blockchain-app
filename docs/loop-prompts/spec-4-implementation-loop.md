@@ -107,7 +107,7 @@ Creativity mode: dispatch one **dev** subagent on a freshly-created `creativity/
 
 **Every gate must be green before committing.** Failing any gate → do NOT commit; re-queue the unit with the findings as context for next tick.
 
-1. **Tests** — run all: `npx hardhat test`, `pnpm test` (vitest), web E2E. **100% pass.**
+1. **Tests** — run all: `npx hardhat test`, `pnpm test` (vitest), web E2E, **`npm run check-ruling-abi`** (asserts the orchestrator's `scripts/lib/ruling-abi.ts` encoder type-list matches the contract decoder literal at `CoverageNegotiation.sol:661` AND round-trips 5 sample rulings — SPEC-0004 R26 repurposed under Amendment 0006, see [`../amendments/0006-self-hosted-arbiter-agent.md`](../amendments/0006-self-hosted-arbiter-agent.md); cheap, chain-independent, catches drift introduced by changes to either side). **100% pass.**
 2. **Coverage subagent** (Sonnet) — runs coverage tool, writes `docs/progress/coverage.md`. **≥ 85% line + branch** across `src/`, `contracts/`, `web/src/`.
 3. **Design-conformance subagent** (Sonnet) — compares current `web/src/` tree to the prototype source files in `docs/reference/ui-prototype-handoff/project/`. Writes `docs/progress/design-conformance.md`. **≥ 90% conformance** (component tree alignment + key text + key affordances; NOT pixel-diff — read JSX/HTML directly per the prototype's own README).
 4. **Secret-scan** — scan the diff vs `origin/main`. Use `gitleaks detect --no-banner --redact` if installed; else inline regex pass (`-----BEGIN [A-Z]+ PRIVATE KEY-----`, `0x[0-9a-fA-F]{64}`, `sk-[A-Za-z0-9]{32,}`, `xox[bpa]-[A-Za-z0-9-]+`, AWS/GCP key patterns). **Zero findings.**
