@@ -4,11 +4,81 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 107 — refresh after a 9-commit run closing the SPEC-0005 L-queue + R25 research+probe + harness L7 fix. **Browser-verify: 80/80 sim-mode PASS** as of tick 105. R20 audit revised tick 100: 12→4 real gaps; 3 of 4 closed this run (L10/L7/L5); only L9-retry remains.)
+**Last updated:** 2026-05-30 (tick 114 — refresh after a 7-commit run closing SPEC-0005 R20 (final mis-classification) + R21 (all 3 arbiter-reaching twins live-verified). **Browser-verify: 99/99 sim-mode PASS** as of tick 113. SPEC-0005 §3.6 R20+R21 sim-mode chunk is feature-complete; R22 (real-chain LLM verification) remains gated on SPEC-0004 R25.)
 **Current mode:** `impl` — **new top-priority blocker SPEC-0004 R25** (live agent ABI drift; real-mode adjudication is currently a no-op because the registered `IParseWebsiteAgent` ABI no longer recognises selector `0x4be9280f` that the deployed contract emits). T2b-2/3/4 + R1 mid-flow still blocked on operator wallet funding; deployed contract still needs redeploy with 10-arg Ruled ABI — see Operator notes.
-**Current tick:** 107
+**Current tick:** 114
 **Last focus:** Tick 85 landed SPEC-0005 R23 (pre-flight wallet sufficiency: `web/tests/agent-browser/cost-estimator.sh` helper + 9-test suite + Scenario A wired as the proof-of-concept — `feat(test): c07c05d`). Iter-1 Opus security-review caught HIGH H1 (RCE via attacker-controlled RPC interpolating into `python -c` source), MEDIUM M1 (private key in `argv` → `/proc/<pid>/cmdline`), LOW L1 (`set -x` echoed key), LOW L2 (caller address body-injection in JSON-RPC payload). All four fixed inline (regex+env-var-only python, `printf`-builtin stdin pipe for key, `set +x` save/restore wrapper, strict `0x+40-hex` address validator); iter-2 PASS zero findings. Opus strict-review PASS zero findings with 5 NITs documented. Then PR #14 merged in (`merge: 063ce0b`) bringing SPEC-0004 §2.7 R25/R26/R27 + SPEC-0003 §2.10 R48/R49 (renumbered from PR #14's `§2.9 R42/R43` to avoid collision with the already-landed UNIT-7a `§2.9 R42-R47` wallet-config decision). PR #14 task `TASK-3` renumbered to `TASK-4` for the same collision. **PR #14 remains OPEN against `main`** on GitHub; merged into `spec-4-implementation` only. **SPEC-0005 done (key-paste arm)**: R6/R7/R8/R10/R11 (key-paste arm)/R12/R13/R14/R15/R16/R17/R19/R23 + R1 skeleton. **SPEC-0005 open**: R1 mid-flow (T74b — operator-blocked on R18), R20/R21/R22 (NEW), R23 broader-scenario-rollout (1 of N scenarios wired). **SPEC-0004 open (new from merge)**: R25 (regenerate IParseWebsiteAgent / switch AGENT_ID / self-deploy), R26 (CI ABI drift check), R27 (responsible-claim gate on demos). **SPEC-0003 open (new from merge)**: R48 (real-mode adjudication success gate before Decision 1), R49 (R4 attribution distinguishes fee-burned-no-work from fee-paid-LLM-ran).
-**Last commit:** `004d17f` (tick 106 L5 feedback-submit Scenario) → tick 107 lands this refresh.
+**Last commit:** `b1fb89d` (tick 113 browser-verify R21-done at 99/99) → tick 114 lands this refresh.
+
+**Ticks 107-113 summary** (the R20-closeout + R21-completion sprint):
+- **Tick 107** (`f1b5ab3` browser-verify): L5 verified live (3/3 PASS).
+  Harness 83/83 across 18 scenarios.
+- **Tick 108** (`3c08468` audit revision): L9-retry mis-classified as
+  R20-exempt. `ErrorCard` is rendered at `Detail.tsx:391` WITHOUT
+  `onRetry` — per its contract the retry button never renders. Closes
+  R20 fully: 0 remaining real gaps.
+- **Tick 109** (`5153347` M1): R21 first arbiter-twin — Scenario A's
+  denial mirror (Deny → both accept → Settled). 6 new assertions.
+  Discovered `settle()` accepts Denied as well as Approved per the
+  contract require; coveredAmount=0 carries through to Settled.
+- **Tick 110** (`1a4d78d` browser-verify): M1 verified live (6/6 PASS).
+  Harness 89/89 across 19 scenarios.
+- **Tick 111** (`5d9fdce` M2): R21 second arbiter-twin — L1's denial
+  mirror (Evidence → Deny). 5 new assertions.
+- **Tick 112** (`47bd982` M3): R21 third arbiter-twin — L2's denial
+  mirror (Deny → appeal → Deny). 5 new assertions.
+- **Tick 113** (`b1fb89d` browser-verify): M2 + M3 verified live
+  (10/10 PASS). Harness 99/99 across 21 scenarios. R21
+  feature-complete.
+
+**SPEC-0005 §3.6 sim-mode milestone:** R20 + R21 + R23 all done.
+
+| R20 affordance | Scenario | Status |
+|---|---|---|
+| evidence-submit | L1 | ✓ done |
+| appeal-submit | L2 | ✓ done |
+| refuse-submit | L3 | ✓ done |
+| withdraw-submit | L4 | ✓ done |
+| feedback-submit | L5 | ✓ done |
+| custom-policy composer | L7 | ✓ done |
+| create-payer-line | L10 | ✓ done |
+| error-card-retry | — | exempt (onRetry not wired by Detail.tsx) |
+
+| R21 twin pair | Status |
+|---|---|
+| A (Approve) ↔ M1 (Deny) → Settled | ✓ both live-verified |
+| L1 (Evidence→Approve) ↔ M2 (Evidence→Deny) | ✓ both live-verified |
+| L2 (Appeal→Approve) ↔ M3 (Appeal→Deny) | ✓ both live-verified |
+| C2 (PolicyInvalid) | no twin needed — A covers compliant→Approve |
+
+**Verdict table after tick 113:**
+
+| Gate | Verdict |
+|---|---|
+| Lib tests (`npm run test:lib`) | ✓ 196/196 (last verified tick 83) |
+| Hardhat tests (`cd contracts && npx hardhat test`) | ✓ 30/30 (last verified tick 83) |
+| Browser-verify sim mode (the 21-scenario suite) | ✓ **99/99 PASS (tick 113)** |
+| Browser-verify real mode | ✗ blocked by SPEC-0004 R25 |
+| Secret-scan | ✓ no findings across all ticks 83-113 |
+| Solidity-compliance | ✓ no `contracts/` diff in this run |
+| Security-review | ✓ all diffs reviewed PASS (last Opus pass tick 85) |
+| Strict-review | ✓ all diffs reviewed PASS or N/A |
+
+**Remaining top-of-queue going into tick 115:**
+1. **SPEC-0004 R25 option (c)** — self-deploy `CurieLLMAgent.sol`.
+   Multi-tick effort (contract design + Hardhat deploy script + redeploy
+   `CoverageNegotiation` with new selector + the tick-49/50 10-arg `Ruled`
+   ABI). Per ticks 98/99 research, this is the only viable path; bundle
+   with the existing redeploy debt.
+2. **SPEC-0004 R26** — CI ABI drift check. Depends on R25 self-deploy.
+3. **SPEC-0003 R49** — has spec inconsistency (claims "reads exclusively
+   from callback payload" but `handleResponse(reqId)` only carries reqId).
+   Needs spec clarification before implementation.
+4. **SPEC-0005 R22** — real on-chain arbiter verification. Blocked on R25.
+
+The sim-mode browser-verify suite is at terminal coverage for SPEC-0005
+§3.6 R20+R21+R23. Further progress requires either R25 unblocking real
+mode, or moving to creativity mode for unspecced features.
 
 **Ticks 98-106 summary** (the R25-research + L-queue-closeout sprint):
 - **Tick 98** (`9d04a35` docs/research R25): authored
