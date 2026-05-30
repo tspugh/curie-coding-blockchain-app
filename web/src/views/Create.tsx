@@ -16,14 +16,7 @@ import { parseAmount, shortHex } from "../shared.js";
 import { SAMPLE_CASE } from "../sampleCase.js";
 import { useWalletBalance } from "../hooks/useWalletBalance.js";
 import { ErrorCard } from "../components/ErrorCard.js";
-
-// SPEC-0003 §2.6 R31: the user's wallet must hold `requestedAmount` plus the
-// reserve for the next-step `requestAdjudication` so they can finish the
-// negotiation loop. Sourced from VITE_AGENT_FEE_WEI to match the value the
-// SDK already forwards on `requestAdjudication` (see client.ts:160).
-const AGENT_FEE_RESERVE_WEI: bigint = BigInt(
-  import.meta.env.VITE_AGENT_FEE_WEI ?? "330000000000000000",
-);
+import { AGENT_FEE_RESERVE_WEI } from "../config.js";
 
 function fmtStt(wei: bigint): string {
   // Whole-STT integer division for the user-facing message — the cap
