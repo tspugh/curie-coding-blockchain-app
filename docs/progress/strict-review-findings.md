@@ -1,3 +1,97 @@
+## Tick 85 — SPEC-0005 R23 cost-estimator (strict-review)
+
+**Date:** 2026-05-30
+**Scope:** `web/tests/agent-browser/cost-estimator.sh` (new),
+`web/tests/agent-browser/cost-estimator.test.sh` (new),
+`web/tests/agent-browser/run.sh` (sourced + Scenario A pre-flight call).
+
+**Verdict:** PASS (zero findings promoted)
+
+### CRITICAL
+- (none)
+
+### MEDIUM
+- (none)
+
+### LOW
+- (none)
+
+### NITs (not promoted)
+- `cost-estimator.sh:50-55` — the comment "Pass the key via argv so it never
+  appears in process listing as part of the script body" is misleading: argv
+  IS the process listing (`/proc/<pid>/cmdline` exposes it to the same user
+  for the brief lifetime of the `node` process). The comment's *intent*
+  (keep it out of the script literal so `bash -x` of the helper file
+  doesn't echo it) is partially true — but `bash -x` of run.sh would still
+  echo the expanded `"$key"` argv. Practical risk is low (testnet-only key,
+  trusted dev machine), and stdin-fed heredoc would be the strictly safer
+  alternative. Not promoted: aligns with current testnet operator model.
+- `cost-estimator.sh:86, 111, 114, 118` — `python3 -c "...$VAR..."` strings
+  interpolate shell variables into python source. Inputs are
+  caller-supplied (`writes`, `arbiters`) or RPC-derived (`hex`) or
+  internally computed integers, all of which are practically
+  integer-shaped, but the construct is injection-shaped. A `python3 -
+  <<<"$VAR"` or argv-passed alternative would be a hardening win. Not
+  promoted: out-of-scope tightening.
+- `cost-estimator.sh:111` — no validation that `$writes` / `$arbiters` are
+  non-negative integers; a typo'd `assert_wallet_sufficient "X" -6 1` would
+  silently compute a negative need and always pass. Edge case noted; tests
+  cover happy-path math (T2/T4/T5) and short-balance (T3/T6) only.
+- `cost-estimator.test.sh:22` — diagnostic `rc=$?` on the failure branch
+  captures `[ -z "$out" ]`'s exit code (always 1 when reached), not the
+  function's. Cosmetic; doesn't affect pass/fail.
+- `cost-estimator.sh` — RPC-failure (rc=4/5) and derivation-failure
+  (rc=2/3) paths are coded but not unit-tested. Acceptable: error branches
+  are loud-by-fail-loud (printf to stderr + non-zero return), and the
+  test-balance override exercises the success path.
+- Spec-text-vs-impl: SPEC-0005 §3.6 R23 expresses the cost as
+  `Σ(estimatedGas_i × maxFeePerGas) + agentFeeReserve × arbiterCallCount`
+  (per-tx gas); the helper collapses to
+  `writes × COST_GAS_PER_WRITE_UPPER × COST_MAX_FEE_WEI + arbiters ×
+  COST_AGENT_FEE_WEI` (single upper-bound gas × write_count). This is an
+  intentional upper-bound simplification documented in the file header,
+  and the spec language ("computes the upper-bound STT cost") supports it.
+  Not drift.
+
+### Cross-checks performed
+- Ran `bash web/tests/agent-browser/cost-estimator.test.sh` — all 6 tests
+  PASS as claimed. T3 message-format asserts the full literal prefix
+  (`"T3 scenario: insufficient balance: needed "`), the literal infixes
+  (`" STT, have "`, `" STT, short "`), and the literal suffix
+  (`"fund 0xDEAD…0002 at https://testnet.somnia.network/$"` anchored with
+  end-of-line `$`) — strong exact-match coverage of the spec's
+  R23 message format.
+- T6 verifies the wei→STT arithmetic to 4dp: 6 writes × 250k × 1e11 +
+  3.5e17 = 5.0e17 wei = `0.5000 STT`; have 1e17 = `0.1000 STT`; short
+  4.0e17 = `0.4000 STT`. Arithmetic checks out.
+- IS_REAL gate at `web/src/client.ts:38` is `VITE_WALLET_MODE === "real"`;
+  helper at `cost-estimator.sh:102` mirrors as
+  `"${VITE_WALLET_MODE:-}" != "real"` (skip when not real). Consistent
+  with the convention. `COST_FORCE_CHECK=1` test-override is gated such
+  that production runs never see it. Good.
+- Spec named the helper file path (§3.6 R23, §4 deliverable 7): file
+  exists at `web/tests/agent-browser/cost-estimator.sh`. Match.
+- run.sh:46 sources the helper near the top (under `set -uo pipefail`).
+  Scenario A:150 calls `assert_wallet_sufficient "Scenario A" 6 1 || exit
+  2` BEFORE the first `open_app` and first write. Sequencing satisfies
+  the spec's "before each integration Scenario fires its first write tx."
+- Write-count audit for Scenario A: createContract, insurerEngage,
+  requestAdjudication, accept (insurer), accept (provider), settle = 6
+  writes. Matches the literal `6` passed. Arbiter calls: the single
+  `adjudicate-submit` triggers 1 arbiter ruling. Matches `1`.
+- Tunables (`COST_GAS_PER_WRITE_UPPER`, `COST_MAX_FEE_WEI`,
+  `COST_AGENT_FEE_WEI`, `COST_RPC_URL`, `COST_TEST_BALANCE_WEI`,
+  `COST_FORCE_CHECK`, `COST_ENV_FILE`) — all consumed at least once
+  (none dead). `${VAR:-default}` consistent across the file.
+- Private-key flow end-to-end: `key` read via grep+cut into a local
+  shell var; passed as `argv[1]` to a node ESM snippet; node prints
+  ONLY `wallet.address`. Key is never echoed, logged, included in any
+  stderr/stdout path of the helper, or written to any file. Spec
+  invariant ("never log it, never echo it") holds. Argv exposure noted
+  in NITs above as a hardening item, not a defect at this tick.
+
+---
+
 ## Tick 83 — R11 key-paste derived-address (strict-review)
 
 **Date:** 2026-05-30

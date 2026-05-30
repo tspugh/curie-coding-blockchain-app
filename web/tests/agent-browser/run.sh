@@ -38,6 +38,13 @@ URL="${URL:-http://localhost:4173/}"
 AB="${AGENT_BROWSER:-agent-browser}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 
+# SPEC-0005 R23: pre-flight wallet sufficiency helper. Scenarios that fire
+# write txs call `assert_wallet_sufficient <name> <writes> <arbiters>` early
+# so a short balance fails loud with funding instructions instead of
+# reverting opaquely mid-flow. Real-mode-only; sim-mode returns 0 silently.
+# shellcheck source=cost-estimator.sh
+. "$(dirname "${BASH_SOURCE[0]}")/cost-estimator.sh"
+
 PASS=0
 FAIL=0
 SERVER_PID=""
@@ -135,6 +142,12 @@ start_server() {
 # ===========================================================================
 scenario_happy_path() {
   echo "Scenario A: happy-path lifecycle (file → engage → adjudicate(approve) → accept → settle)"
+
+  # SPEC-0005 R23 pre-flight: 6 write txs across this flow
+  # (createContract, insurerEngage, requestAdjudication, accept × 2, settle)
+  # plus 1 arbiter ruling (the agent-fee outlay on adjudicate). Real-mode
+  # only — sim-mode call returns 0 silently.
+  assert_wallet_sufficient "Scenario A" 6 1 || exit 2
 
   # Arrange: fresh app, file a request as the provider.
   open_app
