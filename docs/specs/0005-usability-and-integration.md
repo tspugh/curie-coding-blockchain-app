@@ -233,7 +233,176 @@ coverage so no button silently regresses.
    helper for pre-flight wallet sufficiency, called at the top of each
    Scenario that fires write txs.
 
-## 5. Out of scope (v0)
+## 5. Test cases
+
+Each entry states the scenario to cover — what must be verified — not the test
+implementation. Reference requirement IDs explicitly. Synthetic data only (R1).
+
+### 5.1 Integration test (R1–R5)
+
+- **T1 (R1) Full-loop real-wallet run.** A single agent-browser session on Somnia
+  testnet (chain 50312) drives the complete six-step sequence —
+  `createContract` → `insurerEngage` → `requestAdjudication` →
+  arbiter `handleResponse` → both parties `accept` → `settle` — against the live
+  contract using the provider wallet (`0x2040…9128`) and insurer wallet
+  (`0x140e…8C62`). Assert: on-chain `state == 6` (Settled) and the Settled event
+  names `0x2040…9128` as recipient.
+- **T2 (R2) Underfunded wallet fail-loud.** With either wallet balance set to < 0.5 STT
+  (simulated via a mocked balance check), the test asserts a failure message
+  containing the shortfall amount and the unfunded address — no silent skip.
+- **T3 (R3) Receipt capture.** After the T1 run, `docs/progress/integration-test.md`
+  contains a tx hash for each of the six on-chain steps (create, engage, adjudicate,
+  accept×2, settle).
+- **T4 (R4) Headless / headed parity.** The T1 script exits 0 (all assertions pass)
+  in both `--headless` CI mode and `--headed` dev mode. No assertion is
+  skipped based on mode.
+- **T5 (R5) Sim-mode smoke.** The same six-step flow succeeds against the simulated
+  backend (no real chain, no wallets required). Assert the UI reaches a terminal
+  Settled state.
+
+### 5.2 Layout invariants (R6–R9)
+
+- **T6 (R6) Top-bar density at 1280×800.** A screenshot at 1280×800 shows brand,
+  wallet chip, and Role selector in distinct non-overlapping columns with no text
+  truncation, no wrapping, and ≥ 12px gutter. STT balance uses tabular-numeric
+  formatting.
+- **T7 (R7) Insurer Detail single-column layout.** With `role = insurer` and any
+  request open in Detail, a screenshot shows a single full-width column — not the
+  two-column provider grid.
+- **T8 (R8) View switch returns to Overview.** From a Detail page, clicking Overview
+  in the top nav renders the Overview list, not the previous Detail. Repeat for
+  Network and Settings. No stale Detail state is visible.
+- **T9 (R9) Screenshots attached per layout R.** Each tick closing R6, R7, or R8
+  produces a named screenshot under `docs/progress/browser-verify.md` for that
+  R-number.
+
+### 5.3 Generalized user model (R10–R13)
+
+- **T10 (R10) Arbitrary N users.** Add four synthetic users (each `{id, label, address,
+  role}`) to the registry; assert all four appear in the Role pill row. The three seed
+  profiles remain present as ordinary entries.
+- **T11 (R11) Add and remove users.** Via Settings → Users: (a) add a new user with a
+  synthetic 0x address — assert it persists to `localStorage["curie:users"]` and
+  survives a page reload; (b) remove a non-active user — assert it is absent from
+  `localStorage` and from the pill row after reload.
+- **T12 (R12) Role pill row reflects registry.** When the registry contains five users,
+  five pills appear in the pill row. Adding or removing a user updates the count with
+  no reload.
+- **T13 (R13) Demo-mode quick-switch.** With the demo toggle OFF (default), the legacy
+  three-profile shortcut is hidden. Turning it ON reveals the shortcut. Toggle state
+  persists across reloads.
+
+### 5.4 Customizable insurance policy (R14–R16)
+
+- **T14 (R14) Curated policy library.** At engage time, the insurer sees ≥ 4 curated
+  policies (Part D formulary, Commercial PA-required, Medicaid step-therapy,
+  demo known-bad). Selecting each renders its name and clause list. All policy
+  names and clause text are synthetic.
+- **T15 (R15) Free-text policy override.** The insurer selects "Custom policy", enters
+  a non-empty name and ≥ 1 clause, and submits. Assert: the engage tx carries a
+  `policyHash` derived from the composed policy. Assert: submitting with an empty name
+  or zero clauses is blocked with an inline validation message.
+- **T16 (R16) Policy preview before submit.** After selecting or composing a policy,
+  a read-only summary card and hash preview appear before `engage-submit` is enabled.
+  The preview matches what is submitted (hash verified post-tx).
+
+### 5.5 Known errors + operator blockers (R17–R19)
+
+- **T17 (R17) "Account does not exist" mapped.** Triggering a write tx from an
+  unfunded address produces an ErrorCard whose headline is exactly **"Wallet has no
+  funds on Somnia testnet"** and whose *What to do* hint contains
+  `https://testnet.somnia.network/` with the active address inlined. No Retry button
+  is rendered. Covers both the raw `"account does not exist"` substring and the
+  `"could not coalesce error"` ethers v6 wrapping.
+- **T18 (R19) Pre-flight balance check.** With `balance < agentFeeReserve +
+  estimatedGas`, the write-tx button is blocked before firing. The inline error names
+  the shortfall. In simulated mode the check is bypassed and the action proceeds.
+
+### 5.6 Per-affordance integration coverage (R20–R23)
+
+- **T19 (R20) Every state-mutating affordance has a named Scenario.** A CI lint step
+  (or reviewer check) asserts: for every `data-testid` that maps to a state-mutating
+  action (contract write, arbiter trigger, localStorage write, or route-resetting nav),
+  a corresponding named Scenario exists in `web/tests/agent-browser/run.sh`.
+  Pure-navigation links are exempt.
+- **T20 (R21) Both arbiter outcomes covered.** Each arbiter-reaching flow has exactly
+  two Scenarios: one that ends with `State.Settled` (recipient = `providerAddr`) and
+  one that ends with `State.Denied` (appeal-or-close branch behaves per
+  `appeal-ladder-enforcement.md`). A flow with only one outcome fails; the missing
+  outcome has a clearly marked failing stub.
+- **T21 (R22) Real on-chain arbiter call verified.** In any Scenario claiming real-mode
+  integration coverage for an arbiter step: the assertion confirms a `Ruled` event for
+  the test run's `reqId`, a non-zero block hash, and agent tx `status === 1`. The
+  assertion message includes the mode string so a silent drop to sim is caught.
+  Sim-mode runs (R5) do not satisfy this case.
+- **T22 (R23) Pre-flight wallet sufficiency per scenario.** Before each write-tx
+  Scenario, the cost estimator (`web/tests/agent-browser/cost-estimator.sh`) computes
+  the upper-bound cost and asserts `balance ≥ cost`. A shortfall causes the Scenario
+  to fail with the exact message:
+  `insufficient balance: needed X STT, have Y STT, short Z STT — fund <addr> at https://testnet.somnia.network/`.
+
+## 6. Pass / fail criteria
+
+### PASS — all must hold
+
+- [ ] **R1:** At least one T1 run completes with on-chain `state == 6` (Settled) and
+  the settlement event recipient equals `0x2040…9128` (providerAddr).
+- [ ] **R2:** When either wallet is underfunded, the harness fails with a message that
+  names the shortfall and the unfunded address — no silent skip (T2).
+- [ ] **R3:** `docs/progress/integration-test.md` contains all six per-step tx hashes
+  after a T1 run (T3).
+- [ ] **R4:** T1 script exits 0 in both headless and headed modes (T4).
+- [ ] **R5:** Sim-mode smoke (T5) reaches Settled state with no wallet required.
+- [ ] **R6:** At 1280×800, top-bar brand + wallet chip + Role selector are
+  non-overlapping, non-truncating, and ≥ 12px apart (T6).
+- [ ] **R7:** Insurer Detail renders single-column (T7).
+- [ ] **R8:** Nav switches from Detail to Overview (and any other top-level view)
+  without retaining stale Detail state (T8).
+- [ ] **R9:** Screenshots for each closed layout R are attached under
+  `docs/progress/browser-verify.md` (T9).
+- [ ] **R10:** Profile registry supports arbitrary N users; all appear in the pill
+  row (T10).
+- [ ] **R11:** Add/remove in Settings persists to `localStorage["curie:users"]` and
+  survives reload (T11).
+- [ ] **R12:** Pill row count reflects registry size live, no reload needed (T12).
+- [ ] **R13:** Demo toggle defaults OFF; turning it ON reveals shortcut; persists
+  across reload (T13).
+- [ ] **R14:** ≥ 4 curated policies appear at engage time (T14).
+- [ ] **R15:** Custom policy validates (non-empty name + ≥ 1 clause) before allowing
+  submit; invalid inputs are blocked with an inline message (T15).
+- [ ] **R16:** Policy preview card and hash appear before `engage-submit` (T16).
+- [ ] **R17:** Unfunded-address write produces ErrorCard with headline **"Wallet has
+  no funds on Somnia testnet"**, faucet URL, inlined address, and no Retry button
+  (T17).
+- [ ] **R19:** Pre-flight balance check blocks the write-tx button with a shortfall
+  message in real mode; bypassed in sim mode (T18).
+- [ ] **R20:** Every state-mutating affordance (by `data-testid`) has a named Scenario
+  in `run.sh`; a new affordance without a Scenario fails strict-review (T19).
+- [ ] **R21:** Every arbiter-reaching flow has both an approval Scenario (Settled +
+  correct recipient) and a denial Scenario (Denied + appeal-ladder behavior) (T20).
+- [ ] **R22:** Every real-mode arbiter Scenario asserts a `Ruled` event, non-zero
+  block hash, and `status === 1`; the assertion message names the mode (T21).
+- [ ] **R23:** `cost-estimator.sh` runs before each write-tx Scenario; a shortfall
+  fails loud with the exact prescribed message (T22).
+
+### FAIL — any triggers rejection
+
+- Any fixture, note, snapshot, or test-data file contains real PHI (violates R1).
+- A Scenario that claims real-mode integration coverage for an arbiter step silently
+  falls through to sim mode without an assertion failure (violates R22).
+- A new state-mutating affordance ships without a corresponding named Scenario in
+  `run.sh` (violates R20).
+- The T1 run is claimed as green when `on-chain state ≠ 6` or the settlement
+  recipient does not equal `providerAddr` (violates R1).
+- An underfunded-wallet scenario silently skips instead of failing loud with the
+  shortfall message (violates R2, R23).
+- The ErrorCard for an `"account does not exist"` revert shows a Retry button or does
+  not surface the faucet URL (violates R17).
+- Custom-policy submission is accepted with an empty name or zero clauses without
+  an inline validation error (violates R15).
+- A layout screenshot is absent for any tick that closes R6, R7, or R8 (violates R9).
+
+## 7. Out of scope (v0)
 
 - Real KYC / wallet onboarding flows beyond a private-key paste.
 - Notification / email / Slack integration on settlement.
@@ -241,7 +410,7 @@ coverage so no button silently regresses.
 - Production-grade policy authoring (versioning, audit trail, signatures).
 - Anything the R1 integration test doesn't actually exercise.
 
-## 6. Open questions
+## 8. Open questions
 
 - **OQ1**: should the integration test run on every PR (gas cost) or only
   on nightly + release tags? v0 default: nightly + release.
@@ -251,12 +420,12 @@ coverage so no button silently regresses.
 - **OQ3**: how do the curated policies map to the existing R23
   policy-void path (amendment 0005)? Each policy declares which of its
   clauses are `voids=true`; the arbiter's R23 logic uses that flag.
-- **OQ4 (HIGH)**: this spec is missing the spec-author-standard §5 Test
-  cases and §6 Pass/fail criteria sections. R20-R23 increase the
-  surface area enough that the gap is now load-bearing — without an
-  explicit PASS gate, "every affordance has a Scenario" is unverifiable.
-  Next spec-touching tick should restructure the spec to add both
-  sections, indexed by R.
+- **OQ4 (HIGH) — CLOSED tick 148:** §5 Test cases and §6 Pass/fail
+  criteria have been added (see above). §5 indexes T1–T22 against R1–R23;
+  §6 provides explicit PASS checkbox list (one per R or group of R's, each
+  traced to a requirement) and a FAIL disqualifier list. The "every
+  affordance has a Scenario" verifiability gap is now covered by T19/R20
+  and the R20 FAIL condition.
 - **OQ5 (MED)**: R22 requires real-chain arbiter calls. Under Amendment 0006
   (Adopted 2026-05-30), the live contract is
   `0x2c561f339a0A15cf0550cb9a0880Bb341488ac93` in self-hosted mode. The
