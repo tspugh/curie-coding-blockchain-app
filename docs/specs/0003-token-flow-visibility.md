@@ -602,8 +602,11 @@ loop-detection signal is well-understood.
   carry a `cost` field.
 - **Attribution rules:** keyed by contract method →
   - `requestAdjudication` → `Outbound to agent (fee escrow)` + value, plus `Burned (gas)`.
-  - `createContract` (if it requires a deposit) → `Outbound to contract (deposit)` or
-    `Locked (escrowed)` depending on contract semantics; otherwise `Burned (gas)` only.
+  - `createContract` → `Burned (gas)` only. Verified non-payable in
+    `contracts/contracts/CoverageNegotiation.sol:354` (signature is
+    `external returns (uint256 reqId)` — no `payable`, no `msg.value`). The
+    only value-bearing call in the negotiation flow is `requestAdjudication`
+    (see Q1 closure in §8).
   - Accept/appeal/evidence (no value) → `Burned (gas)` only.
   - `Settled` / refunds → `Inbound (refund / settlement)` on the receiving wallet.
 - **Polling:** use a single shared interval (≤30s) gated on document visibility so background
@@ -661,13 +664,25 @@ sent without the user being able to see its expected and realized cost from the 
 
 ## 8. Open questions
 
-- **Q1.** Does `createContract` require a deposit today, or is the only value-bearing call
-  `requestAdjudication`? Confirm against the merged `CoverageNegotiation.sol` so R4
-  attribution names the right "Outbound to contract" cases (or removes that label).
+- **Q1 — RESOLVED tick 149.** Does `createContract` require a deposit today,
+  or is the only value-bearing call `requestAdjudication`?
+  **Answer: only `requestAdjudication` is value-bearing.** `createContract` at
+  `contracts/contracts/CoverageNegotiation.sol:354` is declared
+  `external returns (uint256 reqId)` — non-payable, no `msg.value` reference,
+  no deposit. `requestAdjudication` at line 420 is `external payable
+  nonReentrant` (carries the agent-fee escrow). R4 attribution
+  has been tightened to drop the `(if it requires a deposit)` conditional —
+  `createContract` maps to `Burned (gas)` only.
 - **Q2.** Do we want a **funding-flow shortcut** in the UI ("send X STT from `0xdD4a…6CEA`
   to `0x2040…9128`") for the dev experience, or is that out-of-scope tooling?
-- **Q3 (blocking R42).** Which resolution path do we take for the agent-ABI drift
-  documented in §2.9 — regenerate `IParseWebsiteAgent` from the live registry, switch
-  the configured `AGENT_ID` to one whose ABI matches the docs example, or deploy a fresh
-  contract against a verified selector + agent pair? Choice belongs to SPEC-0004 §2.7
-  R25's resolution; recorded here because R42 cannot close until that lands.
+- **Q3 — RESOLVED tick 149 (was: blocking R42, now R48 after merge renumber).**
+  Which resolution path do we take for the agent-ABI drift documented in §2.9?
+  **Answer: path (c) self-deploy adopted** via
+  [Amendment 0006](../amendments/0006-self-hosted-arbiter-agent.md) (Adopted
+  2026-05-30). All Ticks A+B+C+D landed; contract redeployed at
+  `0x2c561f339a0A15cf0550cb9a0880Bb341488ac93` with `selfHosted == true` and
+  `platform == orchestrator EOA`; `npm run verify-deploy` 8/8 PASS (tick 142).
+  R42 was renumbered to R48 on PR #14 merge (per the §2.10 merge note);
+  R48 is unblocked from the deploy side. Live R48 verification still requires
+  real-mode browser-verify (externally gated on wallet refund and/or
+  `ANTHROPIC_API_KEY`).
