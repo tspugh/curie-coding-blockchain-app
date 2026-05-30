@@ -188,15 +188,19 @@ coverage so no button silently regresses.
   only). Scenarios MUST distinguish their mode in the assertion message
   so a regression that silently drops to sim is caught.
 
-  *Amendment 0006 (2026-05-30): under self-hosted mode the "live agent"
-  is the orchestrator at `scripts/orchestrator-real.ts` calling
-  `claude-opus-4-7` and submitting via `handleResponse` from the
+  *Amendment 0006 (2026-05-30, Adopted): under self-hosted mode the
+  "live agent" is the orchestrator at `scripts/orchestrator-real.ts`
+  calling `claude-opus-4-7` and submitting via `handleResponse` from the
   configured platform EOA — see SPEC-0004 §2.7 Amendment 0006 status
   block. The R22 assertion shape (`Ruled` event + non-zero block hash +
-  `status === 1`) is unchanged; only the agent identity changes. Tick A
-  (orchestrator with LLM ruling) + Tick B (contract `selfHosted`
-  surface) are landed; live R22 exercise still requires Tick C bundle
-  redeploy + `setPlatformSelfHosted` configuration on Somnia testnet.*
+  `status === 1`) is unchanged; only the agent identity changes. All
+  Ticks A+B+C+D landed (contract deployed at
+  `0x2c561f339a0A15cf0550cb9a0880Bb341488ac93` with `selfHosted == true`,
+  `platform == 0x204031FA1ad46a2D453b7c54fC28Ff1787Bd9128`;
+  `npm run verify-deploy` 8/8 PASS tick 142); live R22 exercise still
+  requires (a) operator wallet refunded to ~8 STT for the full 22-Scenario
+  sweep, or (b) `ANTHROPIC_API_KEY` set for the smaller Tick A live
+  smoke (~0.5 STT, affordable at current balance).*
 - **R23 (MUST) Pre-flight wallet sufficiency per scenario.** Before
   each integration Scenario fires its first write tx, the harness
   computes the upper-bound cost of the Scenario as
@@ -253,9 +257,23 @@ coverage so no button silently regresses.
   explicit PASS gate, "every affordance has a Scenario" is unverifiable.
   Next spec-touching tick should restructure the spec to add both
   sections, indexed by R.
-- **OQ5 (MED)**: R22 requires real-chain arbiter calls; the deployed
-  agent at the contract `0x1dC5bA…3E1A` charges 0.35 STT per ruling.
-  A full R20+R21 sweep (~10 Scenarios × 2 outcomes × 1 arbiter call
-  per outcome with appeal paths possibly adding more) could cost
-  several STT per CI run. Decide before R20 lands whether to gate the
-  real-chain sweep to nightly only (per OQ1) or accept the per-PR cost.
+- **OQ5 (MED)**: R22 requires real-chain arbiter calls. Under Amendment 0006
+  (Adopted 2026-05-30), the live contract is
+  `0x2c561f339a0A15cf0550cb9a0880Bb341488ac93` in self-hosted mode. The
+  on-chain `agentReward` is still 0.35 STT per ruling; the contract forwards
+  it to the configured `platform` address, which under self-hosted mode is the
+  orchestrator EOA (`0x204031FA1ad46a2D453b7c54fC28Ff1787Bd9128` —
+  see `_fireAgentSelfHosted` at `contracts/contracts/CoverageNegotiation.sol`).
+  In the v0 dev setup where one EOA plays both provider and orchestrator (the
+  current `web/tests/agent-browser/run.sh` configuration), the agentReward is
+  paid out by the provider role and received by the orchestrator role on the
+  same wallet — so the net on-chain wallet impact per ruling is gas only. Each
+  ruling also carries an off-chain `claude-opus-4-7` call billed by Anthropic
+  to the orchestrator operator (out-of-chain cost; not visible to wallet
+  balance). A full R20+R21 sweep (~10 Scenarios × 2 outcomes × 1 arbiter call
+  per outcome with appeal paths possibly adding more) is therefore dominated
+  by Anthropic API spend rather than chain fees, when run with the same-EOA
+  dev configuration. A production-style setup with distinct provider/insurer
+  EOAs would shift 0.35 STT per ruling from each provider to the orchestrator
+  per call. Decide before R20 lands whether to gate the real-chain sweep to
+  nightly only (per OQ1) or accept the per-PR cost.

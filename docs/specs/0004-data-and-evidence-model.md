@@ -486,20 +486,34 @@ prevents on-chain ABI discovery). Implementation breakdown:
   `_fireAgentSelfHosted` with synthetic `requestId` via `keccak256(block.number,
   contract, reqId, ++nonce)` (commit `9db79d7`). Hardhat: +9 tests, 39/39 PASS;
   both Opus iter-2 reviewers PASS zero findings (commit `413962b`).
-- **Tick C — bundle redeploy.** Open. Redeploy `CoverageNegotiation` with the
-  selfHosted-capable code + tick-49/50 10-arg `Ruled` ABI debt. Post-deploy,
-  call `setPlatformSelfHosted(<orchestrator EOA>)`; update `.env`'s
-  `VITE_CONTRACT_ADDRESS` + `AGENT_PLATFORM_ADDRESS`. Blocked on operator wallet
-  STT funding for deploy gas.
+- **Tick C — bundle redeploy.** Done (tick 139, commit `770766c`). Redeployed
+  `CoverageNegotiation` with the selfHosted-capable code + tick-49/50 10-arg
+  `Ruled` ABI at `0x2c561f339a0A15cf0550cb9a0880Bb341488ac93` on Somnia testnet;
+  `setPlatformSelfHosted(0x204031FA1ad46a2D453b7c54fC28Ff1787Bd9128)` tx
+  `0xff7918df8431f00c6cf289e3518d6eb4af0dbe34ae95462100d0542de051da42`; `.env`
+  `VITE_CONTRACT_ADDRESS` + `COVERAGE_CONTRACT_ADDRESS` + `AGENT_PLATFORM_ADDRESS`
+  updated. `npm run verify-deploy` (tick 142): 8/8 read-only RPC assertions PASS
+  against the live address (`selfHosted == true`, `platform == orchestrator EOA`,
+  bytecode > 0, agent params sane).
+- **Tick D — SPEC updates.** Done (ticks 140, 141, 146, 147). Amendment 0006
+  status flipped Proposed → Adopted (tick 140, commit `4fcb32a`); SPEC-0003 R49
+  rewritten for self-hosted attribution (tick 141, commit `98d9ceb`);
+  `docs/specs/README.md` status index refreshed (tick 146, commit `5d3310c`);
+  in-spec normative text in §2.7 (this block) + §3 TASK-4 + SPEC-0005 R22 note
+  + OQ5 refreshed (tick 147).
 
-**R25 status:** design-complete + code-complete (Ticks A + B); live-verification
-pending Tick C. R26 (build-time ABI drift check) loses its original target
-under self-hosted mode — the orchestrator's ABI is the orchestrator's own code,
-not an external registry — and SHOULD be repurposed to assert the
-orchestrator's encoder matches `_fireAgentSelfHosted`'s decoder shape. R27
-(no-end-to-end-claim gate) remains in force until Tick C lands and live
-verification on Somnia testnet produces at least one `Settled` from an
-orchestrator-submitted ruling.
+**R25 status:** **complete** — design-complete + code-complete (Ticks A + B) +
+deployed + verified (Ticks C + D). Live-verification on real-mode browser-verify
+remains gated on operator wallet refund and/or `ANTHROPIC_API_KEY`, not on any
+remaining R25 work. R26 (build-time ABI drift check) was repurposed under
+self-hosted mode — the orchestrator's ABI is the orchestrator's own code, not an
+external registry — and now asserts the orchestrator's encoder matches
+`_fireAgentSelfHosted`'s decoder shape via `scripts/check-ruling-abi.ts`
+(landed) plus a hardhat mirror-test round-trip (landed). R27
+(no-end-to-end-claim gate) remains in force until live verification on Somnia
+testnet produces at least one `Settled` event from an orchestrator-submitted
+ruling — blocked on wallet refund (~8 STT for full sweep; current 5.50) and/or
+`ANTHROPIC_API_KEY` for a smaller Tick A live smoke.
 
 ## 3. Technical documentation
 
@@ -751,12 +765,16 @@ the same inputs; **the live-agent selector check is missing or failing (§2.7 R2
   ABI of agent `12875401142070969085`; pick a resolution path (regenerate
   `IParseWebsiteAgent`, switch `AGENT_ID`, or self-deploy an agent); land R26's
   build-time drift check. Blocks SPEC-0003 §2.10 R48 and the SPEC-0004 PASS
-  criterion above. **IN PROGRESS** (per Amendment 0006 status block in §2.7):
-  resolution path (c) self-deploy selected; Ticks A + B landed in commits
-  `d578716` / `95156a3` (orchestrator) and `2b410ea` / `9db79d7` (contract
-  selfHosted surface); Tick C bundle redeploy remains, blocked on operator
-  wallet STT funding. *(Renumbered from PR #14's `TASK-3` on merge to avoid
-  collision with the arbiter-prompt-design TASK-3 above.)*
+  criterion above. **DONE** (per Amendment 0006 status block in §2.7):
+  resolution path (c) self-deploy adopted; all Ticks A+B+C+D landed (orchestrator
+  commits `d578716` / `95156a3`; contract `selfHosted` surface commits `2b410ea`
+  / `9db79d7`; bundle redeploy commit `770766c` tick 139 at
+  `0x2c561f339a0A15cf0550cb9a0880Bb341488ac93`; `verify-deploy` 8/8 PASS tick
+  142). R26 build-time drift check landed as `scripts/check-ruling-abi.ts` +
+  hardhat mirror-test. SPEC-0003 §2.10 R48 unblocked from the deploy side; live
+  verification still requires real-mode browser-verify (wallet/`ANTHROPIC_API_KEY`
+  gated). *(Renumbered from PR #14's `TASK-3` on merge to avoid collision with
+  the arbiter-prompt-design TASK-3 above.)*
 
 ## Implementation plan (auxiliary)
 

@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 146 — specs/README.md status refresh. The index had three stale "blocked on Tick C" references and a "To do next" paragraph that described Tick C as upcoming work. Tick C shipped in tick 139; all downstream doc updates (amendments, loop-prompts, loop-state) already reflected this, but the spec index was not updated. Fixed: correct blockers (wallet/API key, not Tick C), correct browser-verify count (22 scenarios not 21), correct "To do next" (real-mode run, not Tick C deploy). No code change; doc hygiene only. Wallet: 5.50 STT — no change.)
+**Last updated:** 2026-05-30 (tick 147 — in-spec Tick-C status refresh. Tick 146 fixed `docs/specs/README.md`; the strict-reviewer planning subagent for tick 147 found that the *normative* spec text in SPEC-0004 §2.7 (Amendment 0006 status block "Tick C — Open" + "blocked on operator wallet STT funding") + SPEC-0004 TASK-4 ("IN PROGRESS") + SPEC-0005 §3.6 R22 Amendment 0006 note ("Tick C bundle redeploy still required") + SPEC-0005 OQ5 (cited the decommissioned contract `0x1dC5bA…3E1A` and the old 0.35 STT/ruling validator fee model) were all still stale. Same class of drift as tick 146 but in the normative spec text rather than the index. Updated: Tick C → Done with deployed contract + tx hash + verify-deploy citation; added Tick D entry (SPEC updates, ticks 140/141/146/147 — this very edit); R25 status → complete; TASK-4 → DONE; R22 note → all Ticks A+B+C+D landed; OQ5 → correct contract addr + accurate self-hosted fee flow verified via grep of `_fireAgentSelfHosted`. Secret-scan flagged the public setPlatformSelfHosted tx hash `0xff7918df…` as a regex false-positive — confirmed via RPC `eth_getTransactionByHash` that it's a real public tx (from EOA, to new contract, block 396060125) AND it's already committed at `docs/amendments/0006-self-hosted-arbiter-agent.md:8`. No code change; doc hygiene. Wallet: 5.50 STT — no change.)
 **Current mode:** `impl` — steady state still gated on real-mode browser-verify against `0x2c561f33…488ac93` (wallet 5.50 STT < ~7.35 needed for full sweep; or `ANTHROPIC_API_KEY` for smaller Tick A smoke).
-**Current tick:** 146
-**Last focus:** Spec index hygiene. `docs/specs/README.md` had stale "blocked on Tick C" text in three places (SPEC-0003, SPEC-0004, SPEC-0005 entries + "To do next" paragraph). Updated to reflect that Tick C is done (tick 139), verify-deploy is 8/8 (tick 142), and the real-mode blocker is now wallet balance + API key.
-**Last commit:** `61323a1` (tick 145 loop-state rotation) → tick 146 lands the spec README update.
+**Current tick:** 147
+**Last focus:** In-spec Tick-C status refresh. SPEC-0004 §2.7 Amendment 0006 status block + TASK-4 + SPEC-0005 §3.6 R22 note + OQ5 all carried stale "Tick C still required" or stale contract-address text. Updated to reflect deployed reality (Tick C done tick 139, verify-deploy 8/8 tick 142, A-0006 Adopted tick 140) and added a Tick D ("SPEC updates") entry consistent with the amendment's structure.
+**Last commit:** `5d3310c` (tick 146 spec README refresh) → tick 147 lands the in-spec normative text refresh.
 
 > **History rotation note (tick 145):** earlier reviewer-history blocks (ticks
 > 122-128), tick-summary blocks (115-120, 107-113, 98-106, and the older 90-96
@@ -48,7 +48,7 @@ contract**, blocked on either wallet refund (need ~8 STT total; current 5.50)
 OR `ANTHROPIC_API_KEY` for a smaller-scope Tick A live smoke (current STT
 sufficient for that).
 
-**Top-of-queue going into tick 147:**
+**Top-of-queue going into tick 148:**
 1. **Tick A live smoke test** — single requestAdjudication via orchestrator
    + Claude SDK on `0x2c561f33…`. Affordable (~0.5 STT). Requires
    `ANTHROPIC_API_KEY`.
@@ -63,3 +63,7 @@ sufficient for that).
    further closes would need helper-function tests.
 5. **State-machine branch coverage continuation in `CoverageNegotiation.sol`** —
    diminishing returns; gate is already passing.
+6. **SPEC-0005 OQ4** still open — "this spec is missing the spec-author-standard
+   §5 Test cases and §6 Pass/fail criteria sections" (HIGH). R20-R23 are now
+   landed sim-mode, which makes the structural gap a worthwhile next polish if
+   no external state changes. One-tick scope: add §5+§6 indexed by R-number.
