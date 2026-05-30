@@ -24,7 +24,8 @@
     "test:real-local": "bash scripts/real-backend-localnode.sh",
     "demo:orchestrator": "node scripts/orchestrator-demo.mjs",
     "orchestrator:real": "tsx scripts/orchestrator-real.ts",
-    "check-ruling-abi": "tsx scripts/check-ruling-abi.ts"
+    "check-ruling-abi": "tsx scripts/check-ruling-abi.ts",
+    "verify-deploy": "tsx scripts/verify-deploy.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
