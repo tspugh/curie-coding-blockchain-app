@@ -10,7 +10,9 @@ import {
   LADDERS,
   PayerLine,
   stageNameFor,
+  policiesForLine,
   type CoverageEvent,
+  type CuratedPolicy,
   type NegotiationView,
   type PolicyCommitment,
   type PriceBasis,
@@ -98,6 +100,20 @@ const STEPPER_STEPS: readonly {
  * payerLineDisplay (kept inline rather than shared to keep the diff tight; a
  * shared helper is a small future NIT closure).
  */
+/**
+ * SPEC-0005 R14: serialize a curated policy into the single-string body the
+ * insurer commits off-chain. The on-chain payload is the keccak256 of THIS
+ * string, so the format MUST be stable for clause-level replay; do not
+ * reorder or relabel without bumping the policy id.
+ */
+function renderCuratedPolicyText(policy: CuratedPolicy): string {
+  const head = `${policy.name}. ${policy.summary}`;
+  const clauseLines = policy.clauses.map(
+    (c) => `Clause ${c.id}${c.voids ? " (FLAGGED)" : ""}: ${c.text}`,
+  );
+  return [head, ...clauseLines].join(" ");
+}
+
 function payerLineDisplay(line: PayerLine): string {
   switch (line) {
     case PayerLine.PartD: return "Medicare Part D";
@@ -211,7 +227,10 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   const [error, setError] = useState<unknown>(null);
 
   const [policyText, setPolicyText] = useState("");
-  const [policyChoice, setPolicyChoice] = useState<"compliant" | "noncompliant" | null>(null);
+  // SPEC-0005 R14: the policy choice is now the curated policy's id (or
+  // null when nothing's selected yet). R15 will extend this to support a
+  // synthesised "custom-…" id for the free-text override.
+  const [policyChoice, setPolicyChoice] = useState<string | null>(null);
   const [decision, setDecision] = useState<Decision>(getNextDecision());
   const [appealEvidence, setAppealEvidence] = useState("");
   const [evidenceText, setEvidenceText] = useState("");
@@ -587,32 +606,50 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
             <div className="action">
               <p className="action-label">Choose a policy to attach:</p>
               <div className="policy-cards">
-                <button
-                  type="button"
-                  data-testid="engage-load-compliant"
-                  className={`policy-card compliant${policyChoice === "compliant" ? " selected" : ""}`}
-                  onClick={() => { setPolicyText(SAMPLE_CASE.policyText); setPolicyChoice("compliant"); }}
-                >
-                  <span className="policy-card-icon">✓</span>
-                  <strong>Standard Coverage Policy</strong>
-                  <p>Medicare Part D formulary — covers Adalimumab with prior authorization for approved indications.</p>
-                </button>
-                <button
-                  type="button"
-                  data-testid="engage-noncompliant-toggle"
-                  className={`policy-card noncompliant${policyChoice === "noncompliant" ? " selected" : ""}`}
-                  onClick={() => {
-                    setPolicyText(SAMPLE_CASE.nonCompliantPolicyText);
-                    setPolicyChoice("noncompliant");
-                    // Pre-steer the simulated AI outcome: non-compliant policy → AI asks for more evidence
-                    setDecision(Decision.NeedMoreEvidence);
-                    setNextDecision(Decision.NeedMoreEvidence);
-                  }}
-                >
-                  <span className="policy-card-icon">⚠</span>
-                  <strong>Non-Compliant Policy (Demo)</strong>
-                  <p>Contains a clause that contradicts FDA guidelines. AI will detect and void it.</p>
-                </button>
+                {policiesForLine(n.payerLine).map((policy) => {
+                  // SPEC-0005 R14: render one card per curated policy that
+                  // targets this negotiation's payer line. Preserve the legacy
+                  // testids on the corresponding canonical entries (the
+                  // canonical compliant Part D formulary keeps the
+                  // `engage-load-compliant` testid; the demo non-compliant
+                  // policy keeps `engage-noncompliant-toggle`) so the existing
+                  // harness keeps working unchanged.
+                  const isBad = policy.clauses.some((c) => c.voids);
+                  const legacyTestid =
+                    policy.id === "partd-formulary-adalimumab"
+                      ? "engage-load-compliant"
+                      : policy.id === "demo-bad-adalimumab-noncompliant"
+                        ? "engage-noncompliant-toggle"
+                        : `engage-policy-${policy.id}`;
+                  const selected = policyChoice === policy.id;
+                  return (
+                    <button
+                      key={policy.id}
+                      type="button"
+                      data-testid={legacyTestid}
+                      className={`policy-card ${isBad ? "noncompliant" : "compliant"}${selected ? " selected" : ""}`}
+                      onClick={() => {
+                        // Compose a single text body from the policy's
+                        // name + clauses for the off-chain commit; the
+                        // arbiter reads structured slices via R10 packets.
+                        const body = renderCuratedPolicyText(policy);
+                        setPolicyText(body);
+                        setPolicyChoice(policy.id);
+                        if (isBad) {
+                          // Pre-steer the simulated AI: bad policy → AI
+                          // asks for more evidence (R23 surfaces the
+                          // voided-clause indices on Ruled).
+                          setDecision(Decision.NeedMoreEvidence);
+                          setNextDecision(Decision.NeedMoreEvidence);
+                        }
+                      }}
+                    >
+                      <span className="policy-card-icon">{isBad ? "⚠" : "✓"}</span>
+                      <strong>{policy.name}</strong>
+                      <p>{policy.summary}</p>
+                    </button>
+                  );
+                })}
               </div>
               {policyChoice && (
                 <button
