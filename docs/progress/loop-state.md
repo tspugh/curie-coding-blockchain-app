@@ -4,11 +4,69 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 97 — refresh after a 7-commit run on the SPEC-0005 L-queue + browser-verify discharge + harness build-mode safety. **Browser-verify: 74/74 sim-mode PASS** as of tick 95.)
+**Last updated:** 2026-05-30 (tick 107 — refresh after a 9-commit run closing the SPEC-0005 L-queue + R25 research+probe + harness L7 fix. **Browser-verify: 80/80 sim-mode PASS** as of tick 105. R20 audit revised tick 100: 12→4 real gaps; 3 of 4 closed this run (L10/L7/L5); only L9-retry remains.)
 **Current mode:** `impl` — **new top-priority blocker SPEC-0004 R25** (live agent ABI drift; real-mode adjudication is currently a no-op because the registered `IParseWebsiteAgent` ABI no longer recognises selector `0x4be9280f` that the deployed contract emits). T2b-2/3/4 + R1 mid-flow still blocked on operator wallet funding; deployed contract still needs redeploy with 10-arg Ruled ABI — see Operator notes.
-**Current tick:** 97
+**Current tick:** 107
 **Last focus:** Tick 85 landed SPEC-0005 R23 (pre-flight wallet sufficiency: `web/tests/agent-browser/cost-estimator.sh` helper + 9-test suite + Scenario A wired as the proof-of-concept — `feat(test): c07c05d`). Iter-1 Opus security-review caught HIGH H1 (RCE via attacker-controlled RPC interpolating into `python -c` source), MEDIUM M1 (private key in `argv` → `/proc/<pid>/cmdline`), LOW L1 (`set -x` echoed key), LOW L2 (caller address body-injection in JSON-RPC payload). All four fixed inline (regex+env-var-only python, `printf`-builtin stdin pipe for key, `set +x` save/restore wrapper, strict `0x+40-hex` address validator); iter-2 PASS zero findings. Opus strict-review PASS zero findings with 5 NITs documented. Then PR #14 merged in (`merge: 063ce0b`) bringing SPEC-0004 §2.7 R25/R26/R27 + SPEC-0003 §2.10 R48/R49 (renumbered from PR #14's `§2.9 R42/R43` to avoid collision with the already-landed UNIT-7a `§2.9 R42-R47` wallet-config decision). PR #14 task `TASK-3` renumbered to `TASK-4` for the same collision. **PR #14 remains OPEN against `main`** on GitHub; merged into `spec-4-implementation` only. **SPEC-0005 done (key-paste arm)**: R6/R7/R8/R10/R11 (key-paste arm)/R12/R13/R14/R15/R16/R17/R19/R23 + R1 skeleton. **SPEC-0005 open**: R1 mid-flow (T74b — operator-blocked on R18), R20/R21/R22 (NEW), R23 broader-scenario-rollout (1 of N scenarios wired). **SPEC-0004 open (new from merge)**: R25 (regenerate IParseWebsiteAgent / switch AGENT_ID / self-deploy), R26 (CI ABI drift check), R27 (responsible-claim gate on demos). **SPEC-0003 open (new from merge)**: R48 (real-mode adjudication success gate before Decision 1), R49 (R4 attribution distinguishes fee-burned-no-work from fee-paid-LLM-ran).
-**Last commit:** `0eb0c1e` (tick 96 harness build-mode safety) → tick 97 lands this refresh.
+**Last commit:** `004d17f` (tick 106 L5 feedback-submit Scenario) → tick 107 lands this refresh.
+
+**Ticks 98-106 summary** (the R25-research + L-queue-closeout sprint):
+- **Tick 98** (`9d04a35` docs/research R25): authored
+  `docs/research/agent-abi-drift-2026-05-30.md`. Key finding: somnia-agent-kit
+  AgentRegistry struct holds `string ipfsMetadata` + `string[] capabilities`
+  but NOT a Solidity ABI directly, so PR #14 option (a) splits into (a1)
+  reverse-engineer (heavy) and (a2) fetch IPFS metadata (light probe — try first).
+- **Tick 99** (`9a1711e` research probe): wrote
+  `contracts/scripts/probe-agent-abi.ts` + 2 diag scripts; ran against live
+  Somnia testnet. **Option (a2) closed: infeasible.** The address PR #14 cited
+  is an EIP-1967 proxy (impl at `0xC0D5…d764`, 5939 bytes), and the
+  somnia-agent-kit ABI shape doesn't match the live impl — base agents like
+  `12875401142070969085` are likely platform-built-in, not user-registered.
+  Recommendation strengthened to option (c) self-deploy.
+- **Tick 100** (`2d5a89b` audit revision): R20 affordance audit revised
+  12 → 4 real gaps. Mis-classified 4 testids as exempt (verify-onchain is a
+  display div, load-demo-evidence pure-React, error-card-dismiss pure-React,
+  users-remove already covered). Closed 4 (L1/L2/L3/L4). Remaining real gaps:
+  L5 (feedback), L7 (custom-policy), L9-retry (ErrorCard retry), L10 (payer-line).
+- **Tick 101** (`1aa5915` L10): payer-line round-trip Scenario. Verifies
+  `getNegotiation(reqId).payerLine == 1` after a non-default Commercial pick.
+- **Tick 102** (`a053bad` L7): custom-policy composer Scenario. R15/R16 —
+  composer engages with non-zero policyHash.
+- **Ticks 103/104/105** (`4af38ec`, `d29ed21`): full harness re-runs.
+  Tick 103 found 79/80 (L7 had a soft preview-text assertion fail). Tick 104
+  diagnosed two intertwined causes via live agent-browser debug:
+  1. `ab get text` returns only ONE descendant text node, not the subtree.
+     Use `eval document.querySelector(...).textContent` for multi-descendant
+     elements.
+  2. The original multi-line `\n` clauses body had fiddly transit through
+     bash/base64/JS/React. Use single-clause input for the composer test.
+  Tick 105 landed the fix; harness now **80/80 PASS**.
+- **Tick 106** (`004d17f` L5): feedback-submit Scenario. Discovered the
+  tick-100 audit was wrong — postFeedback REQUIRES `!_terminal`, so the
+  Scenario fires from Open (not post-Settled as the audit suggested).
+  Asserts the input clears post-success (proves the await didn't revert).
+
+**Verdict table after tick 106:**
+
+| Gate | Verdict |
+|---|---|
+| Lib tests (`npm run test:lib`) | ✓ 196/196 (last verified tick 83) |
+| Hardhat tests (`cd contracts && npx hardhat test`) | ✓ 30/30 (last verified tick 83) |
+| Browser-verify sim mode (the 17-scenario suite) | ✓ **80/80 PASS (tick 105)**; L5 (tick 106) un-verified live yet — re-run queued for tick 107 (in flight as harness ID blv4s7z6p) |
+| Browser-verify real mode | ✗ blocked by SPEC-0004 R25 (live agent ABI drift) |
+| Secret-scan | ✓ no findings across all ticks 83-106 |
+| Solidity-compliance | ✓ no `contracts/` diff in this run |
+| Security-review | ✓ all diffs reviewed PASS (last Opus pass tick 85; subsequent test-script-only commits skipped per Phase-8 "N/A") |
+| Strict-review | ✓ all diffs reviewed PASS or N/A |
+| Coverage / Design-conformance | not re-measured this run |
+
+**SPEC-0005 R20 status:** L1/L2/L3/L4/L5/L7/L10 done (7 of 7 closed gaps after audit revision); only L9-retry remains (ErrorCard retry chain re-fire — needs a deterministic failure to induce).
+
+**Top-of-queue going into tick 108:**
+1. **SPEC-0005 L9-retry** — last R20 gap. Induce a known revert (e.g. accept from non-party); assert ErrorCard renders + retry click re-fires.
+2. **SPEC-0004 R25 option (c)** — self-deploy `CurieLLMAgent.sol`. Multi-tick effort. Per tick-98/99 research, this is the only viable path; bundles with the tick-49+50 redeploy debt.
+3. **SPEC-0004 R26** — CI ABI drift check. Depends on R25 self-deploy landing.
+4. **SPEC-0003 R49** — has spec inconsistency (claims "reads exclusively from callback payload" but `handleResponse(reqId)` only carries reqId). Needs spec clarification before implementation.
 
 **Ticks 90-96 summary** (the multi-tick L-queue + verification sprint):
 - **Tick 90** (`6e11b88` feat(test) L3): `refuse-submit` Scenario — provider refuses Ready-state contract → ProviderRefused (state=9, terminal). 5 assertions including UI badge text + button-hidden-post-terminal. R7/T7.
