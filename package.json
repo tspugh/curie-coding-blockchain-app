@@ -22,7 +22,8 @@
     "test:e2e": "bash web/tests/agent-browser/run.sh",
     "test:real-local": "bash scripts/real-backend-localnode.sh",
     "demo:orchestrator": "node scripts/orchestrator-demo.mjs",
-    "orchestrator:real": "tsx scripts/orchestrator-real.ts"
+    "orchestrator:real": "tsx scripts/orchestrator-real.ts",
+    "check-ruling-abi": "tsx scripts/check-ruling-abi.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",

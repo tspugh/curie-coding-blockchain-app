@@ -53,6 +53,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { ethers } from "ethers";
 import * as z from "zod/v4";
+import { Decision, encodeRuling, type Ruling, ZERO_HASH } from "./lib/ruling-abi.js";
 
 // ---------------------------------------------------------------------------
 // Env loader (mirrors scripts/register-agent.mjs — no dotenv dep)
@@ -104,8 +105,9 @@ const CONTRACT_ABI = [
   "event RulingRequested(uint256 indexed reqId, uint256 indexed requestId, uint256 fee)",
 ] as const;
 
-// Decision enum mirrors contracts/contracts/CoverageNegotiation.sol :91-96.
-const Decision = { Approve: 0, Deny: 1, NeedMoreEvidence: 2, PolicyInvalid: 3 } as const;
+// Decision + Ruling + encodeRuling + ZERO_HASH come from `lib/ruling-abi.ts`
+// (shared with the build-time check `scripts/check-ruling-abi.ts`, SPEC-0004
+// §2.7 R26 repurposed under Amendment 0006).
 const ResponseStatus = { None: 0, Pending: 1, Success: 2, Failed: 3, TimedOut: 4 } as const;
 
 interface NegotiationRow {
@@ -119,25 +121,6 @@ interface NegotiationRow {
   policyHash: string;
   policyUri: string;
   justificationHash: string;
-}
-
-const ZERO_HASH = "0x" + "00".repeat(32);
-
-// ---------------------------------------------------------------------------
-// Ruling shape — the 10-tuple `_fireAgent` decodes via handleResponse.
-// ---------------------------------------------------------------------------
-
-interface Ruling {
-  decision: number;
-  costPlusUnitPrice: bigint;
-  nadacUnitPrice: bigint;
-  rationaleHash: string;
-  clauseRef: string;
-  standardRef: string;
-  receiptId: bigint;
-  policyVoidedClauseIndices: number[];
-  usedReferenceIndices: number[];
-  usedLeafHashes: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -365,28 +348,6 @@ async function computeRuling(reqId: bigint, n: NegotiationRow): Promise<Ruling> 
     console.warn(`[reqId=${reqId}] LLM call failed (${err instanceof Error ? err.message : String(err)}); falling back to stub`);
     return computeStubRuling(n);
   }
-}
-
-// ---------------------------------------------------------------------------
-// Ruling encoder — produces the bytes the contract decodes (10-tuple).
-// Tuple order must match `_fireAgent` → handleResponse decoder.
-// ---------------------------------------------------------------------------
-
-function encodeRuling(r: Ruling): string {
-  return ethers.AbiCoder.defaultAbiCoder().encode(
-    [
-      "uint8", "uint256", "uint256",
-      "bytes32", "bytes32", "bytes32",
-      "uint256",
-      "uint16[]", "uint16[]", "bytes32[]",
-    ],
-    [
-      r.decision, r.costPlusUnitPrice, r.nadacUnitPrice,
-      r.rationaleHash, r.clauseRef, r.standardRef,
-      r.receiptId,
-      r.policyVoidedClauseIndices, r.usedReferenceIndices, r.usedLeafHashes,
-    ],
-  );
 }
 
 // ---------------------------------------------------------------------------

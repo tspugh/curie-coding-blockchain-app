@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 123 — R25 Tick D spec updates landed. Three additive amendments: SPEC-0004 §2.7 + TASK-4 now carry an "Amendment 0006 status" block citing the Tick A/B/C breakdown with commit SHAs; SPEC-0005 §3.6 R22 carries a self-hosted note clarifying the orchestrator is the "live agent" under Amendment 0006; SPEC-0003 §2.10 R49 carries a 3-state self-hosted attribution model since `executionCost` is always 0 with no validator subcommittee. All R-numbers unchanged; all PASS criteria untouched; R27 + R48 + R25 still gated on Tick C. Iter-1 strict-review PASS with zero MEDIUM+ findings.)
-**Current mode:** `impl` — SPEC-0004 R25 Ticks A + B + D landed. Remaining: Tick C (bundle redeploy with selfHosted-capable contract + 10-arg Ruled ABI) — blocked on operator wallet STT funding for deploy gas. T2b-2/3/4 + R1 mid-flow still blocked on Tick C redeploy. Deployed contract `0x1dC5bA…3E1A` is the pre-Amendment-0006 build.
-**Current tick:** 123
-**Last focus:** R25 Tick D — three additive italic-note edits across SPECs 0003/0004/0005 capturing the Amendment 0006 status without disturbing requirement numbers or pass criteria. The R49 (SPEC-0003) edit is the heaviest: degrades the validator-`executionCost` dichotomy into a 3-state model (orchestrator Success / orchestrator Failed / silent past `rulingDeadline`) — chain-only payload cannot distinguish fee-burned-no-work from fee-paid-LLM-ran in self-hosted mode (orchestrator pays Anthropic off-chain). SPEC-0004 R26 reframed from "moot" to "loses its original target; SHOULD be repurposed to assert orchestrator-encoder matches `_fireAgentSelfHosted` decoder" per strict-review LOW. SPEC-0004 TASK-4 downgraded OPEN → IN PROGRESS with the four Amendment 0006 commit SHAs.
-**Last commit:** `95156a3` (tick 122 R25 Tick A LLM swap) → tick 123 lands the spec updates.
+**Last updated:** 2026-05-30 (tick 124 — R26 repurposed check landed per the Tick D amendment. New `scripts/check-ruling-abi.ts` build-time check asserts the orchestrator's encoder type list matches the contract's `_fireAgentSelfHosted` → `handleResponse` decoder shape (static check) AND that round-trip encode → decode preserves every field across 5 sample rulings — one per Decision enum value plus a schema-ceiling sample at 10^30 wei / 64-element arrays / max receiptId. Cheap, chain-independent, doc-aligned. Refactor extracted the shared 10-tuple ABI module to `scripts/lib/ruling-abi.ts` so orchestrator + check share a single source of truth. Iter-1 strict-review PASS zero MEDIUM+; three LOWs (byte-count clarity, index-guard `!`, schema-ceiling sample) all applied; two NITs accepted.)
+**Current mode:** `impl` — SPEC-0004 R25 Ticks A + B + D + R26-repurpose landed. Remaining: Tick C (bundle redeploy with selfHosted-capable contract + 10-arg Ruled ABI) — blocked on operator wallet STT funding for deploy gas. T2b-2/3/4 + R1 mid-flow still blocked on Tick C redeploy. Deployed contract `0x1dC5bA…3E1A` is the pre-Amendment-0006 build.
+**Current tick:** 124
+**Last focus:** R26 repurposed under Amendment 0006. New `scripts/check-ruling-abi.ts` + shared `scripts/lib/ruling-abi.ts`; orchestrator-real.ts refactored to import the shared module (removed local Decision/ZERO_HASH/Ruling/encodeRuling — behavior byte-identical). Two-tier check: (1) static — encoder `RULING_ABI_TYPES` deep-equals contract `CONTRACT_DECODER_TYPES` literal (copied from `CoverageNegotiation.sol:661`); (2) dynamic — 5 sample rulings round-trip encode → decode bit-for-bit. Negative-path sanity tested: swapping any two type-list elements correctly trips `tuple element N mismatch` with exit 1. Wired as `npm run check-ruling-abi`.
+**Last commit:** `5a784b2` (tick 123 R25 Tick D spec updates) → tick 124 lands R26-repurpose.
 
 **Tick 122 reviewer history:**
 - Security-review iter-1 (Opus): **PASS** zero MEDIUM+. One in-scope LOW (enforce `WEI_CAP` via `.refine`, not `.describe()`) — applied before strict-review.
@@ -20,6 +20,11 @@
 - All commit SHAs verified to exist (`d578716`, `95156a3`, `2b410ea`, `9db79d7`, `413962b`).
 - R-number integrity: all R20-R23, R25-R27, R48-R49 retain original IDs and normative `MUST`/`SHOULD` text unchanged.
 - §6 PASS/FAIL criteria untouched (SPEC-0004 still demands "R25 has landed green … real `ResponseStatus.Success` ruling against the live agent on testnet" — correctly remains gated on Tick C).
+
+**Tick 124 reviewer history:**
+- Strict-review iter-1 (Opus): **PASS** zero MEDIUM+. Five findings, all addressed: LOW-1 (magic byte-count math) — applied `(encoded.length - 2) / 2`; LOW-2 (`noUncheckedIndexedAccess` not enforced on scripts/, but indices accessed without guards) — applied `!` non-null assertions to match existing pattern at line 127; LOW-3 (round-trip coverage gap — missed schema-ceiling values) — applied, new 5th sample at 10^30 wei + 64-element arrays + max receiptId; NIT-1 (`CONTRACT_DECODER_TYPES` provenance via copy-comment is fragile) — accepted; NIT-2 (`readonly string[]` widens `as const`) — applied (dropped redundant `as const`).
+- Negative-path sanity test performed: swapped `RULING_ABI_TYPES` elements 7 ↔ 9 in `lib/ruling-abi.ts`, ran `npm run check-ruling-abi`, got exit 1 with `tuple element 7 mismatch: encoder="bytes32[]", contract="uint16[]"`. Restored.
+- Refactor verified byte-identical: encoder type list and field order unchanged from pre-tick-124 inline version.
 
 **Ticks 115-120 summary** (the Amendment 0006 sprint):
 - **Tick 115** (`3cfd52a` amendment 0006): authored
@@ -57,21 +62,22 @@
 **SPEC-0005 §3.6 sim-mode milestone holds:** R20 + R21 + R23 all done.
 Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 
-**Verdict table after tick 123:**
+**Verdict table after tick 124:**
 
 | Gate | Verdict |
 |---|---|
-| Lib tests (`npm run test:lib`) | ✓ **196/196** (re-verified tick 123 — spec-only diff) |
-| Hardhat tests | ✓ **39/39** (re-verified tick 123 — spec-only diff) |
+| Lib tests (`npm run test:lib`) | ✓ **196/196** (re-verified tick 124) |
+| Hardhat tests | ✓ **39/39** (re-verified tick 124; no contract change) |
+| `npm run check-ruling-abi` (new) | ✓ **PASS** — static check + 5/5 round-trips |
 | Browser-verify sim mode | ✓ 99/99 PASS (tick 113; not re-run — no UI change) |
 | Browser-verify real mode | ✗ blocked by Tick C redeploy |
-| Secret-scan | ✓ no findings across all ticks 83-123 |
+| Secret-scan | ✓ no findings across all ticks 83-124 |
 | Solidity-compliance | ✓ iter-2 PASS (tick 119); N/A this tick (no contract change) |
-| Security-review | ✓ iter-1 PASS (tick 122); N/A this tick (spec-only) |
-| Strict-review | ✓ **iter-1 PASS** tick 123 (spec-only; zero MEDIUM+; one LOW applied) |
-| TypeScript typecheck | N/A this tick (no code change) |
+| Security-review | ✓ iter-1 PASS (tick 122); N/A this tick (no risk-bearing changes) |
+| Strict-review | ✓ **iter-1 PASS** tick 124 (zero MEDIUM+; 3 LOWs + 1 NIT applied) |
+| TypeScript typecheck | ✓ project `npm run typecheck` + standalone strict `tsc` on all three script files clean |
 
-**Remaining top-of-queue going into tick 124:**
+**Remaining top-of-queue going into tick 125:**
 1. **R25 Tick C — bundle redeploy.** Redeploy `CoverageNegotiation`
    with the 10-arg `Ruled` ABI (tick-49/50 debt) + Amendment 0006
    selfHosted mode. Update `.env`: `AGENT_PLATFORM_ADDRESS` = orchestrator
@@ -81,11 +87,12 @@ Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
    focused tick: `npm --prefix contracts run deploy:somnia`, capture
    the new address, run `setPlatformSelfHosted` via the admin script,
    update `.env` + `.env.example` defaults, commit + push.
-2. **R26 repurpose (per Tick D rephrasing).** Add a build-time check
-   that asserts the orchestrator's `encodeRuling` tuple shape matches
-   `_fireAgentSelfHosted`'s decoder — e.g. a `scripts/check-ruling-abi.ts`
-   that decodes a sample-encoded ruling and asserts every field
-   round-trips. Cheap, doc-aligned, no chain dependency.
+2. **Wire `check-ruling-abi` into the loop's CI / pre-commit gate.**
+   Tick 124 created the check but did not gate the loop on it. Add it
+   to `docs/loop-prompts/spec-4-implementation-loop.md` Phase 5 as a
+   new gate before the secret-scan gate, since it's cheap and would
+   have caught any orchestrator/contract ABI drift introduced by ticks
+   118-122.
 3. **Optional Tick A follow-up (post-Tick-C):** end-to-end smoke test
    of the LLM path against the redeployed contract — requires
    `ANTHROPIC_API_KEY` + funded orchestrator wallet. Currently exercised
