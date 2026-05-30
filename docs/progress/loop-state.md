@@ -4,11 +4,41 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 89 — SPEC-0005 R20 affordance audit landed at `docs/progress/affordance-coverage.md`; 12 state-mutating gaps queued as L1-L10. Prior ticks 87 (R27 README disclaimer) + 88 (R23 broader rollout across 6 more scenarios) also captured.)
+**Last updated:** 2026-05-30 (tick 97 — refresh after a 7-commit run on the SPEC-0005 L-queue + browser-verify discharge + harness build-mode safety. **Browser-verify: 74/74 sim-mode PASS** as of tick 95.)
 **Current mode:** `impl` — **new top-priority blocker SPEC-0004 R25** (live agent ABI drift; real-mode adjudication is currently a no-op because the registered `IParseWebsiteAgent` ABI no longer recognises selector `0x4be9280f` that the deployed contract emits). T2b-2/3/4 + R1 mid-flow still blocked on operator wallet funding; deployed contract still needs redeploy with 10-arg Ruled ABI — see Operator notes.
-**Current tick:** 89
+**Current tick:** 97
 **Last focus:** Tick 85 landed SPEC-0005 R23 (pre-flight wallet sufficiency: `web/tests/agent-browser/cost-estimator.sh` helper + 9-test suite + Scenario A wired as the proof-of-concept — `feat(test): c07c05d`). Iter-1 Opus security-review caught HIGH H1 (RCE via attacker-controlled RPC interpolating into `python -c` source), MEDIUM M1 (private key in `argv` → `/proc/<pid>/cmdline`), LOW L1 (`set -x` echoed key), LOW L2 (caller address body-injection in JSON-RPC payload). All four fixed inline (regex+env-var-only python, `printf`-builtin stdin pipe for key, `set +x` save/restore wrapper, strict `0x+40-hex` address validator); iter-2 PASS zero findings. Opus strict-review PASS zero findings with 5 NITs documented. Then PR #14 merged in (`merge: 063ce0b`) bringing SPEC-0004 §2.7 R25/R26/R27 + SPEC-0003 §2.10 R48/R49 (renumbered from PR #14's `§2.9 R42/R43` to avoid collision with the already-landed UNIT-7a `§2.9 R42-R47` wallet-config decision). PR #14 task `TASK-3` renumbered to `TASK-4` for the same collision. **PR #14 remains OPEN against `main`** on GitHub; merged into `spec-4-implementation` only. **SPEC-0005 done (key-paste arm)**: R6/R7/R8/R10/R11 (key-paste arm)/R12/R13/R14/R15/R16/R17/R19/R23 + R1 skeleton. **SPEC-0005 open**: R1 mid-flow (T74b — operator-blocked on R18), R20/R21/R22 (NEW), R23 broader-scenario-rollout (1 of N scenarios wired). **SPEC-0004 open (new from merge)**: R25 (regenerate IParseWebsiteAgent / switch AGENT_ID / self-deploy), R26 (CI ABI drift check), R27 (responsible-claim gate on demos). **SPEC-0003 open (new from merge)**: R48 (real-mode adjudication success gate before Decision 1), R49 (R4 attribution distinguishes fee-burned-no-work from fee-paid-LLM-ran).
-**Last commit:** `30e2718` (tick 88 R23 broader rollout) → tick 89 lands the R20 affordance audit + this refresh. Tick 87 was `9a7c069` (R27 README disclaimer). The R20 audit reveals 12 state-mutating affordances without Scenarios (L1-L10) — see `docs/progress/affordance-coverage.md`.
+**Last commit:** `0eb0c1e` (tick 96 harness build-mode safety) → tick 97 lands this refresh.
+
+**Ticks 90-96 summary** (the multi-tick L-queue + verification sprint):
+- **Tick 90** (`6e11b88` feat(test) L3): `refuse-submit` Scenario — provider refuses Ready-state contract → ProviderRefused (state=9, terminal). 5 assertions including UI badge text + button-hidden-post-terminal. R7/T7.
+- **Tick 91** (`07fa2ba` feat(test) L1): `evidence-submit` re-fires arbiter — create → engage → sim NeedMoreEvidence → submit evidence → sim Approve → state=4. 5 assertions including round counter advance. R9.
+- **Tick 92** (`18f5d81` feat(test) L2): `appeal-submit` re-fires from Denied — create → engage → sim Deny (state=5) → appeal → sim Approve → state=4. 5 assertions. R12 / appeal-ladder.
+- **Tick 93** (`6d3dc23` feat(test) L4): `withdraw-submit` — single-button path to Withdrawn (state=10, terminal). 4 assertions. No engage step required (contract guard is just `_onlyParty + !_terminal`).
+- **Ticks 94/95** (`7a9018f` chore browser-verify): Full harness run executed twice. **First run** (build inherited `.env`'s `VITE_WALLET_MODE=real`): 45/74 pass, 29 fail — every write-tx Scenario broke because sim-only setters can't drive real-chain state. **Second run** (explicit `VITE_WALLET_MODE=simulated`): **74/74 PASS** — all 4 new L-scenarios green end-to-end. Indirect SPEC-0004 R25 confirmation: the real-mode failure pattern matches PR #14's isolation-test finding (agent receives calldata but viem ABI-decode rejects every validator response → state never advances).
+- **Tick 96** (`0eb0c1e` fix(test) harness): `start_server` now explicitly pins `VITE_WALLET_MODE=simulated` (with `HARNESS_WALLET_MODE` env opt-out for a future real-mode-only suite). Bakes the tick-94 gotcha fix into the harness itself so a fresh shell can't trip on it again.
+
+**Verdict table after tick 96:**
+
+| Gate | Verdict |
+|---|---|
+| Lib tests (`npm run test:lib`) | ✓ 196/196 (last verified tick 83) |
+| Hardhat tests (`cd contracts && npx hardhat test`) | ✓ 30/30 (last verified tick 83) |
+| Browser-verify sim mode (74-assert suite) | ✓ 74/74 PASS (tick 95) |
+| Browser-verify real mode | ✗ blocked by SPEC-0004 R25 (live agent ABI drift) |
+| Secret-scan | ✓ no findings across all ticks 83-96 |
+| Solidity-compliance | ✓ no contracts/ diff in this run |
+| Security-review | ✓ all diffs reviewed PASS (L-scenarios used Opus reviewers in ticks 85/86; subsequent test-script-only commits skipped per Phase-8 "N/A" branch) |
+| Strict-review | ✓ all diffs reviewed PASS or N/A |
+| Coverage | not re-measured this run — last value ≥85% per tick-46 era |
+| Design-conformance | not re-measured — last value ≥90% per tick-46 era |
+
+**SPEC progress as of tick 97:**
+- **SPEC-0001 (MVP0):** R7/T7 + R9 + R12 now have agent-browser coverage (L3/L1/L2). Withdrawn terminal covered (L4).
+- **SPEC-0002 (demo + integration seam):** R7 CDS-Hooks covered (Scenario H).
+- **SPEC-0003 (token-flow visibility):** mostly UI surface; R48/R49 added by PR #14 merge (R49 — fee-burned vs fee-paid attribution — still TODO).
+- **SPEC-0004 (data + evidence):** done except §2.7 R25/R26/R27 from PR #14. R27 README disclaimer landed (tick 87). R25/R26 BLOCKERS.
+- **SPEC-0005 (usability + integration):** R6/R7/R8/R10/R11/R12/R13/R14/R15/R16/R17/R19/R23 done. R20 affordance audit landed (tick 89, `docs/progress/affordance-coverage.md`). R23 cost-estimator wired into all 7 write-tx Scenarios (ticks 85/88). L1/L2/L3/L4 done; L5/L6/L7/L8/L9/L10 remaining. R21 + R22 still pending (R22 blocked on R25).
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
 ## New findings the next planner MUST act on
