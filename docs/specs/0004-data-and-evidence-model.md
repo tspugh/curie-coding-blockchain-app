@@ -387,6 +387,84 @@ rulings are reachable, not which side wins on the contested merits.
   MAY suggest a covered same-class alternative when the requested drug fails on
   D2 or R24. v0 does not implement this; it's a V1.5 polish item.
 
+### 2.7 (2026-05-30) Agent-edge ABI drift — real-mode arbiter call blocked (Decision 7)
+
+The entire evidence-packet → arbiter → ruling pipeline this spec defines (§2.3
+evidence packets, §2.6 arbiter policy defaults) depends on the contract's
+`createRequest` payload reaching the live Somnia LLM Parse Website agent
+(`agentId = 12875401142070969085`) with a recognised selector. **As of
+2026-05-30 that call does not reach the LLM at all:** every validator in the
+subcommittee rejects the calldata at viem ABI-decode and returns the same
+error before any HTTP fetch or LLM inference runs. The platform finalises the
+request as `ResponseStatus.Failed (3)`, our `handleResponse` is invoked with
+an empty success-path, and the contract routes to `EvidenceRequested` — but
+the arbiter was never actually consulted.
+
+The selector our contract sends is `0x4be9280f`, derived from
+`ExtractANumber(string,string,uint256,uint256,string,string,bool,uint8)` per
+`docs.somnia.network/agents/base-agents/llm-parse-website`. The agent's
+*registered* ABI on chain does not contain that selector. This is **ABI
+drift between the published docs and the live registered agent**, not a bug
+in this repo's interface mirror.
+
+Why this belongs in SPEC-0004 specifically: §2.3 (evidence packets) and §2.6
+(arbiter policy defaults) define how the arbiter consumes inputs and produces
+rulings. None of that is testable end-to-end while the on-chain
+`createRequest` payload is unparseable to the agent runtime. This is *the*
+data-flow edge for this spec.
+
+- **R25 (MUST — blocker) The on-chain agent invocation MUST encode calldata
+  using a selector and ABI that match the LIVE registered ABI for the
+  configured agent id — NOT the docs-example ABI on
+  `docs.somnia.network`.** Authoritative source for the registered ABI is
+  `AgentRegistry @ 0x08D1Fc808f1983d2Ea7B63a28ECD4d8C885Cd02A` (surfaced via
+  the Somnia agent explorer; queryable on-chain). Acceptable resolutions:
+  1. Regenerate `IParseWebsiteAgent` inside
+     `contracts/contracts/ISomniaAgent.sol` from the live registry response,
+     update `CoverageNegotiation.sol:759` to call the regenerated selector,
+     redeploy.
+  2. Switch `AGENT_ID` (in `.env` + deployment constants) to a different
+     registered agent whose ABI matches the existing `ExtractANumber`
+     signature this repo already uses, and verify selector match before
+     re-firing.
+  3. Roll our own agent under a controlled id whose ABI we own.
+- **R26 (MUST) Agent-ABI drift check at build time.** Extend SPEC-0001 R19's
+  Solidity-mirror posture from covering only the *platform* interface
+  (`IAgentRequester` / `IAgentRequesterHandler`) to also cover the *agent*
+  interface our contract emits selectors for. Concretely:
+  - `scripts/check-somnia-interface.ts` (R19's drift check) MUST be extended,
+    OR a new `scripts/check-agent-abi.ts` added, that fetches the registered
+    ABI for the configured `AGENT_ID`, recomputes the selector for the
+    function our contract calls, and **fails the build / CI on mismatch**.
+  - On each commit that bumps `AGENT_ID` or the agent-interface mirror, the
+    commit body MUST cite the upstream registry response (or an equivalent
+    snapshot) — same posture R19 requires for the platform mirror.
+- **R27 (MUST) Until R25 lands green, no demo or recorded artifact MAY claim
+  end-to-end real-mode arbitration.** Simulated mode demos are fine and must
+  be labelled `(simulated — real-mode currently blocked by SPEC-0004 §2.7
+  R25)`. This is the responsible-claim gate, mirrored by SPEC-0003 §2.9 R42
+  on the visibility side.
+
+**Evidence (Somnia testnet, captured 2026-05-30):**
+
+| Item | Value |
+|---|---|
+| isolation contract | `0x063c9E322971E162D943fd36Ca59299ffB889b21` |
+| fire tx | `0x34b2b8eeb443a3638cc8c460066fc17d0bcb5fea668bd60bf7e181e1fdbd7813` |
+| validator-1 response tx | `0xc45e34b5cce8fb5d2fe02fd332c16b491386e12a3f7db1569102e2d94ae2c24e` |
+| validator-2 response tx | `0x63e85dedb6ffea96e0edbeecb03826b571bde5d57ba5af70905a3794df2cdfc9` |
+| validator-3 response tx | `0x13161d853098c8beeb22e819f485a7c6ef19a54944f2e54418e1404a0ea07912` |
+| agent id | `12875401142070969085` (LLM Parse Website) |
+| selector sent | `0x4be9280f` (`ExtractANumber(string,string,uint256,uint256,string,string,bool,uint8)`) |
+| validator error (verbatim) | `"ABI decode failed (selector=0x4be9280f): … not found on ABI. Make sure you are using the correct ABI and that the function exists on it. … viem@2.46.1"` |
+| platform finalisation | `RequestFinalized(requestId=3183908, status=3 Failed)` |
+| production contract impact | `contracts/contracts/CoverageNegotiation.sol:759` calls the same selector against the same agent id |
+
+**Cross-spec.** SPEC-0003 §2.9 (R42, R43) covers the *visibility* side
+(distinguishing fee-burned-no-work from fee-paid-LLM-ran). R25 here is the
+*root-cause fix*; once R25 lands, R42 can be verified, R43 becomes a polish
+hardening.
+
 ## 3. Technical documentation
 
 ### 3.1 Scenario storage
@@ -587,9 +665,12 @@ and the TS UI.
 
 **PASS:** all three scenarios run end-to-end; the stage picker walks the named appeal ladder;
 two runs against the same inputs are bit-identical (modulo seed); the evidence panel shows
-provenance; no fixture has a hand-PHI signature. **FAIL:** the demo only has one note; the
-arbiter consults more than one formulary; the on-chain ruling fans out to multiple agent
-calls in a round; rulings differ across runs with the same inputs.
+provenance; no fixture has a hand-PHI signature; **§2.7 R25 has landed green (live-agent
+selector match verified by `scripts/check-agent-abi.ts`) AND at least one curated case has
+produced a real `ResponseStatus.Success` ruling against the live agent on testnet.**
+**FAIL:** the demo only has one note; the arbiter consults more than one formulary; the
+on-chain ruling fans out to multiple agent calls in a round; rulings differ across runs with
+the same inputs; **the live-agent selector check is missing or failing (§2.7 R26).**
 
 ## 7. Out of scope
 
@@ -626,6 +707,12 @@ calls in a round; rulings differ across runs with the same inputs.
   formulary sources per payer line. Hand to an agent; the outputs land as the
   concrete inputs to the three curated `demo-data/scenarios/<slug>/` folders.
   **OPEN.**
+- **TASK-3 (§2.7) — Resolve live-agent ABI drift (R25).** Query
+  `AgentRegistry @ 0x08D1Fc808f1983d2Ea7B63a28ECD4d8C885Cd02A` for the registered
+  ABI of agent `12875401142070969085`; pick a resolution path (regenerate
+  `IParseWebsiteAgent`, switch `AGENT_ID`, or self-deploy an agent); land R26's
+  build-time drift check. Blocks SPEC-0003 §2.9 R42 and the SPEC-0004 PASS
+  criterion above. **OPEN.**
 - **TASK-3 — Arbiter prompt design (D2 + R10b).** The arbiter prompt encoding the
   off-label evidence threshold (D2) and gating the R10b verification call lives in
   the technical-design folder. **OPEN.**
