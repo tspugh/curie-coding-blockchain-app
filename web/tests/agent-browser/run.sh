@@ -452,6 +452,38 @@ scenario_note_verify() {
   esac
 }
 
+# ===========================================================================
+# Scenario I — persisted DemoUser → top-bar pill + Settings card
+#   (SPEC-0005 R10/R11 storage→registry→UI loop; T75b wiring)
+# ===========================================================================
+scenario_persisted_users() {
+  echo "Scenario I: persisted DemoUser → top-bar pill + Settings card (R10/R11)"
+
+  # Clean any prior state so the assertions read the seeded value.
+  open_app
+  ev "(()=>{localStorage.removeItem('curie:users'); return 'cleared'})()" >/dev/null
+  ev "(()=>{localStorage.setItem('curie:users', JSON.stringify([{id:'harness-bob',label:'Harness Bob',role:'insurer',address:'0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'}])); return 'seeded'})()" >/dev/null
+
+  # Reload so client.ts module init re-runs and the persisted user flows
+  # through loadUsers() → profileConfig → ProfileRegistry.
+  open_app
+
+  # Top-bar role pill for the persisted user must be rendered.
+  assert_eq "persisted user appears as a top-bar pill" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-harness-bob]'))")"
+
+  # Settings → Active profile must include the persisted user as a card.
+  ab find testid nav-settings click >/dev/null
+  ab wait 300 >/dev/null
+  case "$(ev "Array.from(document.querySelectorAll('.profile-card .profile-card-label')).map(e=>e.innerText).join('|')")" in
+    *Harness*Bob*) echo "  ✓ persisted user appears as a Settings card"; PASS=$((PASS + 1));;
+    *) echo "  ✗ persisted user missing from Settings cards"; FAIL=$((FAIL + 1));;
+  esac
+
+  # Cleanup so subsequent runs start from a known state.
+  ev "(()=>{localStorage.removeItem('curie:users'); return 'cleared'})()" >/dev/null
+}
+
 # --- main -------------------------------------------------------------------
 
 start_server
@@ -467,6 +499,7 @@ scenario_sample_case;         echo
 scenario_note_verify;         echo
 scenario_observer;            echo
 scenario_cds_prefill;         echo
+scenario_persisted_users;     echo
 
 echo "──────────────────────────────────────────"
 echo "agent-browser E2E: $PASS passed, $FAIL failed"
