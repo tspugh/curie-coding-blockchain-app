@@ -123,6 +123,18 @@ export {
 } from "./data/policies.js";
 export type { CuratedPolicy, PolicyClause } from "./data/policies.js";
 
+// --- Re-exports: SPEC-0005 R10/R11 user-registry storage ---
+export {
+  USERS_STORAGE_KEY,
+  addUser,
+  isDemoRole,
+  isDemoUser,
+  loadUsers,
+  removeUser,
+  saveUsers,
+} from "./users/userStore.js";
+export type { DemoRole, DemoUser } from "./users/userStore.js";
+
 // --- Re-exports: revert-reason mapping (UNIT-4c — Detail wire-up) ---
 export {
   extractRevertReason,
