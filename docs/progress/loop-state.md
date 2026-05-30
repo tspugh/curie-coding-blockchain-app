@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 129 — README + VISION updated for Amendment 0006. README's Real-Mode section now distinguishes "deployed contract is a no-op" (still true, snapshot of `0x1dC5bA…`) from "Amendment 0006 code is complete" (Ticks A + B landed; Tick C pending wallet funding). Scripts table gained 4 new entries (`test`, `check-ruling-abi`, `test:lib`, `orchestrator:real`). Project layout gained a `scripts/` block + an `amendments/` block. VISION's "consensus-verified by validators" claim softened with a parenthetical pointing at A-0006 self-hosted mode as the operational reality until upstream ABI drift resolves. Amendments list updated A-0001..A-0004 → A-0001..A-0006.)
-**Current mode:** `impl` — SPEC-0004 R25 Ticks A + B + D + R26-repurpose + R26-gate-wired + R26-mirror-test + R26-sol-parsed + npm-test-umbrella + README/VISION-A0006 landed. Remaining: Tick C (bundle redeploy) — blocked on operator wallet STT funding. T2b-2/3/4 + R1 mid-flow still blocked on Tick C redeploy. Deployed contract `0x1dC5bA…3E1A` is the pre-Amendment-0006 build.
-**Current tick:** 129
-**Last focus:** First-time-reader docs alignment with Amendment 0006. Keeps the existing "no-op end-to-end" framing for the DEPLOYED contract (still accurate) while explicitly documenting the self-hosted alternative + the Tick C blocker. VISION change is one parenthetical + one amendments-list bump — no headline-architecture rewrite, since Tick C hasn't yet shipped the new contract.
-**Last commit:** `077bbd4` (tick 128 npm test umbrella) → tick 129 lands the README + VISION update.
+**Last updated:** 2026-05-30 (tick 130 — `docs/specs/README.md` status table refreshed. Three statuses updated from stale "to implement"/"draft" to current accurate framing: SPEC-0003 §2.10 R48/R49 now annotated as "blocked on SPEC-0004 R25 Tick C" with the tick-123 self-hosted attribution note cited; SPEC-0004 status enumerates Ticks A/B/D landed + R26 repurposed + Tick C as single remaining blocker + R27 still in force; SPEC-0005 R20/R21/R23 sim-mode-done with 99/99 browser-verify cited + R22 blocked on Tick C. "To do next" section replaced the stale 3-option R25 framing (regenerate/switch/self-deploy) with the now-current "Tick C bundle redeploy is the single remaining blocker" framing.)
+**Current mode:** `impl` — SPEC-0004 R25 Ticks A + B + D + R26-repurpose + R26-gate-wired + R26-mirror-test + R26-sol-parsed + npm-test-umbrella + README/VISION-A0006 + specs-README-refresh landed. Remaining: Tick C (bundle redeploy) — blocked on operator wallet STT funding. T2b-2/3/4 + R1 mid-flow still blocked on Tick C redeploy. Deployed contract `0x1dC5bA…3E1A` is the pre-Amendment-0006 build.
+**Current tick:** 130
+**Last focus:** Doc accuracy — the spec status table was stale (still listed the original R25 3-option framing from before Amendment 0006 was authored). Updated to reflect the post-tick-129 reality: Tick C is the single remaining blocker for SPEC-0004 R25, R27, SPEC-0003 R48, and SPEC-0005 R22 — all four. No spec edits inside the spec files themselves this tick (those landed in tick 123 Tick D).
+**Last commit:** `6d48407` (tick 129 README + VISION Amendment 0006) → tick 130 lands the specs-README status refresh.
 
 **Tick 122 reviewer history:**
 - Security-review iter-1 (Opus): **PASS** zero MEDIUM+. One in-scope LOW (enforce `WEI_CAP` via `.refine`, not `.describe()`) — applied before strict-review.
@@ -72,46 +72,50 @@
 **SPEC-0005 §3.6 sim-mode milestone holds:** R20 + R21 + R23 all done.
 Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 
-**Verdict table after tick 129:**
+**Verdict table after tick 130:**
 
 | Gate | Verdict |
 |---|---|
-| `npm test` (umbrella) | ✓ PASS — exit 0 chain (re-verified tick 129) |
+| `npm test` (umbrella) | ✓ PASS — exit 0 chain (re-verified tick 130) |
 | `npm run check-ruling-abi` | ✓ static + 5/5 round-trips |
 | Lib tests | ✓ 196/196 |
 | Hardhat tests | ✓ 39/39 |
 | Browser-verify sim mode | ✓ 99/99 PASS (tick 113; not re-run — no UI change) |
 | Browser-verify real mode | ✗ blocked by Tick C redeploy |
-| Secret-scan | ✓ no findings across all ticks 83-129 |
-| Strict-review (Opus iter-1) | ✗ skipped this tick (additive doc-only edits to README + VISION; no normative claims; all factual claims cross-checked against tick-128 verdict table + amendments dir) |
+| Secret-scan | ✓ no findings across all ticks 83-130 |
+| Strict-review (Opus iter-1) | ✗ skipped this tick (status-table refresh in `docs/specs/README.md`; all 5 factual claims about per-spec status cross-checked against the loop-state's own verdict-history blocks + the SPEC-0004 §2.7 Amendment-0006 status block from tick 123) |
 | Solidity-compliance / Security-review | N/A this tick (no contract / risk-bearing change) |
 | TypeScript typecheck | N/A this tick (no code change) |
 
-**Remaining top-of-queue going into tick 130:**
-1. **R25 Tick C — bundle redeploy.** Redeploy `CoverageNegotiation`
-   with the 10-arg `Ruled` ABI + Amendment 0006 selfHosted mode. Call
-   `setPlatformSelfHosted(<orchestrator EOA>)` post-deploy; update
-   `.env`. **Blocked on operator wallet STT funding for deploy gas.**
+**Remaining top-of-queue going into tick 131:**
+1. **R25 Tick C — bundle redeploy.** Single remaining R25 blocker per the
+   refreshed status table. Blocked on operator wallet STT funding for
+   deploy gas. Unblock checklist: faucet → `npm --prefix contracts run
+   deploy:somnia` → record new address → `setPlatformSelfHosted(<orchestrator
+   EOA>)` → update `.env`.
 2. **Optional Tick A live smoke test (post-Tick-C):** end-to-end smoke
    of the LLM path against the redeployed contract — requires
    `ANTHROPIC_API_KEY` + funded orchestrator wallet.
-3. **Old SPEC-0003 R49 deprecation pass.** Tick 123 added a self-hosted
-   attribution note but kept the original validator-subcommittee R49
-   normative text. If we abandon validator-subcommittee mode entirely,
+3. **R49 deprecation rewrite.** Tick 123 added a self-hosted attribution
+   note but kept the original validator-subcommittee R49 normative text.
+   If validator-subcommittee mode is formally abandoned in production,
    R49 should be rewritten — not just annotated.
 4. **Restart cron with the updated loop prompt body.** Canonical prompt
    includes the `check-ruling-abi` gate (tick 125) + `npm test` umbrella
    reference (tick 128); live cron `18c86caf` still fires the older body.
-5. **Optional `npm test` `typecheck` chain extension.** Add `tsc -p
+5. **Optional `typecheck` chain extension in `npm test`.** Add `tsc -p
    tsconfig.json --noEmit` to the umbrella for fail-fast project
    typecheck. Cheap (~5s) but adds bytes to every test run; defer.
-6. **`docs/specs/README.md` status table refresh.** That file tracks
-   per-spec status (done / to implement / draft). Recent SPEC-0004 +
-   SPEC-0005 amendments may have shifted statuses; should be reviewed.
-7. **Spec-author skill check on the docs/amendments/ folder.** No
+6. **Spec-author-style standard for `docs/amendments/`.** No
    structure-enforcing skill exists for amendments. If/when a new
-   amendment lands, having a `spec-author`-style standard would prevent
-   format drift.
+   amendment lands, having a per-amendment template would prevent
+   format drift. Could be a simple `docs/amendments/README.md` listing
+   required sections (decision, rationale, ticks, status).
+7. **`docs/progress/coverage.md` and `design-conformance.md` refresh.**
+   The loop's Phase 5 references these as gate output but the files
+   themselves may not have been updated this sprint. Should be checked
+   for staleness; if stale, regenerate via the Sonnet coverage +
+   design-conformance subagents.
 
 **Ticks 107-113 summary** (the R20-closeout + R21-completion sprint):
 - **Tick 107** (`f1b5ab3` browser-verify): L5 verified live (3/3 PASS).
