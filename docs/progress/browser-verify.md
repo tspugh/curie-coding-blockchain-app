@@ -1,12 +1,50 @@
 # Browser-verify
 
-Last run: tick 113 — 2026-05-30 — **sim-mode harness 99/99 PASS** across
-21 scenarios. R21 (approval+denial path coverage) feature-complete: all
-3 arbiter-reaching twins (M1/M2/M3) green end-to-end. Added since
-tick-110 (89/89): M2 (tick 111, 5 new assertions) + M3 (tick 112, 5
-new). All previous 19 scenarios still green (no regressions).
+Last run: tick 138 — 2026-05-30 — **sim-mode harness 99/99 PASS** across
+21 scenarios. No regressions since tick 113. Commits since then (ticks
+114–138) touched contracts/ branch coverage, test tooling, and docs/
+only — no web/ or src/ changes that affected the compiled sim bundle.
 
-## Tick 113 — M2 + M3 verification re-run
+## Tick 138 — routine refresh re-run
+
+Re-ran after 22+ ticks of dormancy to discharge verification debt.
+HEAD commit: `e28ec81` (test(contracts): state-guard branch coverage
+polish 85.98% → 86.59%).
+
+All 99 assertions across 21 scenarios passed with zero failures:
+
+```
+Scenario A  happy-path lifecycle           7/7
+Scenario B  no PHI on-chain                3/3
+Scenario C  adjudication gating            1/1
+Scenario C2 policy invalidated             6/6
+Scenario D  profile switching              4/4   (incl. R13 single-wallet)
+Scenario E  sample case prefill            7/7
+Scenario F  note verify                    2/2
+Scenario G  observer / non-party           3/3
+Scenario H  CDS Hooks prefill              4/4
+Scenario I  persisted users                4/4
+Scenario J  demo-mode toggle               8/8
+Scenario K  key-paste derives address      6/6
+Scenario L3 provider refuse                5/5
+Scenario L1 evidence resubmit              5/5
+Scenario L2 appeal                         5/5
+Scenario L4 withdraw                       4/4
+Scenario L10 payer-line round-trip         2/2
+Scenario L7  custom-policy composer        4/4
+Scenario L5  provider feedback note        3/3
+Scenario M1  denial happy-path             6/6
+Scenario M2  NeedMoreEvidence -> Denied    5/5
+Scenario M3  appeal -> Denied              5/5
+──────────────────────────────────────
+Total: 99 passed, 0 failed
+```
+
+Harness ran end-to-end in sim mode (VITE_WALLET_MODE=simulated,
+VITE_EXPOSE_TEST_API=1, preview build on port 4173). No source changes
+required. Result matches tick-113 verdict exactly.
+
+## Tick 113 — M2 + M3 verification re-run (prior)
 
 Final re-run after the R21 closeout. Increment vs tick-110 baseline:
 

@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 137 — state-guard branch coverage polish. 4 new tests covering revert paths for `requestAdjudication` from Open, `submitEvidence` from Ready, `onRulingTimeout` from Open, `appeal` from Ready. **Branch coverage 85.98% → 86.59% (+0.61pp)** overall; CoverageNegotiation.sol 85.80% → 86.42%. Cumulative ticks 133-137: 76.83% → 86.59% (+9.76pp). Non-blocking polish — gate is already passing; adds safety margin above the 85% threshold.)
-**Current mode:** `impl` — coverage gate PASSING with safety margin. Only remaining blocker for steady state: real-mode browser-verify blocked on Tick C bundle redeploy → operator wallet STT funding.
-**Current tick:** 137
-**Last focus:** Continued the ticks-133-135 branch-coverage close pattern. 4 state-guard `require` revert tests in a new describe block. Each test exercises a state-machine precondition from the wrong State, closing the Istanbul revert-arm tracking. Hardhat test count: 57 → 61.
-**Last commit:** `6b47c50` (tick 136 typecheck-in-umbrella) → tick 137 lands the state-guard polish.
+**Last updated:** 2026-05-30 (tick 138 — **browser-verify sim mode re-verified 99/99 PASS** via Sonnet subagent dispatch. Refreshes the tick-113-era verdict that had been cited as "stale 22+ ticks; no UI change". The 22 intervening ticks (114-137) touched contracts/, tests, scripts/, and docs/ exclusively — no web/ or src/ source changes that would affect the compiled sim bundle. All 21 scenarios green: A/B/C/C2/D/E/F/G/H/I/J/K core lifecycle; L1-L10 evidence/appeal/refuse/withdraw/feedback/policy/payer-line; M1-M3 denial twins. `docs/progress/browser-verify.md` updated with full per-scenario table; historical entries preserved.)
+**Current mode:** `impl` — sim-mode browser-verify NOW FRESH; real-mode still blocked. Only remaining blocker for steady state: real-mode browser-verify, which is blocked on Tick C bundle redeploy → operator wallet STT funding.
+**Current tick:** 138
+**Last focus:** Verification freshness. Dispatched the Sonnet browser-verify subagent to re-run the 99/99 sim-mode harness end-to-end against HEAD (`e28ec81`). The subagent confirmed no regressions: every scenario passes, scenario list unchanged from tick 113. Cost: one Sonnet subagent dispatch (~3 minutes). Value: discharges a long-standing verification-staleness concern; future steady-state self-assessment can cite a current verdict rather than a 22-tick-old one.
+**Last commit:** `e28ec81` (tick 137 state-guard coverage polish) → tick 138 lands the browser-verify refresh.
 
 **Tick 122 reviewer history:**
 - Security-review iter-1 (Opus): **PASS** zero MEDIUM+. One in-scope LOW (enforce `WEI_CAP` via `.refine`, not `.describe()`) — applied before strict-review.
@@ -72,7 +72,7 @@
 **SPEC-0005 §3.6 sim-mode milestone holds:** R20 + R21 + R23 all done.
 Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 
-**Verdict table after tick 137:**
+**Verdict table after tick 138:**
 
 | Gate | Verdict |
 |---|---|
@@ -86,7 +86,7 @@ Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 | Coverage (all contracts, overall) | ✓ **86.59% branch** — PASS (was 85.98%) |
 | Coverage (mocks) | ✓ 100% on every metric |
 | Design-conformance | ✓ ~92% overall — PASS ≥90% gate |
-| Browser-verify sim mode | ✓ 99/99 PASS (tick 113; not re-run — no UI change) |
+| Browser-verify sim mode | ✓ **99/99 PASS — re-verified tick 138 against HEAD `e28ec81`** (was tick 113 stale) |
 | **Browser-verify real mode** | ✗ **STILL BLOCKED on Tick C redeploy** — last remaining steady-state blocker |
 | Secret-scan | ✓ no findings across all ticks 83-137 |
 | Strict-review / Solidity-compliance / Security-review | N/A this tick (mechanical state-guard test additions; same pattern as tick-133/135 which were iter-1 PASS'd) |
@@ -97,7 +97,7 @@ Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 - **R25 Tick C bundle redeploy.** The single remaining steady-state blocker. Operator wallet STT funding is the only thing holding it back. Once funded, this is a single focused tick.
 - `src/contract/simulated.ts` branch 68.63% (src/ subset still passes overall at 92.25%). Lower priority polish — does not block steady state.
 
-**Remaining top-of-queue going into tick 138:**
+**Remaining top-of-queue going into tick 139:**
 1. **R25 Tick C — bundle redeploy.** The single remaining steady-state
    blocker. Blocked on operator wallet STT funding for deploy gas.
 2. **Optional Tick A live smoke test (post-Tick-C).**
@@ -105,19 +105,8 @@ Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 4. **A-0006 status-field flip.** Human-reviewed step.
 5. **R49 deprecation rewrite.** Premature.
 6. **Restart cron with the updated loop prompt body.** Operational.
-7. **Further state-machine branch coverage polish** — after tick 137,
-   remaining arms (estimate ~17 from the ~25 of tick 134, minus the 8
-   closed in 137 + the bytes32(0) close in 134): lines 485 (appeal
-   partyId check), 496/498 (deadlock refund), 521 (accept dead-code,
-   permanently unreachable — skip), 586 (postFeedback terminal), 624
-   (handleResponse state guard — needs orchestrator path),
-   635 (handleResponse status check), 870/923 (refund-failed — needs
-   RevertingReceiver in caller position), 963-967 (`_terminal()`
-   OR-chain — needs each terminal state). Each is more involved than
-   the simple state-guards tick 137 closed; further polish has
-   diminishing returns relative to the load-bearing Tick C blocker.
-8. **Re-run browser-verify sim-mode to refresh the verdict** (tick 113
-   staleness).
+7. **Further state-machine branch coverage polish** — diminishing
+   returns relative to the load-bearing Tick C blocker.
 
 **Ticks 107-113 summary** (the R20-closeout + R21-completion sprint):
 - **Tick 107** (`f1b5ab3` browser-verify): L5 verified live (3/3 PASS).
