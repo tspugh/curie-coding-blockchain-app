@@ -1358,4 +1358,95 @@ describe("CoverageNegotiation", () => {
       ).to.be.revertedWith("mock: underfunded");
     });
   });
+
+  describe("admin setters: remaining onlyOwner branch coverage (tick 134)", () => {
+    // Continues the tick-133 work. Closes the remaining setter onlyOwner
+    // revert arms (setPlatform / setAgentReward / setMaxRounds / withdrawFunds)
+    // plus the value-validation reverts on setMaxRounds and withdrawFunds.
+    // HTML coverage report inspection (tick 134) identified 31 uncovered
+    // branch arms in CoverageNegotiation.sol; this block closes ~7-8 of them,
+    // targeting the gate jump from 80.86% → ≥85%.
+
+    it("setPlatform: non-owner reverts with OwnableUnauthorizedAccount", async () => {
+      const { contract, platform } = await deploy();
+      const [, nonOwner] = await ethers.getSigners();
+      await expect(
+        contract.connect(nonOwner).setPlatform(await platform.getAddress())
+      ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
+    });
+
+    it("setAgentReward: non-owner reverts with OwnableUnauthorizedAccount", async () => {
+      const { contract } = await deploy();
+      const [, nonOwner] = await ethers.getSigners();
+      await expect(
+        contract.connect(nonOwner).setAgentReward(ethers.parseEther("0.01"))
+      ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
+    });
+
+    it("setMaxRounds: non-owner reverts with OwnableUnauthorizedAccount", async () => {
+      const { contract } = await deploy();
+      const [, nonOwner] = await ethers.getSigners();
+      await expect(
+        contract.connect(nonOwner).setMaxRounds(3n)
+      ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
+    });
+
+    it("setMaxRounds: zero value reverts with 'maxRounds: < 1' (R6c invariant)", async () => {
+      const { contract } = await deploy();
+      await expect(contract.setMaxRounds(0n)).to.be.revertedWith("maxRounds: < 1");
+    });
+
+    it("withdrawFunds: non-owner reverts with OwnableUnauthorizedAccount", async () => {
+      const { contract } = await deploy();
+      const [, nonOwner] = await ethers.getSigners();
+      await expect(
+        contract.connect(nonOwner).withdrawFunds(nonOwner.address, 0n)
+      ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
+    });
+
+    it("withdrawFunds: zero address recipient reverts with 'funds: zero addr'", async () => {
+      const { contract } = await deploy();
+      await expect(
+        contract.withdrawFunds(ethers.ZeroAddress, 0n)
+      ).to.be.revertedWith("funds: zero addr");
+    });
+
+    it("withdrawFunds: amount > balance reverts with 'funds: insufficient'", async () => {
+      const { contract } = await deploy();
+      const [owner] = await ethers.getSigners();
+      // Fresh contract has zero balance; asking for any nonzero amount
+      // exceeds the balance and trips the second require.
+      await expect(
+        contract.withdrawFunds(owner.address, 1n)
+      ).to.be.revertedWith("funds: insufficient");
+    });
+
+    it("createContract: zero justificationHash skips ContentCommitted emit (line 394 else-branch)", async () => {
+      // Closes the `if (justificationHash != bytes32(0))` else-branch at
+      // CoverageNegotiation.sol:394. The existing createAs helper always
+      // passes a nonzero JUSTIFICATION_HASH. Asserts ContractCreated fires
+      // but ContentCommitted does NOT.
+      const { contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const ZERO_HASH = ethers.ZeroHash;
+      const tx = contract
+        .connect(provider)
+        .createContract(
+          PROVIDER_ID,
+          INSURER_ID,
+          provider.address,
+          insurer.address,
+          DRUG_REF,
+          REQUESTED,
+          QUANTITY,
+          DAYS_SUPPLY,
+          ZERO_HASH, // justificationHash = bytes32(0) → else branch
+          EVIDENCE_URI,
+          0, // payerLine
+        );
+      await expect(tx)
+        .to.emit(contract, "ContractCreated")
+        .and.to.not.emit(contract, "ContentCommitted");
+    });
+  });
 });

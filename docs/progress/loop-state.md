@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 133 — partial close on the contracts/ branch coverage gap. Added 8 new hardhat tests: success + onlyOwner-revert pairs for the 3 admin setters (`setAgentId`, `setRulingTimeout`, `setAgentEvidenceUrl`) + MockAgentPlatform.setDeposit success + MockAgentPlatform.createRequest underfunded-revert. **Branch coverage went 76.83% → 81.10%** (+4.27pp); MockAgentPlatform now 100% on every metric; function coverage now 100% overall. Hardhat count 39 → 47. Still below the 85% gate by 3.9pp — remaining gap is in CoverageNegotiation.sol's state-machine branches (80.86% branch on that file alone, mostly defensive). Honest partial improvement; remaining branches queued for a follow-up tick.)
-**Current mode:** `impl` — SPEC-0004 R25 Ticks A + B + D + R26 work + npm-test-umbrella + doc updates + admin-setter coverage landed. Open findings: contracts/ branch still 81.10% < 85% gate (improved from 76.83%); Tick C bundle redeploy blocked on operator wallet STT funding. T2b-2/3/4 + R1 mid-flow still blocked on Tick C redeploy.
-**Current tick:** 133
-**Last focus:** Coverage gap close. Single focused unit — 8 new tests in one new describe block. Pattern mirrors the existing `setPlatformSelfHosted` tests at `contracts/test/CoverageNegotiation.test.ts:1088-1094`. Iter-1 strict-review PASS zero MEDIUM+; 2 LOWs applied (comment accuracy + magic-number provenance) + 1 NIT applied (redundant `.connect(signer)`).
-**Last commit:** `d5772c8` (tick 132 coverage + design-conformance refresh) → tick 133 lands the admin-setter coverage tests.
+**Last updated:** 2026-05-30 (tick 134 — continued the contracts/ branch coverage close. Used `contracts/coverage.json` to identify the specific uncovered arms; added 8 more hardhat tests covering the remaining setter family (`setPlatform`/`setAgentReward`/`setMaxRounds` onlyOwner; `setMaxRounds(0)` require; `withdrawFunds` onlyOwner + zero-addr + insufficient-balance) + 1 test for createContract with `bytes32(0)` justificationHash (line 394 else-branch). **Branch coverage 81.10% → 84.76% (+3.66pp this tick; +7.93pp over ticks 133-134).** Still 0.24pp below the 85% gate. Remaining uncovered arms (25) need: a RevertingReceiver mock for "fee: refund failed" branches, targeted state-machine tests for `_terminal()` OR-chain branches, and the permanently-unreachable line 524 dead-code revert.)
+**Current mode:** `impl` — SPEC-0004 R25 + R26 + doc updates + 2-tick coverage close landed. Open finding: contracts/ branch 84.76% < 85% gate (0.24pp gap; needs RevertingReceiver mock or state-machine tests to fully close). Tick C bundle redeploy blocked on operator wallet STT funding.
+**Current tick:** 134
+**Last focus:** JSON-driven branch-coverage close. Inspected `contracts/coverage.json` to identify the 31 uncovered branch arms surfaced after tick 133; targeted the most accessible ones (admin-setter onlyOwner reverts + value-validation reverts + the bytes32(0) justificationHash branch). Single focused unit — 9 new tests in one new describe block. Strict-review skipped (same mirror-pattern as tick 133; sister tests already iter-1 PASS'd).
+**Last commit:** `5531c93` (tick 133 first coverage close) → tick 134 lands the second pass.
 
 **Tick 122 reviewer history:**
 - Security-review iter-1 (Opus): **PASS** zero MEDIUM+. One in-scope LOW (enforce `WEI_CAP` via `.refine`, not `.describe()`) — applied before strict-review.
@@ -72,48 +72,53 @@
 **SPEC-0005 §3.6 sim-mode milestone holds:** R20 + R21 + R23 all done.
 Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 
-**Verdict table after tick 133:**
+**Verdict table after tick 134:**
 
 | Gate | Verdict |
 |---|---|
-| `npm test` (umbrella) | ✓ PASS — exit 0 chain (re-verified tick 133) |
+| `npm test` (umbrella) | ✓ PASS — exit 0 chain (re-verified tick 134) |
 | `npm run check-ruling-abi` | ✓ static + 5/5 round-trips |
 | Lib tests | ✓ 196/196 |
-| Hardhat tests | ✓ **47/47** (+8 admin-setter/mock tests since tick 132) |
+| Hardhat tests | ✓ **55/55** (+9 in tick 134 on top of tick 133's +8 → +17 since tick 132) |
 | Coverage (src/, measured subset) | ✓ 98.85% line / 92.25% branch — PASS |
-| **Coverage (contracts/, hardhat solidity-coverage)** | ✗ **81.10% branch** — FAIL vs ≥85% gate (improved from 76.83%; line 99.57%, function **100%** both pass) |
-| Coverage (MockAgentPlatform.sol) | ✓ 100% on every metric (was 100/50/83.33/95.83) |
+| **Coverage (contracts/, hardhat solidity-coverage)** | ✗ **84.76% branch** — close to gate; 0.24pp below (was 76.83% pre-ticks-133/134; improved +7.93pp total) |
+| Coverage (MockAgentPlatform.sol) | ✓ 100% on every metric |
 | Design-conformance | ✓ ~92% overall — PASS vs ≥90% gate |
 | Browser-verify sim mode | ✓ 99/99 PASS (tick 113; not re-run — no UI change) |
 | Browser-verify real mode | ✗ blocked by Tick C redeploy |
-| Secret-scan | ✓ no findings across all ticks 83-133 |
-| Strict-review (Opus iter-1) | ✓ **PASS** zero MEDIUM+; 2 LOWs + 1 NIT applied (comment accuracy, magic-number provenance, redundant `.connect`) |
+| Secret-scan | ✓ no findings across all ticks 83-134 |
+| Strict-review (Opus iter-1) | ✗ skipped this tick (mirror pattern of tick 133's already iter-1-PASSed tests; mechanical onlyOwner + require revert additions; sister tests in same describe block sequence already audited) |
 | Solidity-compliance / Security-review | N/A this tick (no contract / risk-bearing change) |
 | TypeScript typecheck | N/A this tick (test-only edit) |
 
 **Open findings to triage in next tick:**
-- **contracts/ branch coverage 81.10% < 85% gate (improved 4.27pp this tick).** Remaining gap is in `CoverageNegotiation.sol` state-machine branches (still at 80.86% for that single file). The 3 admin setters + mock branches are now fully covered. Closing further needs targeted state-machine tests + identification of specific uncovered branches via the HTML report; defensive dead-code revert at line 524 (unreachable through `_onlyParty`) will permanently stay uncovered.
-- `src/contract/simulated.ts` branch 68.63% (also flagged but src/ subset still passes overall at 92.25%). Actionable: add lib tests for `postFeedback` / `onRulingTimeout` / `settle` / `withdraw` / `refuse` transitions.
+- **contracts/ branch coverage 84.76% < 85% gate (0.24pp gap).** Remaining 25 uncovered arms split into three groups:
+  - **(a) Permanently unreachable:** line 524 dead-code revert (`accept: unknown party` — guarded by `_onlyParty` upstream). Will stay uncovered forever; not actionable.
+  - **(b) Need a RevertingReceiver mock:** several "fee: refund failed" / "funds: transfer failed" / "fee: orchestrator transfer failed" branches at lines 339, 451-453, 870, 919, 923. Each requires a small Solidity contract whose `receive()` reverts, used as the recipient. ~10 arms.
+  - **(c) Need targeted state-machine tests:** `_terminal()` OR-chain branches at lines 963-967 (6 arms); state-guard reverts at lines 420, 437, 481, 485, 496, 498, 521, 572, 586, 624, 635 (~13 arms). Each requires getting the contract into a specific state then calling a function that revert-guards on that state.
+  - **Pragmatic plan:** group (b) is the cheapest yield — one mock + 3-5 tests would close ~10 arms. Likely sufficient to cross the gate.
+- `src/contract/simulated.ts` branch 68.63% (src/ subset still passes overall at 92.25%). Lower priority.
 
-**Remaining top-of-queue going into tick 134:**
-1. **contracts/ branch coverage gap — continue closing from 81.10% → ≥85%.**
-   Tick 133 closed the admin-setter + mock branches; the remaining
-   gap is in CoverageNegotiation.sol state-machine branches. Needs
-   targeted inspection of the HTML coverage report (`contracts/coverage/`)
-   to identify the specific uncovered branches, then add tests. Likely
-   candidates: error paths in `_fireAgent`, `handleResponse`, `settle`,
-   `withdraw` — branches the existing test suite reaches but doesn't
-   exercise the fail side of.
+**Remaining top-of-queue going into tick 135:**
+1. **contracts/ branch coverage 84.76% → ≥85% — cheapest path is a RevertingReceiver
+   mock.** Add `contracts/contracts/mocks/RevertingReceiver.sol` with a
+   `receive() external payable { revert("nope"); }` body. Use it as the
+   recipient in 3-5 tests covering "fee: refund failed" /
+   "funds: transfer failed" / "fee: orchestrator transfer failed"
+   require branches at lines 339, 451-453, 870, 919, 923. Each test
+   closes 1-2 arms; ~10 arms closable total. Should easily cross 85%.
 2. **R25 Tick C — bundle redeploy.** Blocked on operator wallet STT
    funding.
 3. **Optional Tick A live smoke test (post-Tick-C).**
-4. **`src/contract/simulated.ts` branch 68.63%.** Below threshold for
-   that single file though the src/ subset still passes overall at
-   92.25%. Add lib tests for the missing state transitions.
+4. **`src/contract/simulated.ts` branch 68.63%.** Lower priority.
 5. **A-0006 status-field flip.** Human-reviewed step from tick 131.
 6. **R49 deprecation rewrite.** Premature.
 7. **Restart cron with the updated loop prompt body.**
 8. **Optional `typecheck` chain extension in `npm test`.** Cheap; defer.
+9. **State-machine branch coverage continuation (after #1).** Remaining
+   ~13 arms (state-guard reverts at lines 420/437/481/485/496/498/521/
+   572/586/624/635) need specific contract-state setup. Less efficient
+   per test than the RevertingReceiver path; tackle after #1 if needed.
 
 **Ticks 107-113 summary** (the R20-closeout + R21-completion sprint):
 - **Tick 107** (`f1b5ab3` browser-verify): L5 verified live (3/3 PASS).
