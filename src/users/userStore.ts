@@ -69,8 +69,10 @@ export function isDemoUser(u: unknown): u is DemoUser {
 /**
  * Lazy resolver for the browser's localStorage when no explicit storage is
  * provided. Returns null in non-browser environments (Node tsx tests, SSR)
- * so callers degrade gracefully — the library lives in `src/`, so this file
- * is compiled by the Node-side tsc build where `window` isn't in lib.
+ * so callers degrade gracefully. This module is consumed by BOTH the
+ * Node-side tsc build (the `src/` lib, where `window` isn't in lib) AND
+ * the Vite-bundled web layer (where `window.localStorage` IS available);
+ * using `globalThis` plus a type guard lets the same code path serve both.
  */
 function defaultStorage(): Pick<Storage, "getItem" | "setItem"> | null {
   try {

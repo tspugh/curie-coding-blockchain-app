@@ -26,8 +26,12 @@
  *   VITE_CONTRACT_ADDRESS       — deployed contract address
  *   VITE_RPC_URL                — Somnia testnet RPC (default: testnet)
  *
- * Exit codes:
- *   0  — full flow succeeded; settlement confirmed on-chain.
+ * Exit codes (THIS LANDING — pre-flight + receipts only):
+ *   0  — pre-flight + receipt-capture succeeded. **NOT the full R1 flow.**
+ *        The mid-flow agent-browser steps (create → engage → adjudicate →
+ *        accept → settle) are unimplemented in this tick and land in T74b.
+ *        When T74b lands, exit-0 will be repurposed to mean "full flow OK"
+ *        and the partial-success path here will move to a new exit code 4.
  *   2  — pre-flight failure (insufficient funds, missing config). Operator
  *        action required; the next-tick re-run is futile until fixed.
  *   3  — runtime failure mid-flow (revert, network, harness step). Receipts
@@ -71,8 +75,18 @@ function loadEnv(): EnvConfig | { error: string } {
   }
   const env: Record<string, string> = {};
   for (const line of raw.split("\n")) {
+    if (line.trim().startsWith("#")) continue;
     const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
-    if (m && !line.trim().startsWith("#")) env[m[1]!] = m[2]!.replace(/^"|"$/g, "");
+    if (!m) continue;
+    // Strip an inline `# comment` tail so values like
+    //   VITE_RPC_URL=https://… # somnia testnet
+    // don't carry the comment into the URL. Quoted values keep their `#`.
+    let value = m[2]!;
+    if (!/^["']/.test(value)) {
+      const hash = value.indexOf("#");
+      if (hash >= 0) value = value.slice(0, hash).trimEnd();
+    }
+    env[m[1]!] = value.replace(/^"|"$/g, "").replace(/^'|'$/g, "");
   }
   const providerKey = env["VITE_PRIVATE_KEY"] ?? "";
   const insurerKey = env["VITE_PRIVATE_KEY_INSURER"] ?? "";
@@ -181,6 +195,8 @@ async function main(): Promise<void> {
   // pre-tick-49 7-arg Ruled ABI per R18; the redeploy unblocks both).
 
   console.log("\nPre-flight OK. Mid-flow harness wiring lands in T74b once R18 unblocks.");
+  console.log("EXITING 0 — this is partial success (pre-flight + receipts only).");
+  console.log("The full R1 flow is NOT verified here; that's the T74b deliverable.");
   recordReceipt("preflight", "PASS", {
     provider: cfgOrErr.providerKey.slice(0, 8) + "…",
     insurer: cfgOrErr.insurerKey.slice(0, 8) + "…",

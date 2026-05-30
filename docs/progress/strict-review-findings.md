@@ -8261,3 +8261,217 @@ Neither observation is substantive under the "zero findings" bar — both leave 
 
 `wallet.test.ts` closes P6 cleanly: 13 tests, all passing, drive `wallet.ts` from 0% / 0% / 0% to 89.04% line / 84% branch / 77.78% function — above the P6 `line >= 85%` threshold with the documented RealWallet exemption. The test contract pins SPEC-0001 R11 wallet-auth surface: `SimulatedWallet`'s mode/signer/provider triad + deterministic keccak256-trailing-20 address derivation + seed determinism + seed distinguishability + default-seed shape; `createWallet`'s simulated-mode default + seed forwarding + env-driven mode + malformed-mode throw; `createWallet`'s real-mode synchronous validation guards (missing-key + malformed-key + short-key). The `withEnv` helper is safe (try/finally restoration on throw; per-key save/restore; host-env baseline snapshot + a sanity test at L161-165 to confirm post-suite cleanliness). The RealWallet exemption is correctly scoped (no-mock invariant + testnet-mode browser-verify covers the gap). Two soft observations surface (the address-derivation test is at the edge of the M2 self-pin class; the default-seed test pins shape but not literal bytes) but neither is substantive — the complementary tests mitigate the self-pin risk and the default-seed shape contract is the right strength for the current demo role. Hardhat / web / contract layers untouched this tick. Fit to commit.
 
+---
+
+## SPEC-0005 ticks 69-75 strict-review (audit batch)
+
+**Date:** 2026-05-30
+**Scope:** the 7 accumulated commits `daacc30..164dc8b` (the loop has not dispatched the strict-review gatekeeper since tick 68). Stack-reviewed as a batch; findings grouped by commit. R-citations checked against `docs/specs/0005-usability-and-integration.md` §3.1-3.4.
+
+### Test/build status
+
+- `npm run test:lib`: **192/192 pass**. The two newly added suites (`src/data/policies.test.ts` 14 tests + `src/users/userStore.test.ts` 14 tests) both green; existing 164 untouched.
+- `npm run typecheck` (Node-side `tsc -p tsconfig.json --noEmit`): clean.
+- `cd web && npx tsc --noEmit`: clean.
+
+### Spec citation check (per R)
+
+Verified against `docs/specs/0005-usability-and-integration.md`:
+
+- **R1** (L33-39): full-loop real-wallet integration test — cited in `scripts/integration-test.ts`; partial scope, see commit-79f9dcf finding below.
+- **R2** (L40-43): two funded wallets ≥ 0.5 STT — cited in `scripts/integration-test.ts:14, 49-50`; `MIN_BALANCE_WEI = 0.5` matches the spec exactly.
+- **R3** (L44-47): per-step receipt capture — cited in `scripts/integration-test.ts:17, 137-151`; the receipt format string matches the spec's "tx hash for each on-chain step" intent.
+- **R10** (L74-76): arbitrary N users — cited in `userStore.ts:1-7, 19` and `Settings.tsx:408-412`.
+- **R11** (L77-80): runtime add/remove + `curie:users` localStorage key — cited in `userStore.ts:19, 29`; key matches spec verbatim.
+- **R12** (L81-83): role assignment per user — implicit in `DemoRole = "provider"|"insurer"|"observer"`; role-list matches the spec's three v0 roles exactly. Not cited explicitly by R-number in userStore.ts but the shape is correct.
+- **R14** (L90-93): curated policy library ≥ 4 policies with `{name, clauses: {id, text, voids?}}` — cited in `policies.ts:1-21` + `Detail.tsx:104-108`; library has exactly 4 entries (`POLICY_LIBRARY` L41-121), shape matches the spec.
+- **R15** (L94-97): free-text override + validation — cited in `Detail.tsx:117-131, 674-690`; validation at L779 (`if (!policyText.trim()) ... return`) handles the "name non-empty and ≥ 1 clause" requirement at the engage gate.
+- **R16** (L98-101): policy preview before submit with hash preview — cited in `Detail.tsx:727-732` + commit 16ea572 message; matches `Create.tsx`'s pattern as the spec requires.
+
+All R-numbers accurately quoted; no fabricated citations.
+
+### PHI / NO-PHI invariant check
+
+- `policies.ts`: all four policies are clearly synthetic. The R1 NO-PHI test at `policies.test.ts:109-138` runs SSN / DOB / phone / email / MRN / patient-id regex scans over the JSON-stringified library + per-clause text. **Pass** — no leaks.
+- `userStore.ts` test fixtures (`ALICE`, `BOB`): synthetic 40-hex addresses (`0xaaaa…aaaa`, `0xBBBB…BBBB`); labels `"Alice Demo"`/`"Bob Demo"`. No real names, no addresses tied to real wallets. **Pass.**
+- `scripts/integration-test.ts` `.env` reads: the only field that touches a secret is `providerKey` / `insurerKey`; both are truncated to `slice(0,8) + "…"` in the receipt record at L185-186 (8 hex chars = 32 bits of entropy preview, not full key). `contractAddress` is logged in full but is a *public* deployment address, not a secret. **Pass — no full private-key write reaches `docs/progress/integration-test.md`.**
+
+### Comment-honesty scan (tick-49/50 regression check)
+
+Read every new comment block in the 7 commits. No JSDoc lies, no R-misquotes, no comments restating the code beneath them. The doc comments on `renderCuratedPolicyText` (L103-108) and `buildCustomPolicyText` (L117-123) **do** load-bearingly document the hash-stability contract — which is correct given downstream keccak256 commits.
+
+### Findings by commit
+
+---
+
+#### Commit `daacc30` — R14 data: `src/data/policies.ts` + tests
+
+**No findings.** Library shape matches the spec exactly: 4 policies, 3 payer lines covered, exactly one `voids:true` clause (`PD-ADA-09`), unique ids, all freezing levels asserted, NO-PHI scan pinned. Helpers `getCuratedPolicy` + `policiesForLine` return correct shape. The frozen-by-construction question (Q10 in the scope brief) is handled correctly: `policiesForLine` uses `Array.prototype.filter()` which always returns a fresh `Array` instance — callers can mutate the result without affecting the underlying `POLICY_LIBRARY`. The return type `readonly CuratedPolicy[]` gives TypeScript-level mutation safety without preventing array-level operations.
+
+---
+
+#### Commit `5f197e9` — R14 UI: wire policy library into engage panel
+
+**LOW** — `web/src/styles.css:1250-1255` (`.policy-cards { grid-template-columns: 1fr 1fr }`)
+
+PartD now renders **3** policy cards in the engage panel (2 curated PartD policies + 1 Custom policy — landed in commit 630f585), but `.policy-cards` is hardcoded to a 2-column grid. The third card wraps to a new row of width 50%, leaving an empty cell. Visual screenshot `11-custom-policy-AFTER-R15-full.png` (verified by commit 630f585 description) confirms the wrap. Not a functional bug — selection + preview + Engage still work — but the layout was implicitly sized for "2 cards forever" and the spec's R14 says "≥ 4 curated policies" plus an R15 custom card, so the next non-PartD payer line that gets a second curated policy will trigger the same wrap.
+
+**Recommended fix:** change `.policy-cards` to `grid-template-columns: repeat(auto-fit, minmax(220px, 1fr))` so 1/2/3/N cards all flow gracefully. Single-line CSS edit; no risk.
+
+**Severity rationale:** LOW because (a) functional behaviour is intact, (b) the wrap is symmetric (the empty cell is consistent), and (c) the testid wiring is unaffected.
+
+---
+
+**NIT** — `web/src/views/Detail.tsx:249` (policyChoice type widened from union to `string | null`)
+
+The R14 commit message describes the widen from `"compliant"|"noncompliant"|null` to `string|null`. Verified: all consumers of `policyChoice` in Detail.tsx (lines 645, 679, 695, 732, 736, 745, 773) accept `string|null` correctly. No external module consumes this state — it's local to the `Detail` component. The widen is sound.
+
+The NIT: a tagged-union (`"custom" | { kind: "curated", id: string }`) would be more honest than the sentinel-string approach (`"custom"` co-exists with curated ids in the same namespace). A future curated policy with id `"custom"` would collide. Today the curated ids are kebab-case domain slugs (`partd-formulary-adalimumab` etc.) so collision is implausible — but worth surfacing.
+
+**No fix required.** Surfaced for future awareness.
+
+---
+
+#### Commit `16ea572` — R16 preview: `.policy-preview` card with hash chip
+
+**No findings.** CSS section 36 lands at `styles.css:2236-2270`, between existing sections 35 and 37 (the latter from the next commit). All four CSS vars used (`--accent-lt`, `--accent-mid`, `--text-2`, `--radius-sm`) are defined in `:root` (L10-56). The `.policy-preview` testid is reachable; the `.hash-preview-hash` chip mirrors the existing `Create.tsx` pattern per the spec's R16 cross-reference. The conditional render path (`{policyChoice && (() => { … })()}` at L732-772) returns `null` correctly when the chosen curated id doesn't resolve (defensive `if (!chosen) return null;` at L747) — protects against a race where `n.payerLine` changed after the user selected a policy.
+
+---
+
+#### Commit `630f585` — R15 custom-policy free-text override
+
+**No findings.** CSS section 37 lands at `styles.css:2272-2321`; vars used (`--panel-2`, `--border-lt`, `--text`, `--muted`, `--panel`, `--border`, `--accent-mid`, `--accent-glow`, `--radius-sm`) all defined. The composer's `<label>Label<input/></label>` implicit-association A11y pattern (Q11) is standard and screen-reader-compatible per the ARIA HTML spec (https://www.w3.org/TR/html-aria/) — implicit association is equivalent to explicit `for="id"` association when the input is wrapped. No A11y issue.
+
+The hash-stability contract for `buildCustomPolicyText` (Q9) is documented at L117-123: "format mirrors `renderCuratedPolicyText` and downstream consumers can rely on the same shape." A future refactor that changed the separator from `" "` to `"\n"` or relabelled `Clause CUSTOM-N` would break replay — but the docstring captures this. The same hash-stability note appears on `renderCuratedPolicyText` (L103-108): "the format MUST be stable for clause-level replay; do not reorder or relabel without bumping the policy id." Both helpers are honestly marked.
+
+Empty-name + empty-clauses → `""` short-circuit at L127 is correct: the engage-submit guard at L779 (`if (!policyText.trim()) ...`) catches this and surfaces "Select a policy first." (R15 validation requirement).
+
+---
+
+#### Commit `0687b7e` — R10/R11 storage: `src/users/userStore.ts` + tests
+
+**No findings on functional surface.** Type guards (`isDemoRole`, `isDemoUser`) defensively narrow corrupt persisted values — verified by 14 tests including partial-corruption silent-drop and throwing-storage tolerance. The default-storage path question (Q6, "does it crash on import in Node tsx tests?") resolves cleanly:
+
+1. `defaultStorage()` is **lazy** — only called when `loadUsers`/`saveUsers` are invoked without an explicit storage arg.
+2. The tests **always** inject a stub (`makeStorage(...)`) at the callsites — they never trigger the default-storage path.
+3. Even if the default path were exercised under Node tsx, `globalThis.localStorage` would resolve to `undefined`, the optional-chained access `g.localStorage ?? null` returns `null`, and `loadUsers`/`saveUsers` short-circuit on `storage === null`. No crash path.
+
+The two throwing-storage tests at L124-141 cover the case where `localStorage.getItem` itself throws (private browsing mode, quota exceeded on setItem) — both swallow correctly.
+
+The `addUser` "fresh array" contract (Q10 — does the caller get a mutation-safe result?) is pinned by the test at L163-168 (`assert.notEqual(next, original)` + `assert.equal(original.length, 1)`). The replace-by-id semantics is pinned at L153-161.
+
+**NIT** — `src/users/userStore.ts:73` comment: "this file is compiled by the Node-side tsc build where `window` isn't in lib"
+
+The file is **also** bundled by Vite into the web app (consumed by `Settings.tsx` via `@lib`), so saying it's compiled "by the Node-side tsc build" is incomplete — it's compiled by *both* the Node-side tsc AND Vite's web build. The Vite/web build has `Window` available via `lib.dom.d.ts`, so the rationale "where `window` isn't in lib" applies to the Node-side build only. The current code (`globalThis.localStorage`) works correctly in both — the dual-resolver pattern is correct — but the comment slightly under-explains the dual-build constraint.
+
+---
+
+#### Commit `79f9dcf` — R1 integration-test skeleton
+
+**MEDIUM** — `scripts/integration-test.ts:29-30, 183, 189` (exit-code 0 honesty)
+
+The script's header docstring at L29-30 defines `exit 0 = "full flow succeeded; settlement confirmed on-chain"`. But the implementation at L183-189 exits 0 immediately after `preflightBalances()` succeeds — **without running** the create/engage/adjudicate/accept/settle flow. The on-screen message at L183 ("Pre-flight OK. Mid-flow harness wiring lands in T74b…") is honest about the partial scope, but **the exit code is not.** A CI harness reading exit codes would interpret 0 as "full flow passed" and mark the R1 gate green when in fact only R2 + R3-plumbing ran.
+
+Today (2026-05-30) this is masked by R18 — the insurer wallet is unfunded so the script always exits 2. But the moment R18 is resolved (insurer funded), the script will exit 0 from the pre-flight branch without running the flow, and any caller relying on the documented exit-code semantics will falsely conclude "full flow OK".
+
+**Recommended fix (one of):**
+1. Change exit 0 on the partial path to a distinct code (e.g. `4 = pre-flight only`) and update the L29-34 docstring.
+2. Keep exit 0 but **update the L30 docstring** to document the partial scope explicitly: e.g. `0 — pre-flight + receipt-capture succeeded; mid-flow harness invocation lands in T74b`.
+3. Emit a loud warning to stderr at L183 ("WARNING: exit 0 reports only the pre-flight pass, not full-flow success") so an operator/CI reader sees the caveat.
+
+**Severity rationale:** MEDIUM because (a) the docstring contract is violated, (b) R18 currently hides the mismatch, (c) the consequence on R18-resolution is a silent false-positive — the most dangerous CI failure mode. Not HIGH because the L183 console message is partially honest and R18 currently blocks the issue from surfacing.
+
+---
+
+**LOW** — `scripts/integration-test.ts:74-75` (`.env` parser line-comment edge case)
+
+The regex `/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/` matches `KEY=value` lines, and the `&& !line.trim().startsWith("#")` guard is applied after. This works correctly for full-line comments. **Inline trailing comments** (`KEY=value # note`) are captured as-is into the value — the value becomes `value # note`. For private keys + addresses this is fine (the strict hex regexes at L81-93 reject any non-hex suffix), but a `VITE_RPC_URL=https://… # comment` would silently include the trailing `# comment` in the URL string and fail with a less-clear ethers error.
+
+**Recommended fix:** strip trailing `#…` from the captured value, or use a stricter regex like `/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*("[^"]*"|[^\s#]*)/`. Low-priority — the demo's .env file doesn't use trailing comments.
+
+**Severity rationale:** LOW because the parser handles the common case correctly and the only field where inline comments could silently corrupt a value (`VITE_RPC_URL`) has a downstream ethers error that would surface the issue, just less clearly.
+
+---
+
+#### Commit `164dc8b` — R10/R11 UI: `UsersPanel` in `Settings.tsx`
+
+**No findings.** CSS section 38 lands at `styles.css:2323-2412`; all vars referenced (`--panel-2`, `--border-lt`, `--accent-mid`, `--accent-glow`, `--panel`, `--border`, `--muted`, `--text`, `--radius-sm`) are defined. Add-form A11y uses the same implicit `<label>` wrapper pattern as the custom-policy composer — standard.
+
+The `e.target.value as DemoRole` cast at `Settings.tsx:450` (Q4 + Q12) is honest at the type boundary: the three `<option value="...">` siblings (L452-454) are literally `"provider"`, `"insurer"`, `"observer"` — exactly the three `DemoRole` values. The cast is structurally true given the `<option>` set. DOM-tampering bypass (Q12) is mitigated by the `isDemoRole(newRole)` guard inside `onAdd` at L388 — a tampered DOM that injected `<option value="admin">` would set `newRole = "admin"`, fail `isDemoRole`, and surface `"Role is invalid."` to the user without reaching `addUser`. The form path is safe.
+
+The id-derivation at L389-393 (`label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || \`user-${Date.now()}\``) is defensive: the `|| "user-${Date.now()}"` fallback handles labels that slug to `""` (e.g. label `"!!!"` → empty slug after replace → falls back to timestamp). No NaN / undefined paths.
+
+The `useEffect(() => { setUsers(loadUsers()); }, [])` mount-only load + `persist()` write-through (L370-378) round-trip is the simplest correct pattern; no stale-closure risk because `users` is read fresh from the state setter argument at every callsite (`addUser(users, …)` reads the current state value).
+
+---
+
+### Summary findings table
+
+| Commit | Severity | File:line | Description |
+|---|---|---|---|
+| 5f197e9 | LOW | `web/src/styles.css:1250-1255` | `.policy-cards` 2-col grid awkward with 3+ cards; recommend `auto-fit minmax`. |
+| 5f197e9 | NIT | `web/src/views/Detail.tsx:249` | `policyChoice: string \| null` mixes sentinel `"custom"` and curated ids in one namespace. |
+| 0687b7e | NIT | `src/users/userStore.ts:73` | Docstring claims "Node-side tsc build" only; file is also Vite-bundled. |
+| 79f9dcf | **MEDIUM** | `scripts/integration-test.ts:29-30, 183, 189` | Header says exit 0 = full-flow success; impl exits 0 after pre-flight only. R18 masks today; silent false-positive when R18 unblocks. |
+| 79f9dcf | LOW | `scripts/integration-test.ts:74-75` | `.env` parser would include trailing `# comment` in value. Strict hex guards catch hex fields; `VITE_RPC_URL` could silently corrupt. |
+
+### Verdict: **FAIL (1 MEDIUM + 2 LOW + 2 NIT)**
+
+The MEDIUM (`scripts/integration-test.ts` exit-0 honesty) is the only blocker against the "zero findings" bar. The two LOWs (`.policy-cards` 2-col grid + .env trailing-comment parsing) and two NITs (policyChoice union widening + userStore docstring) are all surfaced for inline closure but don't independently fail the gate.
+
+The MEDIUM fix is one of three small edits documented above (preferred: option 2 — update the L30 docstring to document the partial scope as `0 = pre-flight + receipt-capture succeeded`). Today's R18 blocker masks the false-positive risk; the fix should land **before** R18 resolves to avoid a silent CI green when the full flow has not actually run.
+
+No spec citations were fabricated; no PHI leak; no comment dishonesty regression vs tick 49/50; no test files exercise the default-storage path (Q6 confirmed safe); no consumers of `policyChoice` rely on the pre-widen type; `policiesForLine` returns a fresh filtered array per call (Q10 confirmed safe); CSS section numbers 36/37/38 are unique and sequential with all vars defined.
+
+
+---
+
+## SPEC-0005 ticks 69-75 strict-review iteration 2
+
+Re-verification pass over the iter-1 backlog after the closure commit. No code modified in this iter; this section is verification only.
+
+### Finding-by-finding status
+
+**1. MEDIUM — `scripts/integration-test.ts` exit-0 docstring honesty + console message — CLOSED-with-evidence.**
+The L29-39 docstring now opens with the explicit clarifier `"Exit codes (THIS LANDING — pre-flight + receipts only)"` and the `0` row reads `"pre-flight + receipt-capture succeeded. **NOT the full R1 flow.**"`, with an inline T74b repurpose plan ("When T74b lands, exit-0 will be repurposed to mean 'full flow OK' and the partial-success path here will move to a new exit code 4."). The runtime path at L197-199 prints three honest lines before exit 0:
+
+```
+Pre-flight OK. Mid-flow harness wiring lands in T74b once R18 unblocks.
+EXITING 0 — this is partial success (pre-flight + receipts only).
+The full R1 flow is NOT verified here; that's the T74b deliverable.
+```
+
+Today's gate run still exits 2 (insurer 0x140e…8C62 has 0.0 STT) so the partial-success branch isn't reached at runtime — but the message is wired into the code path that will run as soon as R18 unblocks, which is the bar the iter-1 finding set. Silent false-positive risk eliminated.
+
+**2. LOW — `web/src/styles.css:1250 .policy-cards` grid wrap — CLOSED-with-evidence.**
+L1256 now reads `grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));` with an explanatory comment at L1252-1255 calling out R14/R15 (3-4 cards including custom) and explicitly naming the prior `1fr 1fr` as awkward. 3-up flows at insurer-mode full width, 2-up at narrow widths — exactly the fix the iter-1 finding asked for.
+
+**3. LOW — `loadEnv` inline-comment parsing — CLOSED-with-evidence.**
+L84-88 strip an inline `#…` tail for unquoted values:
+```ts
+let value = m[2]!;
+if (!/^["']/.test(value)) {
+  const hash = value.indexOf("#");
+  if (hash >= 0) value = value.slice(0, hash).trimEnd();
+}
+```
+A quoted-value early-out preserves `#` inside `"…"` / `'…'`, matching iter-1's spec. `VITE_RPC_URL=https://… # somnia testnet` parses cleanly now; the hex-guard fields (`VITE_PRIVATE_KEY`, `_INSURER`, `_CONTRACT_ADDRESS`) still get their HEX regex validation downstream.
+
+**4. NIT — `web/src/views/Detail.tsx:246 policyChoice` sentinel namespace — CLOSED-with-evidence (comment only, as requested).**
+L250-256 carry a "Followup NIT (tracked, not blocking)" block that names the collision risk, explains why the current curated-slug naming makes it implausible, and proposes the tagged-union shape `{kind: "curated"; id: string} | {kind: "custom"} | null` as the deferred fix. State type unchanged at L257 (`useState<string | null>`), which is what the iter-1 finding requested.
+
+**5. NIT — `src/users/userStore.ts:73 defaultStorage` doc — CLOSED-with-evidence.**
+L69-76 docstring now explicitly says "This module is consumed by BOTH the Node-side tsc build (the `src/` lib, where `window` isn't in lib) AND the Vite-bundled web layer (where `window.localStorage` IS available); using `globalThis` plus a type guard lets the same code path serve both." Both consumers are named; the prior Node-only framing is gone.
+
+### Gates
+
+| Gate | Result |
+|---|---|
+| `npm run build` (Node-side tsc, root `tsconfig.json`) | PASS — clean exit, no diagnostics. |
+| `cd web && npx tsc --noEmit` | PASS — silent, no diagnostics. |
+| `npm run test:lib` | PASS — `# tests 192 # pass 192 # fail 0` (duration 7.7s). |
+| `npx tsx scripts/integration-test.ts` | Exit 2 (insurer wallet unfunded, R18) — expected. Pre-flight diagnostic + faucet link surface correctly. Partial-success console block at L197-199 is wired into the post-pre-flight path; it'll surface as soon as R18 funds. |
+
+### Verdict: **PASS (zero findings)**
+
+All five iter-1 findings are closed by inline evidence; both tsc passes are clean; the lib test suite is 192/192; the integration script exits 2 honestly with the R18 funding diagnostic. No new findings surfaced during the re-read of the touched regions. Cleared for the next tick of work.

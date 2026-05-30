@@ -246,6 +246,14 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   // SPEC-0005 R14: the policy choice is the curated policy's id, or the
   // sentinel "custom" when the insurer is composing their own (R15), or
   // null when nothing's selected yet.
+  //
+  // Followup NIT (tracked, not blocking): the "custom" sentinel shares its
+  // string namespace with curated policy ids. A curated policy named
+  // literally "custom" would collide. The library currently uses
+  // hyphenated slugs (partd-formulary-adalimumab, …) so the collision is
+  // implausible; the cleaner shape is a tagged union
+  // `{kind: "curated"; id: string} | {kind: "custom"} | null` — defer
+  // until a second sentinel is needed.
   const [policyChoice, setPolicyChoice] = useState<string | null>(null);
   // SPEC-0005 R15: custom-policy composer state. `customName` is the policy
   // title; `customClauses` is a newline-separated list — each non-empty line

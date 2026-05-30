@@ -1249,7 +1249,11 @@ tr.row-link:hover td:first-child {
 
 .policy-cards {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* SPEC-0005 R14/R15 added 1-2 more cards (extra curated policies + the
+     Custom-policy entry). auto-fit min 220px keeps 2-up at narrow widths
+     and flows to 3-up at the panel's typical insurer-mode full-width
+     layout without the hardcoded 1fr 1fr awkward wrap. */
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
   margin: 12px 0 16px;
 }
