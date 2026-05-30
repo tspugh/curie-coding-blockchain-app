@@ -1,9 +1,39 @@
 # Browser-verify
 
-Last run: tick 110 — 2026-05-30 — **sim-mode harness 89/89 PASS**. Added
-since tick-107 (83/83): M1 (tick 109, R21 first arbiter-twin — Scenario A's
-denial mirror, 6 new assertions, all green). All 19 sim-mode scenarios
-green; no regressions on the previous 18.
+Last run: tick 113 — 2026-05-30 — **sim-mode harness 99/99 PASS** across
+21 scenarios. R21 (approval+denial path coverage) feature-complete: all
+3 arbiter-reaching twins (M1/M2/M3) green end-to-end. Added since
+tick-110 (89/89): M2 (tick 111, 5 new assertions) + M3 (tick 112, 5
+new). All previous 19 scenarios still green (no regressions).
+
+## Tick 113 — M2 + M3 verification re-run
+
+Final re-run after the R21 closeout. Increment vs tick-110 baseline:
+
+```
+Scenario M2: evidence-submit re-fires arbiter -> Denied (R9 follow-up, twin of L1)
+  ✓ M2: filed in Open
+  ✓ M2: insurer engaged -> Ready
+  ✓ M2: AI ruling NeedMoreEvidence -> EvidenceRequested
+  ✓ M2: evidence-submit re-fires arbiter -> Denied (next decision)
+  ✓ M2: round counter advanced (>=1) after resubmission
+
+Scenario M3: appeal-submit re-fires arbiter -> Denied (R12 twin of L2)
+  ✓ M3: filed in Open
+  ✓ M3: insurer engaged -> Ready
+  ✓ M3: first AI ruling Deny -> Denied
+  ✓ M3: appeal re-fire still Deny -> Denied
+  ✓ M3: round counter advanced (>=1) after appeal
+```
+
+All ten new R21-twin assertions PASS. Total: **99 passed, 0 failed**
+across 21 scenarios. Up from 89/89 (tick 110).
+
+R21 status: 3 of 3 arbiter-reaching twins complete (M1/M2/M3 all done
+and live-verified). C2 (PolicyInvalid) doesn't need a twin — Scenario
+A already covers the compliant→Approve path. **R21 feature-complete.**
+
+## Tick 110 — M1 verification re-run
 
 ## Tick 110 — M1 verification re-run
 
