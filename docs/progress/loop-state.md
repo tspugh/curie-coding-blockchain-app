@@ -4,14 +4,60 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 82 — SPEC-0005 R13 demo-mode quick-switch)
+**Last updated:** 2026-05-30 (tick 84 — loop-state refresh covering ticks 83 + skill install + SPEC-0005 R20-R23 spec edit + R11 live agent-browser verification)
 **Current mode:** `impl` (T2b-2/3/4 + R1 mid-flow still blocked on operator wallet funding; deployed contract still needs redeploy with 10-arg Ruled ABI — see Operator notes)
-**Current tick:** 82
-**Last focus:** SPEC-0005 R13 — demo-mode quick-switch. New `web/src/demoMode.ts` holds storage helpers + `DEMO_MODE_CHANGED_EVENT`; default ON in v0 (spec calls for OFF in v1). `Settings.tsx` adds `DemoModePanel` (`role="switch"` button with `data-testid="demo-mode-toggle"` + `aria-checked`); `App.tsx` filters seed ids out of the pill-row list when OFF (registry still holds them — Settings cards remain the full escape-hatch). Same-tab CustomEvent + cross-tab `storage` event for live updates (R12 reuse). Harness Scenario J adds 8 R13 assertions; all 8 PASS (defaults ON shows seeds → flip OFF hides → flip ON restores → OFF persists across reload). Strict-review (Opus) **PASS zero findings**; 4 NITs documented but not promoted (dead `.is-off` CSS class, non-lazy useState init in DemoModePanel, loadDemoMode strictness wording, SEED_PROFILE_IDS duplicated between App.tsx and client.ts — none load-bearing). Lib 196/196; root + web tsc clean; web build clean. **SPEC-0005 done**: R6/R7/R8/R10/R11/R12/R13/R14/R15/R16/R17/R19 + R1 skeleton. **SPEC-0005 open**: R1 mid-flow (T74b — operator-blocked on R18), T75c per-user signer plumbing.
-**Last commit:** `82d452e` (tick 82 — SPEC-0005 R13 demo-mode quick-switch)
+**Current tick:** 84
+**Last focus:** Tick 83 landed SPEC-0005 R11 key-paste arm in Settings → Users (`feat(web): 553930a`); the inline mid-session work then (a) authored SPEC-0005 R20-R23 (per-affordance integration coverage, approval+denial path coverage, real-chain LLM verification, pre-flight wallet sufficiency — `spec(0005): 6d28851`), (b) installed the official `agent-browser` skill from `vercel-labs/agent-browser` into `.claude/skills/agent-browser/SKILL.md` and wired it into the loop-prompt Phase-5 gate 8 (`skill: 331f08b`; .gitignore got `!.claude/skills/` so the skill commits), (c) actually drove the live UI via the skill to verify R11 end-to-end (all 4 assertions PASS — derived `0x19E7…ff2A` matches expected, address `readOnly=true` when key set, persisted address = derived, private key NOT leaked to `curie:users`; `chore(progress): 0dd9d0b`). Tick 84 is a bookkeeping tick: refreshes this loop-state file, queues R20-R23 as next priority. **SPEC-0005 done**: R6/R7/R8/R10/R11 (key-paste arm)/R12/R13/R14/R15/R16/R17/R19 + R1 skeleton. **SPEC-0005 open**: R1 mid-flow (T74b — operator-blocked on R18), R20/R21/R22/R23 (NEW this session), T75c per-user signer plumbing (R11 seed-derive arm still open in sim mode).
+**Last commit:** `0dd9d0b` (tick 83 — browser-verify R11 live run + tick-83 review verdicts) plus tick 84 chore landing this refresh.
 **Emergency tag:** `tokens-emergency-2026-05-29-1` *(historical — superseded by the `a68ffe5` deprecation of token-budget gating)*
 
+## New findings the next planner MUST act on
+
+**Two operational findings landed in tick 83 — encoded in `docs/loop-prompts/spec-4-implementation-loop.md` + `docs/progress/browser-verify.md`; any browser-verify subagent MUST honor:**
+
+1. The `agent-browser` CLI lives at `~/.npm-global/bin/agent-browser` and is NOT on the default PATH. Without `PATH="$HOME/.npm-global/bin:$PATH"`, every command silently exits 127 and agent-browser's `2>/dev/null` swallows the failure — assertions all return empty strings and falsely "pass" any `assert_eq ""=""`. Without this, the entire browser-verify gate is a no-op.
+2. `agent-browser click @ref` (the snapshot-ref click) does NOT reliably trigger React form submit. The form's `onSubmit` only runs when the click is dispatched via the DOM, e.g. `document.querySelector('[data-testid=X]').click()`. The existing `eval_click` helper in `run.sh:69-71` already encapsulates this — any new R20-R23 scenario MUST use it for form-submit buttons.
+
 ## Work queue (priority order)
+
+### SPEC-0005 R11 key-paste arm (LANDED tick 83 — addr derives from pasted privkey)
+**Settings → Users add-user form now derives the on-chain address from a pasted private key via `ethers.Wallet`**
+- What landed: `web/src/views/Settings.tsx` UsersPanel — optional `users-add-key` input + `useMemo`-derived `derivedAddress`; address input goes `readOnly` while key is valid; submit prefers derived over manual; key cleared on success and NEVER persisted to `curie:users`. Reuses existing `isValidHexKey` regex helper from `walletKeys.ts` so the validation gate is shared with the provider/insurer key panel.
+- Test: `web/tests/agent-browser/run.sh` Scenario K — 5 assertions against the well-known `0x11…11` vector → expected address `0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A` (EIP-55-checked).
+- Live verification: drove the production preview build via the `agent-browser` skill (not via run.sh) — all 4 R11 assertions PASS on the running UI. See `docs/progress/browser-verify.md` tick-83 section.
+- Gate verdict: lib 196/196 ✓, hardhat 30/30 ✓, lint ✓, tsc ✓, secret-scan ✓ (the `0x11…11` hit is a public test vector inside a test scenario), Opus strict-review **PASS zero findings**, Opus security-review **PASS zero findings**.
+- Open: the R11 "OR derived from a seed in simulated mode" arm is still open; T75c per-user signer plumbing (i.e. actually using the per-user address to sign chain writes) remains queued.
+
+### SPEC-0005 R20 — per-affordance integration scenario (NEW — tick 83 spec; top of queue)
+**Every state-mutating UI affordance has at least one named Scenario in `web/tests/agent-browser/run.sh` that drives it through the live UI**
+- Files: `web/tests/agent-browser/run.sh` (new scenarios), plus any UI bits without a `data-testid` that need one to be reachable.
+- R-citation: SPEC-0005 §3.6 R20.
+- Acceptance criterion: every `<button>` / `<form onSubmit>` whose effect crosses a layer boundary (contract write OR localStorage write OR route-resetting nav) has a Scenario by name in `run.sh`. Pure-navigation buttons are exempt. An affordance without a Scenario fails strict-review.
+- Concrete first sub-unit: enumerate the affordances in `web/src/views/{Overview,Create,Detail,Settings,Network}.tsx`, cross-check against scenarios A–K already in `run.sh`, list the gap. Land that audit as `docs/progress/affordance-coverage.md` before queuing per-affordance Scenario implementation.
+
+### SPEC-0005 R21 — approval AND denial paths covered (NEW — tick 83 spec; queue after R20)
+**Every arbiter-reaching flow has Scenarios for both ruling outcomes**
+- Files: `web/tests/agent-browser/run.sh`.
+- R-citation: SPEC-0005 §3.6 R21.
+- Acceptance criterion: R1, R2a, and each curated case in R2 have Scenarios for both Approve and Deny outcomes. Approve asserts `State.Settled` + settlement recipient = `providerAddr`; Deny asserts `State.Denied` + the appeal-or-close branch per `appeal-ladder-enforcement.md`. Missing path → failing-stub, not silent skip.
+
+### SPEC-0005 R22 — real on-chain arbiter call verified (NEW — tick 83 spec; queue after R21)
+**Real-mode arbiter Scenarios assert `Ruled` event + non-zero block hash + agent tx `status=1`**
+- Files: `web/tests/agent-browser/run.sh` per-Scenario assertions.
+- R-citation: SPEC-0005 §3.6 R22.
+- Acceptance criterion: scenarios claiming integration coverage for an arbiter step distinguish sim vs real mode in the assertion message AND poll for the `Ruled` event with the test-run's `reqId`. Sim short-circuits do not satisfy R22.
+
+### SPEC-0005 R23 — pre-flight wallet sufficiency (NEW — tick 83 spec; cheap atomic first cut)
+**Per-Scenario cost estimate gate fails loud with funding instructions on shortfall**
+- Files: `web/tests/agent-browser/cost-estimator.sh` (new helper), `web/tests/agent-browser/run.sh` (call helper at top of each write-tx Scenario).
+- R-citation: SPEC-0005 §3.6 R23.
+- Acceptance criterion: every Scenario that fires write txs invokes the helper first; helper computes `Σ(estimatedGas_i × maxFeePerGas) + agentFeeReserve × arbiterCallCount` and fails the Scenario loud if the active wallet's balance is below that sum, with the exact message `insufficient balance: needed X STT, have Y STT, short Z STT — fund <addr> at https://testnet.somnia.network/`. Sim mode bypasses.
+- Suggested first PR: just the helper script + a single Scenario (Scenario A's happy-path) wired through it as the proof-of-concept.
+
+### Tick 83 skill-install + spec-edit bundle (LANDED tick 83 — meta)
+**`agent-browser` skill installed; loop prompt updated; SPEC-0005 R20-R23 authored**
+- What landed: `.claude/skills/agent-browser/SKILL.md` (the official discovery stub from `vercel-labs/agent-browser`, plus the `agent-browser skills get core` pointer); `.gitignore` got `!.claude/skills/` (+ matching negations for `agents/` and `hooks/`) so future skills commit cleanly; `docs/loop-prompts/spec-4-implementation-loop.md` now requires the skill in Phase 5 gate 8 + notes the PATH gotcha + the DOM-click workaround; `docs/specs/0005-usability-and-integration.md` gained section 3.6 with R20-R23 + OQ4 (spec-author §5/§6 sections missing) + OQ5 (per-PR STT cost of real-chain sweep).
+- No code/contract diff. No strict-review needed (docs + tooling only).
 
 ### BROWSER-VERIFY-39 (LANDED tick 39 — first live end-to-end run)
 **First agent-browser run against the deployed Somnia testnet contract**
