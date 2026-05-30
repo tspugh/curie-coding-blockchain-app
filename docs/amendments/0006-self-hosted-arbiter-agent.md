@@ -62,13 +62,46 @@ per the project's existing tooling — see `claude-api` skill):
    the platform address); contract validates msg.sender ==
    platformAddress and routes the ruling.
 
-### Tick B — `contracts/CoverageNegotiation.sol` (minor)
+### Tick B — `contracts/CoverageNegotiation.sol` (REVISED tick 116 — non-trivial)
 
-Already accepts a configurable `AGENT_PLATFORM_ADDRESS`. Confirm the
-existing `handleResponse` callback path requires no contract changes
-when the "platform" is just an EOA we own — should already work, since
-the contract just checks `msg.sender == platformAddress`. Verify and
-land any small clarifying-comment edit if needed.
+Tick-116 contract inspection reveals this is NOT a minor change. Two
+load-bearing surfaces interact with `platform`:
+
+1. **`handleResponse`** is gated by
+   `require(msg.sender == address(platform), ...)` — works for EOA OK.
+2. **`_fireAgent`** calls `platform.createRequest(...)` and
+   `platform.getRequestDeposit()` BEFORE the orchestrator ever gets
+   involved. An EOA-as-platform makes these calls revert (EOAs have no
+   code), so `requestAdjudication` would fail BEFORE the event fires.
+
+Decision: **introduce a self-hosted-mode contract flag**. The cleanest
+shape is a sentinel-address pattern:
+
+- Keep `platform` as `IAgentRequester public platform` (back-compat).
+- Add `bool public selfHosted` (default false).
+- In `setPlatform(address platform_, bool selfHosted_)`: when
+  `selfHosted_ == true`, store `platform_` raw without the IAgentRequester
+  call, set `selfHosted = true`, AND set `agentReward = 0` (no fee paid).
+- In `_fireAgent`: branch on `selfHosted`. Self-hosted path skips
+  `platform.createRequest` + `platform.getRequestDeposit` entirely;
+  generates a synthetic `requestId` (e.g., `uint256(keccak256(abi.encode(
+  block.number, address(this), reqId, ++_selfHostedNonce)))`); maps it via
+  `_requestToNegotiation[requestId] = reqId`; emits the existing
+  `RequestSent`-style event (or a new `AdjudicationRequested(reqId,
+  requestId)` event the orchestrator subscribes to); transitions state
+  to UnderReview as today; refunds any `msg.value` (no fee in self-hosted
+  mode).
+- `handleResponse` works as-is — caller (the orchestrator EOA) is `platform`.
+
+This DOES require:
+- Solidity-compliance Opus review (touches `_fireAgent`, the core
+  agent-firing path).
+- New tests covering the self-hosted branch (sentinel platform mock).
+- A bump to the `_clearRequest` / state-machine invariants if the new
+  flow changes anything.
+
+Estimated: ~1-2 ticks for the contract change + tests, separate from
+the orchestrator script (tick A) and the redeploy (tick C).
 
 ### Tick C — redeploy + reconfigure
 
