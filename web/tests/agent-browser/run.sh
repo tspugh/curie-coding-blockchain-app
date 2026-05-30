@@ -968,6 +968,52 @@ scenario_custom_policy() {
   esac
 }
 
+# ===========================================================================
+# Scenario L5 — provider posts feedback note (SPEC-0001 R20 — postFeedback)
+#   Closes the L5 affordance-coverage gap. The feedback-submit button calls
+#   client.negotiation.postFeedback(reqId, hashContent(text), ZERO_HASH);
+#   contract guard is just !_terminal + _onlyParty (per
+#   CoverageNegotiation.sol:540-546). Pre-terminal — so we fire from Open
+#   without needing a full happy-path setup. Post-success the onClick
+#   handler clears the feedback state to "" (Detail.tsx:970), so a passing
+#   click yields an empty input — the assertion target.
+# ===========================================================================
+scenario_feedback() {
+  echo "Scenario L5: provider posts feedback note (postFeedback)"
+  # SPEC-0005 R23 pre-flight: 2 writes (createContract + postFeedback),
+  # 0 arbiter calls.
+  assert_wallet_sufficient "Scenario L5" 2 0 || exit 2
+
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Routine; testing feedback note path." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "1200" >/dev/null
+  ab find testid create-quantity fill "1" >/dev/null
+  ab find testid create-days-supply fill "30" >/dev/null
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "L5: filed in Open" "0" "$(state_of 1)"
+
+  # Fill feedback-text (Detail.tsx shows the panel when canFeedback =
+  # !view.terminal && isParty — both true here for the active provider).
+  ab find testid feedback-text fill "Patient confirms prior methotrexate trial." >/dev/null
+  ab wait 100 >/dev/null
+
+  # Click feedback-submit — the onClick at Detail.tsx:966 awaits
+  # postFeedback then setFeedback(""). A successful chain call clears
+  # the input; a revert leaves the input populated AND surfaces the
+  # error-card (also asserted negatively below).
+  eval_click feedback-submit
+  ab wait 400 >/dev/null
+
+  assert_eq "L5: feedback input cleared after successful postFeedback" "" \
+    "$(ev "document.querySelector('[data-testid=feedback-text]').value")"
+  assert_eq "L5: error-card NOT shown (postFeedback succeeded)" "false" \
+    "$(ev "String(!!document.querySelector('[data-testid=error-card]'))")"
+}
+
 # --- main -------------------------------------------------------------------
 
 start_server
@@ -992,6 +1038,7 @@ scenario_appeal;              echo
 scenario_withdraw;            echo
 scenario_payer_line;          echo
 scenario_custom_policy;       echo
+scenario_feedback;            echo
 
 echo "──────────────────────────────────────────"
 echo "agent-browser E2E: $PASS passed, $FAIL failed"
