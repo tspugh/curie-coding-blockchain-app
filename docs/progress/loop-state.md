@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 127 — `check-ruling-abi.ts` provenance linkage upgraded from hardcoded TS literal to runtime parse of `CoverageNegotiation.sol`. New `extractContractDecoderTypes()` reads the .sol file, regex-matches the `abi.decode(responses[0].result, (TYPES))` call, splits + trims the type list. Closes tick-124 strict-review NIT-1 (provenance fragility). Loud-fail mode if the abi.decode call is moved/renamed/wrapped — the error message includes the file path + remediation hint. Verified via 4-way negative-test matrix: A baseline → exit 0, B corrupt .sol decoder → exit 1, C corrupt encoder lib → exit 1, D rename abi.decode → exit 1 with extractor-not-found message.)
-**Current mode:** `impl` — SPEC-0004 R25 Ticks A + B + D + R26-repurpose + R26-gate-wired + R26-mirror-test + R26-sol-parsed landed. Remaining: Tick C (bundle redeploy) — blocked on operator wallet STT funding. T2b-2/3/4 + R1 mid-flow still blocked on Tick C redeploy. Deployed contract `0x1dC5bA…3E1A` is the pre-Amendment-0006 build.
-**Current tick:** 127
-**Last focus:** Provenance linkage tightening. `scripts/check-ruling-abi.ts` previously held a hand-copied literal of the Solidity decoder type list, which would silently go stale on any contract-decoder change. Replaced with `readFileSync` + regex parse of the .sol source — the script's source-of-truth IS now the compiled-Solidity-adjacent source file, not a TS snapshot. Three LOW stickler items (stale "10 elements" + "10 fields" magic numbers + "four sample rulings" comment) cleaned up to derive from `RULING_ABI_TYPES.length`.
-**Last commit:** `c78209c` (tick 126 R26 hardhat mirror linkage) → tick 127 lands the .sol-parsed provenance upgrade.
+**Last updated:** 2026-05-30 (tick 128 — `npm test` umbrella landed. Root package.json now has a `test` script that chains `check-ruling-abi` → `test:lib` → hardhat in order (fastest gates first, fail-fast). A dev running `npm test` from the repo root now executes the same first-three gates the loop prompt enumerates — no more `Missing script: test` error, and no more way for someone to run only hardhat while missing the R26 ABI check. Loop prompt's Phase 5 #1 Tests bullet updated to reference the umbrella + fix two stale doc claims: replaces the inaccurate "pnpm test (vitest)" mention (project uses `node --test`), and updates the check-ruling-abi description from "compares against literal" to "parses CoverageNegotiation.sol at runtime" per tick 127's upgrade.)
+**Current mode:** `impl` — SPEC-0004 R25 Ticks A + B + D + R26-repurpose + R26-gate-wired + R26-mirror-test + R26-sol-parsed + npm-test-umbrella landed. Remaining: Tick C (bundle redeploy) — blocked on operator wallet STT funding. T2b-2/3/4 + R1 mid-flow still blocked on Tick C redeploy. Deployed contract `0x1dC5bA…3E1A` is the pre-Amendment-0006 build.
+**Current tick:** 128
+**Last focus:** Closing the gap between the loop's gate enumeration and what a dev/CI invocation runs. Added `"test": "npm run check-ruling-abi && npm run test:lib && npm --prefix contracts test"` to root package.json. Updated `docs/loop-prompts/spec-4-implementation-loop.md` Phase 5 #1 to reference the umbrella + describe the live `.sol`-parsing behavior accurately + mention the hardhat mirror-linkage test as the second-tier guarantee.
+**Last commit:** `d0152f0` (tick 127 .sol-parse provenance) → tick 128 lands the umbrella.
 
 **Tick 122 reviewer history:**
 - Security-review iter-1 (Opus): **PASS** zero MEDIUM+. One in-scope LOW (enforce `WEI_CAP` via `.refine`, not `.describe()`) — applied before strict-review.
@@ -25,6 +25,16 @@
 - Strict-review iter-1 (Opus): **PASS** zero MEDIUM+. Five findings, all addressed: LOW-1 (magic byte-count math) — applied `(encoded.length - 2) / 2`; LOW-2 (`noUncheckedIndexedAccess` not enforced on scripts/, but indices accessed without guards) — applied `!` non-null assertions to match existing pattern at line 127; LOW-3 (round-trip coverage gap — missed schema-ceiling values) — applied, new 5th sample at 10^30 wei + 64-element arrays + max receiptId; NIT-1 (`CONTRACT_DECODER_TYPES` provenance via copy-comment is fragile) — accepted; NIT-2 (`readonly string[]` widens `as const`) — applied (dropped redundant `as const`).
 - Negative-path sanity test performed: swapped `RULING_ABI_TYPES` elements 7 ↔ 9 in `lib/ruling-abi.ts`, ran `npm run check-ruling-abi`, got exit 1 with `tuple element 7 mismatch: encoder="bytes32[]", contract="uint16[]"`. Restored.
 - Refactor verified byte-identical: encoder type list and field order unchanged from pre-tick-124 inline version.
+
+**Tick 126 reviewer history:**
+- Strict-review iter-1 (Opus): **PASS** zero MEDIUM+. LOW-1 (slight conflation of "overflow at encode" vs "decoder mismatch" in comment) — applied. 3-corruption negative test: clean → exit 0, uint8↔uint256 swap → exit 1, uint16[]↔bytes32[] swap → exit 1.
+
+**Tick 127 reviewer history:**
+- Strict-review iter-1 (Opus): **PASS** zero MEDIUM+. Three LOW stale-count fixes applied (`RULING_ABI_TYPES.length` substitutes hardcoded `10`; "four sample rulings" → "five"). 4-way negative-test matrix all correct (baseline, corrupt .sol decoder, corrupt encoder lib, extractor-renamed).
+
+**Tick 128 reviewer history:**
+- Strict-review iter-1 (Opus): **PASS** zero MEDIUM+. Three findings: LOW-1 (cross-reference to `package.json` not stated in the loop-prompt bullet — appended `(chain defined in package.json scripts.test, in order: ...)`); LOW-2 (verdict-table sub-row dropped the "static + 5/5" detail — restored); NIT-1 (`✗ skipped this tick` glyph reads as failure — changed to PASS narrative since strict-review was actually run). All applied.
+- Verified all doc-vs-reality claims in the new bullet: `package.json` chain matches; `check-ruling-abi.ts` parses .sol at runtime; hardhat round-trip test imports orchestrator encoder; `test:e2e` exclusion intentional + documented.
 
 **Ticks 115-120 summary** (the Amendment 0006 sprint):
 - **Tick 115** (`3cfd52a` amendment 0006): authored
@@ -62,47 +72,48 @@
 **SPEC-0005 §3.6 sim-mode milestone holds:** R20 + R21 + R23 all done.
 Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 
-**Verdict table after tick 127:**
+**Verdict table after tick 128:**
 
 | Gate | Verdict |
 |---|---|
-| `npm run check-ruling-abi` | ✓ **PASS** — static + 5/5 round-trips (re-verified tick 127) |
-| Hardhat tests | ✓ 39/39 (re-verified tick 127) |
-| Lib tests | ✓ 196/196 (re-verified tick 127) |
-| R26 negative-path matrix | ✓ 3/3 corruptions detected (baseline + corrupt .sol decoder + corrupt encoder lib + extractor-cannot-find) |
+| `npm test` (umbrella, new) | ✓ **PASS** — exit 0 chain through check-ruling-abi → 196/196 lib → 39/39 hardhat |
+| `npm run check-ruling-abi` | ✓ PASS — static + 5/5 round-trips (run via umbrella) |
+| Lib tests | ✓ 196/196 (run via umbrella) |
+| Hardhat tests | ✓ 39/39 (run via umbrella) |
 | Browser-verify sim mode | ✓ 99/99 PASS (tick 113; not re-run — no UI change) |
 | Browser-verify real mode | ✗ blocked by Tick C redeploy |
-| Secret-scan | ✓ no findings across all ticks 83-127 |
-| Strict-review (Opus iter-1) | ✓ **PASS** zero MEDIUM+; 3 LOW stale-count cleanups applied |
+| Secret-scan | ✓ no findings across all ticks 83-128 |
+| Strict-review (Opus iter-1) | ✓ **PASS** zero MEDIUM+; 2 LOWs + 1 NIT applied (cross-ref to package.json, preserve "static + 5/5" detail, glyph fix) |
 | Solidity-compliance / Security-review | N/A this tick (no contract / risk-bearing change) |
-| TypeScript typecheck | ✓ standalone strict `tsc` on script clean |
+| TypeScript typecheck | N/A this tick (no code change) |
 
-**Remaining top-of-queue going into tick 128:**
+**Remaining top-of-queue going into tick 129:**
 1. **R25 Tick C — bundle redeploy.** Redeploy `CoverageNegotiation`
    with the 10-arg `Ruled` ABI (tick-49/50 debt) + Amendment 0006
    selfHosted mode. Update `.env`: `AGENT_PLATFORM_ADDRESS` = orchestrator
    EOA; `COVERAGE_CONTRACT_ADDRESS` = new addr; call
    `setPlatformSelfHosted` post-deploy. **Blocked on operator wallet
    STT funding for the deploy gas.**
-2. **Optional Tick A follow-up (post-Tick-C):** end-to-end smoke test
+2. **README / VISION update for Amendment 0006.** Top-level README +
+   `docs/VISION.md` likely still describe the validator-subcommittee
+   architecture from before Amendment 0006. Updating either makes the
+   self-hosted reality visible to first-time readers. Doc-only,
+   low-risk, no unblock needed — likely next pick.
+3. **Optional Tick A follow-up (post-Tick-C):** end-to-end smoke test
    of the LLM path against the redeployed contract — requires
    `ANTHROPIC_API_KEY` + funded orchestrator wallet.
-3. **Old SPEC-0003 R49 deprecation pass.** Tick 123 added a self-hosted
+4. **Old SPEC-0003 R49 deprecation pass.** Tick 123 added a self-hosted
    attribution note but kept the original validator-subcommittee R49
    normative text. If we abandon validator-subcommittee mode entirely,
    R49 should be rewritten — not just annotated.
-4. **Restart the cron with the updated loop prompt body.** Canonical loop
-   prompt now includes the `check-ruling-abi` gate (tick 125); live cron
-   `18c86caf` still fires the pre-tick-125 prompt body until restarted.
-5. **README / VISION update for Amendment 0006.** The repo's top-level
-   README + docs/VISION.md likely still describe the validator-subcommittee
-   architecture from before Amendment 0006. Updating either would make
-   the self-hosted reality visible to first-time readers. Doc-only,
-   low-risk, doesn't require any other unblock.
-6. **`check-ruling-abi` already-fires-on-test umbrella.** The check is
-   wired into the loop prompt but not into `npm test`. A future tick
-   could create a `test` umbrella script that chains hardhat + lib + e2e
-   + check-ruling-abi for one-command CI parity with the loop.
+5. **Restart the cron with the updated loop prompt body.** Canonical loop
+   prompt now includes the `check-ruling-abi` gate (tick 125) + the
+   `npm test` umbrella reference (tick 128); live cron `18c86caf` still
+   fires the pre-tick-125 prompt body until restarted.
+6. **Optional `npm test` add-on.** Could also chain `typecheck` (`tsc
+   -p tsconfig.json --noEmit`) into the umbrella for a fail-fast project
+   typecheck gate. Cheap (~5s) but adds bytes to every test run; defer
+   until the gap matters.
 
 **Ticks 107-113 summary** (the R20-closeout + R21-completion sprint):
 - **Tick 107** (`f1b5ab3` browser-verify): L5 verified live (3/3 PASS).

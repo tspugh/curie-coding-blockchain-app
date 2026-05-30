@@ -18,6 +18,7 @@
     "web:dev": "vite",
     "web:build": "vite build",
     "web:preview": "vite preview --port 4173",
+    "test": "npm run check-ruling-abi && npm run test:lib && npm --prefix contracts test",
     "test:lib": "node --import tsx --test \"src/**/*.test.ts\"",
     "test:e2e": "bash web/tests/agent-browser/run.sh",
     "test:real-local": "bash scripts/real-backend-localnode.sh",
