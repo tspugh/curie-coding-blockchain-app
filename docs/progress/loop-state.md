@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 135 — **COVERAGE GATE CROSSED.** Added `contracts/contracts/mocks/RevertingReceiver.sol` (12 lines, one `receive()` that always reverts) + 2 hardhat tests using it as the recipient of the "transfer failed" branches at `withdrawFunds` and `_fireAgentSelfHosted` fee-forward. **Branch coverage 84.76% → 85.98% overall (+1.22pp);** CoverageNegotiation.sol itself 84.95% → **85.80%** ✓. Cumulative over ticks 133-135: 76.83% → 85.98% (+9.15pp). Both Opus reviewers PASS — solidity-compliance zero MEDIUM+; strict-review zero MEDIUM+ (2 NITs: line-number drift in NatSpec applied; rounding in comment left as-is).)
-**Current mode:** `impl` — coverage gate now PASSING. Remaining open blocker for steady state: real-mode browser-verify still blocked on Tick C bundle redeploy (which is blocked on operator wallet STT funding).
-**Current tick:** 135
-**Last focus:** Cross the 85% gate. Single focused unit — 1 new Solidity test mock + 2 hardhat tests that use `hardhat_setBalance` (withdrawFunds) and the new `setPlatformSelfHosted(reverter)` self-hosted path. Mock NatSpec cites the require message strings (not line numbers) for drift-durability per strict-review NIT-1.
-**Last commit:** `119dcb7` (tick 134 second coverage close) → tick 135 lands the gate-crossing.
+**Last updated:** 2026-05-30 (tick 136 — `typecheck` chained into the `npm test` umbrella. Order now check-ruling-abi → typecheck → test:lib → hardhat (fastest-first; ~19s end-to-end, +7s vs prior). Loop-prompt Phase 5 #1 Tests bullet updated accordingly. Catches TS errors in src/ that the hardhat + check-ruling-abi gates don't reach. One-line edit + one-line loop-prompt update.)
+**Current mode:** `impl` — coverage gate PASSING. Only remaining blocker for steady state: real-mode browser-verify blocked on Tick C bundle redeploy → operator wallet STT funding.
+**Current tick:** 136
+**Last focus:** Defensive gate addition. Inserts `npm run typecheck` between check-ruling-abi (fastest) and test:lib (slowest). Doesn't change pass/fail behavior today (project typecheck already clean), but future TS-source edits get a fail-fast gate at the dev/CI invocation layer rather than waiting for hardhat to catch them indirectly.
+**Last commit:** `ee101e6` (tick 135 coverage-gate-cross) → tick 136 lands the typecheck addition.
 
 **Tick 122 reviewer history:**
 - Security-review iter-1 (Opus): **PASS** zero MEDIUM+. One in-scope LOW (enforce `WEI_CAP` via `.refine`, not `.describe()`) — applied before strict-review.
@@ -72,53 +72,51 @@
 **SPEC-0005 §3.6 sim-mode milestone holds:** R20 + R21 + R23 all done.
 Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 
-**Verdict table after tick 135:**
+**Verdict table after tick 136:**
 
 | Gate | Verdict |
 |---|---|
-| `npm test` (umbrella) | ✓ PASS — exit 0 chain (re-verified tick 135) |
+| `npm test` (umbrella, now includes typecheck) | ✓ PASS — exit 0 chain in ~19s (re-verified tick 136) |
 | `npm run check-ruling-abi` | ✓ static + 5/5 round-trips |
+| **TypeScript typecheck** (new in umbrella) | ✓ project tsc clean |
 | Lib tests | ✓ 196/196 |
-| Hardhat tests | ✓ **57/57** (+2 this tick; +18 since tick 132) |
+| Hardhat tests | ✓ 57/57 |
 | Coverage (src/, measured subset) | ✓ 98.85% line / 92.25% branch — PASS |
-| **Coverage (contracts/, hardhat solidity-coverage)** | ✓ **85.80% branch** — **PASS** ≥85% gate (CoverageNegotiation.sol; was 84.95% at tick 134) |
-| Coverage (all contracts, overall) | ✓ **85.98% branch** — PASS (was 84.76%) |
-| Coverage (MockAgentPlatform.sol + RevertingReceiver.sol) | ✓ 100% on every metric |
+| Coverage (contracts/, CoverageNegotiation.sol) | ✓ 85.80% branch — PASS ≥85% gate |
+| Coverage (all contracts, overall) | ✓ 85.98% branch — PASS |
+| Coverage (mocks) | ✓ 100% on every metric |
 | Design-conformance | ✓ ~92% overall — PASS ≥90% gate |
 | Browser-verify sim mode | ✓ 99/99 PASS (tick 113; not re-run — no UI change) |
 | **Browser-verify real mode** | ✗ **STILL BLOCKED on Tick C redeploy** — last remaining steady-state blocker |
-| Secret-scan | ✓ no findings across all ticks 83-135 |
-| **Solidity-compliance (Opus iter-1)** | ✓ **PASS** zero MEDIUM+; 2 NITs (mock structure + receive-only — both non-blocking) |
-| **Strict-review (Opus iter-1)** | ✓ **PASS** zero MEDIUM+; 2 NITs (line-number drift in NatSpec applied; comment rounding left) |
-| Security-review (Opus) | Skipped (test mock only; solidity-compliance covers risk surface adequately for this scope) |
-| TypeScript typecheck | N/A this tick (no TS source change) |
+| Secret-scan | ✓ no findings across all ticks 83-136 |
+| Strict-review / Solidity-compliance / Security-review | N/A this tick (one-line package.json + loop-prompt edit; no risk surface) |
 
-**Steady-state self-assessment after tick 135:** 7 of 8 criteria met. The only outstanding criterion is **browser-verify real mode** (still blocked on Tick C bundle redeploy → operator wallet STT funding). The coverage criterion that has held up steady-state for many ticks is **NOW PASSING**.
+**Steady-state self-assessment after tick 136:** 7 of 8 criteria met. Same as tick 135 — typecheck addition is defensive, doesn't change pass/fail behavior today. The only outstanding criterion remains **browser-verify real mode** (Tick C blocker).
 
 **Open findings to triage in next tick:**
 - **R25 Tick C bundle redeploy.** The single remaining steady-state blocker. Operator wallet STT funding is the only thing holding it back. Once funded, this is a single focused tick.
 - `src/contract/simulated.ts` branch 68.63% (src/ subset still passes overall at 92.25%). Lower priority polish — does not block steady state.
 
-**Remaining top-of-queue going into tick 136:**
+**Remaining top-of-queue going into tick 137:**
 1. **R25 Tick C — bundle redeploy.** The single remaining steady-state
-   blocker now that coverage is passing. Blocked on operator wallet STT
-   funding for deploy gas. Once unblocked: `npm --prefix contracts run
-   deploy:somnia` → `setPlatformSelfHosted(<orchestrator EOA>)` →
-   update `.env` → run browser-verify R22 real-mode → steady-state
-   self-assessment passes all 8 criteria → tag `steady-state-2026-05-30-1`
+   blocker. Blocked on operator wallet STT funding for deploy gas.
+   Once unblocked: deploy → `setPlatformSelfHosted` → update `.env` →
+   run browser-verify R22 real-mode → tag `steady-state-2026-05-30-1`
    → flip mode to `creativity`.
-2. **Optional Tick A live smoke test (post-Tick-C).** Requires
-   `ANTHROPIC_API_KEY` + funded orchestrator wallet.
+2. **Optional Tick A live smoke test (post-Tick-C).**
 3. **`src/contract/simulated.ts` branch 68.63%.** Lower-priority polish;
    src/ subset overall still passes 92.25%.
 4. **A-0006 status-field flip.** Human-reviewed step from tick 131.
 5. **R49 deprecation rewrite.** Premature.
-6. **Restart cron with the updated loop prompt body.** Operational.
-7. **Optional `typecheck` chain extension in `npm test`.** Cheap; defer.
-8. **State-machine branch coverage polish** (~13 arms remain at lines
-   420/437/481/485/496/498/521/572/586/624/635 + the `_terminal()`
-   OR-chain). Coverage gate is now passing; this is polish, not
-   blocker.
+6. **Restart cron with the updated loop prompt body.** Operational —
+   live cron `18c86caf` fires the pre-tick-125 body; canonical prompt
+   now has typecheck-in-umbrella references too.
+7. **State-machine branch coverage polish** (~13 arms remain at lines
+   420/437/481/485/496/498/521/572/586/624/635 + `_terminal()` OR-chain).
+   Non-blocking — coverage gate is passing.
+8. **Re-run browser-verify sim-mode to refresh the verdict** (last
+   measured tick 113; no UI change since but ~22 ticks of staleness).
+   Optional; the loop-state correctly cites the staleness explicitly.
 
 **Ticks 107-113 summary** (the R20-closeout + R21-completion sprint):
 - **Tick 107** (`f1b5ab3` browser-verify): L5 verified live (3/3 PASS).
