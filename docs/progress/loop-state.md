@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 143 — Loop-prompt deployed-contract address updated from the stale pre-Amendment-0006 `0x1dC5bA…3E1A` to the post-Tick-C `0x2c561f33…488ac93`. Also points readers at `npm run verify-deploy` (tick 142) for a chain-live sanity check. Trivial 1-line edit but load-bearing: future cron restarts pick up the canonical loop-prompt body, so the address citation needs to be accurate.)
-**Current mode:** `impl` — All canonical loop-prompt references now reflect the Tick C deploy. Steady state still gated on real-mode browser-verify or Tick A live smoke with real Claude.
-**Current tick:** 143
-**Last focus:** Canonical-source-of-truth hygiene. Loop-prompt is the version-controlled source that future cron restarts (and any human reader) will consult; an out-of-date address there silently sends operators to the wrong contract. Now consistent with README.md (tick 139) + loop-state.md.
-**Last commit:** `2ae6da2` (tick 142 verify-deploy) → tick 143 lands the loop-prompt address refresh.
+**Last updated:** 2026-05-30 (tick 144 — `src/contract/simulated.ts` branch coverage gap close. New test file `src/contract/simulated.transitions.test.ts` covers 5 functions tick-132's coverage subagent flagged as missing tests: `settle` / `refuse` / `withdraw` / `onRulingTimeout` / `postFeedback`. 13 new tests (happy path + 1-2 revert paths each). **Branch coverage 68.63% → 75.45% (+6.82pp);** line coverage now 95.06%. Lib test count: 196 → **209**. Dev iter caught 3 initial failures from wrong-message assumption (`"auth: not a party"` not `"auth: not party"`) + wrong filter API (`EventFilter` has no `name` field; filter in JS). All 3 fixed inline.)
+**Current mode:** `impl` — `simulated.ts` branch coverage improved but still below the per-file threshold (75.45% < 85%). However, src/ subset overall continues to pass at ≥90%. Steady state remains gated on real-mode browser-verify or Tick A live smoke.
+**Current tick:** 144
+**Last focus:** Lib-side coverage polish. Single-file gap close on `simulated.ts` via 13 new transition tests mirroring the existing `simulated.auth.test.ts` test pattern (node:test + tsx, deterministic `setCaller`, `rejects(fn, msg)` revert-message matching). Honest partial improvement; full close would need targeted tests for the few internal helpers (deliverRuling branch coverage, refusable() edge cases).
+**Last commit:** `ea2afb2` (tick 143 loop-prompt address refresh) → tick 144 lands the simulated.ts transition tests.
 
 **Tick 122 reviewer history:**
 - Security-review iter-1 (Opus): **PASS** zero MEDIUM+. One in-scope LOW (enforce `WEI_CAP` via `.refine`, not `.describe()`) — applied before strict-review.
@@ -72,14 +72,14 @@
 **SPEC-0005 §3.6 sim-mode milestone holds:** R20 + R21 + R23 all done.
 Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 
-**Verdict table after tick 143:**
+**Verdict table after tick 144:**
 
 | Gate | Verdict |
 |---|---|
 | `npm test` (umbrella) | ✓ PASS — exit 0 chain (re-verified tick 137) |
 | `npm run check-ruling-abi` | ✓ static + 5/5 round-trips |
 | TypeScript typecheck | ✓ project tsc clean |
-| Lib tests | ✓ 196/196 |
+| Lib tests | ✓ **209/209** (+13 new transition tests this tick) |
 | Hardhat tests | ✓ **61/61** (+4 state-guard tests this tick) |
 | Coverage (src/, measured subset) | ✓ 98.85% line / 92.25% branch — PASS |
 | Coverage (contracts/, CoverageNegotiation.sol) | ✓ **86.42% branch** — PASS ≥85% gate (was 85.80%) |
