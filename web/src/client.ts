@@ -21,10 +21,13 @@ import {
   Decision,
   hashContent,
   DEFAULT_PROFILES,
+  loadUsers,
   setNextPolicyVoidedClauseIndices,
   setNextUsedReferenceIndices,
   setNextUsedLeafHashes,
   type CurieClient,
+  type DemoRole,
+  type DemoUser,
   type Negotiation,
 } from "@lib";
 import { KEY_STORAGE_PREFIX, isValidHexKey } from "./walletKeys.js";
@@ -109,12 +112,45 @@ export function getNextNadacUnitPrice(): bigint | null {
  * In simulated mode the privateKey is ignored; both clients are equivalent
  * mocks (the SimulatedBackend has no signer).
  */
+/** SPEC-0005 R12 — map a DemoRole onto its ProfileRegistry partyId. */
+function partyIdFor(role: DemoRole): bigint {
+  switch (role) {
+    case "provider":
+      return 1n;
+    case "insurer":
+      return 2n;
+    case "observer":
+      return 99n;
+  }
+}
+
+/**
+ * Convert a localStorage-persisted {@link DemoUser} to a Profile entry the
+ * ProfileRegistry can hold. The address isn't yet plumbed into the registry
+ * (the registry binds profiles to ONE wallet), so we only carry the
+ * label/partyId pair; T75c will extend this to per-user signers when the
+ * underlying registry surface grows multi-wallet support.
+ */
+function userToProfile(u: DemoUser): { id: string; label: string; partyId: bigint } {
+  return { id: u.id, label: u.label, partyId: partyIdFor(u.role) };
+}
+
 function makeClient(privateKey: string | undefined): CurieClient {
+  // SPEC-0005 R10/R11/R12: seed the registry with the curated defaults, then
+  // append any localStorage-persisted DemoUser entries. Saved entries that
+  // collide with a seed id (e.g. a user the operator added named "provider")
+  // are dropped here so the seed semantics stay stable; the Settings UI can
+  // surface a future warning when collisions occur.
+  const seeds = [
+    ...DEFAULT_PROFILES,
+    { id: "observer", label: "Observer", partyId: 99n },
+  ];
+  const seedIds = new Set(seeds.map((p) => p.id));
+  const persisted = loadUsers()
+    .filter((u) => !seedIds.has(u.id))
+    .map(userToProfile);
   const profileConfig = {
-    profiles: [
-      ...DEFAULT_PROFILES,
-      { id: "observer", label: "Observer", partyId: 99n },
-    ],
+    profiles: [...seeds, ...persisted],
   };
   if (IS_REAL) {
     if (!privateKey) {
