@@ -1,10 +1,26 @@
 # Browser-verify
 
-Last run: tick 103 — 2026-05-30 — **sim-mode harness 79/80 PASS** (1 soft
-failure in L7's "2 clauses" preview readout; engage-with-non-zero-policyHash
-assertion still passes). Added since tick-95 baseline: L10 (tick 101, 2 new
-assertions) + L7 (tick 102, 4 new — 3 pass, 1 fail). All previous-pass
-scenarios still green (no regressions on L1/L2/L3/L4 or the original 13).
+Last run: tick 107 — 2026-05-30 — **sim-mode harness 83/83 PASS**. Added
+since tick-103 (79/80): L7 fix (tick 105 — 80/80) + L5 (tick 106, 3 new
+assertions, all green tick 107). All 17 sim-mode scenarios green; no
+regressions on the original 13 or the 4 ticks-90-93 L scenarios.
+
+## Tick 107 — L5 verification re-run
+
+Final re-run after L5 added in tick 106. Increment vs tick-105 baseline:
+
+```
+Scenario L5: provider posts feedback note (postFeedback)
+  ✓ L5: filed in Open
+  ✓ L5: feedback input cleared after successful postFeedback
+  ✓ L5: error-card NOT shown (postFeedback succeeded)
+```
+
+All three L5 assertions green. Total: **83 passed, 0 failed** across
+18 scenarios. Last-mile R20 gap (L9-retry, ErrorCard chain re-fire)
+queued for tick 108+.
+
+## Tick 103 — full re-verification after L10 + L7
 
 ## Tick 103 — full re-verification after L10 + L7
 
