@@ -859,6 +859,42 @@ scenario_withdraw() {
   assert_hidden "L4: withdraw-submit hidden after terminal" "[data-testid=withdraw-submit]"
 }
 
+# ===========================================================================
+# Scenario L10 — payer-line selection round-trips to on-chain (R20)
+#   Closes the L10 affordance-coverage gap. File a request with the
+#   payer-line dropdown explicitly set to Commercial (value=1, NOT the
+#   default PartD=0), then read getNegotiation(reqId).payerLine and assert
+#   it survived the wire round-trip — guards against the "field collapses
+#   to default" failure mode where a form field is rendered but never
+#   piped into the on-chain createContract args.
+# ===========================================================================
+scenario_payer_line() {
+  echo "Scenario L10: create-payer-line round-trips (SPEC-0004 §2.5 ladder selection)"
+  # SPEC-0005 R23 pre-flight: 1 write (createContract), 0 arbiter calls.
+  assert_wallet_sufficient "Scenario L10" 1 0 || exit 2
+
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Routine follow-up; testing payer-line round-trip." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "1200" >/dev/null
+  ab find testid create-quantity fill "1" >/dev/null
+  ab find testid create-days-supply fill "30" >/dev/null
+
+  # PayerLine enum values: PartD=0 (default), Commercial=1, Medicaid=2.
+  # Selecting a non-default value forces the form to actually pipe the
+  # user choice through to createContract — a default-only test would
+  # pass even if the field were broken.
+  ev "(()=>{const el=document.querySelector('[data-testid=create-payer-line]');const setter=Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value').set;setter.call(el,'1');el.dispatchEvent(new Event('change',{bubbles:true}));return el.value})()" >/dev/null
+  ab wait 100 >/dev/null
+
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "L10: filed in Open" "0" "$(state_of 1)"
+  assert_eq "L10: payerLine on-chain == 1 (Commercial)" "1" "$(field_of 1 payerLine)"
+}
+
 # --- main -------------------------------------------------------------------
 
 start_server
@@ -881,6 +917,7 @@ scenario_refuse;              echo
 scenario_evidence_resubmit;   echo
 scenario_appeal;              echo
 scenario_withdraw;            echo
+scenario_payer_line;          echo
 
 echo "──────────────────────────────────────────"
 echo "agent-browser E2E: $PASS passed, $FAIL failed"
