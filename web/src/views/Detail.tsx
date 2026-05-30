@@ -114,6 +114,22 @@ function renderCuratedPolicyText(policy: CuratedPolicy): string {
   return [head, ...clauseLines].join(" ");
 }
 
+/**
+ * SPEC-0005 R15: serialize a custom (insurer-composed) policy. Each non-empty
+ * textarea line becomes one clause; clauses are numbered `CUSTOM-N` so the
+ * format mirrors `renderCuratedPolicyText` and downstream consumers can rely
+ * on the same shape. Empty name + empty clauses yield "" so the gating check
+ * sees an empty body.
+ */
+function buildCustomPolicyText(name: string, clauses: string): string {
+  const trimmedName = name.trim();
+  const lines = clauses.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+  if (trimmedName === "" && lines.length === 0) return "";
+  const head = `${trimmedName || "Custom policy"}. Custom composition.`;
+  const clauseLines = lines.map((text, i) => `Clause CUSTOM-${i + 1}: ${text}`);
+  return [head, ...clauseLines].join(" ");
+}
+
 function payerLineDisplay(line: PayerLine): string {
   switch (line) {
     case PayerLine.PartD: return "Medicare Part D";
@@ -227,10 +243,15 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   const [error, setError] = useState<unknown>(null);
 
   const [policyText, setPolicyText] = useState("");
-  // SPEC-0005 R14: the policy choice is now the curated policy's id (or
-  // null when nothing's selected yet). R15 will extend this to support a
-  // synthesised "custom-…" id for the free-text override.
+  // SPEC-0005 R14: the policy choice is the curated policy's id, or the
+  // sentinel "custom" when the insurer is composing their own (R15), or
+  // null when nothing's selected yet.
   const [policyChoice, setPolicyChoice] = useState<string | null>(null);
+  // SPEC-0005 R15: custom-policy composer state. `customName` is the policy
+  // title; `customClauses` is a newline-separated list — each non-empty line
+  // becomes a single clause in the rendered text body.
+  const [customName, setCustomName] = useState("");
+  const [customClauses, setCustomClauses] = useState("");
   const [decision, setDecision] = useState<Decision>(getNextDecision());
   const [appealEvidence, setAppealEvidence] = useState("");
   const [evidenceText, setEvidenceText] = useState("");
@@ -650,26 +671,94 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                     </button>
                   );
                 })}
+                {/* SPEC-0005 R15: free-text custom policy — the insurer can
+                    compose their own policy at engage time. */}
+                <button
+                  type="button"
+                  data-testid="engage-policy-custom"
+                  className={`policy-card${policyChoice === "custom" ? " selected" : ""}`}
+                  onClick={() => {
+                    setPolicyChoice("custom");
+                    // Compose the on-chain text from the current composer
+                    // state (could be empty until the user types).
+                    setPolicyText(buildCustomPolicyText(customName, customClauses));
+                  }}
+                >
+                  <span className="policy-card-icon">✎</span>
+                  <strong>Custom policy</strong>
+                  <p>Compose your own policy: name + 1..N clauses, hashed and committed off-chain.</p>
+                </button>
               </div>
+              {/* SPEC-0005 R15: composer is visible when "custom" is selected;
+                  edits stay in sync with policyText (and therefore the R16
+                  hash preview below). */}
+              {policyChoice === "custom" && (
+                <div className="custom-policy-composer" data-testid="custom-policy-composer">
+                  <label>
+                    Policy name
+                    <input
+                      type="text"
+                      data-testid="custom-policy-name"
+                      value={customName}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setCustomName(next);
+                        setPolicyText(buildCustomPolicyText(next, customClauses));
+                      }}
+                      placeholder="e.g. Plan-Z PA criteria for Drug X"
+                    />
+                  </label>
+                  <label>
+                    Clauses (one per line)
+                    <textarea
+                      data-testid="custom-policy-clauses"
+                      rows={5}
+                      value={customClauses}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setCustomClauses(next);
+                        setPolicyText(buildCustomPolicyText(customName, next));
+                      }}
+                      placeholder={"Clause 1 body…\nClause 2 body…"}
+                    />
+                  </label>
+                </div>
+              )}
               {/* SPEC-0005 R16: read-only preview of the selected policy
                   before submit. Mirrors Create.tsx's .hash-preview pattern
                   so the insurer sees exactly what will be committed
-                  on-chain (the keccak256 of the rendered text body). */}
+                  on-chain (the keccak256 of the rendered text body). Works
+                  for both curated AND custom selections. */}
               {policyChoice && (() => {
-                const chosen = policiesForLine(n.payerLine).find(
-                  (p) => p.id === policyChoice,
-                );
-                if (!chosen) return null;
+                let displayName: string;
+                let displaySummary: string;
+                let clauseCount: number;
+                if (policyChoice === "custom") {
+                  const lines = customClauses.split("\n").filter((l) => l.trim().length > 0);
+                  displayName = customName.trim() || "Custom policy (unnamed)";
+                  displaySummary = lines.length === 0
+                    ? "No clauses yet — add at least one line below to enable Engage."
+                    : `Custom composition with ${lines.length} clause${lines.length === 1 ? "" : "s"}.`;
+                  clauseCount = lines.length;
+                } else {
+                  const chosen = policiesForLine(n.payerLine).find(
+                    (p) => p.id === policyChoice,
+                  );
+                  if (!chosen) return null;
+                  displayName = chosen.name;
+                  displaySummary = chosen.summary;
+                  clauseCount = chosen.clauses.length;
+                }
                 const previewHash = hashContent(policyText);
                 return (
                   <div className="policy-preview" data-testid="policy-preview">
                     <div className="policy-preview-head">
-                      <strong>{chosen.name}</strong>
+                      <strong>{displayName}</strong>
                       <span className="policy-preview-clauses">
-                        {chosen.clauses.length} clause{chosen.clauses.length === 1 ? "" : "s"}
+                        {clauseCount} clause{clauseCount === 1 ? "" : "s"}
                       </span>
                     </div>
-                    <p className="policy-preview-summary">{chosen.summary}</p>
+                    <p className="policy-preview-summary">{displaySummary}</p>
                     <div className="hash-preview">
                       <span className="hash-preview-chars">
                         {policyText.length} chars · stays in your wallet / agent
