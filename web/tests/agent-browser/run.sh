@@ -638,6 +638,60 @@ scenario_key_paste_derives() {
   ev "(()=>{localStorage.removeItem('curie:users'); return 'cleared'})()" >/dev/null
 }
 
+# ===========================================================================
+# Scenario L3 — provider refuses the insurer's terms (SPEC-0001 R7/T7)
+#   File → engage (Ready=1) → switch to provider → click refuse-submit →
+#   ProviderRefused (state=9, terminal). Closes the affordance-coverage L3
+#   gap from docs/progress/affordance-coverage.md (refuse-submit had no
+#   prior Scenario).
+# ===========================================================================
+scenario_refuse() {
+  echo "Scenario L3: provider refuses insurer terms -> ProviderRefused (R7/T7)"
+  # SPEC-0005 R23 pre-flight: 3 writes (createContract + insurerEngage +
+  # refuse), 0 arbiter calls (refuse short-circuits before any agent fire).
+  assert_wallet_sufficient "Scenario L3" 3 0 || exit 2
+
+  # Arrange: provider files a request -> Open (state=0).
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Severe plaque psoriasis; documented failure of methotrexate." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "L3: filed in Open" "0" "$(state_of 1)"
+
+  # Insurer engages with compliant policy -> Ready (state=1) so refuse becomes
+  # available per SPEC-0001 R7 ("from Ready onward, pre-terminal").
+  ab find testid profile-pill-insurer click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  eval_click engage-load-compliant
+  eval_click engage-submit
+  ab wait 300 >/dev/null
+  assert_eq "L3: insurer engaged -> Ready" "1" "$(state_of 1)"
+
+  # Act: switch to provider and refuse.
+  ab find testid profile-pill-provider click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  eval_click refuse-submit
+  ab wait 300 >/dev/null
+
+  # Assert: state is ProviderRefused (9, terminal). Badge mirrors via Detail.tsx.
+  assert_eq "L3: refuse -> ProviderRefused (on-chain)" "9" "$(state_of 1)"
+  case "$(ab get text "[data-testid=state-badge]" | tail -1)" in
+    *Refused*) echo "  ✓ L3: UI badge reflects Provider Refused"; PASS=$((PASS + 1));;
+    *) echo "  ✗ L3: UI badge reflects Provider Refused — badge text did not contain 'Refused'"; FAIL=$((FAIL + 1));;
+  esac
+  # ProviderRefused is terminal per the SPEC-0001 state-machine table; later
+  # actions on this reqId should no longer expose refuse-submit.
+  assert_hidden "L3: refuse-submit hidden after terminal" "[data-testid=refuse-submit]"
+}
+
 # --- main -------------------------------------------------------------------
 
 start_server
@@ -656,6 +710,7 @@ scenario_cds_prefill;         echo
 scenario_persisted_users;     echo
 scenario_demo_mode;           echo
 scenario_key_paste_derives;   echo
+scenario_refuse;              echo
 
 echo "──────────────────────────────────────────"
 echo "agent-browser E2E: $PASS passed, $FAIL failed"
