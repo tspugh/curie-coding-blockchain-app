@@ -1501,4 +1501,56 @@ describe("CoverageNegotiation", () => {
       ).to.be.revertedWith("fee: orchestrator transfer failed");
     });
   });
+
+  describe("state-guard reverts (tick 137 branch coverage polish)", () => {
+    // Continues ticks 133-135's branch-coverage close. Each test exercises a
+    // state-precondition `require` from the wrong State, closing the revert-
+    // arm Istanbul tracks. Coverage gate is already passing (85.80% on
+    // CoverageNegotiation.sol after tick 135); these add safety margin.
+
+    it("requestAdjudication: pre-engage state == Open trips 'adjudicate: not Ready' (line 422)", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      // Create but DO NOT engage — state stays Open, not Ready.
+      const reqId = await createAs(contract, provider, insurer.address);
+      expect(await contract.stateOf(reqId)).to.equal(State.Open);
+      await expect(
+        contract.connect(provider).requestAdjudication(reqId)
+      ).to.be.revertedWith("adjudicate: not Ready");
+    });
+
+    it("submitEvidence: state == Ready (no adjudication yet) trips 'evidence: wrong state' (line 437)", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      // Create + engage but DO NOT requestAdjudication — state stays Ready.
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+      expect(await contract.stateOf(reqId)).to.equal(State.Ready);
+      await expect(
+        contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI)
+      ).to.be.revertedWith("evidence: wrong state");
+    });
+
+    it("onRulingTimeout: state == Open (no fire yet) trips 'timeout: not UnderReview' (line 572)", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      // Fresh negotiation in Open state — onRulingTimeout requires UnderReview.
+      const reqId = await createAs(contract, provider, insurer.address);
+      expect(await contract.stateOf(reqId)).to.equal(State.Open);
+      await expect(
+        contract.connect(provider).onRulingTimeout(reqId)
+      ).to.be.revertedWith("timeout: not UnderReview");
+    });
+
+    it("appeal: state == Ready (no ruling yet) trips 'appeal: prior ruling not Deny' (line 481)", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+      // State is Ready, not Denied.
+      await expect(
+        contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URI, ethers.id("appeal:reason"))
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+  });
 });
