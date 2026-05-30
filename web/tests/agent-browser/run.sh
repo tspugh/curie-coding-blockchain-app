@@ -1128,6 +1128,62 @@ scenario_evidence_resubmit_denial() {
   esac
 }
 
+# ===========================================================================
+# Scenario M3 — Deny-twin for Scenario L2 (SPEC-0005 §3.6 R21 — both
+#   outcomes of an appeal flow). L2 ends with the appeal re-fire =
+#   Approve; M3 ends with the appeal re-fire = Deny (a second Denied
+#   ruling at round+1). The Deadlocked terminal — appealing at
+#   round >= maxRounds — is a separate scenario (queued as M3-deadlock).
+# ===========================================================================
+scenario_appeal_denial() {
+  echo "Scenario M3: appeal-submit re-fires arbiter -> Denied (R12 twin of L2)"
+  # SPEC-0005 R23 pre-flight: 4 writes + 2 arbiter rulings.
+  assert_wallet_sufficient "Scenario M3" 4 2 || exit 2
+
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Same setup as L2 — the appeal re-fire produces a second Denied." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "M3: filed in Open" "0" "$(state_of 1)"
+
+  # Insurer engages compliant policy -> Ready.
+  ab find testid profile-pill-insurer click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  eval_click engage-load-compliant
+  eval_click engage-submit
+  ab wait 300 >/dev/null
+  assert_eq "M3: insurer engaged -> Ready" "1" "$(state_of 1)"
+
+  # First adjudication with sim decision = Deny (-> Denied state 5).
+  eval_click decision-deny
+  eval_click adjudicate-submit
+  ab wait 1800 >/dev/null
+  assert_eq "M3: first AI ruling Deny -> Denied" "5" "$(state_of 1)"
+
+  # Provider appeals with sim NEXT decision = Deny (1) again -> re-fired
+  # ruling still Denied; round counter advanced.
+  ab find testid profile-pill-provider click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  ev "window.__curie.setNextDecision(1); 1" >/dev/null   # 1 = Decision.Deny
+  ev "(()=>{const el=document.querySelector('[data-testid=appeal-evidence]');const setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(el,'https://www.nejm.org/doi/10.1056/NEJMoa1503824');el.dispatchEvent(new Event('input',{bubbles:true}));return 'ok'})()" >/dev/null
+  eval_click appeal-submit
+  ab wait 1800 >/dev/null
+
+  assert_eq "M3: appeal re-fire still Deny -> Denied" "5" "$(state_of 1)"
+  case "$(ev "(async()=>String((await window.__curie.negotiation.getNegotiation(1n)).round))()")" in
+    [1-9]*) echo "  ✓ M3: round counter advanced (>=1) after appeal"; PASS=$((PASS + 1));;
+    *) echo "  ✗ M3: round counter did not advance"; FAIL=$((FAIL + 1));;
+  esac
+}
+
 # --- main -------------------------------------------------------------------
 
 start_server
@@ -1155,6 +1211,7 @@ scenario_custom_policy;       echo
 scenario_feedback;            echo
 scenario_happy_path_denial;   echo
 scenario_evidence_resubmit_denial; echo
+scenario_appeal_denial;       echo
 
 echo "──────────────────────────────────────────"
 echo "agent-browser E2E: $PASS passed, $FAIL failed"
