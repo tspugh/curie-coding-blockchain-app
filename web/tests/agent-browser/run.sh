@@ -692,6 +692,68 @@ scenario_refuse() {
   assert_hidden "L3: refuse-submit hidden after terminal" "[data-testid=refuse-submit]"
 }
 
+# ===========================================================================
+# Scenario L1 — provider re-submits evidence after a NeedMoreEvidence ruling
+#   (SPEC-0001 R9 follow-up round; closes the L1 affordance-coverage gap)
+#   File -> engage (Ready) -> sim NeedMoreEvidence ruling (-> EvidenceRequested)
+#   -> provider fills evidence-text + clicks evidence-submit -> sim re-fires
+#   the arbiter with Approve as the next decision -> Approved (terminal).
+# ===========================================================================
+scenario_evidence_resubmit() {
+  echo "Scenario L1: evidence-submit re-fires arbiter (R9 follow-up round)"
+  # SPEC-0005 R23 pre-flight: 4 writes (createContract + insurerEngage +
+  # requestAdjudication + submitEvidence) + 2 arbiter rulings
+  # (NeedMoreEvidence then Approve).
+  assert_wallet_sufficient "Scenario L1" 4 2 || exit 2
+
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Severe plaque psoriasis; methotrexate failure documented." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "L1: filed in Open" "0" "$(state_of 1)"
+
+  # Insurer engages compliant policy -> Ready.
+  ab find testid profile-pill-insurer click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  eval_click engage-load-compliant
+  eval_click engage-submit
+  ab wait 300 >/dev/null
+  assert_eq "L1: insurer engaged -> Ready" "1" "$(state_of 1)"
+
+  # First adjudication with sim decision = NeedMoreEvidence (-> EvidenceRequested).
+  eval_click decision-evidence
+  eval_click adjudicate-submit
+  ab wait 1800 >/dev/null
+  assert_eq "L1: AI ruling NeedMoreEvidence -> EvidenceRequested" "3" "$(state_of 1)"
+
+  # Provider re-submits evidence. Prime the sim's NEXT decision = Approve so
+  # the re-fired agent resolves rather than looping; populate evidence-text
+  # via the DOM-set pattern (the input is a controlled component).
+  ab find testid profile-pill-provider click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  ev "window.__curie.setNextDecision(0); 1" >/dev/null         # 0 = Decision.Approve
+  ev "window.__curie.setNextCostPlusUnitPrice(2100n); 1" >/dev/null
+  ev "window.__curie.setNextNadacUnitPrice(2000n); 1" >/dev/null
+  ev "(()=>{const el=document.querySelector('[data-testid=evidence-text]');const setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(el,'https://www.nejm.org/doi/10.1056/NEJMoa1503824');el.dispatchEvent(new Event('input',{bubbles:true}));return 'ok'})()" >/dev/null
+  eval_click evidence-submit
+  ab wait 1800 >/dev/null
+
+  # Assert: re-fired arbiter resolved -> Approved; round counter advanced.
+  assert_eq "L1: evidence-submit re-fires arbiter -> Approved (next decision)" "4" "$(state_of 1)"
+  case "$(ev "(async()=>String((await window.__curie.negotiation.getNegotiation(1n)).round))()")" in
+    [1-9]*) echo "  ✓ L1: round counter advanced (>=1) after resubmission"; PASS=$((PASS + 1));;
+    *) echo "  ✗ L1: round counter did not advance"; FAIL=$((FAIL + 1));;
+  esac
+}
+
 # --- main -------------------------------------------------------------------
 
 start_server
@@ -711,6 +773,7 @@ scenario_persisted_users;     echo
 scenario_demo_mode;           echo
 scenario_key_paste_derives;   echo
 scenario_refuse;              echo
+scenario_evidence_resubmit;   echo
 
 echo "──────────────────────────────────────────"
 echo "agent-browser E2E: $PASS passed, $FAIL failed"
