@@ -343,7 +343,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
         <ErrorCard error={error} onDismiss={() => setError(null)} />
       )}
 
-      <div className="detail-grid">
+      <div className={`detail-grid${isInsurer ? " is-insurer" : ""}`}>
         {/* Request details */}
         <div className="card facts">
           <h2>Request Details</h2>
@@ -572,7 +572,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
         appealRound={n.appealRound}
       />
 
-      <div className="detail-grid">
+      <div className={`detail-grid${isInsurer ? " is-insurer" : ""}`}>
         <div className="card actions">
           {nextStep && isParty && (
             <div className="next-step" data-testid="next-step-banner">
