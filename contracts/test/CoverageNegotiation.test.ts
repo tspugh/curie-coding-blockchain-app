@@ -1449,4 +1449,56 @@ describe("CoverageNegotiation", () => {
         .and.to.not.emit(contract, "ContentCommitted");
     });
   });
+
+  describe("transfer-failure branches via RevertingReceiver mock (tick 135)", () => {
+    // Closes the "require(ok, ...)" branches that follow native
+    // `.call{value: x}("")` patterns. Each branch needs a recipient whose
+    // `receive()` reverts so the inner `.call` returns false. Pushes
+    // contracts/ branch coverage past the 85% gate.
+
+    it("withdrawFunds: reverting recipient trips 'funds: transfer failed' (line 339)", async () => {
+      const { contract } = await deploy();
+      const Reverter = await ethers.getContractFactory("RevertingReceiver");
+      const reverter = await Reverter.deploy();
+      await reverter.waitForDeployment();
+
+      // Fund the contract directly via Hardhat's setBalance — there's no
+      // receive()/fallback() so we can't transfer in normally, and the
+      // payable entry points all forward the value through immediately.
+      const contractAddr = await contract.getAddress();
+      await ethers.provider.send("hardhat_setBalance", [
+        contractAddr,
+        "0x1000000000000000", // ~0.072 ether
+      ]);
+
+      await expect(
+        contract.withdrawFunds(await reverter.getAddress(), 1n)
+      ).to.be.revertedWith("funds: transfer failed");
+    });
+
+    it("_fireAgentSelfHosted: reverting platform trips 'fee: orchestrator transfer failed' (line 919)", async () => {
+      const { contract } = await deploy();
+      const Reverter = await ethers.getContractFactory("RevertingReceiver");
+      const reverter = await Reverter.deploy();
+      await reverter.waitForDeployment();
+      const [provider, insurer] = await ethers.getSigners();
+
+      // Configure self-hosted with the reverting contract as platform.
+      // setAgentReward > 0 so _fireAgentSelfHosted has a fee to forward.
+      const fee = ethers.parseEther("0.01");
+      await contract.setPlatformSelfHosted(await reverter.getAddress());
+      await contract.setAgentReward(fee);
+
+      // Create + engage so adjudication is reachable.
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      // Fire — _fireAgentSelfHosted tries to .call{value: fee}() the platform
+      // (which is the RevertingReceiver). Recipient reverts → ok=false →
+      // require(feeOk, "fee: orchestrator transfer failed") fires.
+      await expect(
+        contract.connect(provider).requestAdjudication(reqId, { value: fee })
+      ).to.be.revertedWith("fee: orchestrator transfer failed");
+    });
+  });
 });

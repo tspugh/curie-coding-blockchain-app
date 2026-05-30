@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 134 — continued the contracts/ branch coverage close. Used `contracts/coverage.json` to identify the specific uncovered arms; added 8 more hardhat tests covering the remaining setter family (`setPlatform`/`setAgentReward`/`setMaxRounds` onlyOwner; `setMaxRounds(0)` require; `withdrawFunds` onlyOwner + zero-addr + insufficient-balance) + 1 test for createContract with `bytes32(0)` justificationHash (line 394 else-branch). **Branch coverage 81.10% → 84.76% (+3.66pp this tick; +7.93pp over ticks 133-134).** Still 0.24pp below the 85% gate. Remaining uncovered arms (25) need: a RevertingReceiver mock for "fee: refund failed" branches, targeted state-machine tests for `_terminal()` OR-chain branches, and the permanently-unreachable line 524 dead-code revert.)
-**Current mode:** `impl` — SPEC-0004 R25 + R26 + doc updates + 2-tick coverage close landed. Open finding: contracts/ branch 84.76% < 85% gate (0.24pp gap; needs RevertingReceiver mock or state-machine tests to fully close). Tick C bundle redeploy blocked on operator wallet STT funding.
-**Current tick:** 134
-**Last focus:** JSON-driven branch-coverage close. Inspected `contracts/coverage.json` to identify the 31 uncovered branch arms surfaced after tick 133; targeted the most accessible ones (admin-setter onlyOwner reverts + value-validation reverts + the bytes32(0) justificationHash branch). Single focused unit — 9 new tests in one new describe block. Strict-review skipped (same mirror-pattern as tick 133; sister tests already iter-1 PASS'd).
-**Last commit:** `5531c93` (tick 133 first coverage close) → tick 134 lands the second pass.
+**Last updated:** 2026-05-30 (tick 135 — **COVERAGE GATE CROSSED.** Added `contracts/contracts/mocks/RevertingReceiver.sol` (12 lines, one `receive()` that always reverts) + 2 hardhat tests using it as the recipient of the "transfer failed" branches at `withdrawFunds` and `_fireAgentSelfHosted` fee-forward. **Branch coverage 84.76% → 85.98% overall (+1.22pp);** CoverageNegotiation.sol itself 84.95% → **85.80%** ✓. Cumulative over ticks 133-135: 76.83% → 85.98% (+9.15pp). Both Opus reviewers PASS — solidity-compliance zero MEDIUM+; strict-review zero MEDIUM+ (2 NITs: line-number drift in NatSpec applied; rounding in comment left as-is).)
+**Current mode:** `impl` — coverage gate now PASSING. Remaining open blocker for steady state: real-mode browser-verify still blocked on Tick C bundle redeploy (which is blocked on operator wallet STT funding).
+**Current tick:** 135
+**Last focus:** Cross the 85% gate. Single focused unit — 1 new Solidity test mock + 2 hardhat tests that use `hardhat_setBalance` (withdrawFunds) and the new `setPlatformSelfHosted(reverter)` self-hosted path. Mock NatSpec cites the require message strings (not line numbers) for drift-durability per strict-review NIT-1.
+**Last commit:** `119dcb7` (tick 134 second coverage close) → tick 135 lands the gate-crossing.
 
 **Tick 122 reviewer history:**
 - Security-review iter-1 (Opus): **PASS** zero MEDIUM+. One in-scope LOW (enforce `WEI_CAP` via `.refine`, not `.describe()`) — applied before strict-review.
@@ -72,53 +72,53 @@
 **SPEC-0005 §3.6 sim-mode milestone holds:** R20 + R21 + R23 all done.
 Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 
-**Verdict table after tick 134:**
+**Verdict table after tick 135:**
 
 | Gate | Verdict |
 |---|---|
-| `npm test` (umbrella) | ✓ PASS — exit 0 chain (re-verified tick 134) |
+| `npm test` (umbrella) | ✓ PASS — exit 0 chain (re-verified tick 135) |
 | `npm run check-ruling-abi` | ✓ static + 5/5 round-trips |
 | Lib tests | ✓ 196/196 |
-| Hardhat tests | ✓ **55/55** (+9 in tick 134 on top of tick 133's +8 → +17 since tick 132) |
+| Hardhat tests | ✓ **57/57** (+2 this tick; +18 since tick 132) |
 | Coverage (src/, measured subset) | ✓ 98.85% line / 92.25% branch — PASS |
-| **Coverage (contracts/, hardhat solidity-coverage)** | ✗ **84.76% branch** — close to gate; 0.24pp below (was 76.83% pre-ticks-133/134; improved +7.93pp total) |
-| Coverage (MockAgentPlatform.sol) | ✓ 100% on every metric |
-| Design-conformance | ✓ ~92% overall — PASS vs ≥90% gate |
+| **Coverage (contracts/, hardhat solidity-coverage)** | ✓ **85.80% branch** — **PASS** ≥85% gate (CoverageNegotiation.sol; was 84.95% at tick 134) |
+| Coverage (all contracts, overall) | ✓ **85.98% branch** — PASS (was 84.76%) |
+| Coverage (MockAgentPlatform.sol + RevertingReceiver.sol) | ✓ 100% on every metric |
+| Design-conformance | ✓ ~92% overall — PASS ≥90% gate |
 | Browser-verify sim mode | ✓ 99/99 PASS (tick 113; not re-run — no UI change) |
-| Browser-verify real mode | ✗ blocked by Tick C redeploy |
-| Secret-scan | ✓ no findings across all ticks 83-134 |
-| Strict-review (Opus iter-1) | ✗ skipped this tick (mirror pattern of tick 133's already iter-1-PASSed tests; mechanical onlyOwner + require revert additions; sister tests in same describe block sequence already audited) |
-| Solidity-compliance / Security-review | N/A this tick (no contract / risk-bearing change) |
-| TypeScript typecheck | N/A this tick (test-only edit) |
+| **Browser-verify real mode** | ✗ **STILL BLOCKED on Tick C redeploy** — last remaining steady-state blocker |
+| Secret-scan | ✓ no findings across all ticks 83-135 |
+| **Solidity-compliance (Opus iter-1)** | ✓ **PASS** zero MEDIUM+; 2 NITs (mock structure + receive-only — both non-blocking) |
+| **Strict-review (Opus iter-1)** | ✓ **PASS** zero MEDIUM+; 2 NITs (line-number drift in NatSpec applied; comment rounding left) |
+| Security-review (Opus) | Skipped (test mock only; solidity-compliance covers risk surface adequately for this scope) |
+| TypeScript typecheck | N/A this tick (no TS source change) |
+
+**Steady-state self-assessment after tick 135:** 7 of 8 criteria met. The only outstanding criterion is **browser-verify real mode** (still blocked on Tick C bundle redeploy → operator wallet STT funding). The coverage criterion that has held up steady-state for many ticks is **NOW PASSING**.
 
 **Open findings to triage in next tick:**
-- **contracts/ branch coverage 84.76% < 85% gate (0.24pp gap).** Remaining 25 uncovered arms split into three groups:
-  - **(a) Permanently unreachable:** line 524 dead-code revert (`accept: unknown party` — guarded by `_onlyParty` upstream). Will stay uncovered forever; not actionable.
-  - **(b) Need a RevertingReceiver mock:** several "fee: refund failed" / "funds: transfer failed" / "fee: orchestrator transfer failed" branches at lines 339, 451-453, 870, 919, 923. Each requires a small Solidity contract whose `receive()` reverts, used as the recipient. ~10 arms.
-  - **(c) Need targeted state-machine tests:** `_terminal()` OR-chain branches at lines 963-967 (6 arms); state-guard reverts at lines 420, 437, 481, 485, 496, 498, 521, 572, 586, 624, 635 (~13 arms). Each requires getting the contract into a specific state then calling a function that revert-guards on that state.
-  - **Pragmatic plan:** group (b) is the cheapest yield — one mock + 3-5 tests would close ~10 arms. Likely sufficient to cross the gate.
-- `src/contract/simulated.ts` branch 68.63% (src/ subset still passes overall at 92.25%). Lower priority.
+- **R25 Tick C bundle redeploy.** The single remaining steady-state blocker. Operator wallet STT funding is the only thing holding it back. Once funded, this is a single focused tick.
+- `src/contract/simulated.ts` branch 68.63% (src/ subset still passes overall at 92.25%). Lower priority polish — does not block steady state.
 
-**Remaining top-of-queue going into tick 135:**
-1. **contracts/ branch coverage 84.76% → ≥85% — cheapest path is a RevertingReceiver
-   mock.** Add `contracts/contracts/mocks/RevertingReceiver.sol` with a
-   `receive() external payable { revert("nope"); }` body. Use it as the
-   recipient in 3-5 tests covering "fee: refund failed" /
-   "funds: transfer failed" / "fee: orchestrator transfer failed"
-   require branches at lines 339, 451-453, 870, 919, 923. Each test
-   closes 1-2 arms; ~10 arms closable total. Should easily cross 85%.
-2. **R25 Tick C — bundle redeploy.** Blocked on operator wallet STT
-   funding.
-3. **Optional Tick A live smoke test (post-Tick-C).**
-4. **`src/contract/simulated.ts` branch 68.63%.** Lower priority.
-5. **A-0006 status-field flip.** Human-reviewed step from tick 131.
-6. **R49 deprecation rewrite.** Premature.
-7. **Restart cron with the updated loop prompt body.**
-8. **Optional `typecheck` chain extension in `npm test`.** Cheap; defer.
-9. **State-machine branch coverage continuation (after #1).** Remaining
-   ~13 arms (state-guard reverts at lines 420/437/481/485/496/498/521/
-   572/586/624/635) need specific contract-state setup. Less efficient
-   per test than the RevertingReceiver path; tackle after #1 if needed.
+**Remaining top-of-queue going into tick 136:**
+1. **R25 Tick C — bundle redeploy.** The single remaining steady-state
+   blocker now that coverage is passing. Blocked on operator wallet STT
+   funding for deploy gas. Once unblocked: `npm --prefix contracts run
+   deploy:somnia` → `setPlatformSelfHosted(<orchestrator EOA>)` →
+   update `.env` → run browser-verify R22 real-mode → steady-state
+   self-assessment passes all 8 criteria → tag `steady-state-2026-05-30-1`
+   → flip mode to `creativity`.
+2. **Optional Tick A live smoke test (post-Tick-C).** Requires
+   `ANTHROPIC_API_KEY` + funded orchestrator wallet.
+3. **`src/contract/simulated.ts` branch 68.63%.** Lower-priority polish;
+   src/ subset overall still passes 92.25%.
+4. **A-0006 status-field flip.** Human-reviewed step from tick 131.
+5. **R49 deprecation rewrite.** Premature.
+6. **Restart cron with the updated loop prompt body.** Operational.
+7. **Optional `typecheck` chain extension in `npm test`.** Cheap; defer.
+8. **State-machine branch coverage polish** (~13 arms remain at lines
+   420/437/481/485/496/498/521/572/586/624/635 + the `_terminal()`
+   OR-chain). Coverage gate is now passing; this is polish, not
+   blocker.
 
 **Ticks 107-113 summary** (the R20-closeout + R21-completion sprint):
 - **Tick 107** (`f1b5ab3` browser-verify): L5 verified live (3/3 PASS).
