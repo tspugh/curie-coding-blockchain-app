@@ -434,36 +434,43 @@ at all.
   configured `AGENT_ID` to one whose registered ABI matches what the contract
   emits, or (c) deploy a new contract that targets a verified
   selector + agent pair.
-- **R49 (MUST) When `ResponseStatus.Failed` lands, R4 attribution MUST
-  distinguish "fee burned (no work executed)" from "fee paid (LLM ran but
-  consensus failed)".** Concretely, sum `executionCost` across the validator
-  `Response[]` carried by the callback: if it is approximately zero, render
-  "fee burned (no agent work)"; if it equals roughly
-  `perAgentBudget × subcommitteeSize`, render "fee paid (LLM ran, consensus
-  failed)". Same UI affordance + cost number — different copy, different
-  treatment. Reads exclusively from the existing callback payload; no new
-  RPC or contract changes.
+- **R49 (MUST) R4 attribution under Amendment 0006 self-hosted mode.**
+  *Rewritten 2026-05-30 (ticks 139-140) after Amendment 0006 shipped on
+  Somnia testnet. The validator-subcommittee dichotomy in the original
+  R49 (preserved below as Historical) no longer applies to the deployed
+  contract `0x2c561f33…488ac93`, which has `selfHosted == true`.* In
+  self-hosted mode the orchestrator pays the LLM provider off-chain and
+  submits a single synthetic-`requestId` response via `handleResponse`;
+  `executionCost` in that response is always 0 by construction. The UI
+  R4 attribution MUST therefore distinguish the following three
+  on-chain-observable outcomes, each from a different terminal state
+  the contract can reach after `requestAdjudication`:
 
-  *Amendment 0006 (2026-05-30) — semantics under self-hosted mode: when
-  `selfHosted == true` (see SPEC-0004 §2.7 Amendment 0006 status block),
-  there is no validator subcommittee and no per-validator
-  `executionCost` — the orchestrator pays the LLM provider (Anthropic)
-  off-chain and submits a single synthetic-`requestId` response via
-  `handleResponse`. `executionCost` is always 0 in that response.
-  R49's chain-only distinction therefore DEGRADES to two on-chain
-  states + one off-chain state: (i) **orchestrator submitted Success**
-  → render "ruling delivered"; (ii) **orchestrator submitted Failed**
-  → render "orchestrator reported failure" (no fee-burned vs
-  fee-paid split possible without orchestrator telemetry); (iii)
-  **`rulingDeadline` elapsed with no submission** (no `Ruled` /
-  `RequestFinalized` event) → render "orchestrator silent — fee held
-  by contract pending operator action". The chain-only payload alone
-  cannot resolve the original R49 dichotomy under self-hosted; any
-  finer-grained fee-accounting attribution requires a new
-  orchestrator-emitted off-chain telemetry channel, which is out of
-  scope for v1. Implementations MAY surface "self-hosted mode" as a
-  UI badge so the user understands the attribution model is different
-  from validator-subcommittee mode.*
+  | Observed state | UI copy | Treatment |
+  |---|---|---|
+  | `Ruled` event with `ResponseStatus.Success` + decoded ruling | "Ruling delivered (Approved / Denied / NeedMoreEvidence / PolicyInvalid)" | Display the decoded decision + per-unit prices; route per existing R4 |
+  | `Ruled` event with `ResponseStatus.Failed` (or Failed-from-revert in callback) | "Orchestrator reported failure" | Show the fee status as "fee held by contract pending operator action" — under self-hosted the fee transfer happens INSIDE `_fireAgentSelfHosted` before handleResponse, so a Failed callback after a successful fire means the orchestrator returned a failure code, not a fee leak |
+  | `rulingDeadline` elapsed with no callback fired | "Orchestrator silent — operator escalation required" | Show how long past the deadline; surface `onRulingTimeout()` as the recovery action; preserve the fee accounting (transferred to orchestrator EOA at fire time) |
+
+  Implementations MAY surface "self-hosted mode" as a UI badge so users
+  understand the attribution model differs from a validator-subcommittee
+  consensus model. The chain-only payload alone cannot resolve finer
+  fee-accounting questions (e.g., did the orchestrator actually pay
+  Anthropic for an LLM call before returning Failed?) — that requires
+  orchestrator-emitted off-chain telemetry, which is out of scope for v1.
+  Reads exclusively from the existing callback payload + contract state;
+  no new RPC or contract changes needed.
+
+  *Historical (validator-subcommittee mode, superseded by Amendment 0006
+  on 2026-05-30; the deployed `0x1dC5bA…3E1A` build used this model
+  but is no longer the active address):* the original R49 required
+  distinguishing "fee burned (no work executed)" from "fee paid (LLM ran
+  but consensus failed)" by summing `executionCost` across the validator
+  `Response[]` carried by the callback. Approximately-zero sum meant
+  "fee burned (no agent work)"; sum ≈ `perAgentBudget × subcommitteeSize`
+  meant "fee paid (LLM ran, consensus failed)". Same UI affordance + cost
+  number, different copy. This text is preserved for historical context
+  and for any future return to a validator-subcommittee path.
 
 **Evidence (Somnia testnet, captured 2026-05-30):**
 

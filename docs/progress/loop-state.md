@@ -4,11 +4,11 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 140 — Amendment 0006 status flipped Proposed → Adopted. The disposition was held back during ticks 117-138 specifically because the README's amendments-Lifecycle rules say "Accepted/Adopted" is a separate human-reviewed step. With Tick C live on testnet (tick 139), the implementation has fully shipped and the flip is no longer a unilateral claim — it's a mechanical reflection of what's already deployed. Updated amendment Status field with concrete deployment evidence (contract address + setPlatformSelfHosted tx). Removed the disambiguating footnote in `docs/amendments/README.md` index since the gap it documented no longer exists.)
-**Current mode:** `impl` — R25 + Amendment 0006 fully landed (design + implementation + deploy + normative-status-flip). Last remaining gate to claim steady state: re-run browser-verify real mode against the new contract `0x2c561f33…488ac93`.
-**Current tick:** 140
-**Last focus:** Normative housekeeping. One-line Status flip on A-0006 + a 12-line index-row simplification in the amendments README. Doc-only, no code; both edits cite the on-chain evidence (deploy address + tx hash) that justifies the flip.
-**Last commit:** `770766c` (tick 139 R25 Tick C deploy) → tick 140 lands the A-0006 status flip.
+**Last updated:** 2026-05-30 (tick 141 — SPEC-0003 R49 rewritten for Amendment 0006. The original validator-subcommittee text was held back through ticks 123-140 because the deployed contract was either the pre-Amendment-0006 build (tick 113) or unverified. With Tick C live + A-0006 Adopted (ticks 139-140), the original normative text describes a model that's no longer deployed; the tick-123 italic note that previously *added* the self-hosted semantics is now promoted to the primary normative text. Original validator-subcommittee text preserved verbatim in a "Historical" subblock for context and for any future return to that mode. New normative R49 specifies a 3-row table mapping observed states (Ruled+Success, Ruled+Failed, deadline-elapsed) to UI copy + treatment. Wallet balance check at tick start: 5.50 STT (5.77 - 0.27 spent on Tick C).)
+**Current mode:** `impl` — R25 + Amendment 0006 + R49-rewrite all landed. Wallet has 5.50 STT (insufficient for full browser-verify real mode ~7.35 STT; sufficient for Tick A live smoke ~0.5 STT). Last remaining gate to claim steady state: real-mode browser-verify or equivalent live smoke against `0x2c561f33…488ac93`.
+**Current tick:** 141
+**Last focus:** Spec normative-text catch-up. Rewrote SPEC-0003 R49 to make the post-Amendment-0006 attribution model primary (was supplementary in tick 123's italic note). 3-row table covers the operational outcomes the deployed contract can produce. Validator-subcommittee text preserved as "Historical (superseded by Amendment 0006 on 2026-05-30)".
+**Last commit:** `4fcb32a` (tick 140 A-0006 status flip) → tick 141 lands the R49 rewrite.
 
 **Tick 122 reviewer history:**
 - Security-review iter-1 (Opus): **PASS** zero MEDIUM+. One in-scope LOW (enforce `WEI_CAP` via `.refine`, not `.describe()`) — applied before strict-review.
@@ -72,7 +72,7 @@
 **SPEC-0005 §3.6 sim-mode milestone holds:** R20 + R21 + R23 all done.
 Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 
-**Verdict table after tick 140:**
+**Verdict table after tick 141:**
 
 | Gate | Verdict |
 |---|---|
@@ -98,25 +98,25 @@ Browser-verify: 99/99 sim-mode PASS across 21 scenarios as of tick 113.
 - **R25 Tick C bundle redeploy.** The single remaining steady-state blocker. Operator wallet STT funding is the only thing holding it back. Once funded, this is a single focused tick.
 - `src/contract/simulated.ts` branch 68.63% (src/ subset still passes overall at 92.25%). Lower priority polish — does not block steady state.
 
-**Remaining top-of-queue going into tick 141:**
-1. **Re-run browser-verify real mode against `0x2c561f33…`** — the
-   final steady-state criterion. Should pass since the contract is now
-   selfHosted-capable + the orchestrator path is wired. Requires the
-   orchestrator to be running during the test (so it can deliver
-   rulings to handleResponse). LONG-RUNNING — likely spans multiple
-   ticks unless dispatched all-at-once.
-2. **Tick A live smoke test** (smaller scope than full browser-verify):
-   single requestAdjudication via the orchestrator + Claude SDK round-
-   trip to confirm the wiring works end-to-end on the new contract.
-   Requires `ANTHROPIC_API_KEY` in `.env`.
-3. **R49 deprecation rewrite.** Now actionable — validator-subcommittee
-   mode is formally superseded by self-hosted (deployed and adopted as
-   of ticks 139-140). R49's normative text can be rewritten — not just
-   annotated — to drop the executionCost dichotomy.
-4. **`src/contract/simulated.ts` branch 68.63%.** Lower-priority polish.
-5. **Restart cron with the updated loop prompt body.** Operational.
-6. **Further state-machine branch coverage polish** — diminishing
+**Remaining top-of-queue going into tick 142:**
+1. **Tick A live smoke test** — single requestAdjudication via the
+   orchestrator + Claude SDK on the new contract `0x2c561f33…`.
+   Affordable: ~0.5 STT (wallet has 5.50). Requires `ANTHROPIC_API_KEY`
+   in `.env`. Real load-bearing proof that the full Amendment 0006
+   path works end-to-end.
+2. **Re-run browser-verify real mode** — needs ~7.35 STT (21 scenarios
+   × 0.35 STT) but wallet has 5.50 STT. Either fund the wallet to
+   8+ STT OR run a curated subset of scenarios that fits the budget.
+3. **`src/contract/simulated.ts` branch 68.63%.** Lower-priority polish.
+4. **Restart cron with the updated loop prompt body.** Operational.
+5. **Further state-machine branch coverage polish** — diminishing
    returns.
+6. **Spec-0003 §2.10 R48 verification** — R48 was the visibility-side
+   blocker that depended on SPEC-0004 R25 landing. With Tick C done
+   and the orchestrator's selfHosted path live, R48 should now be
+   exercise-able via R49's new 3-row attribution table in the UI.
+   Verification likely covered by #1 or #2 above (the smoke + e2e
+   runs).
 
 **Ticks 107-113 summary** (the R20-closeout + R21-completion sprint):
 - **Tick 107** (`f1b5ab3` browser-verify): L5 verified live (3/3 PASS).
