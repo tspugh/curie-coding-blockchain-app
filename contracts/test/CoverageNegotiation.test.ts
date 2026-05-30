@@ -1093,4 +1093,163 @@ describe("CoverageNegotiation", () => {
       ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
     });
   });
+
+  describe("Amendment 0006: self-hosted _fireAgent branch", () => {
+    it("requestAdjudication in self-hosted mode reaches UnderReview without platform calls", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer, orchestrator] = await ethers.getSigners();
+      await contract.setPlatformSelfHosted(orchestrator.address);
+      const reward = ethers.parseEther("0.05");
+      await contract.setAgentReward(reward);
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      const before = await ethers.provider.getBalance(orchestrator.address);
+      await expect(contract.connect(provider).requestAdjudication(reqId, { value: reward }))
+        .to.emit(contract, "RulingRequested")
+        .and.to.emit(contract, "PacketSubmitted");
+
+      // State machine: UnderReview, awaiting orchestrator's handleResponse.
+      expect(await contract.stateOf(reqId)).to.equal(State.UnderReview);
+
+      // Fee flowed to the orchestrator EOA.
+      const after = await ethers.provider.getBalance(orchestrator.address);
+      expect(after - before).to.equal(reward);
+
+      // _requestToNegotiation populated with a non-zero synthetic requestId.
+      const n = await contract.getNegotiation(reqId);
+      expect(n.pendingRequestId).to.not.equal(0n);
+    });
+
+    it("synthetic requestId is unique across two same-block fires", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer, orchestrator] = await ethers.getSigners();
+      await contract.setPlatformSelfHosted(orchestrator.address);
+      await contract.setAgentReward(0n); // free demo mode
+
+      const reqIdA = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqIdA, POLICY_HASH, POLICY_URI);
+      const reqIdB = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqIdB, POLICY_HASH, POLICY_URI);
+
+      await contract.connect(provider).requestAdjudication(reqIdA);
+      await contract.connect(provider).requestAdjudication(reqIdB);
+
+      const nA = await contract.getNegotiation(reqIdA);
+      const nB = await contract.getNegotiation(reqIdB);
+      expect(nA.pendingRequestId).to.not.equal(0n);
+      expect(nB.pendingRequestId).to.not.equal(0n);
+      expect(nA.pendingRequestId).to.not.equal(nB.pendingRequestId);
+    });
+
+    it("self-hosted underfunded msg.value reverts with fee: underfunded", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer, orchestrator] = await ethers.getSigners();
+      await contract.setPlatformSelfHosted(orchestrator.address);
+      await contract.setAgentReward(ethers.parseEther("0.05"));
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      await expect(
+        contract.connect(provider).requestAdjudication(reqId, { value: ethers.parseEther("0.01") })
+      ).to.be.revertedWith("fee: underfunded");
+    });
+
+    it("self-hosted overpayment refunds excess to caller", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer, orchestrator] = await ethers.getSigners();
+      await contract.setPlatformSelfHosted(orchestrator.address);
+      const reward = ethers.parseEther("0.05");
+      const overpay = ethers.parseEther("0.10");
+      await contract.setAgentReward(reward);
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      const orchBefore = await ethers.provider.getBalance(orchestrator.address);
+      const tx = await contract.connect(provider).requestAdjudication(reqId, { value: overpay });
+      const receipt = await tx.wait();
+      const gasCost = receipt!.gasUsed * receipt!.gasPrice;
+      const orchAfter = await ethers.provider.getBalance(orchestrator.address);
+
+      // Orchestrator received exactly the reward.
+      expect(orchAfter - orchBefore).to.equal(reward);
+
+      // Provider net out = reward + gas (overpay was refunded). Verifying the
+      // contract's balance is 0 (no trapped funds) is the cleaner invariant.
+      expect(await ethers.provider.getBalance(await contract.getAddress())).to.equal(0n);
+      void gasCost;
+    });
+
+    it("orchestrator handleResponse round-trip: Approve ruling drives state → Approved", async () => {
+      // Closes the tick-118 Opus-review LOW: verifies the full self-hosted
+      // round-trip end-to-end, not just the fire half. Orchestrator EOA fires
+      // handleResponse directly with an encoded 10-tuple ruling.
+      const { contract } = await deploy();
+      const [provider, insurer, orchestrator] = await ethers.getSigners();
+      await contract.setPlatformSelfHosted(orchestrator.address);
+      await contract.setAgentReward(0n);
+
+      // Fire the agent through the self-hosted path; capture synthetic requestId.
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+      await contract.connect(provider).requestAdjudication(reqId);
+      const requestId = (await contract.getNegotiation(reqId)).pendingRequestId;
+
+      // Build the 10-tuple result the contract decodes (mirrors MockAgentPlatform's
+      // triggerRuling encoding). Approve with costPlus=200, NADAC=180, no
+      // policy-void / used-ref payloads (Approve is the simplest happy path).
+      const result = ethers.AbiCoder.defaultAbiCoder().encode(
+        [
+          "uint8",   "uint256", "uint256",
+          "bytes32", "bytes32", "bytes32",
+          "uint256",
+          "uint16[]", "uint16[]", "bytes32[]",
+        ],
+        [
+          Decision.Approve, 200n, NADAC_UNIT,
+          RATIONALE_HASH, CLAUSE_REF, STANDARD_REF,
+          RECEIPT_ID,
+          [], [], [],
+        ],
+      );
+      const response = {
+        validator: orchestrator.address,
+        result,
+        status: ResponseStatus.Success,
+        receipt: RECEIPT_ID,
+        timestamp: 0n,
+        executionCost: 0n,
+      };
+      const emptyRequest = {
+        id: requestId,
+        requester: await contract.getAddress(),
+        callbackAddress: await contract.getAddress(),
+        callbackSelector: "0x00000000",
+        subcommittee: [],
+        responses: [],
+        responseCount: 0n,
+        failureCount: 0n,
+        threshold: 0n,
+        createdAt: 0n,
+        deadline: 0n,
+        status: ResponseStatus.Success,
+        consensusType: 0,
+        remainingBudget: 0n,
+        perAgentBudget: 0n,
+      };
+
+      // Orchestrator EOA delivers the ruling — proves _requestToNegotiation maps
+      // the synthetic requestId back to reqId AND msg.sender == platform passes.
+      await expect(
+        contract
+          .connect(orchestrator)
+          .handleResponse(requestId, [response], ResponseStatus.Success, emptyRequest)
+      ).to.emit(contract, "Ruled");
+
+      expect(await contract.stateOf(reqId)).to.equal(State.Approved);
+    });
+  });
 });

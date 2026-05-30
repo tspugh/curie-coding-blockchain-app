@@ -192,6 +192,11 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     ///         negotiation is mid-fire without decoding the agent payload. Zero outside
     ///         an active fire. Because state is set to `UnderReview` before this is
     ///         written, the CEI invariant is fully preserved.
+    /// @dev Amendment 0006 exception: NOT set in the self-hosted path
+    ///      (`_fireAgentSelfHosted`) because there's no external `platform.createRequest`
+    ///      call for an observer to interleave with. Self-hosted observers should read
+    ///      the `RulingRequested` event instead, which fires synchronously after the
+    ///      synthetic requestId is minted.
     uint256 public currentlyFiringReqId;
 
     /// @dev Auto-incrementing request id.
@@ -201,6 +206,15 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
     /// @dev Maps an in-flight agent requestId back to its negotiation id.
     mapping(uint256 => uint256) private _requestToNegotiation;
+
+    /// @dev Amendment 0006: monotonic nonce used to seed synthetic agent-request IDs
+    ///      in self-hosted mode. Mixed with block.number + address(this) + reqId
+    ///      under keccak256 so two negotiations firing in the same block can't
+    ///      collide on the same requestId. Unused when `selfHosted == false`.
+    ///      APPENDED to the storage block (after the existing mappings) so adding
+    ///      this slot doesn't shift `_nextId`, `_negotiations`, or `_requestToNegotiation`
+    ///      — preserves storage-layout compat for any future upgrade-in-place.
+    uint256 private _selfHostedNonce;
 
     // ---------------------------------------------------------------------
     // Events (SPEC-0001 §3 — names implemented exactly)
@@ -778,6 +792,20 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     ///      committed before either external call (CEI).
     /// @param payer The caller funding this fire (refund recipient for any overpayment).
     function _fireAgent(uint256 reqId, Negotiation storage n, address payer) internal {
+        // Amendment 0006 branch: in self-hosted mode the "platform" is an EOA we run
+        // (the off-chain orchestrator), so `platform.createRequest` /
+        // `platform.getRequestDeposit` external calls would revert (EOAs have no code).
+        // The selfHosted path skips those calls, generates a synthetic requestId
+        // locally, and forwards `agentReward` (which acts as the orchestrator fee)
+        // via plain call. handleResponse stays gated on `msg.sender == platform` —
+        // only the orchestrator EOA can deliver a ruling. Common state effects
+        // (UnderReview, rulingDeadline, totalFees, PacketSubmitted, RulingRequested,
+        // _requestToNegotiation) are identical across both branches.
+        if (selfHosted) {
+            _fireAgentSelfHosted(reqId, n, payer);
+            return;
+        }
+
         // Payload for the Somnia LLM Parse Website base agent (ExtractANumber).
         // The agent fetches agentEvidenceUrl (an FDA label or drug info page) and
         // uses an LLM to extract whether coverage should be approved (1) or denied (0).
@@ -840,6 +868,59 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         if (refund > 0) {
             (bool ok, ) = payable(payer).call{value: refund}("");
             require(ok, "fee: refund failed");
+        }
+    }
+
+    /// @dev Amendment 0006: self-hosted agent firing. Skips the
+    ///      `platform.createRequest` / `getRequestDeposit` external calls
+    ///      (they'd revert against an EOA-as-platform), generates a synthetic
+    ///      requestId locally, and forwards `agentReward` to the orchestrator
+    ///      via plain call. State machine + invariants identical to the
+    ///      platform path: same UnderReview transition, same rulingDeadline,
+    ///      same _requestToNegotiation mapping, same RulingRequested event.
+    ///      Guarded by the caller's `nonReentrant` entry point (CEI: all
+    ///      state effects committed before either external call).
+    function _fireAgentSelfHosted(uint256 reqId, Negotiation storage n, address payer) internal {
+        // Self-hosted fee is just the configurable agentReward — there is no
+        // platform-side per-request deposit to add. agentReward may be 0 (free
+        // demo) or non-zero (the orchestrator EOA collects it as its fee).
+        uint256 fee = agentReward;
+        require(msg.value >= fee, "fee: underfunded");
+        uint256 refund = msg.value - fee;
+
+        n.totalFees += fee; // accumulate for the 50/50 settlement marker (R8)
+
+        // Effects before interaction (CEI). Identical state transitions to the
+        // platform path so handleResponse and the rest of the state machine treat
+        // self-hosted and platform-driven adjudications interchangeably.
+        n.rulingDeadline = block.timestamp + rulingTimeout;
+        n.state = State.UnderReview;
+
+        // Synthetic requestId — keccak256(block.number, address(this), reqId,
+        // ++nonce) guarantees uniqueness across same-block fires (the nonce
+        // tiebreaks even when the other three inputs collide). Cast to uint256
+        // to match the platform.createRequest return type so downstream code
+        // (handleResponse, _requestToNegotiation) is shape-compatible.
+        _selfHostedNonce += 1;
+        uint256 requestId = uint256(
+            keccak256(abi.encode(block.number, address(this), reqId, _selfHostedNonce))
+        );
+        n.pendingRequestId = requestId;
+        _requestToNegotiation[requestId] = reqId;
+
+        emit PacketSubmitted(reqId, n.round, n.evidenceUri, n.evidenceUri);
+        emit RulingRequested(reqId, requestId, fee);
+
+        // Interactions: forward the fee to the orchestrator EOA, then refund the
+        // caller's overpayment. Both guarded by the caller's `nonReentrant`
+        // entry point; all state effects above are already committed (CEI-safe).
+        if (fee > 0) {
+            (bool feeOk, ) = payable(address(platform)).call{value: fee}("");
+            require(feeOk, "fee: orchestrator transfer failed");
+        }
+        if (refund > 0) {
+            (bool refundOk, ) = payable(payer).call{value: refund}("");
+            require(refundOk, "fee: refund failed");
         }
     }
 

@@ -1,3 +1,96 @@
+# Solidity compliance — tick 118
+
+**Date:** 2026-05-30
+**Scope:** Amendment 0006 Tick B (part 2) — `_fireAgent` self-hosted branch on
+`CoverageNegotiation.sol` + 4 new `_fireAgentSelfHosted` tests in
+`contracts/test/CoverageNegotiation.test.ts`. Diff also includes tick-117's
+committed `selfHosted` storage + `setPlatformSelfHosted` setter.
+
+## Tick 118 — R25 Tick B (self-hosted _fireAgent branch)
+
+**Verdict:** FAIL (3 findings: 1 MEDIUM, 1 LOW, 1 NIT)
+
+### MEDIUM
+
+- **Storage layout: `currentlyFiringReqId` and `_selfHostedNonce` were INSERTED,
+  not appended.** The pre-change layout order was
+  `platform, agentId, agentReward, rulingTimeout, maxRounds, agentEvidenceUrl,
+  _nextId, _negotiations, _requestToNegotiation`. Post-change:
+  `platform+selfHosted (packed), agentId, agentReward, rulingTimeout, maxRounds,
+  agentEvidenceUrl, currentlyFiringReqId (NEW, slot 6), _nextId (SHIFTED to 7),
+  _selfHostedNonce (NEW, slot 8), _negotiations (SHIFTED to 9),
+  _requestToNegotiation (SHIFTED to 10)`. `_nextId`, `_negotiations`, and
+  `_requestToNegotiation` all move slots. The reviewer brief stated "New slots
+  appended, not inserted" — that is incorrect for this diff. For a fresh deploy
+  (the demo path) this is harmless. For any upgrade-in-place / proxy scenario it
+  would corrupt the request-id counter and the negotiation mapping root. Confirm
+  the deployment posture explicitly rules out an existing-state upgrade, or move
+  `currentlyFiringReqId` + `_selfHostedNonce` to the end of the storage block
+  (after `_requestToNegotiation`). File:
+  `contracts/contracts/CoverageNegotiation.sol:189-209`.
+
+  (The `bool selfHosted` packing into the `platform` slot IS safe — `IAgentRequester`
+  is an address = 20 bytes, leaves 12 bytes spare, bool occupies 1. No upgrade
+  impact on slot 0.)
+
+### LOW
+
+- **Test coverage gap: no handleResponse round-trip through the self-hosted
+  path.** The 4 added tests prove `_fireAgentSelfHosted` reaches UnderReview,
+  generates unique requestIds, reverts on underfunding, and refunds overpayment.
+  None of them invoke `handleResponse` from the orchestrator EOA against the
+  synthetic requestId, so the end-to-end loop (self-hosted fire → orchestrator
+  ruling → state transition to Approved/Denied/etc.) is unproven. The
+  `_requestToNegotiation[requestId] = reqId` mapping write is the load-bearing
+  step that must round-trip — currently asserted only as "non-zero", not as
+  "delivers a ruling when keyed back". Add at least one test where the
+  orchestrator signer calls `handleResponse(requestId, responses)` with an
+  Approve/Deny tuple and asserts the final state. File:
+  `contracts/test/CoverageNegotiation.test.ts:1086-1188` (the new self-hosted
+  describe block).
+
+### NIT
+
+- **`currentlyFiringReqId` is not set/cleared on the self-hosted path** while the
+  platform path sets it before and clears it after `platform.createRequest`
+  (`CoverageNegotiation.sol:202-209` in `_fireAgent`). Self-hosted skips this
+  entirely. The accessor doc string ("Zero outside an active fire") still holds
+  trivially (it's always zero in self-hosted mode), but anything off-chain that
+  uses this as a probe (per the existing comment: "off-chain probe / future
+  indexer") will see no signal during a self-hosted fire. Either mirror the
+  set/clear inside `_fireAgentSelfHosted` for behavioral parity, or update the
+  accessor doc string to call out the self-hosted exception.
+
+### Passed checks
+
+- CEI ordering in `_fireAgentSelfHosted`: all state writes (`n.totalFees`,
+  `n.rulingDeadline`, `n.state`, `_selfHostedNonce`, `n.pendingRequestId`,
+  `_requestToNegotiation[requestId]`) complete before the two external
+  `.call{value}` interactions (CoverageNegotiation.sol:879-916). Clean.
+- Reentrancy: all callers (`requestAdjudication`, `submitEvidence`, `appeal`)
+  carry `nonReentrant`; `_fireAgentSelfHosted` is `internal` and unreachable
+  bypassing the guard.
+- Access control: `setPlatformSelfHosted` is `onlyOwner` (covered by test at
+  test:1063-1069 via `OwnableUnauthorizedAccount`). `_fireAgentSelfHosted` is
+  `internal`.
+- Synthetic requestId uniqueness: `_selfHostedNonce += 1` runs BEFORE the
+  keccak (line 896 then 897-899); `uint256` nonce can't realistically wrap;
+  `address(this)` prevents cross-contract collision; same-block uniqueness
+  verified by test (test:1106-1126).
+- Fee semantics: `fee = agentReward`, underfunded reverts, 0 allowed,
+  overpayment refunds, success of orchestrator transfer bubbled via
+  `require(feeOk, ...)`.
+- Event consistency: `PacketSubmitted` + `RulingRequested` emitted with the
+  same arg shapes and ordering as the platform path; downstream
+  `handleResponse` and `_requestToNegotiation` are shape-compatible.
+- OpenZeppelin pattern compliance: inheritance unchanged
+  (`Ownable, ReentrancyGuard, IAgentRequesterHandler`); no storage collision
+  introduced against base classes.
+- `selfHosted` storage packs into the same slot as `platform` (slot 0) — no
+  new slot for the bool, consistent with the inline doc.
+
+---
+
 # Solidity compliance — tick 14
 
 **Date:** 2026-05-29
