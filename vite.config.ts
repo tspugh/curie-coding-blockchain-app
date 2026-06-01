@@ -13,7 +13,8 @@
  */
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { mkdir, appendFile } from "node:fs/promises";
+import { mkdir, appendFile, readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -33,6 +34,38 @@ function txLogSinkPlugin(): Plugin {
     name: "curie-tx-log-sink",
     configureServer(server) {
       server.middlewares.use("/__log/tx", (req, res) => {
+        // GET → return the entire JSONL as a JSON array so the in-UI
+        // TxMonitor can hydrate cumulative session state across reloads.
+        // POST → append a single confirmed-tx record (the original sink).
+        if (req.method === "GET") {
+          void (async () => {
+            try {
+              if (!existsSync(logFile)) {
+                res.statusCode = 200;
+                res.setHeader("Content-Type", "application/json");
+                res.end("[]");
+                return;
+              }
+              const raw = await readFile(logFile, "utf8");
+              const entries = raw
+                .split("\n")
+                .filter((l) => l.trim().length > 0)
+                .map((l) => {
+                  try { return JSON.parse(l) as unknown; } catch { return null; }
+                })
+                .filter((x) => x !== null);
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify(entries));
+            } catch (err) {
+              // eslint-disable-next-line no-console
+              console.error("[tx-log-sink] read failed:", err);
+              res.statusCode = 500;
+              res.end();
+            }
+          })();
+          return;
+        }
         if (req.method !== "POST") {
           res.statusCode = 405;
           res.end();

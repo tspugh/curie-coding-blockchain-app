@@ -194,6 +194,14 @@ function makeClient(privateKey: string | undefined): CurieClient {
           contractAddress: import.meta.env.VITE_CONTRACT_ADDRESS,
           // = platform.getRequestDeposit() (0.03 STT) + 0.10 STT × 3 validators = 0.33 STT.
           agentFeeValue: BigInt(import.meta.env.VITE_AGENT_FEE_WEI ?? "330000000000000000"),
+          // Somnia testnet RPC caps `eth_getLogs` at 1000 blocks. Without a
+          // floor, the dashboard's history fetch reverts and the Timeline /
+          // Network / TxMonitor render empty. Set `VITE_DEPLOYMENT_BLOCK` to
+          // the deploy block to scan the contract's full history; otherwise
+          // RealBackend falls back to a `latest - 50_000`-block lookback.
+          deploymentBlock: import.meta.env.VITE_DEPLOYMENT_BLOCK
+            ? Number(import.meta.env.VITE_DEPLOYMENT_BLOCK)
+            : undefined,
         },
       },
     });

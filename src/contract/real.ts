@@ -46,7 +46,25 @@ export interface RealBackendOptions {
    * (R9). Defaults to 0 (assumes the contract is pre-funded).
    */
   readonly agentFeeValue?: bigint;
+  /**
+   * Block number at (or just before) the contract deployment. Used as the floor
+   * for historical event scans. Somnia testnet RPC caps `eth_getLogs` to 1000
+   * blocks per request; without a floor, `getEvents` falls back to scanning
+   * `latest - DEFAULT_LOOKBACK_BLOCKS` so the dashboard always loads.
+   */
+  readonly deploymentBlock?: number;
 }
+
+/**
+ * Default lookback window (blocks) when no `deploymentBlock` is configured.
+ * Somnia testnet block time ≈ 1.3s, so 10_000 ≈ 3.5 hours — enough to render
+ * the demo session's just-completed flow without overwhelming the RPC with
+ * paged queries. Configure `VITE_DEPLOYMENT_BLOCK` for the full history.
+ */
+const DEFAULT_LOOKBACK_BLOCKS = 10_000;
+
+/** Somnia testnet RPC's per-request `eth_getLogs` window cap. */
+const LOG_PAGE_SIZE = 1_000;
 
 /**
  * Raw `Negotiation` tuple returned by ethers — field order matches the Solidity
@@ -175,6 +193,7 @@ export class RealBackend implements CoverageNegotiationClient {
   private readonly contract: CoverageContract & ethers.Contract;
   private readonly provider: ethers.Provider;
   private readonly agentFeeValue: bigint;
+  private readonly deploymentBlock?: number;
   /** Maps a user listener to the ethers listeners we attached, for cleanup. */
   private readonly attached = new Map<
     CoverageEventListener,
@@ -190,6 +209,7 @@ export class RealBackend implements CoverageNegotiationClient {
     }
     this.provider = wallet.provider;
     this.agentFeeValue = options.agentFeeValue ?? 0n;
+    if (options.deploymentBlock !== undefined) this.deploymentBlock = options.deploymentBlock;
     // Bind with the signer so write methods are sendable; reads still work.
     this.contract = new ethers.Contract(
       address,
@@ -401,27 +421,59 @@ export class RealBackend implements CoverageNegotiationClient {
   ];
 
   async getEvents(filter: EventFilter = {}): Promise<CoverageEvent[]> {
-    const from = filter.fromBlock ?? 0;
-    const to = filter.toBlock ?? "latest";
+    // Resolve absolute block bounds. Somnia testnet RPC caps `eth_getLogs` to
+    // 1000 blocks per request — so unbounded "fromBlock: 0" calls revert with
+    // "block range exceeds 1000" and the dashboard stays empty (the
+    // diagnostic that drove this fix). Page the range in `LOG_PAGE_SIZE`
+    // chunks, floored at `deploymentBlock` (or `latest - DEFAULT_LOOKBACK_BLOCKS`
+    // when the deploy block isn't configured). For efficiency we do ONE
+    // `eth_getLogs` per page against the whole contract address and decode each
+    // log against the event registry, rather than 20 calls per page (one per
+    // event name); that keeps a fresh-page load to ~LOOKBACK / 1000 RPC calls
+    // (≈10 for the default lookback).
+    const latest = await this.provider.getBlockNumber();
+    const toAbs = filter.toBlock ?? latest;
+    const floor =
+      this.deploymentBlock ?? Math.max(0, latest - DEFAULT_LOOKBACK_BLOCKS);
+    const fromAbs = filter.fromBlock ?? floor;
+    const reqIdTopic =
+      filter.reqId !== undefined
+        ? ethers.zeroPadValue(ethers.toBeHex(filter.reqId), 32)
+        : null;
+
+    const iface = this.contract.interface;
+    const contractAddr = await this.contract.getAddress();
+    const eventSet = new Set<string>(RealBackend.EVENT_NAMES);
+
     const collected: Array<{ ev: CoverageEvent; block: number; index: number }> = [];
 
-    for (const name of RealBackend.EVENT_NAMES) {
-      // reqId is the first (indexed) topic of every event, so the named filter
-      // narrows the `eth_getLogs` query to a single contract when requested.
-      const make = this.contract.filters[name] as unknown as (
-        reqId?: bigint,
-      ) => ethers.DeferredTopicFilter;
-      const topic = filter.reqId === undefined ? make() : make(filter.reqId);
-      const logs = await this.contract.queryFilter(topic, from, to);
+    for (let start = fromAbs; start <= toAbs; start += LOG_PAGE_SIZE) {
+      const end = Math.min(start + LOG_PAGE_SIZE - 1, toAbs);
+      const logs = await this.provider.getLogs({
+        address: contractAddr,
+        fromBlock: start,
+        toBlock: end,
+        // Every event in EVENT_NAMES has `reqId` as the first indexed topic, so
+        // topics[1] == reqId-padded-bytes32 when a single negotiation is asked
+        // for. `topics[0]` (signature) stays open — we filter by name below.
+        ...(reqIdTopic !== null ? { topics: [null, reqIdTopic] } : {}),
+      });
       for (const log of logs) {
-        const el = log as ethers.EventLog;
+        let parsed: ethers.LogDescription | null;
+        try {
+          parsed = iface.parseLog(log);
+        } catch {
+          continue;
+        }
+        if (!parsed || !eventSet.has(parsed.name)) continue;
+        const name = parsed.name as CoverageEventName;
         collected.push({
-          ev: this.buildEvent(name, [...el.args], {
-            txHash: el.transactionHash,
-            blockNumber: el.blockNumber,
+          ev: this.buildEvent(name, [...parsed.args], {
+            txHash: log.transactionHash,
+            blockNumber: log.blockNumber,
           }),
-          block: el.blockNumber,
-          index: el.index,
+          block: log.blockNumber,
+          index: log.index,
         });
       }
     }
