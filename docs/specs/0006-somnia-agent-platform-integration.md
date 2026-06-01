@@ -542,6 +542,46 @@ issues under the pre-pivot deploy. **All items below are additive to
   branch, and no hardcoded ruling table may participate in the
   Scenario's path to terminal state.
 
+- **R56 (MUST) Network tab shows full chain history, not just
+  current session.** The Network tab MUST hydrate from BOTH the
+  chain-side paged-`getLogs` result (per R48/R49/R51) covering
+  `[deploymentBlock, latest]` (or the default `latest - 10_000`
+  lookback) AND the dev-server JSONL sink (per R50) for
+  session-persistent `tx-confirmed` events not yet captured in the
+  chain scan. Sources MUST be deduplicated by `txHash` (chain-scan
+  wins on conflict). A page reload against a contract with a
+  non-trivial on-chain history MUST render the full visible history
+  in the Network tab — empty surfaces ("no transactions yet",
+  "waiting for first confirmed tx") against a contract with prior
+  events are a regression (same signal as R51's reload-hydration
+  assertion). Mirrors SPEC-0003 §2.11 R58.
+- **R57 (MUST) Network tab sorted by recency, descending.**
+  Transactions in the Network tab MUST be rendered in **descending
+  block-number order — most recent at the top**. Secondary sort
+  key when two transactions share a block: transaction index
+  within the block (highest index first). Ascending-block-order
+  or session-arrival-order rendering fails this MUST. Mirrors
+  SPEC-0003 §2.11 R59.
+- **R58 (MUST) Dashboard/Overview lists negotiations by
+  most-recent activity, descending.** The Overview rows (the
+  "Coverage Requests" list on the front page) MUST be sorted by
+  **the block number of each negotiation's most-recent event (any
+  event whose `reqId` matches that row), descending**. Concretely:
+  - A new event on an existing negotiation MUST move that row up
+    to the position determined by the new event's block number.
+  - A negotiation in a terminal state (`Settled`,
+    `PolicyInvalidated`, `Refused`, `Withdrawn`) with no newer
+    events MUST fall down the list as newer negotiations push past
+    it; terminal state does NOT exclude the row from the sort.
+  - Ties (same most-recent-event block) break by `reqId`
+    descending.
+
+  This ordering MUST apply on first paint after a reload (derived
+  from the paged-`getLogs` scan) AND incrementally as new
+  `tx-confirmed` events arrive during the session (a row whose
+  negotiation gets a new event MUST reorder to its new position
+  within one render cycle). Mirrors SPEC-0003 §2.11 R60.
+
 ## 3. Technical documentation
 
 ### 3.1 Canonical SomniaAgents contract addresses
@@ -1065,6 +1105,16 @@ the test implementation. Synthetic data only. Test IDs trace to R-ids.
   exact emitted-event pattern. The bad-policy flow's
   `PolicyInvalid` ruling originates from the platform agent per
   R0/R0a — no stub.
+- [ ] **R56:** Network tab hydrates from BOTH paged-`getLogs` and
+  the dev-server JSONL sink, deduped by `txHash`. A reload against
+  a contract with prior events renders the full visible history,
+  not session-only data.
+- [ ] **R57:** Network tab transactions sort by descending block
+  number (secondary: descending tx index within block). Most
+  recent at the top.
+- [ ] **R58:** Overview rows sort by descending most-recent-event
+  block number; ties break by descending `reqId`; new events
+  reorder rows within one render cycle without reload.
 
 ### FAIL — any triggers rejection
 

@@ -615,6 +615,61 @@ ISSUE 7).
 - R55–R56 reuse the §2.4 R21 ErrorCard surface for the disabled-affordance
   notice and the terminal-state CTA copy.
 
+#### Network tab + Dashboard ordering (extends R50–R52)
+
+- **R58 (MUST) Network tab shows the full chain history for the
+  configured contract, not just the current browser session.** The
+  Network tab MUST hydrate from BOTH:
+  - The chain-side paged-`getLogs` result (per R50/R51) covering
+    `[deploymentBlock, latest]` (or the default `latest - 10_000`
+    lookback when `VITE_DEPLOYMENT_BLOCK` is unset), AND
+  - The dev-server JSONL sink (per R52) for any session-persistent
+    `tx-confirmed` events surfaced by the local client that are not
+    yet captured in the chain scan (e.g., the last few seconds of
+    confirms between block-finalization and the next paged-scan
+    refresh window).
+
+  Sources MUST be deduplicated by `txHash` (chain-scan entry wins on
+  conflict, since it carries the canonical block + index pair). A
+  page reload against a contract with a non-trivial on-chain history
+  MUST render the full visible history in the Network tab — empty
+  surfaces ("no transactions yet", "waiting for first confirmed tx")
+  against a contract with prior events are a regression and indicate
+  R50, R51, or R52 is broken (same regression signal as R51's
+  reload-hydration assertion).
+- **R59 (MUST) Network tab sorted by recency, descending.**
+  Transactions in the Network tab MUST be rendered in **descending
+  block-number order — most recent at the top**. When two
+  transactions share a block, the secondary sort key MUST be
+  transaction index within the block (highest index first, since
+  later within-block txs read as "more recent"). This is the order
+  a user opening the Network tab to inspect "what just happened"
+  reads naturally; ascending-block-order or session-arrival-order
+  fails this MUST.
+- **R60 (MUST) Dashboard/Overview lists negotiations by most-recent
+  activity, descending.** The Overview rows (the "Coverage Requests"
+  list users see on the front page) MUST be sorted by **the block
+  number of each negotiation's most-recent event (any event whose
+  `reqId` matches that row), descending** — so the negotiation with
+  the latest activity sits at the top. Concretely:
+  - A new event on an existing negotiation (e.g., a fresh `Ruled`,
+    `Appealed`, `Accepted`, or `Settled` for an existing `reqId`)
+    MUST move that row up to the position determined by the new
+    event's block number.
+  - A negotiation with no events since some prior `Settled` /
+    `PolicyInvalidated` / `Refused` / `Withdrawn` terminal MUST
+    fall down the list naturally as newer negotiations push past
+    it; terminal state does NOT exclude the row from the sort.
+  - Ties (same most-recent-event block) break by `reqId`
+    descending (newer requests above older requests).
+
+  This ordering MUST apply both on first paint after a reload (when
+  the row set is derived from the paged-`getLogs` scan) AND
+  incrementally as new `tx-confirmed` events arrive during the
+  session (a row whose negotiation gets a new event MUST reorder
+  to its new position within one render cycle, per R13's
+  re-derive-from-state rule).
+
 ## Implementation plan (auxiliary)
 
 > Non-normative. Phases the polish work into landable PRs against the spec
