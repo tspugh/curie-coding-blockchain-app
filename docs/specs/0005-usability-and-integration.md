@@ -1,10 +1,20 @@
 # SPEC-0005 — Usability criteria + integration testing (2026-05-30)
 
-> **Status:** draft. Authored 2026-05-30 in response to a user direction
-> shift: "the core priority now is integration test, not just unit tests".
-> Subsequent ticks will land each R-numbered requirement individually with
-> the loop's standard gates. Layout R-items are paired with screenshot
-> evidence at the named viewport sizes.
+> **Status: Superseded by SPEC-0006 (2026-06-01).** Every requirement in
+> this spec has been folded into
+> [`0006-somnia-agent-platform-integration.md`](0006-somnia-agent-platform-integration.md)
+> per the 2026-06-01 user direction "we should flatten specs six and
+> five". Mapping: SPEC-0005 §3.2 → SPEC-0006 §2.9 (R27-R30);
+> SPEC-0005 §3.3 → SPEC-0006 §2.10 (R31-R34); SPEC-0005 §3.4 →
+> SPEC-0006 §2.11 (R35-R37); SPEC-0005 §3.5 → SPEC-0006 §2.12
+> (R38-R39); SPEC-0005 §3.6 → SPEC-0006 §2.13 (R40-R43); SPEC-0005
+> §3.1 → SPEC-0006 §2.14 (R44-R47). The original draft below is
+> preserved for archaeology — do NOT build to it; SPEC-0006 is the
+> source of truth.
+
+> **Original status (pre-supersession):** draft. Authored 2026-05-30
+> in response to a user direction shift: "the core priority now is
+> integration test, not just unit tests".
 
 ## 1. Summary
 
@@ -341,6 +351,224 @@ implementation. Reference requirement IDs explicitly. Synthetic data only (R1).
   to fail with the exact message:
   `insufficient balance: needed X STT, have Y STT, short Z STT — fund <addr> at https://testnet.somnia.network/`.
 
+### 5.7 (2026-06-01) Multi-flow + runbook test cases (R24–R30)
+
+Distilled per §3.7 (which the loop appended below in document order to
+keep the chronological audit trail intact). The R24–R30 MUSTs that §3.7
+introduces are exercised by the test cases below; the §3.7 block itself
+sits after §5.7 to keep its 2026-06-01 timestamp in document order with
+the prior 2026-05-30 §3.6 block.
+
+- **T23 (R24) Insurer-side cost-estimator pre-flight.** Before any insurer-
+  signed tx in any Scenario, `cost-estimator.sh` asserts insurer balance ≥
+  computed insurer-side cost. Shortfall fails loud with the same
+  `insufficient balance: needed X STT, have Y STT, short Z STT — fund
+  <insurerAddr> at https://testnet.somnia.network/` message format.
+- **T24 (R25) Dev-server hygiene runbook step.** Demo runbook contains an
+  explicit pre-demo step to kill stray Vite servers (`lsof -i :5173 -i
+  :5174` etc) before `npm run web:dev`.
+- **T25 (R26) Funding history + cost matrix + balance-audit reproducer.**
+  Demo runbook documents the provider→insurer top-up size, the per-actor
+  per-tx cost matrix, and the post-flow balance audit; a reproducer
+  command prints both wallet balances before the demo starts.
+- **T26 (R27) Operator pre-condition gate.** Real-mode harness fails loud
+  on any of the five enumerated pre-conditions (two funded EOAs, no
+  stale dev server, orchestrator subscribed, `verify-deploy` 8/8 PASS,
+  `npm run build` fresh) with the failing item named — not opaquely
+  mid-flow.
+- **T27 (R28) `INSURER_ADDRESS` setup-required gate.** With
+  `VITE_PRIVATE_KEY_INSURER` unset, the Create form is blocked with a
+  surfaced setup-required error before the tx fires; the bundle does not
+  serialize `address(0)` or fall back to the provider address.
+- **T28 (R29) Three named flow Scenarios.** Each of `flow-approve-settle`,
+  `flow-dispute-appeal-settle`, `flow-bad-policy-policy-invalidated`
+  drives end-to-end on testnet and reaches its documented terminal state
+  with the exact emitted-event pattern. Regression on any one fails
+  strict-review.
+- **T29 (R30) Reload-hydration assertion.** After each R29 flow's terminal
+  state lands, the harness reloads the page and asserts: Dashboard row
+  count matches (e.g. `Settled 1`); Detail Timeline event count matches
+  the expected per-flow count; Network tab explorer link count equals
+  the Timeline count; Tx Monitor header carries non-empty gas + value
+  totals + tx count.
+
+### 3.7 (2026-06-01) Multi-flow coverage, operator runbook, dev-server hygiene, and insurer pre-flight (extends §3.1, §3.5, §3.6)
+
+Distilled from real-mode browser-driving on 2026-06-01 against the
+deployed `0x2c561f33…488ac93` contract on Somnia testnet, after which
+three distinct terminal states (Settled, Dispute-then-Settled,
+PolicyInvalidated) were reproducibly reached from the web UI alone. The
+items below pin the runbook and integration-test coverage required for
+those flows to be a repeatable demo gate. **All items below are additive
+to §3.1–§3.6; none rewrite earlier requirements.** Sources:
+[`../progress/2026-06-01-full-flow-verification.md`](../progress/2026-06-01-full-flow-verification.md)
+and
+[`../progress/2026-06-01-dispute-and-bad-policy-flows.md`](../progress/2026-06-01-dispute-and-bad-policy-flows.md).
+
+#### Insurer-side pre-flight (extends §3.6 R23)
+
+- **R24 (MUST) Insurer-side wallet pre-flight.** R23's
+  `web/tests/agent-browser/cost-estimator.sh` MUST also gate the
+  insurer-side flow. Before any Scenario that fires an insurer-signed
+  tx (`insurerEngage`, `appeal` from the Insurer party, `accept` from the
+  Insurer, or `settle` from the Insurer), the helper MUST assert
+  `insurerBalance ≥ engageGasReserve + (appealFeeValue × expectedAppealCycles)
+   + acceptGasReserve + settleGasReserve`. Shortfall MUST fail loud with
+  the same exact message format from R23 (`insufficient balance: needed
+  X STT, have Y STT, short Z STT — fund <insurerAddr> at
+  https://testnet.somnia.network/`). The in-UI counterpart in
+  `WalletBalance.tsx` (or wherever the SPEC-0003 §2.1 R5 balance-block
+  hint is rendered) MUST also gate the insurer-side flow, not just the
+  provider against `AGENT_FEE_RESERVE_WEI`. (Full-flow ISSUE 3; dispute
+  ISSUE D4.)
+
+#### Operator runbook + dev-server hygiene
+
+- **R25 (MUST) Vite dev-server hygiene runbook step.** The demo runbook
+  MUST include an explicit pre-demo step: kill all stray Vite servers
+  (`lsof -i :5173 -i :5174 …` then `kill -9 <pid>`, or equivalent)
+  before starting `npm run web:dev`. A stale dev server from a sibling
+  worktree on the default port serves an older `client.ts` bundle whose
+  export set may omit `INSURER_ADDRESS`, `walletSetupRequired`,
+  `syncProfilesFromUsers`, `setActiveClientProfile`, or
+  `USERS_CHANGED_EVENT`; the `Create.tsx` form then pulls
+  `INSURER_ADDRESS` as `undefined`, ethers serializes it to
+  `address(0)`, and `createContract` reverts with `addr: zero` (or
+  silently no-ops with no surfaced error). The runbook step MUST be
+  performed before *every* demo run, not just the first. (Full-flow
+  ISSUE 2.)
+- **R26 (MUST) Funding history documented in the runbook.** The runbook
+  MUST document:
+  - The one-off provider → insurer top-up needed for engage + appeal
+    cycles (0.5 STT is enough for ~3 demo runs in the current
+    `verify-deploy` configuration);
+  - The cost matrix per actor per tx (createContract ~0.016 STT gas;
+    requestAdjudication 0.35 STT agent-fee + ~0.025 STT gas;
+    accept ~0.001 STT gas; settle ~0.001 STT gas; insurerEngage
+    ~0.0025 STT gas; insurer accept ~0.0019 STT gas);
+  - The post-flow balance audit (provider, insurer, contract — verifying
+    the contract held no escrow under settlement-by-event model).
+
+  A reproducer command block MUST also be present that prints both
+  wallet balances before the demo starts, so the operator can confirm
+  the insurer top-up landed before clicking Engage. (Full-flow
+  pre-conditions table + reproducer.)
+
+#### Orchestrator + deploy pre-conditions
+
+- **R27 (MUST) Operator pre-conditions for self-hosted real-mode runs.**
+  Before any real-mode integration Scenario (R20–R22) runs against the
+  deployed contract under Amendment 0006, every item below MUST be
+  asserted GREEN by the harness or refused as a pre-flight failure:
+  - Two distinct funded EOAs derived from `VITE_PRIVATE_KEY` and
+    `VITE_PRIVATE_KEY_INSURER` (R29 below);
+  - No stale Vite dev server on the default port (R25);
+  - `scripts/orchestrator-real.ts` running and subscribed to
+    `RulingRequested` (background process, gas borne by the
+    orchestrator wallet, which equals the provider wallet in self-hosted
+    mode);
+  - `npm run verify-deploy` returns 8/8 PASS against the configured
+    `VITE_CONTRACT_ADDRESS` (`selfHosted == true`,
+    `platform == orchestrator EOA`, sane agent params);
+  - `npm run build` for the `@lib` alias has been run since the last
+    library change.
+
+  A harness that fires real-mode txs without first asserting these MUST
+  fail loud with the specific pre-condition that broke, not opaquely
+  mid-flow.
+
+#### Insurer-address derivation hardening
+
+- **R28 (MUST) `INSURER_ADDRESS` MUST never silently fall back to the
+  provider address.** The web client (`web/src/client.ts`) MUST derive
+  `INSURER_ADDRESS` from `VITE_PRIVATE_KEY_INSURER` and MUST surface a
+  loud setup-required state (the existing `walletSetupRequired` export
+  semantics) before allowing `Create.tsx` to submit a tx when
+  `VITE_PRIVATE_KEY_INSURER` is unset. Concretely: when the insurer key
+  is missing, `createContract` MUST be blocked at the UI layer with a
+  surfaced error pointing the operator to set the env var; the bundle
+  MUST NOT serialize `address(0)` and let the contract revert with
+  `addr: zero` (or worse, populate the form with the provider's
+  address and produce a `create: self-contract` revert). (Full-flow
+  ISSUE 1 + ISSUE 2.)
+
+#### Multi-flow integration coverage
+
+- **R29 (MUST) Integration coverage MUST exercise three end-to-end
+  flows.** R1 (single Settled run) is necessary but no longer
+  sufficient. The R20/R21 per-affordance + dual-outcome coverage MUST
+  be exercised through three named flow Scenarios driving the live UI
+  end-to-end on Somnia testnet:
+
+  1. **`flow-approve-settle`** — Provider files → Insurer engages with
+     a compliant policy → Provider requests adjudication → orchestrator
+     rules Approve → both parties accept → Provider settles.
+     **Terminal:** `Settled (state 6)`. **Receipt:** Settled event with
+     recipient = `providerAddr`.
+  2. **`flow-dispute-appeal-settle`** — Provider files → Insurer
+     engages → Provider requests adjudication →
+     `ORCHESTRATOR_STUB_DECISION=Deny` (or LLM Deny) → ruling=Deny
+     (state→5) → Insurer files appeal (round→2, agentFeeValue paid) →
+     re-rule Deny → Provider files second appeal (orchestrator restarted
+     with default Approve in between, or LLM Approve) → ruling=Approve
+     (state→4, round=3, appealRound=2) → both parties accept →
+     Provider settles. **Terminal:** `Settled (state 6)`.
+  3. **`flow-bad-policy-policy-invalidated`** — Provider files →
+     Insurer engages with the DEMO non-compliant Adalimumab policy
+     (the `engage-noncompliant-toggle` testid) → Provider requests
+     adjudication → orchestrator stub matches `DEMO_BAD_POLICY_HASH`
+     and returns `Decision.PolicyInvalid` with
+     `clauseRef = "clause:PD-ADA-09"`,
+     `standardRef = "standard:fda-label-indication:HUMIRA:plaque-psoriasis"`,
+     `voidedClauseIndices = [0]` →
+     `PolicyFlagged` + `Ruled` + `PolicyInvalidated` emitted in the same
+     block → state → 8 (terminal). **Terminal:** `PolicyInvalidated
+     (state 8)`. **Receipt:** zero state-mutation affordances offered
+     after terminal landed; recovery is a brand-new request (per
+     SPEC-0003 R56 and SPEC-0004 R30).
+
+  All three flows MUST emit on-chain events visible on a clean page
+  reload via `getEvents({ reqId })`; the Dashboard row count, Detail
+  Timeline event count, Network tab explorer link count, and Tx
+  Monitor totals MUST hydrate on reload (per R30 below). A regression
+  that breaks any one flow MUST fail strict-review.
+
+- **R30 (MUST) Live event-history hydration on reload.** After any of
+  the three R29 flows reaches its terminal state, a page reload
+  against the live deployed contract MUST hydrate:
+  - **Dashboard row** — shows the terminal-state badge with the
+    correct row count (e.g. `Settled 1`, `PolicyInvalidated 1`);
+  - **Detail Timeline** — lists every event emitted across the flow
+    (11 events for the verified `flow-approve-settle` run, ≥ 14 for
+    `flow-dispute-appeal-settle`, 5 for
+    `flow-bad-policy-policy-invalidated`);
+  - **Network tab** — one explorer link per event;
+  - **Tx Monitor header** — running gas + value totals + tx count.
+
+  Empty surfaces ("waiting for first confirmed tx", "no events yet")
+  on a reload against a contract with a non-trivial event history MUST
+  be treated as a regression — they indicate that paged getLogs
+  (SPEC-0003 R50), deploymentBlock plumbing (SPEC-0003 R51), or
+  JSONL-sink hydration (SPEC-0003 R52) is broken. The harness MUST
+  reload the page once after each flow's terminal-state landing and
+  assert the four surfaces against the expected counts before passing
+  the Scenario.
+
+#### Open-question status updates (additive)
+
+- **OQ6 (NEW)** — Demo cadence under the dual-wallet flow: the
+  profile-flip cadence required by the verified flows (Provider → file,
+  Insurer → engage, Provider → adjudicate, Provider → accept, Insurer
+  → accept, Provider → settle, plus more for the dispute flow) is
+  currently broken by the SPEC-0003 R54 issue (top-bar profile switch
+  drops to Overview). R54 closure MUST land before R29's three Scenarios
+  can run hands-off in a recorded demo.
+- **OQ7 (NEW)** — Detail auto-refresh post-`Ruled` (SPEC-0003 R53):
+  same blocker for the dispute flow's re-rule branches — the
+  orchestrator delivers the second `Ruled` event within ~1.5s of the
+  second `appeal`, but the Detail page doesn't re-derive without the
+  Back → re-open workaround. R53 closure MUST land alongside R54.
+
 ## 6. Pass / fail criteria
 
 ### PASS — all must hold
@@ -384,6 +612,27 @@ implementation. Reference requirement IDs explicitly. Synthetic data only (R1).
   block hash, and `status === 1`; the assertion message names the mode (T21).
 - [ ] **R23:** `cost-estimator.sh` runs before each write-tx Scenario; a shortfall
   fails loud with the exact prescribed message (T22).
+- [ ] **R24:** Insurer-side cost-estimator pre-flight runs before any
+  insurer-signed tx; insurer-balance shortfall fails loud with the same
+  `insufficient balance: needed X STT…` message format from R23.
+- [ ] **R25:** Demo runbook documents the pre-demo dev-server kill step (no
+  stale Vite servers on default ports before `npm run web:dev`).
+- [ ] **R26:** Demo runbook documents (a) provider → insurer top-up tx + size,
+  (b) per-actor per-tx cost matrix, (c) post-flow balance audit. A reproducer
+  command prints both wallet balances before the demo starts.
+- [ ] **R27:** Pre-flight asserts two distinct funded EOAs, no stale dev server,
+  orchestrator subscribed, `verify-deploy` 8/8 PASS, `npm run build` fresh.
+  Harness fails loud with the failing item, not opaquely mid-flow.
+- [ ] **R28:** `INSURER_ADDRESS` does not silently fall back to the provider
+  address when `VITE_PRIVATE_KEY_INSURER` is unset; createContract is blocked
+  at the UI layer with a surfaced setup-required error.
+- [ ] **R29:** Three named flow Scenarios (`flow-approve-settle`,
+  `flow-dispute-appeal-settle`, `flow-bad-policy-policy-invalidated`) each run
+  end-to-end on testnet and reach their documented terminal state with the
+  exact emitted-event pattern. Regression on any one fails strict-review.
+- [ ] **R30:** After each R29 flow, a page reload hydrates Dashboard row count,
+  Detail Timeline event count, Network tab explorer link count, and Tx
+  Monitor totals — no empty surfaces against a non-trivial event history.
 
 ### FAIL — any triggers rejection
 

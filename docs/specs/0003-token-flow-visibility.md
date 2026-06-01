@@ -491,6 +491,130 @@ agent-call edge); this spec covers the visibility consequences and the demo
 gate. R48 (this spec) renumbered from PR #14's `R42` on merge; SPEC-0004's
 R25/R26/R27 numbers are unchanged.
 
+### 2.11 (2026-06-01) Tx-ledger durability, Detail auto-refresh, and action-coherence corrections (Decision 11)
+
+Distilled from real-mode full-flow agent-browser verification on
+2026-06-01 (see [`../progress/2026-06-01-full-flow-verification.md`](../progress/2026-06-01-full-flow-verification.md)
+and [`../progress/2026-06-01-dispute-and-bad-policy-flows.md`](../progress/2026-06-01-dispute-and-bad-policy-flows.md)).
+After driving the deployed `0x2c561f33…488ac93` contract through every
+state (Filed → Settled, Dispute → Settled, Bad-policy → PolicyInvalidated),
+a set of UI-side behaviours surfaced that are required for the system to
+reach the spec-correct terminal states from a clean page-load. All items
+below are **additive** to §2.1–§2.10; none rewrite earlier requirements.
+
+#### Tx-ledger durability (extends §2.2 R8/R9)
+
+The original §2.2 left the event-log fetch strategy and the in-UI tx
+monitor's reload behaviour unspecified. Both gaps caused the
+Detail-Timeline / Network-tab / Tx-Monitor surfaces to render empty after
+a page reload despite a complete on-chain history existing (see full-flow
+ISSUE 7).
+
+- **R50 (MUST) Paged event-log scan against the Somnia testnet 1000-block
+  cap.** `RealBackend.getEvents` MUST query the chain via
+  `provider.getLogs({ address, fromBlock, toBlock })` in chunks of at most
+  `LOG_PAGE_SIZE = 1000` blocks and decode the contract's events from the
+  resulting `LogDescription` set. A single naive `eth_getLogs({fromBlock:0,
+  toBlock:latest})` MUST NOT be used — Somnia testnet's RPC reverts with
+  `"block range exceeds 1000"` and the App-level `events` array stays
+  empty. The paged scan SHOULD perform one call per page parsed against
+  the interface (not one-call-per-event-name × pages).
+- **R51 (MUST) Deployment-block plumbing for full-history scans.**
+  `RealBackend` MUST accept `RealBackendOptions.deploymentBlock`; the web
+  bundle MUST forward `import.meta.env.VITE_DEPLOYMENT_BLOCK` into that
+  option. When `deploymentBlock` is unset, the default lookback MUST be
+  `latest - 10_000` blocks (~3.5h of testnet). Operators MUST be able to
+  set `VITE_DEPLOYMENT_BLOCK` in `.env` to recover full-lifetime history
+  past the 10k-block default window for a long demo run, at the documented
+  cost of additional paged RPC calls at startup.
+- **R52 (MUST) TxMonitor hydration from the persistent JSONL sink.** The
+  Vite dev-server middleware (§2.2 R9) MUST expose a `GET /__log/tx`
+  endpoint that returns the persisted `.tmp/tx-log.jsonl` contents as a
+  JSON array. The web client MUST call a `hydrateTxLogFromSink()` helper
+  once on mount (from the `TxMonitor` component's effect that wires the
+  subscription) that fetches `GET /__log/tx` and replays each entry through
+  `ingest()`. Without this hydration the session-only ingest stream
+  silently resets header totals to zero on every page reload, even though
+  the JSONL ledger accumulated correctly.
+
+#### Detail-view auto-refresh + profile-switch preservation
+
+- **R53 (MUST) Detail re-fetches `getNegotiationView` on every event whose
+  `reqId` matches the active view.** The current `Detail.tsx` effect with
+  `[reqId, events]` deps does not catch identity-mutated state when
+  React's array dep check is fooled. Implementations MUST EITHER trigger a
+  manual refetch on every new event whose `reqId === active`, OR add a
+  short polling fallback while `state == UnderReview`. The
+  `Ruled`-then-no-refresh failure mode where the Detail page keeps
+  rendering "Request AI Decision →" after the orchestrator has delivered
+  the ruling (workaround: click Back, re-open the row) MUST be eliminated
+  — the next render after the matching event MUST reflect the new
+  on-chain state. (Full-flow ISSUE 5 + dispute ISSUE D2.)
+- **R54 (MUST) Profile-switch MUST preserve the current Detail view.**
+  Clicking Provider / Insurer / Observer in the top-bar radio while on a
+  Detail page MUST NOT drop the user back to Overview. The active
+  `reqId` + `useView` state MUST be preserved across profile change so
+  the user can flip sides without re-clicking the row. (Full-flow ISSUE
+  6.) This is required because the Insurer-side engage / accept and the
+  Provider-side accept / settle / appeal alternate within the same Detail
+  view; making the user re-navigate after every flip breaks the demo
+  cadence and exercises bugs that only surface when state is reset.
+
+#### Action coherence corrections (extends §2.3 R13/R14)
+
+- **R55 (MUST) Appeal affordance MUST be gated on `state === Denied`, not
+  on `ruled`.** When the AI rules `Approve`, the UI MUST NOT render an
+  enabled Appeal affordance. The contract reverts with
+  `"appeal: prior ruling not Deny"`
+  ([`CoverageNegotiation.sol:483`](../../contracts/contracts/CoverageNegotiation.sol#L483))
+  in that case, but the current `appeal-submit` handler swallows the
+  gas-estimation revert and leaves the textarea populated with no
+  surfaced error. Implementations MUST EITHER hide the affordance
+  entirely when `view.state !== State.Denied`, OR render a disabled
+  affordance with an inline notice
+  *"Appeals are only available when the AI has denied the request."*
+  Either way the user MUST be prevented from firing a tx that will revert
+  silently. (Dispute ISSUE D1.)
+- **R56 (MUST) Terminal-state explicit CTA.** When the active negotiation's
+  `view.terminal === true`, the Detail page MUST render a single
+  context-tailored CTA that deep-links to `Create.tsx`. Specifically:
+  - `PolicyInvalidated` → CTA copy "Policy must be revised off-chain — File
+    a corrected request →" (no in-UI engage-with-new-policy affordance —
+    the contract design forbids re-engagement at the same `reqId`; recovery
+    is a brand-new request).
+  - Other terminal states (`Settled`, `Refused`, `Withdrawn`) → a generic
+    "File a new request →" CTA.
+  The CTA MUST occupy the same Detail action-panel slot the (now-hidden)
+  state-mutation affordances would have occupied, so the user is not left
+  with a blank action panel. (Dispute ISSUE D3.)
+- **R57 (MUST) Per-party affordance set on `Approved` and `Denied`.** On
+  `Approved` state both Provider and Insurer MUST see Accept (per their
+  respective party id); both MAY see Appeal (subject to R55's
+  state-gate — moot on Approved). On `Denied` state both Provider and
+  Insurer MUST see Appeal (with the agentFeeValue cost surfaced — see
+  SPEC-0004 R29). Only Provider sees `Refuse Terms`. Both parties see
+  `Withdraw` while non-terminal. The exact affordance set the live build
+  must produce on Approved is the testid set
+  `{accept-submit, appeal-evidence, appeal-submit, feedback-text,
+  withdraw-submit}` for Insurer and that same set plus
+  `{refuse-submit}` for Provider. (Dispute flow A verification.)
+
+#### Cross-spec dependencies (additive)
+
+- The tx-ledger MUSTs (R50–R52) depend on `vite.config.ts` middleware
+  + `web/src/txLogger.ts`'s `hydrateTxLogFromSink()` helper +
+  `RealBackendOptions.deploymentBlock` plumbing in `src/contract/real.ts`
+  + `web/src/client.ts` forwarding `VITE_DEPLOYMENT_BLOCK`. All landed in
+  the design-handoff branch on 2026-06-01 (see ISSUE 7 closure).
+- R53 (Detail auto-refresh) MUST also satisfy the dispute-flow path where
+  the orchestrator delivers a `Ruled` event with a re-rule outcome (Deny
+  → Deny on second appeal, then Deny → Approve on third). Each re-rule
+  arrives as a fresh `Ruled` event for the same `reqId` and round; the
+  Detail panel MUST re-derive against the latest ruling, not against any
+  earlier one.
+- R55–R56 reuse the §2.4 R21 ErrorCard surface for the disabled-affordance
+  notice and the terminal-state CTA copy.
+
 ## Implementation plan (auxiliary)
 
 > Non-normative. Phases the polish work into landable PRs against the spec

@@ -515,6 +515,183 @@ testnet produces at least one `Settled` event from an orchestrator-submitted
 ruling — blocked on wallet refund (~8 STT for full sweep; current 5.50) and/or
 `ANTHROPIC_API_KEY` for a smaller Tick A live smoke.
 
+### 2.8 (2026-06-01) Contract-side terminal states, appeal mechanics, and bad-policy detection (Decision 8)
+
+Distilled from the 2026-06-01 dispute + bad-policy flow verification
+(see [`../progress/2026-06-01-dispute-and-bad-policy-flows.md`](../progress/2026-06-01-dispute-and-bad-policy-flows.md))
+and the full-flow verification
+(see [`../progress/2026-06-01-full-flow-verification.md`](../progress/2026-06-01-full-flow-verification.md)).
+The deployed `0x2c561f33…488ac93` contract reached three different
+terminal states across three on-chain reqIds (Settled, Dispute-then-Settled,
+PolicyInvalidated); the invariants below are the contract-side guarantees
+required to reach those terminal states correctly under Amendment 0006's
+self-hosted orchestrator. **All items below are additive to §2.1–§2.7;
+none rewrite earlier requirements.**
+
+- **R28 (MUST, pre-pivot Amendment-0006 scope only — superseded by
+  SPEC-0006 R0/R0a) Bad-policy hash-based detection by the
+  orchestrator.** *This requirement describes the current
+  Amendment-0006 self-hosted state observed on 2026-06-01; under
+  SPEC-0006's `NO STUBS ALLOWED` invariant (R0/R0a), the
+  `policyHash`-match shortcut MUST be retired and the equivalent
+  judgment MUST be reached by the platform agent's prompt-level
+  reasoning over the policy text + FDA-label slice. See SPEC-0006
+  §2.15 R55 flow 3 for the post-pivot form.* Under the pre-pivot
+  orchestrator stub branch (when `ANTHROPIC_API_KEY` is unset and
+  before the SPEC-0006 pivot lands), when the negotiation's
+  `policyHash` matches the precomputed `DEMO_BAD_POLICY_HASH` —
+  the deterministic `keccak256` of
+  `renderCuratedPolicyText(badPolicy)`, currently
+  `0xcf0fcf90c43525f8a684b397c3e707fe65f061c6c4262405c0e3b3c45b1ea35d`
+  for the demo-bad Adalimumab policy — the orchestrator returns
+  `Decision.PolicyInvalid` with:
+  - `clauseRef = "clause:PD-ADA-09"`,
+  - `standardRef = "standard:fda-label-indication:HUMIRA:plaque-psoriasis"`,
+  - `policyVoidedClauseIndices = [0]`.
+
+  Bumping the curated policy text invalidates the hash match by design —
+  this is the right shape for a pre-pivot test-shim only; the LLM path
+  detects bad policies via prompt-level reasoning, not hash match.
+  Recorded on-chain via `PolicyFlagged` + `Ruled` + `PolicyInvalidated`
+  events; the `Ruled` event's decoded decision is
+  `Decision.PolicyInvalid`. **Removal of `DEMO_BAD_POLICY_HASH` from
+  source is a hard requirement of SPEC-0006 R9 / SPEC-0006 §2.15 R55's
+  closing guard.**
+- **R29 (MUST) `appeal()` contract gates.** The
+  `CoverageNegotiation.appeal()` function
+  ([`CoverageNegotiation.sol:483`](../../contracts/contracts/CoverageNegotiation.sol#L483))
+  MUST enforce:
+  - `require(state == State.Denied, "appeal: prior ruling not Deny")` —
+    an attempt to appeal from `Approved` MUST revert with that exact
+    string. (UI-side gate in SPEC-0003 R55; this is the contract-side
+    backstop.)
+  - `msg.value >= agentFeeValue` — the same value as
+    `requestAdjudication` (`0.35 STT` per the current deploy). Each
+    appeal cycle costs the appealing party `agentFeeValue` plus gas.
+  - `round` and `appealRound` MUST increment on every appeal cycle. The
+    chain MUST remember each prior ruling; final settlement MUST carry
+    the last ruling (e.g. a Deny → Deny → Approve sequence with two
+    appeals settles at the third ruling's covered amount). The contract
+    state MUST permit any party to file the resolving appeal; in the
+    verified dispute flow the Provider filed the second resolving
+    appeal because the Insurer wallet ran out of room (see SPEC-0005
+    R24 for the funding pre-flight requirement).
+- **R30 (MUST) `PolicyInvalidated` terminal-state invariants.** State 8
+  (`PolicyInvalidated`) MUST be a member of `TERMINAL_STATES`. After the
+  contract emits `PolicyInvalidated` for a reqId, every state-mutation
+  affordance MUST be denied: `canEngage`, `canSubmitEvidence`,
+  `canAccept`, `canAppeal`, `canSettle`, `canRefuse`, `canWithdraw`,
+  `canFeedback` all evaluate to false against the
+  `view.terminal === true` predicate. The contract MUST NOT permit
+  re-engagement with a different policy at the same reqId — recovery is
+  a brand-new request with a corrected policy (UI-side recovery CTA in
+  SPEC-0003 R56).
+- **R31 (MUST) Evidence-update affordance set, additive-only.** The
+  protocol MUST support exactly the following evidence-update
+  affordances; each lands as its own on-chain event with its own hash
+  per R10 (no "edit existing evidence" affordance — every update is
+  additive):
+
+  | Affordance | Provider | Insurer | When (contract state) |
+  |---|---|---|---|
+  | Commit initial justification | ✅ | — | request creation (state pre-`Open`) |
+  | Attach + commit policy | — | ✅ | `Open` |
+  | Submit additional clinical evidence | ✅ | — | `EvidenceRequested` only |
+  | File appeal with new evidence | ✅ | ✅ | `Denied` only (per R29) |
+  | Post free-text feedback note | ✅ | ✅ | any non-terminal |
+  | Refuse terms | ✅ | — | any non-terminal, `state ≠ Open` |
+  | Withdraw | ✅ | ✅ | any non-terminal |
+
+  The Provider has two evidence-write surfaces (initial + EvidenceRequested
+  follow-up); both parties share the appeal-side evidence surface; only
+  the Provider can refuse. The contract MUST enforce each affordance's
+  state precondition and per-party authorization invariant (the latter is
+  SPEC-0001 R11 territory; restated here as the test surface for the
+  multi-flow integration coverage in SPEC-0005 R26).
+- **R32 (MUST) Contract enforces `providerAddr != insurerAddr`.** The
+  `createContract` function
+  ([`CoverageNegotiation.sol:370`](../../contracts/contracts/CoverageNegotiation.sol#L370))
+  MUST revert with `"create: self-contract"` when
+  `providerAddr == insurerAddr`. This is the contract-side enforcement
+  of R2b's two-EOA invariant; the web-app derives provider from
+  `VITE_PRIVATE_KEY` and insurer from `VITE_PRIVATE_KEY_INSURER`. The
+  pre-existing stale demo data on a sibling-worktree deploy that carried
+  `providerAddr == insurerAddr == 0x69b5…0F77` is the failure mode this
+  guard prevents (see full-flow ISSUE 1: the stale negotiations were
+  unreachable for the "Submit Evidence" attempt because every
+  authorization check reverted with `auth: not provider`).
+- **R33 (MUST, pre-pivot Amendment-0006 scope only — superseded by
+  SPEC-0006 R0/R0a) Orchestrator decision-override env knob.** *This
+  knob is a pre-pivot dispute-flow reproducibility shim and is
+  explicitly prohibited by SPEC-0006 R0/R0a once the platform-agent
+  pivot lands. Post-pivot, the dispute flow's Deny → Deny → Approve
+  arc MUST be reached by per-round evidence-packet design that
+  causes a real platform-agent ruling to shift, NOT by an env knob.
+  See SPEC-0006 §2.15 R55 flow 2.* Under Amendment 0006 self-hosted
+  mode (until SPEC-0006 pivot lands), the orchestrator script
+  (`scripts/orchestrator-real.ts`) honours an
+  `ORCHESTRATOR_STUB_DECISION` environment variable, accepting any
+  of `Approve | Deny | NeedMoreEvidence | PolicyInvalid`. When set,
+  the stub returns that decision; bad-policy detection (R28) still
+  wins. This is scoped to the fallback stub branch (when
+  `ANTHROPIC_API_KEY` is unset); the LLM path is untouched. **Removal
+  of the `ORCHESTRATOR_STUB_DECISION` env knob (along with the entire
+  orchestrator script) is a hard requirement of SPEC-0006 R9 /
+  SPEC-0006 §2.15 R55's closing guard.**
+- **R34 (MUST) PHI loud-signature scanner over every demo fixture.**
+  Extends §2.1 R1 with the test-side enforcement that was landed in
+  ticks 8–10 of the strict-review schedule
+  (see [`../progress/strict-review-findings.md`](../progress/strict-review-findings.md)).
+  Every fixture under `demo-data/scenarios/<slug>/` (`note.md`,
+  `packet.json`, `payer-profile.json`, `requested-drug.json`,
+  `expected-outcome.md`, plus their CDS-Hooks consumers) MUST be
+  scanned in CI by a loud-signature PHI scanner that asserts the
+  serialized fixture content matches NONE of:
+  - phone in `NNN-NNN-NNNN` form (`\b\d{3}-\d{3}-\d{4}\b`),
+  - phone in `(NNN) NNN-NNNN` form (`\(\d{3}\)\s?\d{3}-\d{4}`),
+  - email (`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b`),
+  - SSN in `NNN-NN-NNNN` form (`\b\d{3}-\d{2}-\d{4}\b`),
+  - DOB-quoted `"NNNN-NN-NN"` form (`"\d{4}-\d{2}-\d{2}"`),
+  - MRN with 7+ contiguous digits.
+
+  Known-safe synthetic markers — `MRN 000-PARTD-001` (3 digits before
+  the dash), NDC in 5-4-2 shape (`00074-3799-02`), bare `YYYY-MM-DD`
+  date — MUST slip the scanner because they don't match any of the
+  six patterns above. The scanner is a loud tripwire for "real-shape
+  PHI" copy-paste, not an exhaustive detector. Every identifier in
+  every fixture MUST additionally carry a literal `synthetic` substring
+  (case-insensitive) at the surface the loader exposes — so a
+  real-data paste fails on the marker check as well.
+- **R35 (MUST) `expected-outcome.md` header pin for dispute fixtures.**
+  For fixtures whose expected ruling involves a multi-round dispute
+  arc (e.g. `medicaid-denied-then-appealed`), the
+  `expected-outcome.md` header (`## Expected outcome:` line) MUST name
+  the rulings in chronological order — `Deny` BEFORE `Approve` for a
+  round-0 Deny → round-1 Approve flow. This is the documented
+  surface that fails when R14a sequencing is violated by a future
+  fixture edit (a round-1 Approve with no prior round-0 Deny would
+  violate the on-chain `require(rounds[N-1].decision ==
+  Decision.Deny)` predicate, and the documented header is the
+  early-detection layer for that drift).
+- **R36 (MUST) `slice.kind` closed enum.** Every `EvidenceReference`
+  in any fixture or packet body MUST carry a `slice.kind` value that
+  is one of the five values pinned in §3.4: `"fda-label-indication"`,
+  `"fda-label-contraindication"`, `"guideline-recommendation"`,
+  `"formulary-entry"`, `"price-benchmark"`. New values (e.g. the
+  rejected `"policy-clause"` proposal from tick 9) MUST NOT appear in
+  any fixture; if a new slice kind is needed it MUST be added to the
+  §3.4 union first (a contract change, not an ad-hoc fixture
+  addition).
+- **R37 (MUST) `Packet.submittedAt` typing.** Every fixture's
+  `Packet.submittedAt` field MUST be a positive finite **number**
+  (unix seconds), not a string. Tests that consume the fixtures via
+  the §3.4 `Packet` type MUST assert
+  `typeof submittedAt === "number" && Number.isFinite(submittedAt) &&
+  submittedAt > 0` and MUST NOT accept the ISO-string union, because
+  the §3.4 `Packet` type's contract is number-only and any downstream
+  consumer that type-narrows the field will reject a string at the
+  type boundary.
+
 ## 3. Technical documentation
 
 ### 3.1 Scenario storage
@@ -721,6 +898,41 @@ produced a real `ResponseStatus.Success` ruling against the live agent on testne
 **FAIL:** the demo only has one note; the arbiter consults more than one formulary; the
 on-chain ruling fans out to multiple agent calls in a round; rulings differ across runs with
 the same inputs; **the live-agent selector check is missing or failing (§2.7 R26).**
+
+**§2.8 additive PASS checklist (2026-06-01):**
+
+- [ ] **R28:** Bad-policy hash detection: under the deterministic stub branch,
+  a `policyHash` matching `DEMO_BAD_POLICY_HASH` produces a `Ruled` decision of
+  `PolicyInvalid` with the pinned `clauseRef`, `standardRef`, and
+  `voidedClauseIndices = [0]`; followed by `PolicyInvalidated` emitted in the
+  same block.
+- [ ] **R29:** Contract `appeal()` reverts with exact string
+  `"appeal: prior ruling not Deny"` when invoked from `Approved`. Each appeal
+  requires `msg.value >= agentFeeValue` and increments `round` + `appealRound`.
+  Final settlement carries the latest ruling (a multi-round Deny → Deny →
+  Approve flow settles at the third ruling's covered amount).
+- [ ] **R30:** `PolicyInvalidated (state 8) ∈ TERMINAL_STATES`; after emission,
+  every `canX` predicate evaluates to false; no re-engagement at the same reqId
+  is accepted by the contract.
+- [ ] **R31:** All seven evidence-update affordances enforce their documented
+  state precondition and per-party authorization invariant; every update lands
+  as an additive on-chain event with its own hash.
+- [ ] **R32:** `createContract` reverts with `"create: self-contract"` when
+  `providerAddr == insurerAddr`.
+- [ ] **R33:** With `ORCHESTRATOR_STUB_DECISION` set to one of
+  `Approve|Deny|NeedMoreEvidence|PolicyInvalid`, the orchestrator's no-LLM stub
+  branch returns that decision (bad-policy detection still wins).
+- [ ] **R34:** CI PHI loud-signature scanner runs against every fixture under
+  `demo-data/scenarios/<slug>/` and fails on any of the six pinned patterns;
+  every identifier additionally carries a literal `synthetic` substring
+  (case-insensitive).
+- [ ] **R35:** Every dispute-arc fixture's `expected-outcome.md` header names
+  `Deny` BEFORE `Approve`.
+- [ ] **R36:** No fixture carries a `slice.kind` outside the §3.4 five-value
+  closed enum.
+- [ ] **R37:** Every fixture's `Packet.submittedAt` is a positive finite number;
+  fixture-loader tests assert
+  `typeof submittedAt === "number" && Number.isFinite(submittedAt) && submittedAt > 0`.
 
 ## 7. Out of scope
 
