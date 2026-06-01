@@ -517,6 +517,34 @@ ruling — blocked on wallet refund (~8 STT for full sweep; current 5.50) and/or
 
 ### 2.8 (2026-06-01) Contract-side terminal states, appeal mechanics, and bad-policy detection (Decision 8)
 
+> ⚠️ **STUB-PROHIBITION BANNER — READ BEFORE BUILDING TO §2.8.**
+> The active integration architecture is [SPEC-0006](0006-somnia-agent-platform-integration.md)
+> (status: draft, active). **SPEC-0006 R0 + R0a + R9 BAN every off-chain
+> stub, deterministic shortcut, hand-hashed fixture, and orchestrator
+> script from the contract-execution path.** Two sub-requirements
+> below — **R28 (`DEMO_BAD_POLICY_HASH` detection)** and **R33
+> (`ORCHESTRATOR_STUB_DECISION` env knob)** — describe stub
+> mechanisms that were observed in the 2026-06-01 verification
+> session running under the now-superseded Amendment 0006
+> self-hosted orchestrator. **They are scope-capped to "pre-pivot
+> Amendment-0006 only" and a fresh build to SPEC-0006 MUST NOT
+> implement them.** Their post-pivot equivalents — *platform-agent
+> prompt-level reasoning* for bad-policy detection, and *per-round
+> evidence-packet design that drives a real LLM ruling shift* for the
+> dispute arc — are spelled out in SPEC-0006 §2.15 R55 flows 2 and 3.
+> Removal of `DEMO_BAD_POLICY_HASH`, `ORCHESTRATOR_STUB_DECISION`,
+> `computeStubRuling`, and `scripts/orchestrator-real.ts` is a hard
+> SPEC-0006 R9 requirement enforced by its T1 `git grep` test.
+>
+> Every other requirement in §2.8 (R29 appeal contract gates, R30
+> PolicyInvalidated terminal invariants, R31 evidence-update
+> affordance set, R32 `providerAddr != insurerAddr` revert, R34 PHI
+> scanner, R35 expected-outcome header pin, R36 `slice.kind`
+> closed-enum, R37 `Packet.submittedAt` typing) is agent-architecture-
+> neutral — these are protocol invariants that hold under both the
+> pre-pivot self-hosted orchestrator and the post-pivot SPEC-0006
+> platform-agent integration. Build them as written.
+
 Distilled from the 2026-06-01 dispute + bad-policy flow verification
 (see [`../progress/2026-06-01-dispute-and-bad-policy-flows.md`](../progress/2026-06-01-dispute-and-bad-policy-flows.md))
 and the full-flow verification
