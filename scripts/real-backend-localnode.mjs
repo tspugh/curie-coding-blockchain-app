@@ -31,6 +31,10 @@ import { Decision, State, STATE_NAMES } from "../dist/types/coverage.types.js";
 const RPC = process.env.RPC_URL ?? "http://127.0.0.1:8545";
 // Hardhat node's deterministic account #0 — a throwaway local key, never real funds.
 const KEY = process.env.LOCAL_KEY ?? "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+// SPEC-0004 R2b: providerAddr != insurerAddr per request. The Hardhat node ships
+// with 10 pre-funded accounts; use #1 as the insurer-side default so the localnode
+// harness exercises the multi-wallet model.
+const INSURER_KEY = process.env.LOCAL_INSURER_KEY ?? "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 const AGENT_ID = 7n;
 
 const ZERO = ethers.ZeroHash;
@@ -72,6 +76,8 @@ async function main() {
   const baseSigner = new ethers.Wallet(KEY, provider);
   const address = baseSigner.address;
   const signer = new ethers.NonceManager(baseSigner);
+  // Insurer-side signer (SPEC-0004 R2b: distinct from provider for createContract).
+  const insurerAddress = new ethers.Wallet(INSURER_KEY, provider).address;
 
   // --- Deploy the mock platform + the contract to the local node ---
   const mockArt = artifact("contracts/mocks/MockAgentPlatform.sol/MockAgentPlatform.json");
@@ -89,7 +95,7 @@ async function main() {
   const contractAddr = await contract.getAddress();
 
   // --- Build the REAL backend over a structural RealWallet (provider+signer) ---
-  // Single shared wallet: providerAddr == insurerAddr == this address (R12).
+  // The provider sends txs; `insurerAddress` is the distinct counterparty per R2b.
   const wallet = { mode: "real", address, signer, provider };
   const real = new RealBackend(wallet, { contractAddress: contractAddr, agentFeeValue: FEE });
 
@@ -113,7 +119,8 @@ async function main() {
     providerId: 11n,
     insurerId: 22n,
     providerAddr: address,
-    insurerAddr: address,
+    insurerAddr: insurerAddress,
+    payerLine: 0, // PayerLine.PartD
     drugRef: DRUG,
     requestedAmount: REQUESTED,
     quantity: QUANTITY,
@@ -236,7 +243,8 @@ async function main() {
     providerId: 11n,
     insurerId: 22n,
     providerAddr: address,
-    insurerAddr: address,
+    insurerAddr: insurerAddress,
+    payerLine: 0, // PayerLine.PartD
     drugRef: DRUG,
     requestedAmount: REQUESTED,
     quantity: QUANTITY,

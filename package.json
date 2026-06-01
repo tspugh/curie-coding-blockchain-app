@@ -18,17 +18,23 @@
     "web:dev": "vite",
     "web:build": "vite build",
     "web:preview": "vite preview --port 4173",
+    "test": "npm run check-ruling-abi && npm run typecheck && npm run test:lib && npm --prefix contracts test",
     "test:lib": "node --import tsx --test \"src/**/*.test.ts\"",
     "test:e2e": "bash web/tests/agent-browser/run.sh",
     "test:real-local": "bash scripts/real-backend-localnode.sh",
-    "demo:orchestrator": "node scripts/orchestrator-demo.mjs"
+    "demo:orchestrator": "node scripts/orchestrator-demo.mjs",
+    "orchestrator:real": "tsx scripts/orchestrator-real.ts",
+    "check-ruling-abi": "tsx scripts/check-ruling-abi.ts",
+    "verify-deploy": "tsx scripts/verify-deploy.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.100.1",
     "dotenv": "^16.4.5",
     "ethers": "^6.16.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "somnia-agent-kit": "^3.0.11"
+    "somnia-agent-kit": "^3.0.11",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

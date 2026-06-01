@@ -1,0 +1,41 @@
+{
+  "references": [
+    {
+      "url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=df6ad4a1-1852-4cf2-93a1-0d78e18a5ebc",
+      "contentHash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+      "slice": {
+        "text": "ENBREL (etanercept) is indicated for reducing signs and symptoms, inhibiting the progression of structural damage of active arthritis, and improving physical function in patients with psoriatic arthritis.",
+        "kind": "fda-label-indication",
+        "locator": {
+          "section": "1 INDICATIONS AND USAGE — 1.2 Psoriatic Arthritis",
+          "page": 1
+        }
+      }
+    },
+    {
+      "url": "https://www.aetna.com/cpb/medical/data/700_799/0792.html",
+      "contentHash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+      "slice": {
+        "text": "Etanercept (Enbrel) for psoriatic arthritis is considered medically necessary only when the member has documented evidence of peripheral joint involvement confirmed by imaging (e.g., plain radiographs demonstrating erosive changes, or MRI demonstrating bone marrow edema) in addition to meeting step-therapy criteria. Requests supported solely by clinical examination findings, without qualifying imaging, are considered not medically necessary and will be denied.",
+        "kind": "guideline-recommendation",
+        "locator": {
+          "section": "Criteria — Psoriatic Arthritis, Peripheral Joint Involvement",
+          "page": 4
+        }
+      }
+    },
+    {
+      "url": "https://www.costplusdrugs.com/medications/etanercept-50mg-ml/",
+      "contentHash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+      "slice": {
+        "text": "Etanercept 50 mg/mL subcutaneous injection — Mark Cuban Cost Plus retail price: $1,850 per unit. NADAC acquisition-cost benchmark: $1,710 per unit (CMS NADAC weekly file).",
+        "kind": "price-benchmark",
+        "locator": {
+          "section": "Etanercept 50 mg/mL"
+        }
+      }
+    }
+  ],
+  "submittedAt": 1748649600,
+  "submittedBy": "0x0000000000000000000000000000000000000002"
+}

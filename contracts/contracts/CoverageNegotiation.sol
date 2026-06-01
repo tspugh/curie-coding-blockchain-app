@@ -54,15 +54,24 @@ interface IParseWebsiteAgent {
 /// @dev AUTH (R11): every party action is gated to `msg.sender ∈ {providerAddr,
 ///      insurerAddr}`; `insurerEngage` is insurer-only, `submitEvidence`/`refuse`
 ///      are provider-only, `createContract` must come from the provider address.
-///      A third, unrelated wallet reverts. Reads are public (no gate). Under the
-///      single-shared-wallet model (R12) both addresses are equal and the parties
-///      are distinguished by the trusted app-level `partyId` argument. The platform
-///      callback `handleResponse` is gated to the agent-platform address. Agent-
-///      firing entry points are `nonReentrant` and follow checks-effects-interactions.
+///      A third, unrelated wallet reverts. Reads are public (no gate). SPEC-0004
+///      R2b supersedes SPEC-0001 R12/R13: `providerAddr == insurerAddr` is rejected
+///      at `createContract` — the two addresses MUST be distinct per request.
+///      `partyId` still distinguishes which side of an action the caller represents
+///      when the same EOA holds multiple party roles across DIFFERENT requests; never
+///      within a single request. The platform callback `handleResponse` is gated to
+///      the agent-platform address. Agent-firing entry points are `nonReentrant`
+///      and follow checks-effects-interactions.
 contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler {
     // ---------------------------------------------------------------------
     // State machine (SPEC-0001 §3 "State machine" table — implemented exactly)
     // ---------------------------------------------------------------------
+
+    /// @dev Payer line governing the appeal ladder (SPEC-0004 R13). Determines
+    ///      the regulatory stage names the UI renders against. Stored on the
+    ///      Negotiation struct; documented-only in v0 (R14b — not enforced on-chain).
+    enum PayerLine { PartD, Commercial, Medicaid }
+
     enum State {
         Open, // 0  provider filed; awaiting insurer policy attach
         Ready, // 1  insurer engaged (policy attached); adjudicable
@@ -109,14 +118,25 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         bytes32 standardRef; // public standard cited for a policy flag (R6b)
         Decision lastDecision; // latest agent decision (meaningful once ruled)
         bool hasRuling; // whether an agent decision has landed
-        // ROUND SEMANTICS (R6c): `round` counts TOTAL adjudication cycles, NOT appeals.
-        // It is SET to 1 at the first `requestAdjudication` and INCREMENTED by 1 on each
-        // subsequent agent fire (`submitEvidence` and `appeal`). So after the first
-        // ruling `round == 1`; the first successful appeal makes it 2, etc. The appeal
-        // cap is reached when `round >= maxRounds` (an appeal at that point Deadlocks
-        // instead of firing a new cycle). Read it as "how many times the agent has been
-        // asked to rule", never as "number of appeals so far" (off-by-one trap).
+        // ROUND SEMANTICS: this struct carries TWO related counters that are NOT
+        // interchangeable. Read both before reasoning about appeal state.
+        //
+        //   `round` (R6c) — TOTAL adjudication cycles. SET to 1 at the first
+        //   `requestAdjudication` and INCREMENTED on each subsequent agent fire
+        //   (`submitEvidence` AND `appeal`). The deadlock cap is `round >= maxRounds`.
+        //   Read as "how many times the agent has been asked to rule", NEVER as
+        //   "number of appeals so far".
+        //
+        //   `appealRound` (SPEC-0004 R13) — POSITION IN THE PAYER-LINE LADDER. 0 at
+        //   creation (Initial Determination); INCREMENTED in `appeal()` ONLY (NOT in
+        //   `submitEvidence`, since submitting more evidence stays in the same ladder
+        //   stage). On the deadlock-cap short-circuit path in `appeal()` the bump is
+        //   skipped, so a deadlock leaves `appealRound` at the last successfully-fired
+        //   value. `(payerLine, appealRound)` indexes the static `LADDERS` table the
+        //   UI/library renders against (R15/R16).
         uint256 round; // total adjudication cycles (bounded to maxRounds — R6c)
+        PayerLine payerLine; // payer line governing the appeal ladder (SPEC-0004 R13)
+        uint8 appealRound; // current position in the payer-line ladder (0 = Initial Determination)
         bool providerAccepted; // provider accepted the current ruling
         bool insurerAccepted; // insurer accepted the current ruling
         uint256 totalFees; // accumulated agent fees (50/50 split marker — R8)
@@ -132,7 +152,21 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     // ---------------------------------------------------------------------
 
     /// @notice Somnia agent platform (IAgentRequester) this contract fires requests at.
+    /// @dev When `selfHosted == true`, this slot holds the orchestrator EOA's address
+    ///      cast to IAgentRequester. `_fireAgent` branches on `selfHosted` to skip the
+    ///      `platform.createRequest` / `platform.getRequestDeposit` external calls that
+    ///      would revert against an EOA (no code at the address). See Amendment 0006.
     IAgentRequester public platform;
+
+    /// @notice Amendment 0006: when true, the "platform" is actually a trusted EOA
+    ///         orchestrator we run; `_fireAgent` skips the `platform.createRequest`
+    ///         external call and emits the request event in its own; `handleResponse`
+    ///         still gates `msg.sender == address(platform)` so only our orchestrator
+    ///         can deliver a ruling. `_fireAgent` consumer not yet wired (tick 118+);
+    ///         this storage + setter (`setPlatformSelfHosted`) ships first as a safe
+    ///         additive surface so an Opus solidity-compliance reviewer can verify the
+    ///         contract diff in isolation before the behavior change lands.
+    bool public selfHosted;
 
     /// @notice Registered agent id to run for necessity arbitration.
     uint256 public agentId;
@@ -152,6 +186,19 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     string public agentEvidenceUrl =
         "https://medlineplus.gov/druginfo/meds/a603010.html";
 
+    /// @notice The reqId currently being fired at the agent platform. Set inside
+    ///         `_fireAgent` before `platform.createRequest`, cleared after. Lets a
+    ///         mock platform (or an off-chain probe / future indexer) read exactly which
+    ///         negotiation is mid-fire without decoding the agent payload. Zero outside
+    ///         an active fire. Because state is set to `UnderReview` before this is
+    ///         written, the CEI invariant is fully preserved.
+    /// @dev Amendment 0006 exception: NOT set in the self-hosted path
+    ///      (`_fireAgentSelfHosted`) because there's no external `platform.createRequest`
+    ///      call for an observer to interleave with. Self-hosted observers should read
+    ///      the `RulingRequested` event instead, which fires synchronously after the
+    ///      synthetic requestId is minted.
+    uint256 public currentlyFiringReqId;
+
     /// @dev Auto-incrementing request id.
     uint256 private _nextId = 1;
 
@@ -160,9 +207,31 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     /// @dev Maps an in-flight agent requestId back to its negotiation id.
     mapping(uint256 => uint256) private _requestToNegotiation;
 
+    /// @dev Amendment 0006: monotonic nonce used to seed synthetic agent-request IDs
+    ///      in self-hosted mode. Mixed with block.number + address(this) + reqId
+    ///      under keccak256 so two negotiations firing in the same block can't
+    ///      collide on the same requestId. Unused when `selfHosted == false`.
+    ///      APPENDED to the storage block (after the existing mappings) so adding
+    ///      this slot doesn't shift `_nextId`, `_negotiations`, or `_requestToNegotiation`
+    ///      — preserves storage-layout compat for any future upgrade-in-place.
+    uint256 private _selfHostedNonce;
+
     // ---------------------------------------------------------------------
     // Events (SPEC-0001 §3 — names implemented exactly)
     // ---------------------------------------------------------------------
+
+    /// @notice SPEC-0004 §3.5. Emitted on every agent fire (initial requestAdjudication and
+    ///         every appeal/submitEvidence) so off-chain indexers + the Curie packet store
+    ///         can correlate the on-chain ruling request with the off-chain packet body.
+    ///         `packetRoot` is the bytes32 evidenceUri until UNIT-9 (Merkle root) lands;
+    ///         `packetUrl` is also a bytes32 until UNIT-9 swaps to a string body-store URL.
+    event PacketSubmitted(
+        uint256 indexed reqId,
+        uint256 indexed round,
+        bytes32 packetRoot,
+        bytes32 packetUrl
+    );
+
     event ContractCreated(
         uint256 indexed reqId,
         uint256 indexed providerId,
@@ -186,7 +255,10 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         uint256 coveredAmount,
         bytes32 rationaleHash,
         bytes32 clauseRef,
-        uint256 receiptId
+        uint256 receiptId,
+        uint16[] policyVoidedClauseIndices,
+        uint16[] usedReferenceIndices,
+        bytes32[] usedLeafHashes
     );
     event PolicyFlagged(uint256 indexed reqId, bytes32 clauseRef, bytes32 standardRef);
     event PolicyInvalidated(uint256 indexed reqId, bytes32 clauseRef, bytes32 standardRef);
@@ -215,6 +287,19 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
     function setPlatform(address platform_) external onlyOwner {
         platform = IAgentRequester(platform_);
+        selfHosted = false;
+    }
+
+    /// @notice Amendment 0006: configure the contract for self-hosted-orchestrator mode.
+    ///         The `platform_` is treated as a trusted EOA we run; `_fireAgent`
+    ///         (once wired in a follow-up tick) will skip the `platform.createRequest`
+    ///         external call and just emit the request event. `handleResponse` still
+    ///         gates `msg.sender == address(platform)` — only our orchestrator EOA can
+    ///         deliver a ruling. Owner-only; reversible via `setPlatform` (which clears
+    ///         the self-hosted flag).
+    function setPlatformSelfHosted(address platform_) external onlyOwner {
+        platform = IAgentRequester(platform_);
+        selfHosted = true;
     }
 
     function setAgentId(uint256 agentId_) external onlyOwner {
@@ -260,9 +345,11 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     // ---------------------------------------------------------------------
 
     /// @notice File a coverage-exception request as the provider → `Open` (R2).
-    /// @dev Caller MUST be the provider address (R11). Self-claim (providerAddr ==
-    ///      insurerAddr / providerId == insurerId) is permitted (R13). Stores only
-    ///      the justification hash + opaque refs — never raw content (R3/R4).
+    /// @dev Caller MUST be the provider address (R11). Stores only the justification
+    ///      hash + opaque refs — never raw content (R3/R4).
+    ///      SPEC-0004 R2b: rejects providerAddr == insurerAddr (supersedes SPEC-0001
+    ///      R13's permissive self-claim — the demo explicitly does not support
+    ///      single-party self-contracting).
     /// @return reqId The new request id.
     function createContract(
         uint256 providerId,
@@ -274,11 +361,13 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         uint256 quantity,
         uint256 daysSupply,
         bytes32 justificationHash,
-        bytes32 evidenceUri
+        bytes32 evidenceUri,
+        PayerLine payerLine
     ) external returns (uint256 reqId) {
         require(providerAddr != address(0) && insurerAddr != address(0), "addr: zero");
         require(msg.sender == providerAddr, "auth: not provider");
         require(quantity > 0, "qty: zero"); // quantity drives the deterministic cap (R6a)
+        require(providerAddr != insurerAddr, "create: self-contract"); // SPEC-0004 R2b
 
         reqId = _nextId++;
         Negotiation storage n = _negotiations[reqId];
@@ -292,6 +381,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         n.daysSupply = daysSupply;
         n.justificationHash = justificationHash;
         n.evidenceUri = evidenceUri;
+        n.payerLine = payerLine;
+        n.appealRound = 0;
         n.state = State.Open;
         n.createdAt = block.timestamp;
         n.exists = true;
@@ -337,30 +428,51 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     }
 
     /// @notice Provider submits more public evidence of necessity from
-    ///         `EvidenceRequested` → moves back to `Ready` so either party can
-    ///         re-request adjudication. The caller does NOT need to fund an agent
-    ///         fee here; the fee is paid on the subsequent `requestAdjudication`.
+    ///         `EvidenceRequested` → fires the agent directly (round++) → `UnderReview`
+    ///         (R6/R9). Payable so the caller funds the per-request fee, identical fee
+    ///         model to `requestAdjudication` and `appeal`. At the round cap, routes
+    ///         to terminal `Deadlocked` without firing — mirroring `appeal`'s behavior
+    ///         so a NeedMoreEvidence ↔ submitEvidence cycle can't loop indefinitely.
     /// @dev Provider-only (R11). Records only the opaque evidence ref (R3/R4).
-    function submitEvidence(uint256 reqId, bytes32 evidenceUri) external {
+    function submitEvidence(uint256 reqId, bytes32 evidenceUri) external payable nonReentrant {
         Negotiation storage n = _get(reqId);
         require(n.state == State.EvidenceRequested, "evidence: wrong state");
         require(msg.sender == n.providerAddr, "auth: not provider");
         require(evidenceUri != bytes32(0), "evidence: empty");
 
+        // Bounded to N rounds: at the cap, the submission deadlocks instead of re-firing.
+        // No agent fires → refund the caller's full `msg.value` (R9: never silently retain
+        // caller ETH). Mirrors `appeal`'s cap logic; the function's `nonReentrant` modifier
+        // guards the refund (CEI: terminal state set first).
+        if (n.round >= maxRounds) {
+            _clearRequest(n);
+            n.state = State.Deadlocked;
+            emit Deadlocked(reqId, n.round);
+            if (msg.value > 0) {
+                (bool ok, ) = payable(msg.sender).call{value: msg.value}("");
+                require(ok, "fee: refund failed");
+            }
+            return;
+        }
+
         n.evidenceUri = evidenceUri;
         n.round += 1;
-        n.state = State.Ready;
         emit EvidenceSubmitted(reqId, evidenceUri);
-        emit ContractReady(reqId);
+        _fireAgent(reqId, n, msg.sender);
     }
 
     /// @notice Appeal a ruling with NEW public evidence of necessity (R6c). From
-    ///         `Approved`/`Denied`. Re-fires the agent (round++) while under the
-    ///         round cap; at the cap (`round >= maxRounds`) without mutual accept it
-    ///         routes to terminal `Deadlocked`.
+    ///         `Denied` ONLY (R14a: only a Deny justifies advancing the ladder;
+    ///         appealing an Approved ruling is non-sensical — you already got what
+    ///         you asked for, possibly capped). Re-fires the agent (round++) while
+    ///         under the round cap; at the cap (`round >= maxRounds`) without mutual
+    ///         accept it routes to terminal `Deadlocked`.
     /// @dev Either party may appeal (R11); `partyId` must be a party to the request.
     ///      An appeal MUST carry new public evidence — an empty `evidenceUri`
     ///      (price-only / free-prose appeal) reverts (T6).
+    ///      SPEC-0004 §2.4 R14a: `requestAdjudication(round=N)` is refused unless
+    ///      `round=N-1` was ruled Deny. In this contract's model that gate lives here
+    ///      on `appeal()`.
     function appeal(
         uint256 reqId,
         uint256 partyId,
@@ -368,7 +480,7 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         bytes32 reasonHash
     ) external payable nonReentrant {
         Negotiation storage n = _get(reqId);
-        require(n.state == State.Approved || n.state == State.Denied, "appeal: not ruled");
+        require(n.state == State.Denied, "appeal: prior ruling not Deny");
         _onlyParty(n);
         require(partyId == n.providerId || partyId == n.insurerId, "appeal: unknown party");
         require(evidenceUri != bytes32(0), "appeal: needs evidence");
@@ -391,6 +503,7 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         n.evidenceUri = evidenceUri;
         n.rationaleHash = reasonHash; // carry the appellant's stated reason ref
         n.round += 1;
+        n.appealRound += 1;
         emit Appealed(reqId, partyId, evidenceUri, n.round);
         _fireAgent(reqId, n, msg.sender);
     }
@@ -526,35 +639,74 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
             return;
         }
 
-        // Decode the Somnia LLM Parse Website agent's ExtractANumber response.
-        // The agent returns 1=APPROVE or 0=DENY based on the drug's FDA indications.
-        uint256 approvedVal = abi.decode(responses[0].result, (uint256));
-        Decision decision = approvedVal >= 1 ? Decision.Approve : Decision.Deny;
+        // Decode the arbiter tuple: (decision, costPlusUnitPrice, nadacUnitPrice,
+        // rationaleHash, clauseRef, standardRef, receiptId, policyVoidedClauseIndices,
+        // usedReferenceIndices, usedLeafHashes).
+        // This matches the encoding produced by MockAgentPlatform.triggerRuling and
+        // the real Somnia agent. policyVoidedClauseIndices is the 8th element (SPEC-0004 R23);
+        // usedReferenceIndices and usedLeafHashes are the 9th and 10th (SPEC-0004 R11).
+        (
+            uint8 decisionRaw,
+            uint256 costPlusUnitPrice,
+            uint256 nadacUnitPrice,
+            bytes32 rationaleHash,
+            bytes32 clauseRef,
+            bytes32 standardRef,
+            uint256 receiptId,
+            uint16[] memory policyVoidedClauseIndices,
+            uint16[] memory usedReferenceIndices,
+            bytes32[] memory usedLeafHashes
+        ) = abi.decode(
+            responses[0].result,
+            (uint8, uint256, uint256, bytes32, bytes32, bytes32, uint256, uint16[], uint16[], bytes32[])
+        );
+        Decision decision = Decision(decisionRaw);
 
+        // `NeedMoreEvidence`: agent requests additional public evidence before ruling.
+        // Route to the retriable `EvidenceRequested` state (R6/R9).
+        if (decision == Decision.NeedMoreEvidence) {
+            n.state = State.EvidenceRequested;
+            emit EvidenceRequested(reqId);
+            return;
+        }
+
+        // Store agent-supplied lookup data for all other decisions.
         n.lastDecision = decision;
         n.hasRuling = true;
-        // Price fields are not returned by the LLM base agent — zeroed out.
-        // The covered amount is the full requested amount when approved (no benchmark cap
-        // without per-unit pricing from the agent).
-        n.costPlusUnitPrice = 0;
-        n.nadacUnitPrice = 0;
-        n.rationaleHash = bytes32(0);
-        n.clauseRef = bytes32(0);
-        n.standardRef = bytes32(0);
+        n.costPlusUnitPrice = costPlusUnitPrice;
+        n.nadacUnitPrice = nadacUnitPrice;
+        n.rationaleHash = rationaleHash;
+        n.clauseRef = clauseRef;
+        n.standardRef = standardRef;
         // A fresh ruling resets prior acceptances — parties accept THIS ruling.
         n.providerAccepted = false;
         n.insurerAccepted = false;
 
+        if (decision == Decision.PolicyInvalid) {
+            // R6b: relied-on clause contradicts a public standard — void the contract.
+            emit PolicyFlagged(reqId, clauseRef, standardRef);
+            n.coveredAmount = 0;
+            n.state = State.PolicyInvalidated;
+            emit Ruled(reqId, requestId, decision, 0, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes);
+            emit PolicyInvalidated(reqId, clauseRef, standardRef);
+            return;
+        }
+
         if (decision == Decision.Approve) {
-            // Approved: cover the full requested amount (LLM agent confirms FDA necessity).
-            n.coveredAmount = n.requestedAmount;
+            // R6a: deterministic cap = min(requestedAmount, costPlusUnitPrice × quantity).
+            // The agent supplies only public price lookups; the CONTRACT computes the amount.
+            uint256 benchmarkCap = _benchmarkCap(costPlusUnitPrice, n.quantity);
+            uint256 covered = benchmarkCap > 0 && benchmarkCap < n.requestedAmount
+                ? benchmarkCap
+                : n.requestedAmount;
+            n.coveredAmount = covered;
             n.state = State.Approved;
-            emit Ruled(reqId, requestId, decision, n.requestedAmount, bytes32(0), bytes32(0), 0);
+            emit Ruled(reqId, requestId, decision, covered, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes);
         } else {
             // Denied: agent found no clear medical necessity for coverage.
             n.coveredAmount = 0;
             n.state = State.Denied;
-            emit Ruled(reqId, requestId, decision, 0, bytes32(0), bytes32(0), 0);
+            emit Ruled(reqId, requestId, decision, 0, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes);
         }
     }
 
@@ -640,6 +792,20 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     ///      committed before either external call (CEI).
     /// @param payer The caller funding this fire (refund recipient for any overpayment).
     function _fireAgent(uint256 reqId, Negotiation storage n, address payer) internal {
+        // Amendment 0006 branch: in self-hosted mode the "platform" is an EOA we run
+        // (the off-chain orchestrator), so `platform.createRequest` /
+        // `platform.getRequestDeposit` external calls would revert (EOAs have no code).
+        // The selfHosted path skips those calls, generates a synthetic requestId
+        // locally, and forwards `agentReward` (which acts as the orchestrator fee)
+        // via plain call. handleResponse stays gated on `msg.sender == platform` —
+        // only the orchestrator EOA can deliver a ruling. Common state effects
+        // (UnderReview, rulingDeadline, totalFees, PacketSubmitted, RulingRequested,
+        // _requestToNegotiation) are identical across both branches.
+        if (selfHosted) {
+            _fireAgentSelfHosted(reqId, n, payer);
+            return;
+        }
+
         // Payload for the Somnia LLM Parse Website base agent (ExtractANumber).
         // The agent fetches agentEvidenceUrl (an FDA label or drug info page) and
         // uses an LLM to extract whether coverage should be approved (1) or denied (0).
@@ -668,6 +834,20 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         n.rulingDeadline = block.timestamp + rulingTimeout;
         n.state = State.UnderReview;
 
+        // SPEC-0004 §3.5: emit PacketSubmitted before the external call (CEI-safe — all
+        // state effects above are already committed). `n.round` already holds the round
+        // being requested: requestAdjudication sets it to 1 before calling _fireAgent;
+        // submitEvidence and appeal each do `n.round += 1` before calling _fireAgent.
+        // `packetRoot` and `packetUrl` proxy the on-chain evidenceUri until UNIT-9
+        // (Merkle root + string body-store URL) lands.
+        emit PacketSubmitted(reqId, n.round, n.evidenceUri, n.evidenceUri);
+
+        // Expose the reqId for transparent probing during the external call (mock
+        // platforms in tests, reentrancy guards, off-chain indexers). The slot is set
+        // AFTER all state effects are committed (UnderReview is already written) so the
+        // CEI invariant is preserved. Cleared immediately after the call returns.
+        currentlyFiringReqId = reqId;
+
         // Interaction: fire the native Somnia agent, forwarding EXACTLY the per-request fee.
         uint256 requestId = platform.createRequest{value: fee}(
             agentId,
@@ -675,6 +855,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
             this.handleResponse.selector,
             payload
         );
+
+        currentlyFiringReqId = 0;
 
         n.pendingRequestId = requestId;
         _requestToNegotiation[requestId] = reqId;
@@ -686,6 +868,59 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         if (refund > 0) {
             (bool ok, ) = payable(payer).call{value: refund}("");
             require(ok, "fee: refund failed");
+        }
+    }
+
+    /// @dev Amendment 0006: self-hosted agent firing. Skips the
+    ///      `platform.createRequest` / `getRequestDeposit` external calls
+    ///      (they'd revert against an EOA-as-platform), generates a synthetic
+    ///      requestId locally, and forwards `agentReward` to the orchestrator
+    ///      via plain call. State machine + invariants identical to the
+    ///      platform path: same UnderReview transition, same rulingDeadline,
+    ///      same _requestToNegotiation mapping, same RulingRequested event.
+    ///      Guarded by the caller's `nonReentrant` entry point (CEI: all
+    ///      state effects committed before either external call).
+    function _fireAgentSelfHosted(uint256 reqId, Negotiation storage n, address payer) internal {
+        // Self-hosted fee is just the configurable agentReward — there is no
+        // platform-side per-request deposit to add. agentReward may be 0 (free
+        // demo) or non-zero (the orchestrator EOA collects it as its fee).
+        uint256 fee = agentReward;
+        require(msg.value >= fee, "fee: underfunded");
+        uint256 refund = msg.value - fee;
+
+        n.totalFees += fee; // accumulate for the 50/50 settlement marker (R8)
+
+        // Effects before interaction (CEI). Identical state transitions to the
+        // platform path so handleResponse and the rest of the state machine treat
+        // self-hosted and platform-driven adjudications interchangeably.
+        n.rulingDeadline = block.timestamp + rulingTimeout;
+        n.state = State.UnderReview;
+
+        // Synthetic requestId — keccak256(block.number, address(this), reqId,
+        // ++nonce) guarantees uniqueness across same-block fires (the nonce
+        // tiebreaks even when the other three inputs collide). Cast to uint256
+        // to match the platform.createRequest return type so downstream code
+        // (handleResponse, _requestToNegotiation) is shape-compatible.
+        _selfHostedNonce += 1;
+        uint256 requestId = uint256(
+            keccak256(abi.encode(block.number, address(this), reqId, _selfHostedNonce))
+        );
+        n.pendingRequestId = requestId;
+        _requestToNegotiation[requestId] = reqId;
+
+        emit PacketSubmitted(reqId, n.round, n.evidenceUri, n.evidenceUri);
+        emit RulingRequested(reqId, requestId, fee);
+
+        // Interactions: forward the fee to the orchestrator EOA, then refund the
+        // caller's overpayment. Both guarded by the caller's `nonReentrant`
+        // entry point; all state effects above are already committed (CEI-safe).
+        if (fee > 0) {
+            (bool feeOk, ) = payable(address(platform)).call{value: fee}("");
+            require(feeOk, "fee: orchestrator transfer failed");
+        }
+        if (refund > 0) {
+            (bool refundOk, ) = payable(payer).call{value: refund}("");
+            require(refundOk, "fee: refund failed");
         }
     }
 

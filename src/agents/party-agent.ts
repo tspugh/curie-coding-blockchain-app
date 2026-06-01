@@ -16,6 +16,7 @@ import { ethers } from "ethers";
 
 import { ContentStore } from "../content/content.js";
 import type { CoverageNegotiationClient } from "../contract/types.js";
+import { PayerLine } from "../types/coverage.types.js";
 
 const ZERO_HASH = ethers.ZeroHash;
 
@@ -49,6 +50,8 @@ export interface FileRequestInput {
   readonly daysSupply?: bigint;
   /** Optional public-evidence text; only its hash crosses (R4). Omit for none. */
   readonly evidence?: string;
+  /** Payer line governing the appeal ladder (SPEC-0004 R13). Required — no silent default. */
+  readonly payerLine: PayerLine;
 }
 
 /** An off-chain party actor bound to one identity. */
@@ -78,6 +81,7 @@ export class PartyAgent {
       insurerId: input.insurerId,
       providerAddr: this.address,
       insurerAddr: input.insurerAddr,
+      payerLine: input.payerLine,
       drugRef: ethers.keccak256(ethers.toUtf8Bytes(input.drug)),
       requestedAmount: input.requestedAmount,
       quantity: input.quantity,

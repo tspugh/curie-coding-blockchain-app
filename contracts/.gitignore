@@ -3,3 +3,6 @@ artifacts
 cache
 typechain-types
 .env
+# solidity-coverage output (run: `npx hardhat coverage`)
+coverage/
+coverage.json

@@ -48,6 +48,12 @@ export {
   ZERO_HASH,
   COVERAGE_NEGOTIATION_ABI,
   createCoverageClient,
+  // SPEC-0004 §3.5 R11/R23 sim-arbiter one-shot prime helpers — used by
+  // future browser-verify scenarios that drive the populated ruling-citation
+  // and policy-void paths.
+  setNextPolicyVoidedClauseIndices,
+  setNextUsedReferenceIndices,
+  setNextUsedLeafHashes,
 } from "./contract/index.js";
 
 export {
@@ -105,6 +111,37 @@ export {
   SAMPLE_ORDER_SIGN_REQUEST,
   orderSignToDraft,
 } from "./integrations/cds-hooks/index.js";
+
+// --- Re-exports: appeal-ladder helpers (UNIT-UI-3) ---
+export { LADDERS, stageNameFor } from "./protocol/ladders.js";
+
+// --- Re-exports: SPEC-0005 R14 curated policy library ---
+export {
+  POLICY_LIBRARY,
+  getCuratedPolicy,
+  policiesForLine,
+} from "./data/policies.js";
+export type { CuratedPolicy, PolicyClause } from "./data/policies.js";
+
+// --- Re-exports: SPEC-0005 R10/R11 user-registry storage ---
+export {
+  USERS_STORAGE_KEY,
+  addUser,
+  isDemoRole,
+  isDemoUser,
+  loadUsers,
+  removeUser,
+  saveUsers,
+} from "./users/userStore.js";
+export type { DemoRole, DemoUser } from "./users/userStore.js";
+
+// --- Re-exports: revert-reason mapping (UNIT-4c — Detail wire-up) ---
+export {
+  extractRevertReason,
+  mapRevertReason,
+  REVERT_REASON_MAP,
+} from "./protocol/revertReasonMap.js";
+export type { RevertReason, RevertReasonEntry } from "./protocol/revertReasonMap.js";
 
 import {
   createCoverageClient,

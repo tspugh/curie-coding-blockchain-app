@@ -1,0 +1,41 @@
+{
+  "references": [
+    {
+      "url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=4ead3ea5-55fe-4159-a0b6-26c6a6f19a07",
+      "contentHash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+      "slice": {
+        "text": "HUMIRA (adalimumab) is indicated for reducing signs and symptoms, inducing major clinical response, inhibiting the progression of structural damage, and improving physical function in adult patients with moderately to severely active rheumatoid arthritis.",
+        "kind": "fda-label-indication",
+        "locator": {
+          "section": "1 INDICATIONS AND USAGE",
+          "page": 1
+        }
+      }
+    },
+    {
+      "url": "https://www.cms.gov/medicare/prescription-drug-coverage/formulary/downloads/S5810-001_formulary.zip",
+      "contentHash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+      "slice": {
+        "text": "Adalimumab (NDC 00074-3799-02) — Tier 5 Specialty; prior authorization required; step-therapy required; quantity limit applies. Plan S5810-001 formulary, effective 2026-01-01.",
+        "kind": "formulary-entry",
+        "locator": {
+          "section": "Specialty Tier — Biologics",
+          "page": 47
+        }
+      }
+    },
+    {
+      "url": "https://www.costplusdrugs.com/medications/adalimumab-40mg-08ml/",
+      "contentHash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+      "slice": {
+        "text": "Adalimumab 40 mg/0.8 mL subcutaneous injection — Mark Cuban Cost Plus retail price: $2,100 per unit. NADAC acquisition-cost benchmark: $2,000 per unit (CMS NADAC weekly file).",
+        "kind": "price-benchmark",
+        "locator": {
+          "section": "Adalimumab 40 mg/0.8 mL"
+        }
+      }
+    }
+  ],
+  "submittedAt": 1748563200,
+  "submittedBy": "0x0000000000000000000000000000000000000001"
+}

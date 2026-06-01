@@ -43,6 +43,7 @@ import {
   Decision,
   type Negotiation,
   type NegotiationView,
+  PayerLine,
   State,
   STATE_NAMES,
   TERMINAL_STATES,
@@ -101,6 +102,21 @@ export interface SimulatedAgentOptions {
   /** Off-chain receipt pointer to surface in the `Ruled` event. Default: the request id. */
   readonly receiptId?: bigint;
   /**
+   * SPEC-0004 §3.5 R23: clause indices voided per R23's on-label-policy-void path.
+   * Emitted as the 8th arg of the `Ruled` event. Default: [].
+   */
+  readonly policyVoidedClauseIndices?: number[];
+  /**
+   * SPEC-0004 §3.5 R11: packet-entry indices the ruling relied on.
+   * Emitted as the 9th arg of the `Ruled` event. Default: [].
+   */
+  readonly usedReferenceIndices?: number[];
+  /**
+   * SPEC-0004 §3.5 R11: leaf hashes for the cited references (replay-verification anchor).
+   * Emitted as the 10th arg of the `Ruled` event. Default: [].
+   */
+  readonly usedLeafHashes?: `0x${string}`[];
+  /**
    * Auto-resolve delay in ms after the agent fires. `0` (default) means the
    * ruling is delivered on the next macrotask; set higher to mimic latency. Set
    * `autoResolve: false` to require the explicit {@link SimulatedBackend.resolve}.
@@ -144,6 +160,8 @@ interface SimNegotiation {
   lastDecision: Decision;
   hasRuling: boolean;
   round: bigint;
+  payerLine: PayerLine;
+  appealRound: number;
   providerAccepted: boolean;
   insurerAccepted: boolean;
   totalFees: bigint;
@@ -152,6 +170,60 @@ interface SimNegotiation {
   createdAt: bigint;
   rulingDeadline: bigint;
   exists: boolean;
+}
+
+/**
+ * Module-level mutable for the next `policyVoidedClauseIndices` value to emit
+ * in the simulated `Ruled` event (SPEC-0004 §3.5 R23). Reset to `[]` after each use.
+ * Use {@link setNextPolicyVoidedClauseIndices} to prime a one-shot populated value.
+ */
+let _nextPolicyVoidedClauseIndices: number[] = [];
+
+/**
+ * Set the `policyVoidedClauseIndices` array that will be emitted in the NEXT
+ * `Ruled` event from any {@link SimulatedBackend} instance. Consumed once then
+ * reset to `[]`. Used by future browser-verify scenarios that drive the R23
+ * Approve-with-voided-clauses path; the web layer's own `setNext…` helpers
+ * live in `web/src/client.ts` and target their own backend wrapper.
+ */
+export function setNextPolicyVoidedClauseIndices(arr: number[]): void {
+  _nextPolicyVoidedClauseIndices = arr;
+}
+
+/**
+ * Module-level mutable for the next `usedReferenceIndices` value to emit in the
+ * simulated `Ruled` event (SPEC-0004 §3.5 R11). Reset to `[]` after each use.
+ * Use {@link setNextUsedReferenceIndices} to prime a one-shot populated value.
+ */
+let _nextUsedReferenceIndices: number[] = [];
+
+/**
+ * Set the `usedReferenceIndices` array that will be emitted in the NEXT `Ruled`
+ * event from any {@link SimulatedBackend} instance. Consumed once then reset to
+ * `[]`. Used by future browser-verify scenarios that drive the R11
+ * ruling-citation-replay path; the web layer's own `setNext…` helpers live in
+ * `web/src/client.ts` and target their own backend wrapper.
+ */
+export function setNextUsedReferenceIndices(arr: number[]): void {
+  _nextUsedReferenceIndices = arr;
+}
+
+/**
+ * Module-level mutable for the next `usedLeafHashes` value to emit in the
+ * simulated `Ruled` event (SPEC-0004 §3.5 R11). Reset to `[]` after each use.
+ * Use {@link setNextUsedLeafHashes} to prime a one-shot populated value.
+ */
+let _nextUsedLeafHashes: `0x${string}`[] = [];
+
+/**
+ * Set the `usedLeafHashes` array that will be emitted in the NEXT `Ruled` event
+ * from any {@link SimulatedBackend} instance. Consumed once then reset to `[]`.
+ * Used by future browser-verify scenarios that drive the R11
+ * ruling-citation-replay path; the web layer's own `setNext…` helpers live in
+ * `web/src/client.ts` and target their own backend wrapper.
+ */
+export function setNextUsedLeafHashes(arr: `0x${string}`[]): void {
+  _nextUsedLeafHashes = arr;
 }
 
 /** In-memory backend behind the shared client interface. */
@@ -208,6 +280,11 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     // contract's `require(msg.sender == providerAddr, "auth: not provider")`).
     if (!this.is(params.providerAddr)) throw new Error("auth: not provider");
     if (params.quantity <= 0n) throw new Error("qty: zero");
+    // SPEC-0004 R2b: rejects providerAddr == insurerAddr (supersedes SPEC-0001 R13's
+    // permissive self-claim — the demo explicitly does not support self-contracting).
+    if (params.providerAddr.toLowerCase() === params.insurerAddr.toLowerCase()) {
+      throw new Error("create: self-contract");
+    }
 
     const reqId = this.nextId++;
     const now = BigInt(Math.floor(Date.now() / 1000));
@@ -233,6 +310,8 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       lastDecision: Decision.Approve,
       hasRuling: false,
       round: 0n,
+      payerLine: params.payerLine,
+      appealRound: 0,
       providerAccepted: false,
       insurerAccepted: false,
       totalFees: 0n,
@@ -307,8 +386,9 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     reasonHash: string,
   ): Promise<void> {
     const n = this.must(reqId);
-    if (n.state !== State.Approved && n.state !== State.Denied) {
-      throw new Error("appeal: not ruled");
+    // SPEC-0004 §2.4 R14a: only a Deny justifies advancing the ladder.
+    if (n.state !== State.Denied) {
+      throw new Error("appeal: prior ruling not Deny");
     }
     this.onlyParty(n); // R11: either party may appeal
     if (partyId !== n.providerId && partyId !== n.insurerId) {
@@ -327,6 +407,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     n.evidenceUri = evidenceUri;
     n.rationaleHash = reasonHash;
     n.round += 1n;
+    n.appealRound += 1;
     this.emit({ name: "Appealed", reqId, partyId, evidenceUri, round: n.round });
     this.fireAgent(reqId, n);
   }
@@ -498,6 +579,17 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     n.state = State.UnderReview;
     this.requestToReq.set(requestId, reqId);
 
+    // SPEC-0004 §3.5: PacketSubmitted before RulingRequested mirrors the on-chain
+    // ordering (event emitted inside `_fireAgent` before `platform.createRequest`).
+    // packetRoot + packetUrl both carry evidenceUri until UNIT-9 wires the Merkle
+    // root + body-store URL.
+    this.emit({
+      name: "PacketSubmitted",
+      reqId,
+      round: n.round,
+      packetRoot: n.evidenceUri,
+      packetUrl: n.evidenceUri,
+    });
     this.emit({ name: "RulingRequested", reqId, requestId, fee });
 
     if (this.agent.autoResolve ?? true) {
@@ -557,12 +649,42 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     n.providerAccepted = false;
     n.insurerAccepted = false;
 
+    // SPEC-0004 §3.5 R23: consume the next one-shot policyVoidedClauseIndices if set,
+    // otherwise fall back to the agent config, then [].
+    let policyVoidedClauseIndices: number[];
+    if (_nextPolicyVoidedClauseIndices.length > 0) {
+      policyVoidedClauseIndices = _nextPolicyVoidedClauseIndices;
+      _nextPolicyVoidedClauseIndices = [];
+    } else {
+      policyVoidedClauseIndices = this.agent.policyVoidedClauseIndices ?? [];
+    }
+
+    // SPEC-0004 §3.5 R11: consume the next one-shot usedReferenceIndices if set,
+    // otherwise fall back to the agent config, then [].
+    let usedReferenceIndices: number[];
+    if (_nextUsedReferenceIndices.length > 0) {
+      usedReferenceIndices = _nextUsedReferenceIndices;
+      _nextUsedReferenceIndices = [];
+    } else {
+      usedReferenceIndices = this.agent.usedReferenceIndices ?? [];
+    }
+
+    // SPEC-0004 §3.5 R11: consume the next one-shot usedLeafHashes if set,
+    // otherwise fall back to the agent config, then [].
+    let usedLeafHashes: `0x${string}`[];
+    if (_nextUsedLeafHashes.length > 0) {
+      usedLeafHashes = _nextUsedLeafHashes;
+      _nextUsedLeafHashes = [];
+    } else {
+      usedLeafHashes = this.agent.usedLeafHashes ?? [];
+    }
+
     if (decision === Decision.PolicyInvalid) {
       // R6b: a relied-on clause contradicts a public standard — void the contract.
       n.coveredAmount = 0n;
       n.state = State.PolicyInvalidated;
       this.emit({ name: "PolicyFlagged", reqId, clauseRef, standardRef });
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId });
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes });
       this.emit({ name: "PolicyInvalidated", reqId, clauseRef, standardRef });
       return;
     }
@@ -574,15 +696,15 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       const covered = n.requestedAmount < cap ? n.requestedAmount : cap;
       n.coveredAmount = covered;
       n.state = State.Approved;
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: covered, rationaleHash, clauseRef, receiptId });
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: covered, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes });
     } else if (decision === Decision.Deny) {
       n.coveredAmount = 0n;
       n.state = State.Denied;
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId });
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes });
     } else {
       // NeedMoreEvidence
       n.state = State.EvidenceRequested;
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId });
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes });
       this.emit({ name: "EvidenceRequested", reqId });
     }
   }
@@ -652,6 +774,8 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       lastDecision: n.lastDecision,
       hasRuling: n.hasRuling,
       round: n.round,
+      payerLine: n.payerLine,
+      appealRound: n.appealRound,
       providerAccepted: n.providerAccepted,
       insurerAccepted: n.insurerAccepted,
       totalFees: n.totalFees,

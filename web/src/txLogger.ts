@@ -98,3 +98,25 @@ export function subscribeTxLog(cb: Listener): () => void {
 export function getTxLogSnapshot(): TxLogState {
   return state;
 }
+
+/**
+ * Hydrate the in-memory store from the dev-server JSONL sink so the
+ * TxMonitor shows the full session-to-date right after a page reload.
+ * Idempotent: only runs the first time, and skips if the store already
+ * has entries (live ingests during the same session win). No-op outside
+ * the dev server (the GET endpoint only exists there).
+ */
+let hydrated = false;
+export async function hydrateTxLogFromSink(): Promise<void> {
+  if (hydrated) return;
+  hydrated = true;
+  if (state.entries.length > 0) return;
+  try {
+    const res = await fetch("/__log/tx");
+    if (!res.ok) return;
+    const entries = (await res.json()) as TxConfirmedDetail[];
+    for (const e of entries) ingest(e);
+  } catch {
+    // Sink unavailable (production preview, network error) — keep going.
+  }
+}

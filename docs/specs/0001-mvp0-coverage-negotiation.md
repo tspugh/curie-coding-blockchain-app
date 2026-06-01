@@ -51,7 +51,7 @@ agent and are **bounded to N rounds** → `Deadlocked` if unresolved. Both accep
 - **R5 (MUST — insurer attaches policy)** The **insurer engages** a filed request by **attaching its governing policy criteria** as a **hashed, public** contract input (hash on-chain, body off-chain/at a public URL) **before** adjudication. Adjudication cannot run until a policy is attached.
 - **R6 (MUST — necessity arbiter)** Adjudication fires the **native agent**, which **weighs the provider's cited public evidence against the insurer's attached policy criteria** and rules **`approve | deny | need_more_evidence`**, recording a **rationale hash** + the **specific policy clause ref** relied on + receipt. (This text-vs-text judgment is the irreplaceable, AI-worthy step — A-0003.)
 - **R6a (MUST — deterministic amount)** The covered amount is **not AI-chosen**: on `approve` it is `coveredAmount = min(requestedAmount, benchmarkCap)` where **`benchmarkCap` = the Mark Cuban Cost Plus per-unit retail price × `quantity`** (R2) — the fair, transparent v0 benchmark (resolved 2026-05-27). `daysSupply` does NOT enter the price; it feeds necessity reasoning (e.g. early-refill / excessive-supply flags). **NADAC** is recorded alongside as the acquisition-cost **floor reference** (a `requested < NADAC` is flagged as suspicious). On `deny` the amount is `0`. (A NADAC+dispensing-fee "payer-reimbursement mode" is a v1 alternative — §7.)
-- **R6b (MUST — policy compliance / void)** If a policy clause the agent **relies on contradicts a cited public standard** (FDA-approved indication / guideline), the agent emits **`PolicyFlagged(clauseRef, standardRef)`** and routes the contract to terminal **`PolicyInvalidated`** — the whole request is **voided** (incentivising compliant policy). No silent override.
+- **R6b (MUST — policy compliance / void)** *(Narrowed by amendment [`docs/amendments/0005-policy-void-r23-supersedes-r6b.md`](../amendments/0005-policy-void-r23-supersedes-r6b.md); SPEC-0004 §2.6 R23 is now the canonical on-label policy-void rule.)* If a policy clause the agent relies on **contradicts a cited public standard** (FDA-approved indication / guideline), the agent MUST rule **`Approve`** and emit `PolicyFlagged(clauseRef, standardRef)` as an **annotation event alongside the `Ruled` event** (not a separate state route). The `Approved` ruling carries `policyVoidedClauseIndices: number[]` identifying which policy-clause references are invalidated. The request is **approved, not terminally voided** — the patient gets the drug, the payer's non-compliant clause is publicly flagged (a stronger incentive than voiding). The `PolicyInvalidated` terminal state is **retained but narrowed in scope** to a strict edge case: the agent cannot find any valid ruling because **every policy clause it consulted is non-compliant** (a meta-policy failure, not a per-request void); this case is expected to be rare in v0 and may be removed in v1. No silent override in either path.
 - **R6c (MUST — necessity appeals, bounded)** From a ruling, **either party may `accept` or `appeal`**. An **appeal submits new public evidence of necessity** (`{evidenceUri, reasonHash}`) — never price haggling — and **re-fires the agent**, `round++`. Bounded to **N rounds** (config; default 3). **Both accepting** the current ruling makes it settleable; **N rounds without mutual acceptance → terminal `Deadlocked`**.
 - **R7 (MUST — provider refusal)** After the insurer has attached terms, the **provider may `refuse`** → terminal **`ProviderRefused`** (an attributable rejection of the insurer's stated terms, distinct from neutral `Withdrawn` and from `Deadlocked`), recording an optional reason hash.
 - **R8 (MUST — settlement marker)** Settlement in v0 is an **event marker only** (no token transfer): records the **agreed covered amount** and the **per-party fee split** (50/50) deducted from it. Self-claim is a marker.
@@ -69,6 +69,31 @@ agent and are **bounded to N rounds** → `Deadlocked` if unresolved. Both accep
 - **R16 (MUST)** Three views — **Overview** (claims table + live status), **Create** (file a request), **Maintain/detail** (timeline, current ruling + rationale + cited clause, covered amount, accept/appeal/refuse/settle, gated by state + active profile).
 - **R17 (SHOULD)** Observable over JSON-RPC (events + live subscription).
 - **R18 (MUST — deployment)** The web app is **deployed as a public HTTPS static site** (the SPA is fully client-side; simulated mode needs no backend). v0 target: **AWS S3 (private bucket) + CloudFront (HTTPS) + ACM** (custom domain optional; the default CloudFront cert suffices otherwise), driven by a **repeatable deploy script**. **No PHI and no secrets ship in the static bundle** (synthetic fixtures only; any real-mode key is supplied at runtime, never built in).
+- **R19 (MUST — Somnia agent-interface mirror posture)** Solidity has no on-chain
+  interface registry: to call `IAgentRequester.createRequest(...)` and to implement
+  `IAgentRequesterHandler.handleResponse(...)` the calling contract MUST contain a
+  Solidity source declaring those interfaces (so `solc` emits the correct 4-byte
+  selectors). `contracts/contracts/ISomniaAgent.sol` is that re-statement. Its
+  selectors MUST byte-match Somnia's deployed `AgentPlatform`, or every fired
+  request reverts. **The mirror is a deliberate vendoring decision, not an
+  abstraction** — there is currently no published Solidity package we can
+  import as a versioned dependency. Concretely:
+  - The file header MUST cite the canonical upstream URL and the access date
+    on which the mirror was last verified (`https://docs.somnia.network/agents/invoking-agents/from-solidity`).
+  - Each commit that **modifies** `ISomniaAgent.sol` MUST update the access
+    date in the header and explain the change in the commit body. A drive-by
+    bump is not OK — the upstream diff must be cited.
+  - A **drift check** SHOULD exist that fails the build if the upstream Solidity
+    has changed since the recorded access date. v0 acceptable form: a script in
+    `scripts/check-somnia-interface.ts` that fetches the docs URL (or its source
+    of truth on Context7 `/websites/somnia_network`) and `keccak256`-compares the
+    interface block. v1 may move to importing a Somnia-published npm package
+    once one exists.
+  - **Failure mode the mirror protects against** is *exactly* the tick 36/37
+    incident: an ABI mismatch between the TS client's selector and the deployed
+    contract's selector causes empty-data reverts. The mirror keeps the
+    *contract↔platform* edge stable; tests + browser-verify keep the
+    *client↔contract* edge stable. Both edges need explicit drift protection.
 
 ## 3. Technical documentation
 
@@ -113,7 +138,7 @@ the Somnia platform**.
   - `onRulingTimeout(reqId)` *(keeper; `UnderReview` past deadline)* → `EvidenceRequested`.
   - `postFeedback(reqId, msgHash, uri)` — any active state; no state change.
   - Views: `getNegotiation`, `stateOf`, `coveredAmountOf`, `roundOf`, `policyOf`, `count`.
-- **Events:** `ContractCreated`, `ContentCommitted`, `InsurerEngaged`, `ContractReady`, `AdjudicationRequested`, `RulingRequested`, `Ruled(reqId, requestId, decision, coveredAmount, rationaleHash, clauseRef, receiptId)`, `PolicyFlagged(reqId, clauseRef, standardRef)`, `PolicyInvalidated(reqId, clauseRef, standardRef)`, `EvidenceRequested`, `EvidenceSubmitted`, `Appealed(reqId, partyId, evidenceUri, round)`, `Accepted(reqId, partyId)`, `Settled(reqId, coveredAmount, feePerParty)`, `Deadlocked(reqId, rounds)`, `ProviderRefused(reqId, reasonHash)`, `Withdrawn`, `RulingTimedOut`, `FundsWithdrawn`.
+- **Events:** `ContractCreated`, `ContentCommitted`, `InsurerEngaged`, `ContractReady`, `AdjudicationRequested`, `RulingRequested`, `Ruled(reqId, requestId, decision, coveredAmount, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices)`, `PolicyFlagged(reqId, clauseRef, standardRef)`, `PolicyInvalidated(reqId, clauseRef, standardRef)`, `EvidenceRequested`, `EvidenceSubmitted`, `Appealed(reqId, partyId, evidenceUri, round)`, `Accepted(reqId, partyId)`, `Settled(reqId, coveredAmount, feePerParty)`, `Deadlocked(reqId, rounds)`, `ProviderRefused(reqId, reasonHash)`, `Withdrawn`, `RulingTimedOut`, `FundsWithdrawn`.
 - **Guards:** per-state `require`s; **adjudication only from `Ready`** (policy attached); party actions gated to `{providerAddr, insurerAddr}` (R11), `insurerEngage` insurer-only, `refuse` provider-only; `handleResponse` platform-only; appeals bounded to N (R6c); settle only after both accept; deterministic amount within `[0, benchmarkCap]`; CEI + `nonReentrant` on agent-firing entry points.
 - Deployed to Somnia testnet (chain `50312`, RPC `https://api.infra.testnet.somnia.network/`); identity via `somnia-agent-kit` `AgentRegistry`.
 
@@ -127,7 +152,7 @@ the Somnia platform**.
 | `UnderReview` | `handleResponse`: `approve` (amount = `min(requested, cap)`) | `Approved` |
 | `UnderReview` | `handleResponse`: `deny` | `Denied` |
 | `UnderReview` | `handleResponse`: `need_more_evidence` | `EvidenceRequested` |
-| `UnderReview` | `handleResponse`: relied-on clause non-compliant | `PolicyInvalidated` (terminal) |
+| `UnderReview` | `handleResponse`: every policy clause consulted is non-compliant; meta-policy failure | `PolicyInvalidated` (terminal) |
 | `UnderReview` | `Failed`/`TimedOut`, or `onRulingTimeout` | `EvidenceRequested` (retriable) |
 | `EvidenceRequested` | `submitEvidence` (provider; re-fires) | `UnderReview` (`round++`) |
 | `Approved`/`Denied` | `appeal` (new public evidence; `round < N`) | `UnderReview` (`round++`) |

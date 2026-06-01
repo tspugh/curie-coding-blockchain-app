@@ -27,6 +27,8 @@ export function describeEvent(e: CoverageEvent): string {
       return "Adjudication requested — firing the necessity arbiter";
     case "RulingRequested":
       return `Ruling requested — request ${e.requestId}, fee ${e.fee}`;
+    case "PacketSubmitted":
+      return `Evidence packet pinned — round ${e.round}, root ${shortHex(e.packetRoot)} (${e.packetUrl})`;
     case "Ruled":
       return `Arbiter ruled "${DECISION_NAMES[e.decision]}" — covered ${e.coveredAmount}, clause ${shortHex(e.clauseRef)}, receipt ${e.receiptId}`;
     case "PolicyFlagged":
@@ -64,5 +66,97 @@ export function parseAmount(raw: string): bigint | null {
     return BigInt(trimmed);
   } catch {
     return null;
+  }
+}
+
+/**
+ * Map a CoverageEvent name to a UI tone token for color highlighting.
+ *
+ * Used by the Network tx-stream rows to tint the event-name cell by semantic
+ * meaning. Tones map to existing project palette tokens:
+ *   ok     → terminal success (Accepted, Settled)
+ *   warn   → needs attention (EvidenceRequested, EvidenceSubmitted)
+ *   danger → terminal failure (Denied paths)
+ *   purple → procedural mid-flight (Filed / ContentCommitted / InsurerEngaged
+ *            / Appealed / PacketSubmitted)
+ *   accent → AI-action transitions (AdjudicationRequested / RulingRequested /
+ *            Ruled / ContractReady / FeedbackPosted / RulingTimedOut)
+ *
+ * Mirrors the prototype's EVENT_META intent at data.jsx:305 but uses tokens
+ * that actually exist in our stylesheet.
+ */
+export function eventTone(name: CoverageEvent["name"]): "ok" | "warn" | "danger" | "purple" | "accent" {
+  switch (name) {
+    case "Accepted":
+    case "Settled":
+      return "ok";
+    case "EvidenceRequested":
+    case "EvidenceSubmitted":
+      return "warn";
+    case "Deadlocked":
+    case "PolicyFlagged":
+    case "PolicyInvalidated":
+    case "ProviderRefused":
+    case "Withdrawn":
+      return "danger";
+    case "ContractCreated":
+    case "ContentCommitted":
+    case "InsurerEngaged":
+    case "Appealed":
+    case "PacketSubmitted":
+      return "purple";
+    case "ContractReady":
+    case "AdjudicationRequested":
+    case "RulingRequested":
+    case "Ruled":
+    case "RulingTimedOut":
+    case "FeedbackPosted":
+      return "accent";
+  }
+}
+
+/**
+ * Best-effort attribution label for a CoverageEvent — which actor on the
+ * protocol made this event happen. Used by the Detail timeline's per-row
+ * attribution chip (SPEC-0003 §2.3 R20 conformance with prototype EventLog).
+ *
+ * Some events carry an explicit `partyId` (Appealed, Accepted) — those route
+ * "provider" vs "insurer" by id. Others are inferred from semantics:
+ *   - provider-class:   ContractCreated, ContentCommitted, EvidenceSubmitted,
+ *                       ProviderRefused, Withdrawn
+ *   - insurer-class:    InsurerEngaged
+ *   - arbiter-class:    AdjudicationRequested, RulingRequested, Ruled,
+ *                       PolicyFlagged, PolicyInvalidated, EvidenceRequested,
+ *                       PacketSubmitted, RulingTimedOut
+ *   - system / contract: ContractReady, Settled, Deadlocked, FeedbackPosted
+ */
+export function eventAttribution(e: CoverageEvent): string {
+  switch (e.name) {
+    case "Appealed":
+    case "Accepted":
+      // partyId is 1 (provider), 2 (insurer), 99 (observer) per ProfileRegistry.
+      return e.partyId === 1n ? "provider" : e.partyId === 2n ? "insurer" : "party " + e.partyId.toString();
+    case "ContractCreated":
+    case "ContentCommitted":
+    case "EvidenceSubmitted":
+    case "ProviderRefused":
+    case "Withdrawn":
+      return "provider";
+    case "InsurerEngaged":
+      return "insurer";
+    case "AdjudicationRequested":
+    case "RulingRequested":
+    case "Ruled":
+    case "PolicyFlagged":
+    case "PolicyInvalidated":
+    case "EvidenceRequested":
+    case "PacketSubmitted":
+    case "RulingTimedOut":
+      return "arbiter";
+    case "ContractReady":
+    case "Settled":
+    case "Deadlocked":
+    case "FeedbackPosted":
+      return "system";
   }
 }
