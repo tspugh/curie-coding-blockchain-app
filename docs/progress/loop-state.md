@@ -4,6 +4,62 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
+---
+
+## ⚠ SPEC-0006 PIVOT — read this first (tick 151, 2026-06-03, branch `spec-6-implementation`)
+
+**Everything below this block describes the Amendment-0006 self-hosted
+architecture, which SPEC-0006 §2.3 (R0/R9/R10) now BANS.** Do NOT plan any
+unit that uses `scripts/orchestrator-real.ts`, the `selfHosted` contract path,
+`ANTHROPIC_API_KEY`, the old contract `0x2c561f33…488ac93`, or any off-chain
+LLM in the contract-execution path. Those are superseded targets.
+
+**Current architecture (SPEC-0006, Approved 2026-06-03):** real adjudication
+originates from a single on-chain call to the canonical Somnia AI Agent
+Platform `0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776` via
+`IAgentRequester.createRequest` + the 4-arg `handleResponse` callback. No
+detour through any off-chain process.
+
+**Resolved (SPEC-0006 R-OPEN-1–4, via `scripts/identify-inference-agent.ts`):**
+- Chosen agent: **LLM Inference**, `agentId 12847293847561029384` (testnet+mainnet).
+- Method: `inferString(string,string,bool,string[])`, selector `0xfe7ca098`,
+  decision constrained via non-empty `allowedValues`.
+- `getRequestDeposit()` = 0.03 STT (read dynamically; never hardcode).
+- `inferString` returns a single `string` — `handleResponse` decodes one string.
+
+**Provider wallet** `0x204031FA1ad46a2D453b7c54fC28Ff1787Bd9128` ≈ 3.7 STT;
+insurer (deterministic) `0x3F236fcac19fB951d5714F9Bc7ad5aE6724EB317` ≈ 0.5 STT
+— both funded, both real-mode-capable. No `ANTHROPIC_API_KEY` involved.
+
+**Latest exploratory deploy** `0xaFf3fA6B80E8a8C479fe59F1ECDb4a6B6704635f`
+(spec-4 source, `selfHosted=false`) proved the platform path works end-to-end
+but still calls **8-param `ExtractANumber`** (wrong agent + stale ABI) → rulings
+land in `EvidenceRequested`. The SPEC-0006 cascade replaces that.
+
+**SPEC-0006 implementation cascade (the real top-of-queue):**
+1. **`_fireAgent` → LLM Inference.** Replace the `ExtractANumber` payload with
+   `inferString` (agentId `12847293847561029384`, selector `0xfe7ca098`,
+   `allowedValues = ["approve","deny","needs_more_info","policy_invalid"]`).
+   Pin agentId + cost constants. **This is the keystone — unblocks every
+   downstream verification.** (SPEC-0006 R11/R12, SPEC-0004.1 R1.)
+2. **`handleResponse` decodes a single string** ruling; parse decision token +
+   rationale; emit `RulingRationale` (R24–R26).
+3. **Self-host + stub surface removal** (R9): delete `selfHosted`,
+   `setPlatformSelfHosted`, `_fireAgentSelfHosted`, `_selfHostedNonce`,
+   `scripts/orchestrator-real.ts`, `@anthropic-ai/sdk` dep, the CI lint edge.
+4. **Per-negotiation `agentEvidenceUrl` + `agentPromptHint`** on the struct
+   (R14/R15); `createContract` gains them; drop the contract-level global.
+5. **Drug→evidence map + 6 fixtures** (R16/R18); URL-liveness check (R21).
+6. **Redeploy** + R44 headline gate against ≥2 of the 6 examples; R55 three
+   named flow scenarios; R48–R51/R56–R58 history hydration.
+7. **SPEC-0004.1 ledger absorption** (R1–R12 into owning durable specs); delete
+   the fractional ledger when empty.
+
+**SPEC-0006 R-OPEN-1–4 are CLOSED; SPEC-0005 is Superseded.** Plan from this
+block, not the stale verdict table below (kept for audit trail only).
+
+---
+
 **Last updated:** 2026-05-30 (tick 150 — **SKIP-TICK** per the loop's Phase-8 "gate could not run → skip for THIS tick only and note in loop-state.md" provision. Tick 149 noted the closable-without-external-action queue was empty; tick 150 confirmed via a tight ≤5-tool-use Sonnet planning-subagent sweep. External state unchanged: wallet 5.50 STT, ANTHROPIC_API_KEY unset, both real-mode paths blocked. Remaining open OQs are either user-preference decisions (SPEC-0003 Q2, SPEC-0005 OQ1, OQ5 gating-cadence) or separate workstreams (SPEC-0004 TASK-1 real de-id'd corpus / TASK-2 case-research outputs / TASK-3 arbiter prompt design) or already-deferred (SPEC-0005 OQ2 → v1.5). All gates passing where applicable. The honest move per the loop's "On token budget — IGNORE" clause ("if a tick can't complete a step ... let next tick pick up") and Phase-8 ("Gate could not run → skip for this tick only") is to record the skip rather than manufacture diminishing-returns polish. Working tree clean; no new commit beyond this loop-state note. Counter advanced 149 → 150.)
 **Current mode:** `impl` — steady state still gated on real-mode browser-verify against `0x2c561f33…488ac93` (wallet 5.50 STT < ~7.35 needed for full sweep; or `ANTHROPIC_API_KEY` for smaller Tick A smoke).
 **Current tick:** 150
