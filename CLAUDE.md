@@ -81,6 +81,23 @@ Each spec's status (**done** / **to implement** / **draft**) is tracked inline i
 [`specs/README.md`](specs/README.md); keep it current when a spec lands or its
 implementation merges.
 
+### Fractional specs are temporary violation ledgers
+
+Normal specs use whole-number four-digit filenames (`0001`, `0002`, etc.).
+Fractional spec files such as `0004.1-*.md` are deliberate exceptions: they are
+temporary violation ledgers for requirements that must be fixed in the next durable
+spec/version. They are not permanent roadmap specs and should not become a new
+numbering convention.
+
+When a fractional spec exists:
+
+- Treat every listed item as a compliance violation that must be routed into its
+  owning durable spec and implementation.
+- Do not claim the fractional spec itself as the final source of truth; update the
+  whole-number durable spec that owns the behavior.
+- Delete the fractional spec, and remove its `docs/specs/README.md` entry, once all
+  listed violations are fixed.
+
 ### `docs/research/` — research (what we haven't decided yet)
 
 Information researched regarding what we're going to build, before it has been
