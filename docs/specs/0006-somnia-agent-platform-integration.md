@@ -1,6 +1,6 @@
 # SPEC-0006: On-chain Somnia agent integration + generalized cases + usability
 
-**Status:** Draft · **Owner:** tspugh · **Date:** 2026-06-01 (merges SPEC-0005)
+**Status:** Approved · **Owner:** tspugh · **Date:** 2026-06-01 (merges SPEC-0005); R-OPEN-1–4 resolved 2026-06-03 (LLM Inference agentId + ABI pinned)
 
 > Authored 2026-05-30 from on-chain probes + Somnia docs research; **revised
 > 2026-06-01 to merge SPEC-0005 (usability + integration testing) and add four
@@ -131,8 +131,11 @@ all on testnet, with no off-chain shortcuts.
   matches Curie's "given policy + evidence, decide" pattern), LLM Parse
   Website, or JSON API Request. Selection rationale + chosen `agentId`
   + chosen method + chosen ABI MUST be documented in §3.6 before R12
-  can pass. (Per R-OPEN-1, the LLM Inference testnet agent ID is not in
-  published docs and MUST be resolved before R11 closes.)
+  can pass. **CHOSEN: LLM Inference, `agentId 12847293847561029384`,
+  method `inferString(string,string,bool,string[])` (selector
+  `0xfe7ca098`)** — resolved 2026-06-03 (R-OPEN-1/R-OPEN-2), documented
+  in §3.6. The decision token is constrained via a non-empty
+  `allowedValues` (`["approve","deny","needs_more_info","policy_invalid"]`).
 - **R12 (MUST) Build-time ABI drift detector.** Extend
   `scripts/check-ruling-abi.ts` to pin the chosen agent's selector +
   param types verbatim. The script MUST fail the build if the on-chain
@@ -702,9 +705,9 @@ struct Request {
 
 | Agent | Testnet `agentId` | Methods | Curie fit |
 |---|---|---|---|
-| **LLM Inference** | **Not published** (resolve via R-OPEN-1) | `inferString`, `inferNumber`, `inferChat`, `inferToolsChat` | **Best fit.** Open LLM completion: prompt + context → structured result. Maps directly to "given policy + evidence packet, decide approve/deny". Returns text rationale that powers R24's `RulingRationale` event. |
-| LLM Parse Website | `12875401142070969085` | `ExtractANumber(string,string,uint256,uint256,string,string,bool,uint8,uint8)` (9 params) + `ExtractString` variant | Workable fallback. Phrase as: "given this drug information page <evidenceUrl>, is the drug FDA-indicated for <indication>? Return 1=APPROVE / 0=DENY." Rationale text isn't first-class but the agent returns a structured numeric result; we'd surface a templated rationale instead. |
-| JSON API Request | Not published (R-OPEN-2) | `fetchUint(string url, string selector, uint8 decimals)`, plus `fetchString` variant | Not a fit. |
+| **LLM Inference** | **`12847293847561029384`** (R-OPEN-1 resolved; same on mainnet) | `inferString` (`0xfe7ca098`), `inferNumber` (`0xc6833c3d`), `inferChat` (`0xbee8d139`), `inferToolsChat` (`0xd0683905`) | **Best fit + CHOSEN.** Open LLM completion: prompt + context → structured result. Maps directly to "given policy + evidence packet, decide approve/deny". Returns text rationale that powers R24's `RulingRationale` event. |
+| LLM Parse Website | `12875401142070969085` | `ExtractANumber(string,string,uint256,uint256,string,string,bool,uint8,uint8)` (9 params, `0x2623e955`) + `ExtractString` (`0xc2dd1a7a`) | Workable fallback. Phrase as: "given this drug information page <evidenceUrl>, is the drug FDA-indicated for <indication>? Return 1=APPROVE / 0=DENY." Rationale text isn't first-class but the agent returns a structured numeric result; we'd surface a templated rationale instead. |
+| JSON API Request | `13174292974160097713` (R-OPEN-2 resolved) | `fetchUint(string,string,uint8)` (`0x3bbc1302`), `fetchString(string,string)` (`0xe003c22e`) | Not a fit. |
 
 **Preferred:** LLM Inference (rationale-first). **Fallback:** LLM Parse
 Website with corrected 9-param signature.
@@ -830,7 +833,7 @@ totalDeposit = platform.getRequestDeposit() + (costPerAgent × subcommitteeSize)
 |---|---|---|---|
 | LLM Parse Website | `0.10 ether` | 3 | `0.30 STT` |
 | JSON API Request | `0.03 ether` | 3 | `0.09 STT` |
-| LLM Inference | **TBD** (R-OPEN-3) | 3 | TBD |
+| **LLM Inference** | `0.10 ether` (safe upper bound; `0.07–0.09` observed on chain) | 3 | `0.21–0.30 STT` |
 
 `platform.getRequestDeposit()` is read at request time; do NOT
 hardcode.
@@ -1180,23 +1183,35 @@ the test implementation. Synthetic data only. Test IDs trace to R-ids.
 
 ## 8. Open questions
 
-- **R-OPEN-1 (HIGH — blocks R11):** What is the numeric on-chain
-  `agentId` for **LLM Inference** on Somnia testnet (chain 50312)?
-  Resolution paths: (a) parse `RequestCreated` event logs from
-  `0x037Bb9C…` for distinct `(agentId, payload-method)` pairs; (b)
-  registry view function (currently unknown); (c) ask Somnia devrel
-  via Discord `#dev-chat` or `developers@somnia.foundation`.
-- **R-OPEN-2 (HIGH — blocks R12):** For the chosen agent (LLM
-  Inference preferred), what is the exact registered ABI selector +
-  param types on `0x037Bb9C…`?
-- **R-OPEN-3 (MED — affects R5 hardcoding):** What is the current
-  value of `platform.getRequestDeposit()` on canonical testnet
-  `0x037Bb9C…`? Resolution: read-only RPC at deploy time; spec
-  prefers dynamic read so this is informational.
-- **R-OPEN-4 (MED — affects T26 / T24):** For LLM Inference's
-  `inferString` / `inferChat`, what is the decoded response shape?
-  Single string? Tuple `(string text, uint256 score)`? Drives the
-  rationale-decoding logic in `handleResponse`.
+- **R-OPEN-1 — RESOLVED (2026-06-03).** The numeric on-chain `agentId`
+  for **LLM Inference** is **`12847293847561029384`** on BOTH Somnia
+  testnet (chain 50312) and mainnet (chain 5031 — Somnia uses consistent
+  agent IDs across networks). Resolved via path (a): `scripts/identify-inference-agent.ts`
+  scanned `RequestCreated` logs on `0x037Bb9C…` and matched the
+  `inferString` selector `0xfe7ca098` (48 calls), `inferChat`
+  `0xbee8d139`, and `inferNumber` `0xc6833c3d` against that agentId.
+  Recorded in the `somnia-agent` skill §3.1. **R11 unblocked.**
+- **R-OPEN-2 — RESOLVED (2026-06-03).** LLM Inference's registered ABI
+  on `0x037Bb9C…`: `inferString(string,string,bool,string[])`
+  (selector `0xfe7ca098`), `inferNumber(string,string,int256,int256,bool)`
+  (`0xc6833c3d`), `inferChat(string[],string[],bool)` (`0xbee8d139`),
+  `inferToolsChat(...)` (`0xd0683905`). Curie uses `inferString` with a
+  non-empty `allowedValues` to constrain the decision. Selectors verified
+  on-chain by the discovery script; pinned in `somnia-agent` §3.1.
+  **R12 can now pin a real selector.**
+- **R-OPEN-3 — RESOLVED (2026-06-03).** `platform.getRequestDeposit()`
+  on canonical testnet `0x037Bb9C…` reads **`0.03 STT`**
+  (`0x6a94d74f430000` wei) as of the 2026-06-02 redeploy session. The
+  spec still mandates a dynamic read at request time (R5) — this value is
+  informational and MUST NOT be hardcoded.
+- **R-OPEN-4 — RESOLVED (2026-06-03).** `inferString` returns a **single
+  `string`** (`abi.decode(responses[i].result, (string))`); `inferChat`
+  likewise returns one `string`; `inferNumber` returns one `int256`.
+  There is no tuple. `handleResponse` decodes `responses[0].result` as a
+  single string and parses Curie's structured ruling out of that text
+  (decision token via the constrained `allowedValues`, plus a rationale
+  body for the `RulingRationale` event). Source: `somnia-agent` skill
+  §3.1 method table.
 - **R-OPEN-5 (MED — affects R21):** Will the FDA / DailyMed pages
   consistently allow `HEAD` requests cross-origin from a browser?
   If not (typical), R21 falls back to the Vite `__probe` proxy in
