@@ -21,6 +21,7 @@ import {
   type CoverageEvent,
   Decision,
   DECISION_NAMES,
+  PayerLine,
   State,
   STATE_NAMES,
   type Unsubscribe,
@@ -48,6 +49,8 @@ export interface NegotiationScript {
   readonly quantity: bigint;
   /** Optional clinical-utilization context (necessity reasoning, NOT price) (R2). */
   readonly daysSupply?: bigint;
+  /** Payer line governing the appeal ladder (SPEC-0004 R13). */
+  readonly payerLine: PayerLine;
   /**
    * What to do once the first ruling lands. Default: `accept-and-settle` on a
    * ruled state, `submit-evidence` on EvidenceRequested, else `stop`.
@@ -108,6 +111,7 @@ export async function runNegotiation(
     const reqId = await provider.fileRequest({
       insurerId: insurer.partyId,
       insurerAddr: insurer.address,
+      payerLine: script.payerLine,
       drug: script.drug,
       justification: script.justification,
       requestedAmount: script.requestedAmount,

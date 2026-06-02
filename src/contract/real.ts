@@ -21,6 +21,7 @@ import {
   type Decision,
   type Negotiation,
   type NegotiationView,
+  PayerLine,
   State,
   STATE_NAMES,
   TERMINAL_STATES,
@@ -45,42 +46,62 @@ export interface RealBackendOptions {
    * (R9). Defaults to 0 (assumes the contract is pre-funded).
    */
   readonly agentFeeValue?: bigint;
+  /**
+   * Block number at (or just before) the contract deployment. Used as the floor
+   * for historical event scans. Somnia testnet RPC caps `eth_getLogs` to 1000
+   * blocks per request; without a floor, `getEvents` falls back to scanning
+   * `latest - DEFAULT_LOOKBACK_BLOCKS` so the dashboard always loads.
+   */
+  readonly deploymentBlock?: number;
 }
 
 /**
+ * Default lookback window (blocks) when no `deploymentBlock` is configured.
+ * Somnia testnet block time ≈ 1.3s, so 10_000 ≈ 3.5 hours — enough to render
+ * the demo session's just-completed flow without overwhelming the RPC with
+ * paged queries. Configure `VITE_DEPLOYMENT_BLOCK` for the full history.
+ */
+const DEFAULT_LOOKBACK_BLOCKS = 10_000;
+
+/** Somnia testnet RPC's per-request `eth_getLogs` window cap. */
+const LOG_PAGE_SIZE = 1_000;
+
+/**
  * Raw `Negotiation` tuple returned by ethers — field order matches the Solidity
- * struct (and `abi.ts`) EXACTLY. 29 fields.
+ * struct (and `abi.ts`) EXACTLY. 31 fields.
  */
 type RawNegotiation = readonly [
-  bigint, // providerId
-  bigint, // insurerId
-  string, // providerAddr
-  string, // insurerAddr
-  string, // drugRef
-  bigint, // requestedAmount
-  bigint, // quantity
-  bigint, // daysSupply
-  string, // justificationHash
-  string, // evidenceUri
-  string, // policyHash
-  string, // policyUri
-  bigint, // coveredAmount
-  bigint, // costPlusUnitPrice
-  bigint, // nadacUnitPrice
-  string, // rationaleHash
-  string, // clauseRef
-  string, // standardRef
-  bigint | number, // lastDecision (uint8)
-  boolean, // hasRuling
-  bigint, // round
-  boolean, // providerAccepted
-  boolean, // insurerAccepted
-  bigint, // totalFees
-  bigint | number, // state (uint8)
-  bigint, // pendingRequestId
-  bigint, // createdAt
-  bigint, // rulingDeadline
-  boolean, // exists
+  bigint, // [0]  providerId
+  bigint, // [1]  insurerId
+  string, // [2]  providerAddr
+  string, // [3]  insurerAddr
+  string, // [4]  drugRef
+  bigint, // [5]  requestedAmount
+  bigint, // [6]  quantity
+  bigint, // [7]  daysSupply
+  string, // [8]  justificationHash
+  string, // [9]  evidenceUri
+  string, // [10] policyHash
+  string, // [11] policyUri
+  bigint, // [12] coveredAmount
+  bigint, // [13] costPlusUnitPrice
+  bigint, // [14] nadacUnitPrice
+  string, // [15] rationaleHash
+  string, // [16] clauseRef
+  string, // [17] standardRef
+  bigint | number, // [18] lastDecision (uint8)
+  boolean, // [19] hasRuling
+  bigint, // [20] round
+  bigint | number, // [21] payerLine (uint8)
+  bigint | number, // [22] appealRound (uint8)
+  boolean, // [23] providerAccepted
+  boolean, // [24] insurerAccepted
+  bigint, // [25] totalFees
+  bigint | number, // [26] state (uint8)
+  bigint, // [27] pendingRequestId
+  bigint, // [28] createdAt
+  bigint, // [29] rulingDeadline
+  boolean, // [30] exists
 ];
 
 /** Raw `priceBasisOf` tuple returned by ethers — matches the view's return order. */
@@ -114,6 +135,7 @@ interface CoverageContract extends ethers.BaseContract {
     daysSupply: bigint,
     justificationHash: string,
     evidenceUri: string,
+    payerLine: number,
   ): Promise<ethers.ContractTransactionResponse>;
   insurerEngage(reqId: bigint, policyHash: string, policyUri: string): Promise<ethers.ContractTransactionResponse>;
   requestAdjudication(reqId: bigint, overrides?: Overrides): Promise<ethers.ContractTransactionResponse>;
@@ -171,6 +193,7 @@ export class RealBackend implements CoverageNegotiationClient {
   private readonly contract: CoverageContract & ethers.Contract;
   private readonly provider: ethers.Provider;
   private readonly agentFeeValue: bigint;
+  private readonly deploymentBlock?: number;
   /** Maps a user listener to the ethers listeners we attached, for cleanup. */
   private readonly attached = new Map<
     CoverageEventListener,
@@ -186,6 +209,7 @@ export class RealBackend implements CoverageNegotiationClient {
     }
     this.provider = wallet.provider;
     this.agentFeeValue = options.agentFeeValue ?? 0n;
+    if (options.deploymentBlock !== undefined) this.deploymentBlock = options.deploymentBlock;
     // Bind with the signer so write methods are sendable; reads still work.
     this.contract = new ethers.Contract(
       address,
@@ -243,6 +267,7 @@ export class RealBackend implements CoverageNegotiationClient {
         params.daysSupply,
         params.justificationHash,
         params.evidenceUri,
+        params.payerLine,
       ),
     );
     // Recover reqId from the ContractCreated event (return values aren't
@@ -268,7 +293,11 @@ export class RealBackend implements CoverageNegotiationClient {
   }
 
   async submitEvidence(reqId: bigint, evidenceUri: string): Promise<void> {
-    await this._send("submitEvidence", 0n, this.contract.submitEvidence(reqId, evidenceUri));
+    await this._send(
+      "submitEvidence",
+      this.agentFeeValue,
+      this.contract.submitEvidence(reqId, evidenceUri, { value: this.agentFeeValue }),
+    );
   }
 
   async appeal(
@@ -374,6 +403,7 @@ export class RealBackend implements CoverageNegotiationClient {
     "InsurerEngaged",
     "ContractReady",
     "AdjudicationRequested",
+    "PacketSubmitted",
     "RulingRequested",
     "Ruled",
     "PolicyFlagged",
@@ -391,27 +421,59 @@ export class RealBackend implements CoverageNegotiationClient {
   ];
 
   async getEvents(filter: EventFilter = {}): Promise<CoverageEvent[]> {
-    const from = filter.fromBlock ?? 0;
-    const to = filter.toBlock ?? "latest";
+    // Resolve absolute block bounds. Somnia testnet RPC caps `eth_getLogs` to
+    // 1000 blocks per request — so unbounded "fromBlock: 0" calls revert with
+    // "block range exceeds 1000" and the dashboard stays empty (the
+    // diagnostic that drove this fix). Page the range in `LOG_PAGE_SIZE`
+    // chunks, floored at `deploymentBlock` (or `latest - DEFAULT_LOOKBACK_BLOCKS`
+    // when the deploy block isn't configured). For efficiency we do ONE
+    // `eth_getLogs` per page against the whole contract address and decode each
+    // log against the event registry, rather than 20 calls per page (one per
+    // event name); that keeps a fresh-page load to ~LOOKBACK / 1000 RPC calls
+    // (≈10 for the default lookback).
+    const latest = await this.provider.getBlockNumber();
+    const toAbs = filter.toBlock ?? latest;
+    const floor =
+      this.deploymentBlock ?? Math.max(0, latest - DEFAULT_LOOKBACK_BLOCKS);
+    const fromAbs = filter.fromBlock ?? floor;
+    const reqIdTopic =
+      filter.reqId !== undefined
+        ? ethers.zeroPadValue(ethers.toBeHex(filter.reqId), 32)
+        : null;
+
+    const iface = this.contract.interface;
+    const contractAddr = await this.contract.getAddress();
+    const eventSet = new Set<string>(RealBackend.EVENT_NAMES);
+
     const collected: Array<{ ev: CoverageEvent; block: number; index: number }> = [];
 
-    for (const name of RealBackend.EVENT_NAMES) {
-      // reqId is the first (indexed) topic of every event, so the named filter
-      // narrows the `eth_getLogs` query to a single contract when requested.
-      const make = this.contract.filters[name] as unknown as (
-        reqId?: bigint,
-      ) => ethers.DeferredTopicFilter;
-      const topic = filter.reqId === undefined ? make() : make(filter.reqId);
-      const logs = await this.contract.queryFilter(topic, from, to);
+    for (let start = fromAbs; start <= toAbs; start += LOG_PAGE_SIZE) {
+      const end = Math.min(start + LOG_PAGE_SIZE - 1, toAbs);
+      const logs = await this.provider.getLogs({
+        address: contractAddr,
+        fromBlock: start,
+        toBlock: end,
+        // Every event in EVENT_NAMES has `reqId` as the first indexed topic, so
+        // topics[1] == reqId-padded-bytes32 when a single negotiation is asked
+        // for. `topics[0]` (signature) stays open — we filter by name below.
+        ...(reqIdTopic !== null ? { topics: [null, reqIdTopic] } : {}),
+      });
       for (const log of logs) {
-        const el = log as ethers.EventLog;
+        let parsed: ethers.LogDescription | null;
+        try {
+          parsed = iface.parseLog(log);
+        } catch {
+          continue;
+        }
+        if (!parsed || !eventSet.has(parsed.name)) continue;
+        const name = parsed.name as CoverageEventName;
         collected.push({
-          ev: this.buildEvent(name, [...el.args], {
-            txHash: el.transactionHash,
-            blockNumber: el.blockNumber,
+          ev: this.buildEvent(name, [...parsed.args], {
+            txHash: log.transactionHash,
+            blockNumber: log.blockNumber,
           }),
-          block: el.blockNumber,
-          index: el.index,
+          block: log.blockNumber,
+          index: log.index,
         });
       }
     }
@@ -477,6 +539,15 @@ export class RealBackend implements CoverageNegotiationClient {
         return { name, reqId, ...meta };
       case "AdjudicationRequested":
         return { name, reqId, ...meta };
+      case "PacketSubmitted":
+        return {
+          name,
+          reqId,
+          round: a[1] as bigint,
+          packetRoot: a[2] as string,
+          packetUrl: a[3] as string,
+          ...meta,
+        };
       case "RulingRequested":
         return { name, reqId, requestId: a[1] as bigint, fee: a[2] as bigint, ...meta };
       case "Ruled":
@@ -489,6 +560,9 @@ export class RealBackend implements CoverageNegotiationClient {
           rationaleHash: a[4] as string,
           clauseRef: a[5] as string,
           receiptId: a[6] as bigint,
+          policyVoidedClauseIndices: ((a[7] as bigint[] | undefined) ?? []).map(Number),
+          usedReferenceIndices: ((a[8] as bigint[] | undefined) ?? []).map(Number),
+          usedLeafHashes: ((a[9] as `0x${string}`[] | undefined) ?? []),
           ...meta,
         };
       case "PolicyFlagged":
@@ -565,14 +639,16 @@ export class RealBackend implements CoverageNegotiationClient {
       lastDecision: Number(raw[18]) as Decision,
       hasRuling: raw[19],
       round: raw[20],
-      providerAccepted: raw[21],
-      insurerAccepted: raw[22],
-      totalFees: raw[23],
-      state: Number(raw[24]) as State,
-      pendingRequestId: raw[25],
-      createdAt: raw[26],
-      rulingDeadline: raw[27],
-      exists: raw[28],
+      payerLine: Number(raw[21]) as PayerLine,
+      appealRound: Number(raw[22]),
+      providerAccepted: raw[23],
+      insurerAccepted: raw[24],
+      totalFees: raw[25],
+      state: Number(raw[26]) as State,
+      pendingRequestId: raw[27],
+      createdAt: raw[28],
+      rulingDeadline: raw[29],
+      exists: raw[30],
     };
   }
 

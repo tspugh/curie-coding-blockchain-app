@@ -10,6 +10,7 @@
 import { useEffect, useState } from "react";
 import {
   getTxLogSnapshot,
+  hydrateTxLogFromSink,
   subscribeTxLog,
   type TxLogState,
 } from "../txLogger.js";
@@ -39,7 +40,10 @@ export function TxMonitor(): JSX.Element | null {
   const [snap, setSnap] = useState<TxLogState>(() => getTxLogSnapshot());
   const [open, setOpen] = useState(true);
 
-  useEffect(() => subscribeTxLog(setSnap), []);
+  useEffect(() => {
+    void hydrateTxLogFromSink();
+    return subscribeTxLog(setSnap);
+  }, []);
 
   if (snap.entries.length === 0) {
     // Nothing to show yet — keep the chip visible so the human knows the

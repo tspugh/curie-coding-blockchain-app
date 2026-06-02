@@ -108,7 +108,9 @@ a:hover {
 .header {
   display: flex;
   align-items: center;
-  height: 62px;
+  /* SPEC-0005 R6: 76px gives the 3-column wallet cluster (chip / balance /
+     role) room for label-on-top, content-below without crowding at 1280×800. */
+  height: 76px;
   padding: 0 40px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
@@ -179,21 +181,32 @@ a:hover {
   font-weight: 600;
 }
 
-/* Wallet info — pushed to the far right */
+/* Wallet cluster — pushed to the far right (SPEC-0005 R6). 3 stable columns
+   side-by-side at 1280×800: wallet chip / balance / role pills. Each child
+   uses a label-on-top, content-below stack so labels don't crowd the data.
+   ≥18px gutter between columns; left separator from the nav. */
 .wallet {
   margin-left: auto;
   display: flex;
-  flex-direction: column;
-  gap: 3px;
-  text-align: right;
+  flex-direction: row;
+  align-items: center;
+  gap: 18px;
   flex-shrink: 0;
+  padding-left: 24px;
+  border-left: 1px solid var(--border-lt);
+  height: 100%;
 }
 
+/* Each wallet-line is one of the 3 columns: small label on top, content
+   below. The text-align falls inside each column so values right-align by
+   default but the columns themselves sit on a row gap, not a stacked one. */
 .wallet-line {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  justify-content: flex-end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 3px;
+  white-space: nowrap;
 }
 
 .wallet .label {
@@ -202,6 +215,31 @@ a:hover {
   color: var(--muted-lt);
   text-transform: uppercase;
   letter-spacing: 0.07em;
+}
+
+/* SPEC-0005 R6: tabular-nums on the balance so the digits don't wobble as
+   the value polls. */
+.wallet-balance-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Content row inside each wallet-column: the label sits above, this is the
+   row of inline value(s) — chip + mode badge for Wallet; the value for
+   Balance; the pill row for Role. Right-aligned to match the cluster. */
+.wallet-line-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* The WalletBalance wrapper acts as a column itself when it's the only
+   child of a wallet-line. */
+.wallet-balance {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
 }
 
 .wallet select {
@@ -559,6 +597,9 @@ tr.row-link:hover td:first-child {
   background: var(--danger-lt);
   border-radius: var(--radius-sm);
   border: 1px solid #fca5a5;
+  /* Preserve `\n` separators between RevertReasonEntry.headline and .details
+     (SPEC-0003 R16). Without this, the `\n\n` collapses to a single space. */
+  white-space: pre-line;
 }
 
 .hint {
@@ -619,6 +660,13 @@ tr.row-link:hover td:first-child {
   grid-template-columns: 1fr 1fr;
   gap: 20px;
   margin-top: 20px;
+}
+
+/* SPEC-0005 R7: insurer Detail collapses to a single full-width column so
+   the action panel + timeline below it read naturally. The provider keeps
+   the 2-col facts/decision grid. */
+.detail-grid.is-insurer {
+  grid-template-columns: 1fr;
 }
 
 .btn-row {
@@ -1086,6 +1134,95 @@ tr.row-link:hover td:first-child {
   color: var(--text-2);
 }
 
+/* ─── 25b. KPI strip (Overview — UNIT-UI-1) ─────────────────────────────── */
+
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 26px;
+}
+
+.kpi-card {
+  background: var(--panel, #ffffff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 12px;
+  padding: 18px 20px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.kpi-label {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted, #6b7280);
+}
+
+.kpi-value {
+  font-size: 32px;
+  font-weight: 600;
+  margin-top: 9px;
+  color: var(--text, #111827);
+}
+
+.kpi-value.tone-review   { color: var(--warn); }
+.kpi-value.tone-approved { color: var(--ok); }
+.kpi-value.tone-accent   { color: var(--accent); }
+
+.kpi-sub {
+  font-size: 11.5px;
+  margin-top: 6px;
+  color: var(--muted-lt, #9ca3af);
+}
+
+/* ─── 25c. Filter pill bar (Overview — UNIT-UI-2) ───────────────────────── */
+
+.filter-pill-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  align-items: center;
+}
+
+.filter-pill {
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--border-dk, var(--border, #d1d5db));
+  color: var(--muted, #4b5563);
+  background: var(--panel, #ffffff);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.05));
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.filter-pill:hover {
+  border-color: var(--accent-mid, var(--accent));
+  background: var(--panel-2, #f8f9fc);
+}
+
+.filter-pill.is-active {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 1px 4px rgba(37, 99, 235, .28);
+}
+
+.filter-pill-count {
+  opacity: 0.66;
+  margin-left: 3px;
+}
+
+.filter-pill-spacer { flex: 1; }
+
+.filter-pill-summary {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted, #6b7280);
+}
+
 /* ─── 25. Empty state (Overview) ────────────────────────────────────────── */
 
 .empty-state {
@@ -1112,7 +1249,11 @@ tr.row-link:hover td:first-child {
 
 .policy-cards {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* SPEC-0005 R14/R15 added 1-2 more cards (extra curated policies + the
+     Custom-policy entry). auto-fit min 220px keeps 2-up at narrow widths
+     and flows to 3-up at the panel's typical insurer-mode full-width
+     layout without the hardcoded 1fr 1fr awkward wrap. */
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
   margin: 12px 0 16px;
 }
@@ -1411,3 +1552,865 @@ tr.row-link:hover td:first-child {
 .tx-monitor .tx-list .hash        { color: var(--text-2); font-size: 11.5px; }
 .tx-monitor .tx-list .cost        { grid-column: 3 / 4; grid-row: 1; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-2); }
 .tx-monitor .tx-list .attribution { grid-column: 1 / -1; grid-row: 2; color: var(--text-2); font-size: 11.5px; }
+
+/* UNIT-UI-3: Appeal stage (two-line: stage name + payer-line caption per
+   prototype screens.jsx:142-144) + Round column */
+.col-stage { min-width: 0; }
+.stage-name {
+  font-size: 12.5px;
+  color: var(--text-2);
+  line-height: 1.25;
+}
+.stage-payer {
+  font-size: 10.5px;
+  color: var(--muted);
+  line-height: 1.25;
+  margin-top: 2px;
+}
+.col-round {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Network view (UNIT-NetworkScreen-narrow) ───────────────────────────── */
+
+.network-page {
+  max-width: 960px;
+}
+
+/* ─── Network view — live tx-stream section (UNIT-NetworkScreen-stream) ──── */
+
+.tx-stream-panel {
+  background: var(--panel, #ffffff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  overflow: hidden;
+}
+
+.tx-stream-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+}
+
+.section-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted, #6b7280);
+  margin-bottom: 4px;
+}
+
+.tx-stream-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text, #111827);
+}
+
+/* "streaming" pill — green tint, no interaction */
+.live-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ok, #15803d);
+  background: var(--ok-lt, #f0fdf4);
+  border: 1px solid var(--ok-mid, #22c55e);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+/* Live-dot: 6px green circle with a pure-CSS pulse animation.
+   No JS callback; no setInterval; no fake-event involvement. */
+.live-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok-mid, #22c55e);
+  animation: live-dot-pulse 2s ease-in-out infinite;
+}
+
+@keyframes live-dot-pulse {
+  0%, 100% { opacity: 1;   transform: scale(1);    }
+  50%       { opacity: 0.4; transform: scale(0.75); }
+}
+
+/* Empty state */
+.tx-stream-empty {
+  padding: 36px 24px;
+  text-align: center;
+  color: var(--muted, #6b7280);
+  font-size: 13.5px;
+}
+.tx-stream-empty .hint {
+  font-size: 12px;
+  color: var(--muted-lt, #9ca3af);
+  margin-top: 6px;
+}
+
+/* Rows container */
+.tx-stream-rows {
+  font-size: 12.5px;
+}
+
+/* Each event row: name | tx-hash | description | req-id */
+.tx-stream-row {
+  display: grid;
+  grid-template-columns: 150px 110px 1fr 90px;
+  gap: 14px;
+  padding: 10px 20px;
+  align-items: center;
+  border-bottom: 1px solid var(--border-lt, #eaedf4);
+}
+.tx-stream-row:last-child {
+  border-bottom: none;
+}
+
+/* Network tx-stream row cells — prefixed to avoid colliding with the
+   pre-existing `.ev-name` / `.ev-desc` rules used by Detail.tsx's
+   timeline (lines 769 + 777). */
+.tx-ev-name {
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Per-event-type tones from web/src/shared.ts:eventTone() — keep in sync. */
+.tx-ev-name.tone-ok      { color: var(--ok); }
+.tx-ev-name.tone-warn    { color: var(--warn); }
+.tx-ev-name.tone-danger  { color: var(--danger); }
+.tx-ev-name.tone-purple  { color: var(--purple); }
+.tx-ev-name.tone-accent  { color: var(--accent); }
+
+.tx-ev-tx {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tx-ev-tx a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.tx-ev-tx a:hover {
+  text-decoration: underline;
+}
+.tx-ev-tx .dim {
+  color: var(--muted-lt);
+}
+
+.tx-ev-desc {
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.tx-ev-reqid {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ─── Settings view ─────────────────────────────────────────────────────── */
+
+/* Panel card — same chrome as .tx-stream-panel */
+.settings-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 20px 24px;
+  margin-bottom: 18px;
+}
+
+.settings-panel .section-label {
+  margin-bottom: 6px;
+}
+
+.settings-panel .hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 14px;
+  line-height: 1.5;
+}
+
+/* Profile card grid: 3 columns with equal width */
+.profile-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+/* Each profile card is a plain button styled as a card */
+.profile-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  border: 1px solid var(--border-dk);
+  background: var(--panel);
+  box-shadow: var(--shadow-xs);
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.profile-card:hover {
+  border-color: var(--accent-mid);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Active state: accent border + tinted background */
+.profile-card.is-active {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--accent-lt);
+  box-shadow: var(--shadow-md);
+}
+
+.profile-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 5px;
+}
+
+.profile-card-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.profile-card.is-active .profile-card-label {
+  color: var(--accent-dk);
+}
+
+.profile-card-party {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.profile-card-sub {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.45;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+/* Fact list: definition list rendered as two-column rows */
+.fact-list {
+  margin: 0;
+  padding: 0;
+}
+
+.fact-row {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 12px;
+  align-items: baseline;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border-lt);
+  font-size: 13.5px;
+}
+
+.fact-row:last-child {
+  border-bottom: none;
+}
+
+.fact-row dt {
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.fact-row dd {
+  margin: 0;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Status pills — reuse existing live-pill chrome */
+.pill.no-dot {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.pill.tone-ok {
+  color: var(--ok);
+  background: var(--ok-lt);
+  border: 1px solid var(--ok-mid);
+}
+
+.pill.tone-warn {
+  color: var(--warn);
+  background: var(--warn-lt);
+  border: 1px solid var(--warn-mid);
+}
+
+/* Responsive: collapse to 1 column on narrow screens */
+@media (max-width: 600px) {
+  .profile-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fact-row {
+    grid-template-columns: 90px 1fr;
+  }
+}
+
+/* ─── Wallet keys panel (SPEC-0003 §2.9 R42) ──────────────────────────── */
+.key-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.key-row label {
+  flex: 0 0 160px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.key-row input[type="password"] {
+  flex: 1 1 320px;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12.5px;
+}
+/* Save-error live region lives in .key-actions; per-field validation error
+   lives in .key-row. Same color/sizing both places — un-scoped so either
+   parent surfaces the danger styling. */
+.key-error {
+  flex: 1 1 100%;
+  font-size: 11.5px;
+  color: var(--danger);
+}
+.key-generate {
+  font-size: 12px;
+  padding: 6px 12px;
+}
+.key-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.link-button {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.link-button:hover {
+  background: transparent;
+  color: var(--accent-dk);
+}
+
+/* SPEC-0003 §2.9 R42 — onboarding banner shown when client.ts's
+   walletSetupRequired flag is set (real-mode selected but no key found). */
+.setup-banner {
+  background: var(--warn-lt);
+  border: 1px solid var(--warn-mid);
+  color: var(--text);
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 24px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.setup-banner strong {
+  color: var(--warn);
+}
+.setup-banner code {
+  background: rgba(255, 255, 255, .55);
+  padding: 1px 5px;
+}
+
+/* SPEC-0003 TopBar profile switcher — pill row (matches prototype's
+   ProfileSwitcher in app.jsx:115-131). 3 inline buttons inside a rounded
+   container; the active one fills with the accent color. */
+.profile-switcher {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  gap: 2px;
+}
+.profile-pill {
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.14s ease;
+  white-space: nowrap;
+  font-family: inherit;
+}
+.profile-pill:hover:not(.is-active) {
+  color: var(--text-2);
+  background: transparent;
+  box-shadow: none;
+}
+.profile-pill.is-active {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+/* SPEC-0004 §2.4 R15/R17 — AppealLadder card on Detail. Matches prototype
+   structure at screens.jsx:233-266. Full-width card; row of stage cards;
+   active stage highlighted with var(--accent); passed stages show ✓ in a
+   filled accent badge. */
+.appeal-ladder {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  margin-bottom: 24px;
+  box-shadow: var(--shadow-xs);
+}
+.appeal-ladder-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.appeal-ladder-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+.appeal-ladder-meta strong {
+  color: var(--accent-dk);
+  font-weight: 600;
+}
+.appeal-ladder-grid {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.appeal-stage {
+  flex: 1 1 0;
+  min-width: 130px;
+  padding: 11px 13px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  transition: opacity 0.15s ease;
+}
+.appeal-stage.is-passed {
+  background: var(--panel-2);
+}
+.appeal-stage.is-current {
+  border-color: var(--accent-mid);
+  background: var(--accent-lt);
+}
+.appeal-stage.is-dim {
+  opacity: 0.6;
+}
+.appeal-stage-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 4px;
+}
+.appeal-stage-badge {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--panel);
+  border: 1.5px solid var(--border);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.appeal-stage.is-current .appeal-stage-badge {
+  background: var(--panel);
+  border-color: var(--accent);
+  color: var(--accent-dk);
+}
+.appeal-stage.is-passed .appeal-stage-badge {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+.appeal-stage-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.appeal-stage.is-current .appeal-stage-name {
+  color: var(--accent-dk);
+}
+.appeal-stage-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+/* SPEC-0003 Detail event-log polish (tick 34) — tx-hash chip + attribution
+   chip + per-event tone for the name. The .ev-row / .ev-name rules higher
+   up (~line 769/777) supply the base spacing; these additions are layered
+   on top, scoped under `.timeline` so they don't bleed into other surfaces
+   that use the same class names. */
+.timeline .ev-row {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border-lt);
+}
+.timeline .ev-row:last-child { border-bottom: none; }
+.timeline .ev-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.timeline .ev-row.tone-ok      .ev-name { color: var(--ok); }
+.timeline .ev-row.tone-warn    .ev-name { color: var(--warn); }
+.timeline .ev-row.tone-danger  .ev-name { color: var(--danger); }
+.timeline .ev-row.tone-purple  .ev-name { color: var(--purple); }
+.timeline .ev-row.tone-accent  .ev-name { color: var(--accent); }
+.timeline .ev-desc {
+  font-size: 12.5px;
+  color: var(--text-2);
+  margin-top: 2px;
+  line-height: 1.45;
+}
+.timeline .ev-row-foot {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ev-tx-chip {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  text-decoration: none;
+}
+.ev-tx-chip:hover { background: var(--accent-lt); }
+.ev-tx-chip.is-empty {
+  color: var(--muted-lt);
+  background: transparent;
+  border-style: dashed;
+}
+.ev-attr {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+}
+
+/* SPEC-0003 Create — payer-line label hint + hash preview (tick 36) */
+.label-hint {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12.5px;
+}
+.hash-preview {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 6px;
+  padding: 0 2px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hash-preview-chars {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.hash-preview-hash {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  background: var(--panel-2);
+  border: 1px solid var(--border-lt);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  color: var(--accent-dk);
+}
+
+/* ─── 35. ErrorCard (SPEC-0003 §2.4 R21) ────────────────────────────────── */
+
+.error-card {
+  border: 1px solid var(--danger);
+  background: var(--danger-lt);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* Contained: don't let the card push siblings off-page (R21). */
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.error-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.error-card-icon {
+  font-size: 18px;
+  line-height: 1;
+  color: var(--danger);
+}
+
+.error-card-headline {
+  color: var(--text-2);
+  font-size: 14px;
+  /* Headline can hold a long non-revert error.message — wrap rather than
+     overflow the card. */
+  word-break: break-word;
+}
+
+.error-card-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.error-card-details > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-2);
+  list-style: revert;
+}
+
+.error-card-details > pre {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* Cap the technical-details height so a multi-line ethers stack doesn't
+     blow the surrounding card past the viewport. */
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.error-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ─── 36. Policy preview (SPEC-0005 R16) ──────────────────────────────── */
+
+.policy-preview {
+  margin: 12px 0 4px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-lt, rgba(0, 0, 0, 0.03));
+  border-left: 3px solid var(--accent-mid);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.policy-preview-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.policy-preview-head strong {
+  font-size: 13.5px;
+}
+
+.policy-preview-clauses {
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.policy-preview-summary {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+/* ─── 37. Custom-policy composer (SPEC-0005 R15) ──────────────────────── */
+
+.custom-policy-composer {
+  margin: 10px 0 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  border: 1px solid var(--border-lt);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.custom-policy-composer label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.custom-policy-composer input,
+.custom-policy-composer textarea {
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 400;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: normal;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  resize: vertical;
+}
+
+.custom-policy-composer textarea {
+  min-height: 90px;
+  line-height: 1.45;
+}
+
+.custom-policy-composer input:focus,
+.custom-policy-composer textarea:focus {
+  outline: none;
+  border-color: var(--accent-mid);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* ─── 38. Users panel (SPEC-0005 R10/R11) ─────────────────────────────── */
+
+.users-list {
+  margin: 8px 0 14px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.users-empty {
+  font-size: 12.5px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.users-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  border: 1px solid var(--border-lt);
+}
+
+.users-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.users-row-meta strong {
+  font-size: 13.5px;
+}
+
+.users-row-meta code {
+  font-size: 11.5px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.users-add {
+  display: grid;
+  grid-template-columns: 1fr 120px 2fr;
+  gap: 10px;
+  align-items: end;
+}
+
+.users-add label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.users-add input,
+.users-add select {
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 400;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: normal;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+
+.users-add input:focus,
+.users-add select:focus {
+  outline: none;
+  border-color: var(--accent-mid);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.users-add p.error,
+.users-add button {
+  grid-column: 1 / -1;
+}

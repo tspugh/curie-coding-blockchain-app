@@ -38,6 +38,13 @@ URL="${URL:-http://localhost:4173/}"
 AB="${AGENT_BROWSER:-agent-browser}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 
+# SPEC-0005 R23: pre-flight wallet sufficiency helper. Scenarios that fire
+# write txs call `assert_wallet_sufficient <name> <writes> <arbiters>` early
+# so a short balance fails loud with funding instructions instead of
+# reverting opaquely mid-flow. Real-mode-only; sim-mode returns 0 silently.
+# shellcheck source=cost-estimator.sh
+. "$(dirname "${BASH_SOURCE[0]}")/cost-estimator.sh"
+
 PASS=0
 FAIL=0
 SERVER_PID=""
@@ -59,6 +66,24 @@ ev() {
   out="$("$AB" eval -b "$b64" 2>/dev/null | tail -1)"
   out="${out#\"}"; out="${out%\"}"
   printf '%s' "$out"
+}
+
+# Robust click via DOM .click() to bypass agent-browser's click semantics
+# (which fail to fire React's synthetic onClick for some nested-content
+# buttons — verified empirically tick 42 on the policy-card buttons inside
+# the engage panel). Eval-based .click() always bubbles, so React handlers
+# fire deterministically.
+eval_click() {
+  ev "(()=>{const e=document.querySelector('[data-testid=$1]');if(!e)return 'not-found';e.click();return 'clicked'})()" >/dev/null
+}
+
+# SPEC-0005 R8: switching role returns to Overview. Many scenarios switch
+# profile mid-Detail and expect to stay on Detail — mirror the real user
+# journey by re-opening the request row after the switch. Argument is the
+# request id (e.g. 1) of the row to re-open.
+reopen_detail() {
+  ev "(()=>{const r=document.querySelector('[data-testid=contract-row][data-reqid=\"$1\"]');if(!r)return 'no-row';r.click();return 'clicked'})()" >/dev/null
+  "$AB" wait 150 >/dev/null 2>&1
 }
 
 # --- assertions -------------------------------------------------------------
@@ -93,7 +118,21 @@ start_server() {
   [ "${SKIP_SERVE:-0}" = "1" ] && { echo "SKIP_SERVE=1 — using already-served $URL"; return; }
   if [ "${SKIP_BUILD:-0}" != "1" ]; then
     echo "Building lib + web…"
-    ( cd "$REPO_ROOT" && npm run build && npm run web:build ) >/dev/null 2>&1 \
+    # VITE_EXPOSE_TEST_API=1 opts the production preview bundle into the
+    # `window.__curie.{negotiation,content,wallet,profiles}` test surface
+    # client.ts gates behind this flag (see tick-40 e2e-harness-api-shape).
+    #
+    # VITE_WALLET_MODE=simulated explicitly overrides anything in .env
+    # (which carries VITE_WALLET_MODE=real for live-chain integration
+    # testing). Without this override Vite picks up the .env value at
+    # build time, embeds real mode in the bundle, and every sim-only
+    # scenario in this suite silently fails (tick-94 finding: 29/74
+    # assertions broke that way). Set HARNESS_WALLET_MODE on the shell
+    # to override (only when you've added real-mode-only Scenarios).
+    local mode="${HARNESS_WALLET_MODE:-simulated}"
+    ( cd "$REPO_ROOT" \
+        && VITE_WALLET_MODE="$mode" npm run build \
+        && VITE_WALLET_MODE="$mode" VITE_EXPOSE_TEST_API=1 npm run web:build ) >/dev/null 2>&1 \
       || { echo "BUILD FAILED"; exit 2; }
   fi
   echo "Serving $URL …"
@@ -115,6 +154,12 @@ start_server() {
 scenario_happy_path() {
   echo "Scenario A: happy-path lifecycle (file → engage → adjudicate(approve) → accept → settle)"
 
+  # SPEC-0005 R23 pre-flight: 6 write txs across this flow
+  # (createContract, insurerEngage, requestAdjudication, accept × 2, settle)
+  # plus 1 arbiter ruling (the agent-fee outlay on adjudicate). Real-mode
+  # only — sim-mode call returns 0 silently.
+  assert_wallet_sufficient "Scenario A" 6 1 || exit 2
+
   # Arrange: fresh app, file a request as the provider.
   open_app
   ab find testid nav-create click >/dev/null
@@ -124,7 +169,7 @@ scenario_happy_path() {
   ab find testid create-amount fill "5200" >/dev/null
   ab find testid create-quantity fill "2" >/dev/null          # SPEC-0001: quantity drives the cap
   ab find testid create-days-supply fill "28" >/dev/null      # SPEC-0001: necessity context only
-  ab find testid create-submit click >/dev/null
+  eval_click create-submit
   ab wait 300 >/dev/null
 
   # Assert: request opened in Open; adjudication NOT possible yet (R5 gate).
@@ -132,34 +177,45 @@ scenario_happy_path() {
   assert_hidden "adjudicate hidden before policy attached (R5)" "[data-testid=adjudicate-submit]"
 
   # Act: switch to insurer, attach the compliant policy -> Ready (R5).
-  ab select "[data-testid=profile-switcher]" insurer >/dev/null
+  ab find testid profile-pill-insurer click >/dev/null
   ab wait 200 >/dev/null
-  ab find testid engage-load-compliant click >/dev/null
-  ab find testid engage-submit click >/dev/null
+  # SPEC-0005 R8: profile switch returns to Overview; re-open the row.
+  reopen_detail 1
+  eval_click engage-load-compliant
+  eval_click engage-submit
   ab wait 300 >/dev/null
   assert_eq "policy attached -> Ready (on-chain)" "1" "$(state_of 1)"
-  assert_eq "UI badge reflects Ready (R16)" "Ready" "$(ab get text "[data-testid=state-badge]" | tail -1)"
+  # Badge text is the user-facing label, not the bare state-machine name
+  # ("Policy Attached — Ready for AI" — Detail.tsx renders R16 with friendly copy).
+  case "$(ab get text "[data-testid=state-badge]" | tail -1)" in
+    *Ready*) echo "  ✓ UI badge reflects Ready (R16)"; PASS=$((PASS + 1));;
+    *) echo "  ✗ UI badge reflects Ready (R16) — badge text did not contain 'Ready'"; FAIL=$((FAIL + 1));;
+  esac
 
   # Act: pick decision 'approve' + a Cost Plus unit price of 2100 (cap = 2100 ×
   # quantity 2 = 4200 < requested 5200) and request adjudication -> arbiter fires
   # (R6), auto-resolves ~1.2s -> Approved (SPEC-0001 2026-05-27 per-unit cap).
-  ab select "[data-testid=decision-select]" 0 >/dev/null   # 0 = Decision.Approve
-  ab find testid costplus-unit-price fill "2100" >/dev/null
-  ab find testid nadac-unit-price fill "2000" >/dev/null
-  ab find testid adjudicate-submit click >/dev/null
+  # The redesigned UI doesn't surface cost-pegging inputs (sim-runtime concern);
+  # poke the SimulatedBackend's mutables via the test API instead (tick 45).
+  eval_click decision-approve   # 0 = Decision.Approve
+  ev "window.__curie.setNextCostPlusUnitPrice(2100n); 1" >/dev/null
+  ev "window.__curie.setNextNadacUnitPrice(2000n); 1" >/dev/null
+  eval_click adjudicate-submit
   ab wait 1800 >/dev/null
   assert_eq "approve ruling routes to Approved" "4" "$(state_of 1)"
   # R6a: deterministic covered amount = min(5200, 2100 × 2) = 4200.
   assert_eq "covered = min(requested, costPlus × qty) (R6a)" "4200" "$(covered_of 1)"
 
   # Act: both parties accept, then settle (R8 event marker + 50/50 fee).
-  ab find testid accept-submit click >/dev/null
+  eval_click accept-submit
   ab wait 200 >/dev/null
-  ab select "[data-testid=profile-switcher]" provider >/dev/null
+  ab find testid profile-pill-provider click >/dev/null
   ab wait 200 >/dev/null
-  ab find testid accept-submit click >/dev/null
+  # SPEC-0005 R8: profile switch returns to Overview; re-open the row.
+  reopen_detail 1
+  eval_click accept-submit
   ab wait 200 >/dev/null
-  ab find testid settle-submit click >/dev/null
+  eval_click settle-submit
   ab wait 300 >/dev/null
   assert_eq "settled (terminal)" "6" "$(state_of 1)"
 }
@@ -169,6 +225,8 @@ scenario_happy_path() {
 # ===========================================================================
 scenario_no_phi() {
   echo "Scenario B: no PHI on-chain (R4 hard invariant)"
+  # SPEC-0005 R23 pre-flight: 1 write (createContract), 0 arbiter calls.
+  assert_wallet_sufficient "Scenario B" 1 0 || exit 2
   local token="ZZ_SECRET_PHI_TOKEN_99"
 
   # Arrange + Act: file a request whose justification contains a unique sentinel.
@@ -176,8 +234,11 @@ scenario_no_phi() {
   ab find testid nav-create click >/dev/null
   ab find testid create-note fill "$token — justification body that must never be committed." >/dev/null
   ab find testid create-drug fill "Adalimumab" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=HUMIRA" >/dev/null
   ab find testid create-amount fill "5200" >/dev/null
-  ab find testid create-submit click >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
+  eval_click create-submit
   ab wait 300 >/dev/null
 
   # Assert: the committed justificationHash verifies against the off-chain note (R3)…
@@ -196,6 +257,10 @@ scenario_no_phi() {
 # ===========================================================================
 scenario_adjudication_gating() {
   echo "Scenario C: adjudication gated until insurer attaches a policy (R5/T3)"
+  # SPEC-0005 R23 pre-flight: 2 writes (createContract + the requestAdjudication
+  # attempt that must revert at the R5 gate), 0 arbiter calls (the revert
+  # short-circuits before any agent fire).
+  assert_wallet_sufficient "Scenario C" 2 0 || exit 2
 
   # Arrange: a fresh request with no policy attached (still Open).
   open_app
@@ -203,7 +268,7 @@ scenario_adjudication_gating() {
   ab find testid create-note fill "Request for the policy-gating check." >/dev/null
   ab find testid create-drug fill "Etanercept" >/dev/null
   ab find testid create-amount fill "2500" >/dev/null
-  ab find testid create-submit click >/dev/null
+  eval_click create-submit
   ab wait 300 >/dev/null
 
   # Act + Assert: adjudication before a policy is attached must revert (guard).
@@ -216,21 +281,33 @@ scenario_adjudication_gating() {
 # ===========================================================================
 scenario_policy_invalidated() {
   echo "Scenario C2: non-compliant policy -> PolicyInvalidated (R6b)"
+  # SPEC-0005 R23 pre-flight: 3 writes (createContract + insurerEngage +
+  # requestAdjudication) + 1 arbiter ruling (the agent fires and emits a
+  # void ruling).
+  assert_wallet_sufficient "Scenario C2" 3 1 || exit 2
 
   open_app
   ab find testid nav-create click >/dev/null
-  ab find testid load-sample click >/dev/null
-  ab find testid create-submit click >/dev/null
+  eval_click load-sample
+  eval_click create-submit
   ab wait 300 >/dev/null
 
   # Insurer attaches the NON-compliant policy, then adjudicate with policy_invalid.
-  ab select "[data-testid=profile-switcher]" insurer >/dev/null
+  ab find testid profile-pill-insurer click >/dev/null
   ab wait 200 >/dev/null
-  ab find testid engage-noncompliant-toggle click >/dev/null
-  ab find testid engage-submit click >/dev/null
+  # SPEC-0005 R8: profile switch returns to Overview; re-open the row.
+  reopen_detail 1
+  eval_click engage-noncompliant-toggle
+  eval_click engage-submit
   ab wait 300 >/dev/null
-  ab select "[data-testid=decision-select]" 3 >/dev/null   # 3 = Decision.PolicyInvalid
-  ab find testid adjudicate-submit click >/dev/null
+  # SPEC-0004 §3.5 R23: prime a populated `policyVoidedClauseIndices` so the
+  # ruling-meta panel surfaces the new "Voided clauses" row (tick 51 UI).
+  # SPEC-0004 §3.5 R11: prime ruling-citation indices too so the "Cited
+  # references" row also renders.
+  ev "window.__curie.setNextPolicyVoidedClauseIndices([2]); 1" >/dev/null
+  ev "window.__curie.setNextUsedReferenceIndices([0, 3]); 1" >/dev/null
+  eval_click decision-void   # 3 = Decision.PolicyInvalid
+  eval_click adjudicate-submit
   ab wait 1800 >/dev/null
   assert_eq "non-compliant clause -> PolicyInvalidated (terminal)" "8" "$(state_of 1)"
 
@@ -246,6 +323,13 @@ scenario_policy_invalidated() {
     *psoriasis*) echo "  ✓ FDA indication citation shown"; PASS=$((PASS + 1));;
     *) echo "  ✗ FDA indication citation not shown"; FAIL=$((FAIL + 1));;
   esac
+
+  # SPEC-0004 §3.5 R11 + R23: the tick-51 ruling-meta rows surface the
+  # primed sim values once the Ruled event is decoded.
+  assert_eq "ruling-meta surfaces R23 voided clauses" "[2]" \
+    "$(ab get text "[data-testid=ruling-voided-clauses]" | tail -1)"
+  assert_eq "ruling-meta surfaces R11 cited references" "[0, 3]" \
+    "$(ab get text "[data-testid=ruling-used-refs]" | tail -1)"
 }
 
 # ===========================================================================
@@ -253,24 +337,33 @@ scenario_policy_invalidated() {
 # ===========================================================================
 scenario_observer() {
   echo "Scenario G: observer can view but not act; non-party attempt rejected (R6/R11)"
+  # SPEC-0005 R23 pre-flight: 2 writes (createContract + the insurerEngage
+  # attempt that must revert at the auth gate for an observer caller),
+  # 0 arbiter calls (revert short-circuits before agent fire).
+  assert_wallet_sufficient "Scenario G" 2 0 || exit 2
 
   open_app
   ab find testid nav-create click >/dev/null
-  ab find testid load-sample click >/dev/null
-  ab find testid create-submit click >/dev/null
+  eval_click load-sample
+  eval_click create-submit
   ab wait 300 >/dev/null
 
   # Switch to the observer (party 99) and assert mutating actions are hidden.
-  ab select "[data-testid=profile-switcher]" observer >/dev/null
+  ab find testid profile-pill-observer click >/dev/null
   ab wait 200 >/dev/null
+  # SPEC-0005 R8: profile switch returns to Overview; re-open the row.
+  reopen_detail 1
   assert_eq "active party is observer (99)" "99" "$(ev "String(window.__curie.profiles.getActivePartyId())")"
   assert_hidden "engage hidden for observer" "[data-testid=engage-submit]"
 
-  # The explicit non-party attempt surfaces the gating rejection (R11).
-  ab find testid nonparty-attempt click >/dev/null
-  ab wait 200 >/dev/null
+  # The non-party attempt surfaces the contract's R11 gating directly.
+  # Observer's profile maps to the providerClient (no separate observer
+  # wallet), so a write attempt sees the sim backend's caller=providerAddr,
+  # which is neither the insurer nor any other party — fires "auth: not
+  # insurer" / "auth: not a party". We call the contract directly via the
+  # test API (no UI button needed; this is contract-side R11 verification).
   assert_eq "non-party attempt rejected (R11)" "true" \
-    "$(ev "String(!!document.querySelector('[data-testid=nonparty-rejected]'))")"
+    "$(ev "(async()=>{try{const z='0x'+'00'.repeat(32);await window.__curie.negotiation.insurerEngage(1n,z,z);return 'false'}catch(e){return String(/auth:|not insurer|not a party|empty/i.test(String(e.message||e)))}})()")"
 }
 
 # ===========================================================================
@@ -308,13 +401,17 @@ scenario_profiles() {
   addr1="$(ev "window.__curie.wallet.address")"
 
   # Act: switch to insurer -> active party id is 2.
-  ab select "[data-testid=profile-switcher]" insurer >/dev/null
+  ab find testid profile-pill-insurer click >/dev/null
   ab wait 150 >/dev/null
+  # SPEC-0005 R8: profile switch returns to Overview; re-open the row.
+  reopen_detail 1
   assert_eq "active party is insurer (2)" "2" "$(ev "String(window.__curie.profiles.getActivePartyId())")"
 
   # Act: switch to provider -> active party id is 1.
-  ab select "[data-testid=profile-switcher]" provider >/dev/null
+  ab find testid profile-pill-provider click >/dev/null
   ab wait 150 >/dev/null
+  # SPEC-0005 R8: profile switch returns to Overview; re-open the row.
+  reopen_detail 1
   assert_eq "active party is provider (1)" "1" "$(ev "String(window.__curie.profiles.getActivePartyId())")"
 
   # Assert: the wallet address is unchanged across switches (one shared wallet — R13).
@@ -327,11 +424,13 @@ scenario_profiles() {
 # ===========================================================================
 scenario_sample_case() {
   echo "Scenario E: 'Load sample case' prefills and drives Create (demo-data)"
+  # SPEC-0005 R23 pre-flight: 1 write (createContract), 0 arbiter calls.
+  assert_wallet_sufficient "Scenario E" 1 0 || exit 2
 
   # Arrange: fresh app, open Create, load the synthetic sample case.
   open_app
   ab find testid nav-create click >/dev/null
-  ab find testid load-sample click >/dev/null
+  eval_click load-sample
   ab wait 200 >/dev/null
 
   # Assert: the fixture's drug + requested amount were prefilled.
@@ -344,7 +443,7 @@ scenario_sample_case() {
   assert_eq "sample days supply prefilled" "28" "$(ab get value "[data-testid=create-days-supply]" | tail -1)"
 
   # Act + Assert: filing from the sample case opens a request with that amount.
-  ab find testid create-submit click >/dev/null
+  eval_click create-submit
   ab wait 300 >/dev/null
   assert_eq "sample request filed (Open)" "0" "$(state_of 1)"
   assert_eq "requested amount on-chain" "5200" "$(field_of 1 requestedAmount)"
@@ -356,32 +455,732 @@ scenario_sample_case() {
 # ===========================================================================
 scenario_note_verify() {
   echo "Scenario F: verify an off-chain note copy against the on-chain hash (R3)"
+  # SPEC-0005 R23 pre-flight: 1 write (createContract), 0 arbiter calls.
+  assert_wallet_sufficient "Scenario F" 1 0 || exit 2
 
   # Arrange: file a request with a known justification, landing on Detail.
   open_app
   ab find testid nav-create click >/dev/null
   ab find testid create-note fill "VERIFY_ME canonical justification body" >/dev/null
   ab find testid create-drug fill "Adalimumab" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=HUMIRA" >/dev/null
   ab find testid create-amount fill "5200" >/dev/null
-  ab find testid create-submit click >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
+  eval_click create-submit
   ab wait 300 >/dev/null
+
+  # Reveal the blockchain-proof block (collapsed by default — the verify panel
+  # lives inside it).
+  eval_click proof-toggle
+  ab wait 100 >/dev/null
 
   # Act + Assert: the exact copy matches the committed hash…
   ab find testid verify-note-input fill "VERIFY_ME canonical justification body" >/dev/null
-  ab find testid verify-note-submit click >/dev/null
+  eval_click verify-note-submit
   ab wait 150 >/dev/null
   case "$(ab find testid verify-note-result text | tail -1)" in
-    *matches*) echo "  ✓ matching note verifies against the on-chain hash"; PASS=$((PASS + 1));;
+    *Matches*) echo "  ✓ matching note verifies against the on-chain hash"; PASS=$((PASS + 1));;
     *) echo "  ✗ matching note failed to verify"; FAIL=$((FAIL + 1));;
   esac
 
   # …and a tampered copy does not.
   ab find testid verify-note-input fill "tampered note body" >/dev/null
-  ab find testid verify-note-submit click >/dev/null
+  eval_click verify-note-submit
   ab wait 150 >/dev/null
   case "$(ab find testid verify-note-result text | tail -1)" in
-    *"does not match"*) echo "  ✓ tampered note is rejected"; PASS=$((PASS + 1));;
+    *"Does not match"*) echo "  ✓ tampered note is rejected"; PASS=$((PASS + 1));;
     *) echo "  ✗ tampered note was not rejected"; FAIL=$((FAIL + 1));;
+  esac
+}
+
+# ===========================================================================
+# Scenario I — persisted DemoUser → top-bar pill + Settings card
+#   (SPEC-0005 R10/R11 storage→registry→UI loop; T75b wiring)
+#   (SPEC-0005 R12 — same-tab reactive add/remove, no page reload)
+# ===========================================================================
+scenario_persisted_users() {
+  echo "Scenario I: persisted DemoUser → top-bar pill + Settings card (R10/R11/R12)"
+
+  # Clean any prior state so the assertions read the seeded value.
+  open_app
+  ev "(()=>{localStorage.removeItem('curie:users'); return 'cleared'})()" >/dev/null
+  ev "(()=>{localStorage.setItem('curie:users', JSON.stringify([{id:'harness-bob',label:'Harness Bob',role:'insurer',address:'0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'}])); return 'seeded'})()" >/dev/null
+
+  # Reload so client.ts module init re-runs and the persisted user flows
+  # through loadUsers() → profileConfig → ProfileRegistry.
+  open_app
+
+  # Top-bar role pill for the persisted user must be rendered.
+  assert_eq "persisted user appears as a top-bar pill" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-harness-bob]'))")"
+
+  # Settings → Active profile must include the persisted user as a card.
+  ab find testid nav-settings click >/dev/null
+  ab wait 300 >/dev/null
+  case "$(ev "Array.from(document.querySelectorAll('.profile-card .profile-card-label')).map(e=>e.innerText).join('|')")" in
+    *Harness*Bob*) echo "  ✓ persisted user appears as a Settings card"; PASS=$((PASS + 1));;
+    *) echo "  ✗ persisted user missing from Settings cards"; FAIL=$((FAIL + 1));;
+  esac
+
+  # ---- R12: add a user via Settings → pill row updates WITHOUT reload. ----
+  # Fill the add-user form, submit, then immediately re-query the top-bar.
+  ev "(()=>{const el=document.querySelector('[data-testid=users-add-label]');const setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter.call(el,'Harness Carla');el.dispatchEvent(new Event('input',{bubbles:true}));return 'set-label'})()" >/dev/null
+  ev "(()=>{const el=document.querySelector('[data-testid=users-add-address]');const setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter.call(el,'0xcccccccccccccccccccccccccccccccccccccccc');el.dispatchEvent(new Event('input',{bubbles:true}));return 'set-addr'})()" >/dev/null
+  ev "(()=>{const el=document.querySelector('[data-testid=users-add-role]');const setter=Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value').set;setter.call(el,'observer');el.dispatchEvent(new Event('change',{bubbles:true}));return 'set-role'})()" >/dev/null
+  ev "(()=>{document.querySelector('[data-testid=users-add-submit]').click();return 'submitted'})()" >/dev/null
+  ab wait 200 >/dev/null
+  assert_eq "R12: new pill appears without reload" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-harness-carla]'))")"
+
+  # ---- R12: remove the user → pill row drops it WITHOUT reload. ----
+  ev "(()=>{document.querySelector('[data-testid=users-remove-harness-carla]').click();return 'removed'})()" >/dev/null
+  ab wait 200 >/dev/null
+  assert_eq "R12: pill removed without reload" "false" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-harness-carla]'))")"
+
+  # Cleanup so subsequent runs start from a known state.
+  ev "(()=>{localStorage.removeItem('curie:users'); return 'cleared'})()" >/dev/null
+}
+
+# ===========================================================================
+# Scenario J — demo-mode quick-switch hides + restores the legacy seed pills
+#   (SPEC-0005 R13)
+# ===========================================================================
+scenario_demo_mode() {
+  echo "Scenario J: demo-mode toggle hides/shows legacy seed pills (R13)"
+
+  # Reset to known state: demoMode unset (defaults ON), no custom users.
+  open_app
+  ev "(()=>{localStorage.removeItem('curie:demoMode'); localStorage.removeItem('curie:users'); return 'cleared'})()" >/dev/null
+  open_app
+
+  # With demoMode default ON, the legacy seed pills are rendered.
+  assert_eq "default demoMode ON: provider pill rendered" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-provider]'))")"
+  assert_eq "default demoMode ON: insurer pill rendered" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-insurer]'))")"
+
+  # Toggle OFF via the Settings panel (no page reload).
+  ab find testid nav-settings click >/dev/null
+  ab wait 250 >/dev/null
+  assert_eq "Settings: demo-mode toggle starts ON" "on" \
+    "$(ev "document.querySelector('[data-testid=demo-mode-toggle]').getAttribute('data-state')")"
+  ev "(()=>{document.querySelector('[data-testid=demo-mode-toggle]').click();return 'toggled'})()" >/dev/null
+  ab wait 200 >/dev/null
+  assert_eq "Settings: demo-mode toggle flipped OFF" "off" \
+    "$(ev "document.querySelector('[data-testid=demo-mode-toggle]').getAttribute('data-state')")"
+
+  # Seed pills must disappear from the top bar without a reload.
+  assert_eq "demoMode OFF: provider pill hidden" "false" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-provider]'))")"
+  assert_eq "demoMode OFF: insurer pill hidden" "false" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-insurer]'))")"
+
+  # Toggle back ON; seed pills reappear.
+  ev "(()=>{document.querySelector('[data-testid=demo-mode-toggle]').click();return 'toggled'})()" >/dev/null
+  ab wait 200 >/dev/null
+  assert_eq "demoMode ON again: provider pill restored" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-provider]'))")"
+
+  # Persistence across reload: flip OFF, reload, OFF survives.
+  ev "(()=>{document.querySelector('[data-testid=demo-mode-toggle]').click();return 'toggled'})()" >/dev/null
+  ab wait 100 >/dev/null
+  open_app
+  assert_eq "demoMode OFF persists across reload" "false" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-provider]'))")"
+
+  # Cleanup.
+  ev "(()=>{localStorage.removeItem('curie:demoMode'); return 'cleared'})()" >/dev/null
+}
+
+# ===========================================================================
+# Scenario K — Settings → Users key-paste derives the address (SPEC-0005 R11)
+#   Uses the well-known privkey 0x11..11 → 0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A.
+#   Asserts: derived address auto-fills, address field becomes read-only,
+#   submit persists the derived address (not the key).
+# ===========================================================================
+scenario_key_paste_derives() {
+  echo "Scenario K: key-paste derives address (R11)"
+
+  open_app
+  ev "(()=>{localStorage.removeItem('curie:users'); return 'cleared'})()" >/dev/null
+  open_app
+  ab find testid nav-settings click >/dev/null
+  ab wait 250 >/dev/null
+
+  # Fill label.
+  ev "(()=>{const el=document.querySelector('[data-testid=users-add-label]');const setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter.call(el,'Key-Paste Bob');el.dispatchEvent(new Event('input',{bubbles:true}));return 'ok'})()" >/dev/null
+
+  # Paste the well-known privkey.
+  ev "(()=>{const el=document.querySelector('[data-testid=users-add-key]');const setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter.call(el,'0x1111111111111111111111111111111111111111111111111111111111111111');el.dispatchEvent(new Event('input',{bubbles:true}));return 'ok'})()" >/dev/null
+  ab wait 100 >/dev/null
+
+  # The address field's *displayed value* must match the derived address.
+  assert_eq "R11: address auto-derives from pasted key" \
+    "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A" \
+    "$(ev "document.querySelector('[data-testid=users-add-address]').value")"
+
+  # The address field becomes read-only while the key is present.
+  assert_eq "R11: address field is read-only when key is set" "true" \
+    "$(ev "String(document.querySelector('[data-testid=users-add-address]').readOnly)")"
+
+  # Submit; the persisted DemoUser must carry the derived address — and
+  # nothing in localStorage may contain the private key.
+  ev "(()=>{document.querySelector('[data-testid=users-add-submit]').click();return 'ok'})()" >/dev/null
+  ab wait 200 >/dev/null
+  assert_eq "R11: derived pill present after submit" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=profile-pill-key-paste-bob]'))")"
+  assert_eq "R11: persisted address matches derived" \
+    "0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A" \
+    "$(ev "JSON.parse(localStorage.getItem('curie:users'))[0].address")"
+  assert_eq "R11: private key NOT persisted under curie:users" "false" \
+    "$(ev "String((localStorage.getItem('curie:users')||'').includes('0x1111111111111111111111111111111111111111111111111111111111111111'))")"
+
+  # Invalid key keeps the address field editable (length 10 hex — too short).
+  ev "(()=>{document.querySelector('[data-testid=users-remove-key-paste-bob]').click();return 'ok'})()" >/dev/null
+  ab wait 150 >/dev/null
+  ev "(()=>{const el=document.querySelector('[data-testid=users-add-key]');const setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter.call(el,'0x1111111111');el.dispatchEvent(new Event('input',{bubbles:true}));return 'ok'})()" >/dev/null
+  ab wait 100 >/dev/null
+  assert_eq "R11: invalid key keeps address editable" "false" \
+    "$(ev "String(document.querySelector('[data-testid=users-add-address]').readOnly)")"
+
+  # Cleanup.
+  ev "(()=>{localStorage.removeItem('curie:users'); return 'cleared'})()" >/dev/null
+}
+
+# ===========================================================================
+# Scenario L3 — provider refuses the insurer's terms (SPEC-0001 R7/T7)
+#   File → engage (Ready=1) → switch to provider → click refuse-submit →
+#   ProviderRefused (state=9, terminal). Closes the affordance-coverage L3
+#   gap from docs/progress/affordance-coverage.md (refuse-submit had no
+#   prior Scenario).
+# ===========================================================================
+scenario_refuse() {
+  echo "Scenario L3: provider refuses insurer terms -> ProviderRefused (R7/T7)"
+  # SPEC-0005 R23 pre-flight: 3 writes (createContract + insurerEngage +
+  # refuse), 0 arbiter calls (refuse short-circuits before any agent fire).
+  assert_wallet_sufficient "Scenario L3" 3 0 || exit 2
+
+  # Arrange: provider files a request -> Open (state=0).
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Severe plaque psoriasis; documented failure of methotrexate." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "L3: filed in Open" "0" "$(state_of 1)"
+
+  # Insurer engages with compliant policy -> Ready (state=1) so refuse becomes
+  # available per SPEC-0001 R7 ("from Ready onward, pre-terminal").
+  ab find testid profile-pill-insurer click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  eval_click engage-load-compliant
+  eval_click engage-submit
+  ab wait 300 >/dev/null
+  assert_eq "L3: insurer engaged -> Ready" "1" "$(state_of 1)"
+
+  # Act: switch to provider and refuse.
+  ab find testid profile-pill-provider click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  eval_click refuse-submit
+  ab wait 300 >/dev/null
+
+  # Assert: state is ProviderRefused (9, terminal). Badge mirrors via Detail.tsx.
+  assert_eq "L3: refuse -> ProviderRefused (on-chain)" "9" "$(state_of 1)"
+  case "$(ab get text "[data-testid=state-badge]" | tail -1)" in
+    *Refused*) echo "  ✓ L3: UI badge reflects Provider Refused"; PASS=$((PASS + 1));;
+    *) echo "  ✗ L3: UI badge reflects Provider Refused — badge text did not contain 'Refused'"; FAIL=$((FAIL + 1));;
+  esac
+  # ProviderRefused is terminal per the SPEC-0001 state-machine table; later
+  # actions on this reqId should no longer expose refuse-submit.
+  assert_hidden "L3: refuse-submit hidden after terminal" "[data-testid=refuse-submit]"
+}
+
+# ===========================================================================
+# Scenario L1 — provider re-submits evidence after a NeedMoreEvidence ruling
+#   (SPEC-0001 R9 follow-up round; closes the L1 affordance-coverage gap)
+#   File -> engage (Ready) -> sim NeedMoreEvidence ruling (-> EvidenceRequested)
+#   -> provider fills evidence-text + clicks evidence-submit -> sim re-fires
+#   the arbiter with Approve as the next decision -> Approved (terminal).
+# ===========================================================================
+scenario_evidence_resubmit() {
+  echo "Scenario L1: evidence-submit re-fires arbiter (R9 follow-up round)"
+  # SPEC-0005 R23 pre-flight: 4 writes (createContract + insurerEngage +
+  # requestAdjudication + submitEvidence) + 2 arbiter rulings
+  # (NeedMoreEvidence then Approve).
+  assert_wallet_sufficient "Scenario L1" 4 2 || exit 2
+
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Severe plaque psoriasis; methotrexate failure documented." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "L1: filed in Open" "0" "$(state_of 1)"
+
+  # Insurer engages compliant policy -> Ready.
+  ab find testid profile-pill-insurer click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  eval_click engage-load-compliant
+  eval_click engage-submit
+  ab wait 300 >/dev/null
+  assert_eq "L1: insurer engaged -> Ready" "1" "$(state_of 1)"
+
+  # First adjudication with sim decision = NeedMoreEvidence (-> EvidenceRequested).
+  eval_click decision-evidence
+  eval_click adjudicate-submit
+  ab wait 1800 >/dev/null
+  assert_eq "L1: AI ruling NeedMoreEvidence -> EvidenceRequested" "3" "$(state_of 1)"
+
+  # Provider re-submits evidence. Prime the sim's NEXT decision = Approve so
+  # the re-fired agent resolves rather than looping; populate evidence-text
+  # via the DOM-set pattern (the input is a controlled component).
+  ab find testid profile-pill-provider click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  ev "window.__curie.setNextDecision(0); 1" >/dev/null         # 0 = Decision.Approve
+  ev "window.__curie.setNextCostPlusUnitPrice(2100n); 1" >/dev/null
+  ev "window.__curie.setNextNadacUnitPrice(2000n); 1" >/dev/null
+  ev "(()=>{const el=document.querySelector('[data-testid=evidence-text]');const setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(el,'https://www.nejm.org/doi/10.1056/NEJMoa1503824');el.dispatchEvent(new Event('input',{bubbles:true}));return 'ok'})()" >/dev/null
+  eval_click evidence-submit
+  ab wait 1800 >/dev/null
+
+  # Assert: re-fired arbiter resolved -> Approved; round counter advanced.
+  assert_eq "L1: evidence-submit re-fires arbiter -> Approved (next decision)" "4" "$(state_of 1)"
+  case "$(ev "(async()=>String((await window.__curie.negotiation.getNegotiation(1n)).round))()")" in
+    [1-9]*) echo "  ✓ L1: round counter advanced (>=1) after resubmission"; PASS=$((PASS + 1));;
+    *) echo "  ✗ L1: round counter did not advance"; FAIL=$((FAIL + 1));;
+  esac
+}
+
+# ===========================================================================
+# Scenario L2 — provider appeals a Denied ruling with new evidence (R12)
+#   (SPEC-0001 R12 appeal flow; closes the L2 affordance-coverage gap)
+#   File -> engage (Ready) -> sim Deny ruling (-> Denied) -> provider fills
+#   appeal-evidence + clicks appeal-submit -> sim re-fires arbiter with
+#   Approve as the next decision -> Approved (round counter advanced).
+# ===========================================================================
+scenario_appeal() {
+  echo "Scenario L2: appeal-submit re-fires arbiter from Denied (R12 / appeal-ladder)"
+  # SPEC-0005 R23 pre-flight: 4 writes (createContract + insurerEngage +
+  # requestAdjudication + appeal) + 2 arbiter rulings (Deny then Approve).
+  assert_wallet_sufficient "Scenario L2" 4 2 || exit 2
+
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Severe plaque psoriasis; methotrexate failure documented." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "L2: filed in Open" "0" "$(state_of 1)"
+
+  # Insurer engages compliant policy -> Ready.
+  ab find testid profile-pill-insurer click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  eval_click engage-load-compliant
+  eval_click engage-submit
+  ab wait 300 >/dev/null
+  assert_eq "L2: insurer engaged -> Ready" "1" "$(state_of 1)"
+
+  # First adjudication with sim decision = Deny (-> Denied state 5, ruled=true).
+  eval_click decision-deny
+  eval_click adjudicate-submit
+  ab wait 1800 >/dev/null
+  assert_eq "L2: AI ruling Deny -> Denied" "5" "$(state_of 1)"
+
+  # Provider appeals: prime sim NEXT decision = Approve so the re-fire
+  # resolves the loop; fill appeal-evidence via the controlled-input pattern.
+  ab find testid profile-pill-provider click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  ev "window.__curie.setNextDecision(0); 1" >/dev/null         # 0 = Decision.Approve
+  ev "window.__curie.setNextCostPlusUnitPrice(2100n); 1" >/dev/null
+  ev "window.__curie.setNextNadacUnitPrice(2000n); 1" >/dev/null
+  ev "(()=>{const el=document.querySelector('[data-testid=appeal-evidence]');const setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(el,'https://www.nejm.org/doi/10.1056/NEJMoa1503824');el.dispatchEvent(new Event('input',{bubbles:true}));return 'ok'})()" >/dev/null
+  eval_click appeal-submit
+  ab wait 1800 >/dev/null
+
+  # Assert: re-fired arbiter resolved -> Approved; round counter advanced.
+  assert_eq "L2: appeal-submit re-fires arbiter -> Approved (next decision)" "4" "$(state_of 1)"
+  case "$(ev "(async()=>String((await window.__curie.negotiation.getNegotiation(1n)).round))()")" in
+    [1-9]*) echo "  ✓ L2: round counter advanced (>=1) after appeal"; PASS=$((PASS + 1));;
+    *) echo "  ✗ L2: round counter did not advance"; FAIL=$((FAIL + 1));;
+  esac
+}
+
+# ===========================================================================
+# Scenario L4 — provider withdraws an open request (SPEC-0001 Withdrawn state)
+#   Closes the L4 affordance-coverage gap. The withdraw-submit button is the
+#   only path to State.Withdrawn (10, terminal); contract guard is just
+#   _onlyParty + !_terminal, so this fires from Open without an insurer engage.
+# ===========================================================================
+scenario_withdraw() {
+  echo "Scenario L4: provider withdraws open request -> Withdrawn"
+  # SPEC-0005 R23 pre-flight: 2 writes (createContract + withdraw), 0 arbiter.
+  assert_wallet_sufficient "Scenario L4" 2 0 || exit 2
+
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Provider files then immediately withdraws." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "L4: filed in Open" "0" "$(state_of 1)"
+
+  # Withdraw is available to either party from any non-terminal state.
+  eval_click withdraw-submit
+  ab wait 300 >/dev/null
+  assert_eq "L4: withdraw -> Withdrawn (terminal)" "10" "$(state_of 1)"
+  case "$(ab get text "[data-testid=state-badge]" | tail -1)" in
+    *Withdrawn*) echo "  ✓ L4: UI badge reflects Withdrawn"; PASS=$((PASS + 1));;
+    *) echo "  ✗ L4: UI badge did not contain 'Withdrawn'"; FAIL=$((FAIL + 1));;
+  esac
+  assert_hidden "L4: withdraw-submit hidden after terminal" "[data-testid=withdraw-submit]"
+}
+
+# ===========================================================================
+# Scenario L10 — payer-line selection round-trips to on-chain (R20)
+#   Closes the L10 affordance-coverage gap. File a request with the
+#   payer-line dropdown explicitly set to Commercial (value=1, NOT the
+#   default PartD=0), then read getNegotiation(reqId).payerLine and assert
+#   it survived the wire round-trip — guards against the "field collapses
+#   to default" failure mode where a form field is rendered but never
+#   piped into the on-chain createContract args.
+# ===========================================================================
+scenario_payer_line() {
+  echo "Scenario L10: create-payer-line round-trips (SPEC-0004 §2.5 ladder selection)"
+  # SPEC-0005 R23 pre-flight: 1 write (createContract), 0 arbiter calls.
+  assert_wallet_sufficient "Scenario L10" 1 0 || exit 2
+
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Routine follow-up; testing payer-line round-trip." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "1200" >/dev/null
+  ab find testid create-quantity fill "1" >/dev/null
+  ab find testid create-days-supply fill "30" >/dev/null
+
+  # PayerLine enum values: PartD=0 (default), Commercial=1, Medicaid=2.
+  # Selecting a non-default value forces the form to actually pipe the
+  # user choice through to createContract — a default-only test would
+  # pass even if the field were broken.
+  ev "(()=>{const el=document.querySelector('[data-testid=create-payer-line]');const setter=Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value').set;setter.call(el,'1');el.dispatchEvent(new Event('change',{bubbles:true}));return el.value})()" >/dev/null
+  ab wait 100 >/dev/null
+
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "L10: filed in Open" "0" "$(state_of 1)"
+  assert_eq "L10: payerLine on-chain == 1 (Commercial)" "1" "$(field_of 1 payerLine)"
+}
+
+# ===========================================================================
+# Scenario L7 — custom-policy composer reaches Ready with a non-zero
+#   policyHash (SPEC-0005 R15 + R16; closes the L7 affordance-coverage gap)
+#   File -> insurer engage with the CUSTOM-policy path: select
+#   engage-policy-custom, fill custom-policy-name + custom-policy-clauses,
+#   inspect policy-preview (R16 hash readout), submit engage. The composed
+#   text is the canonical buildCustomPolicyText shape; the on-chain
+#   policyHash must be the keccak256 of that text — verified here just by
+#   asserting it lands as a NON-zero bytes32 (a tighter exact-hash check
+#   would require plumbing buildCustomPolicyText through the test API;
+#   non-zero confirms the composer's hash actually fired and the path
+#   isn't silently using a curated default).
+# ===========================================================================
+scenario_custom_policy() {
+  echo "Scenario L7: custom-policy composer engages with non-zero policyHash (R15/R16)"
+  # SPEC-0005 R23 pre-flight: 2 writes (createContract + insurerEngage),
+  # 0 arbiter calls.
+  assert_wallet_sufficient "Scenario L7" 2 0 || exit 2
+
+  # Provider files.
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Custom-policy composer round-trip test." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "L7: filed in Open" "0" "$(state_of 1)"
+
+  # Switch to insurer, reopen Detail (R8 nav rule), open the custom-policy path.
+  ab find testid profile-pill-insurer click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  eval_click engage-policy-custom
+  ab wait 100 >/dev/null
+
+  # Fill composer fields via the controlled-input DOM-set pattern.
+  # Single-clause body sidesteps the bash → JS newline-escape coalescing
+  # that the tick-103 multi-line variant tripped on (see
+  # docs/progress/browser-verify.md tick-103 L7 finding). The R15 + R16
+  # spec text only requires "name + 1..N clauses" — one clause exercises
+  # the composer + the policy-preview hash readout end-to-end.
+  ev "(()=>{const el=document.querySelector('[data-testid=custom-policy-name]');const s=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;s.call(el,'Plan-X PA criteria');el.dispatchEvent(new Event('input',{bubbles:true}));return el.value})()" >/dev/null
+  ev "(()=>{const el=document.querySelector('[data-testid=custom-policy-clauses]');const s=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;s.call(el,'Must approve under PA');el.dispatchEvent(new Event('input',{bubbles:true}));return el.value.length})()" >/dev/null
+  ab wait 150 >/dev/null
+
+  # R16 policy-preview should report "1 clause" (singular per
+  # Detail.tsx:766 `clause${clauseCount === 1 ? "" : "s"}`). Read the
+  # element's textContent via eval — `ab get text` returns only one
+  # descendant node, not the full subtree (verified during the tick-104
+  # debug; it would return just the hash-preview footer here).
+  case "$(ev "(document.querySelector('[data-testid=policy-preview]')||{}).textContent||''")" in
+    *"1 clause"*) echo "  ✓ L7: R16 policy-preview reports 1 clause"; PASS=$((PASS + 1));;
+    *) echo "  ✗ L7: policy-preview did not show '1 clause' — textContent=[$(ev "(document.querySelector('[data-testid=policy-preview]')||{}).textContent||''")]"; FAIL=$((FAIL + 1));;
+  esac
+
+  # Submit engage → Ready (state=1) with a non-zero policyHash.
+  eval_click engage-submit
+  ab wait 400 >/dev/null
+  assert_eq "L7: engage with custom policy -> Ready" "1" "$(state_of 1)"
+  case "$(field_of 1 policyHash)" in
+    0x0000000000000000000000000000000000000000000000000000000000000000)
+      echo "  ✗ L7: policyHash is ZERO_HASH — composer didn't commit anything"; FAIL=$((FAIL + 1));;
+    0x[0-9a-fA-F]*)
+      echo "  ✓ L7: policyHash is non-zero (custom policy committed)"; PASS=$((PASS + 1));;
+    *)
+      echo "  ✗ L7: policyHash unexpected shape: $(field_of 1 policyHash)"; FAIL=$((FAIL + 1));;
+  esac
+}
+
+# ===========================================================================
+# Scenario L5 — provider posts feedback note (SPEC-0001 R20 — postFeedback)
+#   Closes the L5 affordance-coverage gap. The feedback-submit button calls
+#   client.negotiation.postFeedback(reqId, hashContent(text), ZERO_HASH);
+#   contract guard is just !_terminal + _onlyParty (per
+#   CoverageNegotiation.sol:540-546). Pre-terminal — so we fire from Open
+#   without needing a full happy-path setup. Post-success the onClick
+#   handler clears the feedback state to "" (Detail.tsx:970), so a passing
+#   click yields an empty input — the assertion target.
+# ===========================================================================
+scenario_feedback() {
+  echo "Scenario L5: provider posts feedback note (postFeedback)"
+  # SPEC-0005 R23 pre-flight: 2 writes (createContract + postFeedback),
+  # 0 arbiter calls.
+  assert_wallet_sufficient "Scenario L5" 2 0 || exit 2
+
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Routine; testing feedback note path." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "1200" >/dev/null
+  ab find testid create-quantity fill "1" >/dev/null
+  ab find testid create-days-supply fill "30" >/dev/null
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "L5: filed in Open" "0" "$(state_of 1)"
+
+  # Fill feedback-text (Detail.tsx shows the panel when canFeedback =
+  # !view.terminal && isParty — both true here for the active provider).
+  ab find testid feedback-text fill "Patient confirms prior methotrexate trial." >/dev/null
+  ab wait 100 >/dev/null
+
+  # Click feedback-submit — the onClick at Detail.tsx:966 awaits
+  # postFeedback then setFeedback(""). A successful chain call clears
+  # the input; a revert leaves the input populated AND surfaces the
+  # error-card (also asserted negatively below).
+  eval_click feedback-submit
+  ab wait 400 >/dev/null
+
+  assert_eq "L5: feedback input cleared after successful postFeedback" "" \
+    "$(ev "document.querySelector('[data-testid=feedback-text]').value")"
+  assert_eq "L5: error-card NOT shown (postFeedback succeeded)" "false" \
+    "$(ev "String(!!document.querySelector('[data-testid=error-card]'))")"
+}
+
+# ===========================================================================
+# Scenario M1 — Approve-twin for Scenario A: full Deny -> both accept ->
+#   Settled happy path (SPEC-0005 §3.6 R21 — every arbiter-reaching flow
+#   covers both approval AND denial paths). Mirrors A's flow with sim
+#   decision = Deny; settle() accepts both Approved AND Denied per
+#   CoverageNegotiation.sol:settle(), and coveredAmount on a Denied
+#   ruling is 0 — assert both.
+# ===========================================================================
+scenario_happy_path_denial() {
+  echo "Scenario M1: denial happy-path (file -> engage -> Deny -> both accept -> Settled)"
+  # SPEC-0005 R23 pre-flight: 6 writes (createContract + insurerEngage +
+  # requestAdjudication + accept × 2 + settle) + 1 arbiter ruling.
+  assert_wallet_sufficient "Scenario M1" 6 1 || exit 2
+
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Identical setup to Scenario A — only the ruling flips." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "M1: filed in Open" "0" "$(state_of 1)"
+
+  # Insurer engages compliant policy -> Ready.
+  ab find testid profile-pill-insurer click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  eval_click engage-load-compliant
+  eval_click engage-submit
+  ab wait 300 >/dev/null
+  assert_eq "M1: insurer engaged -> Ready" "1" "$(state_of 1)"
+
+  # Sim Deny ruling -> Denied (state=5). coveredAmount stays 0.
+  eval_click decision-deny
+  eval_click adjudicate-submit
+  ab wait 1800 >/dev/null
+  assert_eq "M1: Deny ruling routes to Denied" "5" "$(state_of 1)"
+  assert_eq "M1: covered=0 on Denied" "0" "$(field_of 1 coveredAmount)"
+
+  # Both parties accept the Denied ruling. settle() accepts both
+  # Approved AND Denied (CoverageNegotiation.sol:settle require).
+  eval_click accept-submit                         # insurer still active
+  ab wait 200 >/dev/null
+  ab find testid profile-pill-provider click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  eval_click accept-submit                         # provider accepts
+  ab wait 200 >/dev/null
+  eval_click settle-submit
+  ab wait 300 >/dev/null
+  assert_eq "M1: settle on Denied -> Settled (terminal)" "6" "$(state_of 1)"
+  assert_eq "M1: covered=0 carries through to Settled" "0" "$(field_of 1 coveredAmount)"
+}
+
+# ===========================================================================
+# Scenario M2 — Deny-twin for Scenario L1 (SPEC-0005 §3.6 R21 — both
+#   arbiter outcomes covered for every follow-up-round flow). L1 ends
+#   with sim re-fire = Approve; M2 ends with sim re-fire = Deny. Same
+#   setup, opposite next-decision; round counter still advances.
+# ===========================================================================
+scenario_evidence_resubmit_denial() {
+  echo "Scenario M2: evidence-submit re-fires arbiter -> Denied (R9 follow-up, twin of L1)"
+  # SPEC-0005 R23 pre-flight: 4 writes (createContract + insurerEngage +
+  # requestAdjudication + submitEvidence) + 2 arbiter rulings
+  # (NeedMoreEvidence then Deny).
+  assert_wallet_sufficient "Scenario M2" 4 2 || exit 2
+
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Same setup as L1 — the re-fired ruling flips to Deny." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "M2: filed in Open" "0" "$(state_of 1)"
+
+  # Insurer engages compliant policy -> Ready.
+  ab find testid profile-pill-insurer click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  eval_click engage-load-compliant
+  eval_click engage-submit
+  ab wait 300 >/dev/null
+  assert_eq "M2: insurer engaged -> Ready" "1" "$(state_of 1)"
+
+  # First adjudication with sim decision = NeedMoreEvidence (-> EvidenceRequested).
+  eval_click decision-evidence
+  eval_click adjudicate-submit
+  ab wait 1800 >/dev/null
+  assert_eq "M2: AI ruling NeedMoreEvidence -> EvidenceRequested" "3" "$(state_of 1)"
+
+  # Provider re-submits evidence with sim NEXT decision = Deny (1).
+  ab find testid profile-pill-provider click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  ev "window.__curie.setNextDecision(1); 1" >/dev/null   # 1 = Decision.Deny
+  ev "(()=>{const el=document.querySelector('[data-testid=evidence-text]');const setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(el,'https://www.nejm.org/doi/10.1056/NEJMoa1503824');el.dispatchEvent(new Event('input',{bubbles:true}));return 'ok'})()" >/dev/null
+  eval_click evidence-submit
+  ab wait 1800 >/dev/null
+
+  # Assert: re-fired arbiter resolved -> Denied; round counter advanced.
+  assert_eq "M2: evidence-submit re-fires arbiter -> Denied (next decision)" "5" "$(state_of 1)"
+  case "$(ev "(async()=>String((await window.__curie.negotiation.getNegotiation(1n)).round))()")" in
+    [1-9]*) echo "  ✓ M2: round counter advanced (>=1) after resubmission"; PASS=$((PASS + 1));;
+    *) echo "  ✗ M2: round counter did not advance"; FAIL=$((FAIL + 1));;
+  esac
+}
+
+# ===========================================================================
+# Scenario M3 — Deny-twin for Scenario L2 (SPEC-0005 §3.6 R21 — both
+#   outcomes of an appeal flow). L2 ends with the appeal re-fire =
+#   Approve; M3 ends with the appeal re-fire = Deny (a second Denied
+#   ruling at round+1). The Deadlocked terminal — appealing at
+#   round >= maxRounds — is a separate scenario (queued as M3-deadlock).
+# ===========================================================================
+scenario_appeal_denial() {
+  echo "Scenario M3: appeal-submit re-fires arbiter -> Denied (R12 twin of L2)"
+  # SPEC-0005 R23 pre-flight: 4 writes + 2 arbiter rulings.
+  assert_wallet_sufficient "Scenario M3" 4 2 || exit 2
+
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Same setup as L2 — the appeal re-fire produces a second Denied." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "M3: filed in Open" "0" "$(state_of 1)"
+
+  # Insurer engages compliant policy -> Ready.
+  ab find testid profile-pill-insurer click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  eval_click engage-load-compliant
+  eval_click engage-submit
+  ab wait 300 >/dev/null
+  assert_eq "M3: insurer engaged -> Ready" "1" "$(state_of 1)"
+
+  # First adjudication with sim decision = Deny (-> Denied state 5).
+  eval_click decision-deny
+  eval_click adjudicate-submit
+  ab wait 1800 >/dev/null
+  assert_eq "M3: first AI ruling Deny -> Denied" "5" "$(state_of 1)"
+
+  # Provider appeals with sim NEXT decision = Deny (1) again -> re-fired
+  # ruling still Denied; round counter advanced.
+  ab find testid profile-pill-provider click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  ev "window.__curie.setNextDecision(1); 1" >/dev/null   # 1 = Decision.Deny
+  ev "(()=>{const el=document.querySelector('[data-testid=appeal-evidence]');const setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(el,'https://www.nejm.org/doi/10.1056/NEJMoa1503824');el.dispatchEvent(new Event('input',{bubbles:true}));return 'ok'})()" >/dev/null
+  eval_click appeal-submit
+  ab wait 1800 >/dev/null
+
+  assert_eq "M3: appeal re-fire still Deny -> Denied" "5" "$(state_of 1)"
+  case "$(ev "(async()=>String((await window.__curie.negotiation.getNegotiation(1n)).round))()")" in
+    [1-9]*) echo "  ✓ M3: round counter advanced (>=1) after appeal"; PASS=$((PASS + 1));;
+    *) echo "  ✗ M3: round counter did not advance"; FAIL=$((FAIL + 1));;
   esac
 }
 
@@ -400,6 +1199,19 @@ scenario_sample_case;         echo
 scenario_note_verify;         echo
 scenario_observer;            echo
 scenario_cds_prefill;         echo
+scenario_persisted_users;     echo
+scenario_demo_mode;           echo
+scenario_key_paste_derives;   echo
+scenario_refuse;              echo
+scenario_evidence_resubmit;   echo
+scenario_appeal;              echo
+scenario_withdraw;            echo
+scenario_payer_line;          echo
+scenario_custom_policy;       echo
+scenario_feedback;            echo
+scenario_happy_path_denial;   echo
+scenario_evidence_resubmit_denial; echo
+scenario_appeal_denial;       echo
 
 echo "──────────────────────────────────────────"
 echo "agent-browser E2E: $PASS passed, $FAIL failed"

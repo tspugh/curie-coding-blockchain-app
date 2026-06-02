@@ -14,6 +14,11 @@
  * to the on-chain record.
  */
 
+import { PayerLine } from "../protocol/ladders.js";
+
+/** Re-export for consumers that deep-import from this module. */
+export { PayerLine } from "../protocol/ladders.js";
+
 /**
  * Request lifecycle state. Numeric values match the Solidity `enum State`
  * declaration order EXACTLY (Open = 0 … Withdrawn = 10).
@@ -123,6 +128,10 @@ export interface Negotiation {
   readonly hasRuling: boolean;
   /** Adjudication round count (bounded to maxRounds — R6c). */
   readonly round: bigint;
+  /** Payer line governing the appeal ladder (SPEC-0004 R13). */
+  readonly payerLine: PayerLine;
+  /** Current position in the payer-line appeal ladder (0 = Initial Determination). */
+  readonly appealRound: number;
   /** Whether the provider has accepted the current ruling. */
   readonly providerAccepted: boolean;
   /** Whether the insurer has accepted the current ruling. */
@@ -178,6 +187,7 @@ export type CoverageEventName =
   | "InsurerEngaged"
   | "ContractReady"
   | "AdjudicationRequested"
+  | "PacketSubmitted"
   | "RulingRequested"
   | "Ruled"
   | "PolicyFlagged"
@@ -240,6 +250,20 @@ export interface RulingRequestedEvent extends BaseEvent {
   readonly fee: bigint;
 }
 
+/**
+ * SPEC-0004 §3.5 PacketSubmitted: emitted on every agent fire (initial
+ * `requestAdjudication`, `submitEvidence`, and `appeal`) so off-chain indexers
+ * and the Curie packet store can correlate the on-chain ruling request with the
+ * off-chain packet body. `packetRoot` and `packetUrl` carry the evidenceUri
+ * (bytes32) until UNIT-9 lands the Merkle root + the body-store URL.
+ */
+export interface PacketSubmittedEvent extends BaseEvent {
+  readonly name: "PacketSubmitted";
+  readonly round: bigint;
+  readonly packetRoot: string;
+  readonly packetUrl: string;
+}
+
 export interface RuledEvent extends BaseEvent {
   readonly name: "Ruled";
   readonly requestId: bigint;
@@ -248,6 +272,12 @@ export interface RuledEvent extends BaseEvent {
   readonly rationaleHash: string;
   readonly clauseRef: string;
   readonly receiptId: bigint;
+  // SPEC-0004 §3.5 R23: clause indices voided per R23's on-label-policy-void path (amendment 0005).
+  readonly policyVoidedClauseIndices: readonly number[];
+  /** SPEC-0004 §3.5 R11: packet-entry indices the ruling relied on. */
+  readonly usedReferenceIndices: readonly number[];
+  /** SPEC-0004 §3.5 R11: leaf hashes for the cited references (replay-verification anchor). */
+  readonly usedLeafHashes: readonly `0x${string}`[];
 }
 
 export interface PolicyFlaggedEvent extends BaseEvent {
@@ -321,6 +351,7 @@ export type CoverageEvent =
   | InsurerEngagedEvent
   | ContractReadyEvent
   | AdjudicationRequestedEvent
+  | PacketSubmittedEvent
   | RulingRequestedEvent
   | RuledEvent
   | PolicyFlaggedEvent

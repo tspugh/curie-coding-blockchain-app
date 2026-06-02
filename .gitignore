@@ -31,8 +31,6 @@ public/curie-live-demo.webm
 scripts/record-live-demo.mjs
 remotion/*
 .claude/*
-# ...but DO track agents/skills/hooks (see comment above) — they are intentionally
-# shipped to judges. Only generated/local artifacts (settings, codebase, graph) stay ignored.
 !.claude/agents/
 !.claude/skills/
 !.claude/hooks/

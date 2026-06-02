@@ -18,7 +18,15 @@ export {
   type PriceBasis,
   type EventFilter,
 } from "./types.js";
-export { SimulatedBackend, type SimulatedAgentOptions, ZERO_HASH, ANY_CALLER } from "./simulated.js";
+export {
+  SimulatedBackend,
+  type SimulatedAgentOptions,
+  ZERO_HASH,
+  ANY_CALLER,
+  setNextPolicyVoidedClauseIndices,
+  setNextUsedReferenceIndices,
+  setNextUsedLeafHashes,
+} from "./simulated.js";
 export { RealBackend, type RealBackendOptions, type TxConfirmedDetail } from "./real.js";
 export { COVERAGE_NEGOTIATION_ABI } from "./abi.js";
 

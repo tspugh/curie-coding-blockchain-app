@@ -11,7 +11,7 @@ import { test } from "node:test";
 
 import { ethers } from "ethers";
 
-import { Decision, State } from "../types/coverage.types.js";
+import { Decision, PayerLine, State } from "../types/coverage.types.js";
 import { ANY_CALLER, SimulatedBackend } from "./simulated.js";
 import type { CreateContractParams } from "./types.js";
 
@@ -42,6 +42,7 @@ function params(over: Partial<CreateContractParams> = {}): CreateContractParams 
     daysSupply: 30n,
     justificationHash: JUSTIFICATION_HASH,
     evidenceUri: EVIDENCE_URI,
+    payerLine: PayerLine.PartD,
     ...over,
   };
 }
@@ -124,18 +125,45 @@ test("party actions reject a third wallet with matching messages", async () => {
   assert.equal(n.providerAddr, PROVIDER);
 });
 
-test("single shared wallet (R12): one address acts as both parties", async () => {
+test("R2b (SPEC-0004 §2.1): self-contract (providerAddr == insurerAddr) is rejected at createContract", async () => {
+  // SPEC-0004 R2b supersedes SPEC-0001 R13's permissive self-claim. The single-shared-wallet
+  // scenario that was valid under R13 is no longer supported.
   const b = backend();
   const solo = PROVIDER;
   b.setCaller(solo);
-  const reqId = await b.createContract(params({ providerAddr: solo, insurerAddr: solo }));
-  await b.insurerEngage(reqId, POLICY_HASH, POLICY_URI); // same wallet, insurer side
-  await b.requestAdjudication(reqId);
-  b.resolve(reqId, Decision.Approve);
-  await b.accept(reqId, PROVIDER_ID);
-  await b.accept(reqId, INSURER_ID);
-  await b.settle(reqId);
-  assert.equal(await b.stateOf(reqId), State.Settled);
+  await assert.rejects(
+    () => b.createContract(params({ providerAddr: solo, insurerAddr: solo })),
+    (e: unknown) => {
+      assert.equal((e as Error).message, "create: self-contract");
+      return true;
+    },
+  );
+});
+
+test("UNIT-2-followup-B (sim): createContract guards order — addr: zero precedes create: self-contract", async () => {
+  // Pins the simulated backend's revert ordering to match the on-chain contract.
+  // If sim and real diverge here, the same input would produce different revert
+  // strings across modes — silent test-fidelity regression.
+  const ZERO = "0x0000000000000000000000000000000000000000";
+  const b = backend();
+  b.setCaller(PROVIDER);
+  const expect = async (
+    providerAddr: string,
+    insurerAddr: string,
+    msg: string,
+  ): Promise<void> => {
+    await assert.rejects(
+      () => b.createContract(params({ providerAddr, insurerAddr })),
+      (e: unknown) => {
+        assert.equal((e as Error).message, msg);
+        return true;
+      },
+    );
+  };
+  await expect(ZERO, PROVIDER, "addr: zero");
+  await expect(PROVIDER, ZERO, "addr: zero");
+  await expect(ZERO, ZERO, "addr: zero"); // NOT "create: self-contract"
+  await expect(PROVIDER, PROVIDER, "create: self-contract");
 });
 
 test("ANY_CALLER wildcard preserves back-compat (no gating)", async () => {
@@ -145,4 +173,115 @@ test("ANY_CALLER wildcard preserves back-compat (no gating)", async () => {
   await b.insurerEngage(reqId, POLICY_HASH, POLICY_URI); // would be insurer-only if gated
   await b.requestAdjudication(reqId);
   assert.equal(await b.stateOf(reqId), State.UnderReview);
+});
+
+// -----------------------------------------------------------------------
+// UNIT-2-followup-A (simulated parity): appeal() reverts from every
+// non-Denied state with "appeal: prior ruling not Deny".
+//
+// Mirrors the hardhat parameterized suite in CoverageNegotiation.test.ts.
+// Uses ANY_CALLER (wildcard) so auth gates don't mask the state-guard check.
+// -----------------------------------------------------------------------
+test("UNIT-2-followup-A (sim): appeal reverts from every non-Denied state", async () => {
+  // Helper: fresh backend with autoResolve OFF (wildcard caller for state-guard isolation).
+  function fresh() {
+    return new SimulatedBackend({ autoResolve: false });
+  }
+
+  // Helper: create → engage → adjudicate (leaves negotiation UnderReview).
+  async function cea(b: SimulatedBackend) {
+    const reqId = await b.createContract(params());
+    await b.insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+    await b.requestAdjudication(reqId);
+    return reqId;
+  }
+
+  const assertReverts = async (fn: () => Promise<unknown>) =>
+    rejects(fn, "appeal: prior ruling not Deny");
+
+  // Ready
+  {
+    const b = fresh();
+    const reqId = await b.createContract(params());
+    await b.insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+    assert.equal(await b.stateOf(reqId), State.Ready);
+    await assertReverts(() => b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH));
+  }
+
+  // UnderReview
+  {
+    const b = fresh();
+    const reqId = await cea(b);
+    assert.equal(await b.stateOf(reqId), State.UnderReview);
+    await assertReverts(() => b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH));
+  }
+
+  // EvidenceRequested
+  {
+    const b = fresh();
+    const reqId = await cea(b);
+    b.resolve(reqId, Decision.NeedMoreEvidence);
+    assert.equal(await b.stateOf(reqId), State.EvidenceRequested);
+    await assertReverts(() => b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH));
+  }
+
+  // Approved
+  {
+    const b = fresh();
+    const reqId = await cea(b);
+    b.resolve(reqId, Decision.Approve);
+    assert.equal(await b.stateOf(reqId), State.Approved);
+    await assertReverts(() => b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH));
+  }
+
+  // Settled (Approved → both accept → settle)
+  {
+    const b = fresh();
+    const reqId = await cea(b);
+    b.resolve(reqId, Decision.Approve);
+    await b.accept(reqId, PROVIDER_ID);
+    await b.accept(reqId, INSURER_ID);
+    await b.settle(reqId);
+    assert.equal(await b.stateOf(reqId), State.Settled);
+    await assertReverts(() => b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH));
+  }
+
+  // Deadlocked (maxRounds=1: first Deny → appeal cap-deadlocks → second appeal from Deadlocked)
+  {
+    const b = new SimulatedBackend({ autoResolve: false, maxRounds: 1n });
+    const reqId = await cea(b);
+    b.resolve(reqId, Decision.Deny);
+    // First appeal at round == maxRounds transitions to Deadlocked (no agent fire).
+    await b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH);
+    assert.equal(await b.stateOf(reqId), State.Deadlocked);
+    await assertReverts(() => b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH));
+  }
+
+  // PolicyInvalidated
+  {
+    const b = fresh();
+    const reqId = await cea(b);
+    b.resolve(reqId, Decision.PolicyInvalid);
+    assert.equal(await b.stateOf(reqId), State.PolicyInvalidated);
+    await assertReverts(() => b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH));
+  }
+
+  // ProviderRefused (create → engage → provider refuses)
+  {
+    const b = fresh();
+    const reqId = await b.createContract(params());
+    await b.insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+    await b.refuse(reqId, REASON_HASH);
+    assert.equal(await b.stateOf(reqId), State.ProviderRefused);
+    await assertReverts(() => b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH));
+  }
+
+  // Withdrawn (create → withdraw before any engage)
+  {
+    const b = fresh();
+    const reqId = await b.createContract(params());
+    await b.withdraw(reqId);
+    assert.equal(await b.stateOf(reqId), State.Withdrawn);
+    await assertReverts(() => b.appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH));
+  }
 });

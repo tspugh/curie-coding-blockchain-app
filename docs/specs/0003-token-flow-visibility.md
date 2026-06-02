@@ -338,6 +338,338 @@ SPEC-0001 R9 / R12 territory. Reconsidering whether the contract should
 auto-loop forever, or cap at a hard terminal `Deadlocked` after N timeouts, is
 a SPEC-0001 amendment-level question — captured here as a follow-up.
 
+### 2.9 (2026-05-29) Runtime wallet configurability (Decision 9 — UNIT-7a)
+
+Pragmatic decision to unblock the two-wallet demo (SPEC-0004 R2b requires
+`providerAddr != insurerAddr`, so the existing single-`.env`-key model can't
+sign as both roles). Until the production wallet-connect path lands (R25,
+R26), the dev loop needs a way to set the second key without rebuilding the
+bundle — pasted from the Settings screen, stored in `localStorage`, picked up
+on the next page load.
+
+- **R42 (MUST) UI-configurable private keys for provider + insurer.** The
+  Settings screen MUST expose a "Wallet keys" panel with two
+  `<input type="password">` fields — one for the provider key, one for the
+  insurer key — plus *Save*, *Clear all*, and per-row *Generate* affordances.
+  Values are validated as `/^0x[0-9a-fA-F]{64}$/` before being accepted.
+  Empty fields fall back to the corresponding `VITE_PRIVATE_KEY*` env value.
+  The UI displays a one-line warning: **testnet-only — never paste a key
+  controlling real funds.**
+- **R43 (MUST) `localStorage` override beats `.env`.** At client-construction
+  time, the web bundle reads each private key via a helper that probes
+  `localStorage["curie:VITE_PRIVATE_KEY*"]` first and falls back to the
+  build-time env. Only `0x`-prefixed 64-hex values are accepted from
+  storage; anything else is ignored and the env fallback wins. Keys are
+  never logged, never echoed to the DOM, and never sent over the network.
+- **R44 (MUST) Reload-to-apply.** Changes saved via the UI take effect on
+  the next page load. The UI prompts the user to reload, and offers a
+  "Reload now" button. (Hot-swap-without-reload is out of scope; see §7.)
+- **R45 (MUST) `setActiveClientProfile(id)` flips the signer on profile
+  switch.** The web client exposes two concrete clients (`providerClient`,
+  `insurerClient`) plus a Proxy-backed `client` export that dispatches every
+  property access to whichever concrete client a module-level pointer names.
+  App.tsx's profile-switch handler MUST call `setActiveClientProfile(id)`
+  BEFORE the React state update so any tx fired from the same render cycle
+  is signed by the correct wallet.
+- **R46 (SHOULD) Insurer address surfaced as a stable export.** The web
+  client exposes `INSURER_ADDRESS` derived from the insurer wallet. Create.tsx
+  uses this to populate `insurerAddr` on `createContract` so the resulting
+  on-chain Negotiation has a real two-party shape (`providerAddr` = active
+  wallet; `insurerAddr` = the second wallet's actual address). The synthetic
+  `0x...0002` placeholder used pre-UNIT-7a is removed.
+- **R47 (SHOULD) Acceptance test on Settings.** A browser-verify path drives:
+  paste a known 0x+64-hex string into "Insurer private key", click Save, click
+  Reload, switch profile to Insurer, observe the wallet chip flipping to the
+  new address (no longer matching the provider address), and observe that the
+  Network "active rulings" + wallet balance recompute against the new signer.
+
+**Security posture (informational, not a requirement):** `localStorage` is
+per-origin, plaintext, and survives until the user clears site data. This is
+acceptable for a testnet-keys-only dev affordance and is consistent with the
+"never paste a real-funds key" disclaimer. Production v0 keeps R25/R26's
+MetaMask + SIWE as the primary path; R42–R47 is the *demo-loop* convenience,
+not the production wallet model.
+
+### 2.10 (2026-05-30) Real-mode adjudication blocked by live agent ABI drift (Decision 10)
+
+*(Merged from PR #14 — `spec-amendments-agent-selector` branch — 2026-05-30.
+Originally numbered §2.9 / R42-R43 on that branch; renumbered to §2.10 /
+R48-R49 here to avoid collision with the already-landed UNIT-7a wallet-config
+decision above. Cross-spec ladder fix references that point at "R25" still
+point at SPEC-0004 R25 — unchanged.)*
+
+Token-flow visibility (Decision 1) is only meaningful if the agent fee escrow
+we display actually pays for executed agent work. A stand-alone isolation test
+on 2026-05-30 (evidence below) confirmed that **every real-mode
+`requestAdjudication` against the deployed `CoverageNegotiation` on Somnia
+testnet currently terminates with `ResponseStatus.Failed (3)`** — not because
+the LLM disagreed, but because every validator in the subcommittee rejects our
+calldata at viem ABI-decode *before any LLM or HTTP work begins*. Each
+validator's `executionCost` is effectively zero; the entire 0.30 STT per-fire
+"agent reward" portion ends up not paying for any LLM cycle.
+
+The selector our contract sends is `0x4be9280f` — derived from
+`ExtractANumber(string,string,uint256,uint256,string,string,bool,uint8)` per
+`docs.somnia.network`. The live registered ABI for agent
+`12875401142070969085` does not contain that selector. The deployed
+`contracts/contracts/CoverageNegotiation.sol:759` calls
+`IParseWebsiteAgent.ExtractANumber.selector` against this same agent id, so
+this drift hits the production contract verbatim — not just the isolation
+test that surfaced it.
+
+**Why this matters for THIS spec:** if R4 attribution labels the escrow as
+"Outbound to agent (fee escrow)" without surfacing that the fee paid for a
+parse-time crash rather than an LLM ruling, the token-flow visibility is
+*actively misleading*. A real-mode user would see "fee paid → Failed ruling"
+and reasonably conclude the LLM ran and disagreed — when in fact no LLM ran
+at all.
+
+- **R48 (MUST — blocker) Real-mode adjudication MUST produce at least one
+  `ResponseStatus.Success` ruling end-to-end against the live agent before
+  Decision 1 (§2.1) can be marked Implemented.** Today every fire returns
+  `Failed (3)` for the ABI-decode reason above; the cause is upstream of this
+  spec but the token-flow demo cannot legitimately ship without resolution.
+  Acceptable resolutions include: (a) regenerate `IParseWebsiteAgent` from
+  the *live* registered ABI (see SPEC-0004 §2.7 R25), (b) switch the
+  configured `AGENT_ID` to one whose registered ABI matches what the contract
+  emits, or (c) deploy a new contract that targets a verified
+  selector + agent pair.
+- **R49 (MUST) R4 attribution under Amendment 0006 self-hosted mode.**
+  *Rewritten 2026-05-30 (ticks 139-140) after Amendment 0006 shipped on
+  Somnia testnet. The validator-subcommittee dichotomy in the original
+  R49 (preserved below as Historical) no longer applies to the deployed
+  contract `0x2c561f33…488ac93`, which has `selfHosted == true`.* In
+  self-hosted mode the orchestrator pays the LLM provider off-chain and
+  submits a single synthetic-`requestId` response via `handleResponse`;
+  `executionCost` in that response is always 0 by construction. The UI
+  R4 attribution MUST therefore distinguish the following three
+  on-chain-observable outcomes, each from a different terminal state
+  the contract can reach after `requestAdjudication`:
+
+  | Observed state | UI copy | Treatment |
+  |---|---|---|
+  | `Ruled` event with `ResponseStatus.Success` + decoded ruling | "Ruling delivered (Approved / Denied / NeedMoreEvidence / PolicyInvalid)" | Display the decoded decision + per-unit prices; route per existing R4 |
+  | `Ruled` event with `ResponseStatus.Failed` (or Failed-from-revert in callback) | "Orchestrator reported failure" | Show the fee status as "fee held by contract pending operator action" — under self-hosted the fee transfer happens INSIDE `_fireAgentSelfHosted` before handleResponse, so a Failed callback after a successful fire means the orchestrator returned a failure code, not a fee leak |
+  | `rulingDeadline` elapsed with no callback fired | "Orchestrator silent — operator escalation required" | Show how long past the deadline; surface `onRulingTimeout()` as the recovery action; preserve the fee accounting (transferred to orchestrator EOA at fire time) |
+
+  Implementations MAY surface "self-hosted mode" as a UI badge so users
+  understand the attribution model differs from a validator-subcommittee
+  consensus model. The chain-only payload alone cannot resolve finer
+  fee-accounting questions (e.g., did the orchestrator actually pay
+  Anthropic for an LLM call before returning Failed?) — that requires
+  orchestrator-emitted off-chain telemetry, which is out of scope for v1.
+  Reads exclusively from the existing callback payload + contract state;
+  no new RPC or contract changes needed.
+
+  *Historical (validator-subcommittee mode, superseded by Amendment 0006
+  on 2026-05-30; the deployed `0x1dC5bA…3E1A` build used this model
+  but is no longer the active address):* the original R49 required
+  distinguishing "fee burned (no work executed)" from "fee paid (LLM ran
+  but consensus failed)" by summing `executionCost` across the validator
+  `Response[]` carried by the callback. Approximately-zero sum meant
+  "fee burned (no agent work)"; sum ≈ `perAgentBudget × subcommitteeSize`
+  meant "fee paid (LLM ran, consensus failed)". Same UI affordance + cost
+  number, different copy. This text is preserved for historical context
+  and for any future return to a validator-subcommittee path.
+
+**Evidence (Somnia testnet, captured 2026-05-30):**
+
+| Item | Value |
+|---|---|
+| isolation contract | `0x063c9E322971E162D943fd36Ca59299ffB889b21` |
+| fire tx | `0x34b2b8eeb443a3638cc8c460066fc17d0bcb5fea668bd60bf7e181e1fdbd7813` |
+| validator-1 response tx | `0xc45e34b5cce8fb5d2fe02fd332c16b491386e12a3f7db1569102e2d94ae2c24e` |
+| validator-2 response tx | `0x63e85dedb6ffea96e0edbeecb03826b571bde5d57ba5af70905a3794df2cdfc9` |
+| validator-3 response tx | `0x13161d853098c8beeb22e819f485a7c6ef19a54944f2e54418e1404a0ea07912` |
+| agent id | `12875401142070969085` (LLM Parse Website) |
+| selector sent | `0x4be9280f` (`ExtractANumber(string,string,uint256,uint256,string,string,bool,uint8)`) |
+| validator error | `"ABI decode failed (selector=0x4be9280f): … not found on ABI. … viem@2.46.1"` |
+| final status | `RequestFinalized(requestId=3183908, status=3 Failed)` |
+
+**Cross-spec.** The root-cause fix lives in SPEC-0004 §2.7 R25 (the on-chain
+agent-call edge); this spec covers the visibility consequences and the demo
+gate. R48 (this spec) renumbered from PR #14's `R42` on merge; SPEC-0004's
+R25/R26/R27 numbers are unchanged.
+
+### 2.11 (2026-06-01) Tx-ledger durability, Detail auto-refresh, and action-coherence corrections (Decision 11)
+
+Distilled from real-mode full-flow agent-browser verification on
+2026-06-01 (see [`../progress/2026-06-01-full-flow-verification.md`](../progress/2026-06-01-full-flow-verification.md)
+and [`../progress/2026-06-01-dispute-and-bad-policy-flows.md`](../progress/2026-06-01-dispute-and-bad-policy-flows.md)).
+After driving the deployed `0x2c561f33…488ac93` contract through every
+state (Filed → Settled, Dispute → Settled, Bad-policy → PolicyInvalidated),
+a set of UI-side behaviours surfaced that are required for the system to
+reach the spec-correct terminal states from a clean page-load. All items
+below are **additive** to §2.1–§2.10; none rewrite earlier requirements.
+
+#### Tx-ledger durability (extends §2.2 R8/R9)
+
+The original §2.2 left the event-log fetch strategy and the in-UI tx
+monitor's reload behaviour unspecified. Both gaps caused the
+Detail-Timeline / Network-tab / Tx-Monitor surfaces to render empty after
+a page reload despite a complete on-chain history existing (see full-flow
+ISSUE 7).
+
+- **R50 (MUST) Paged event-log scan against the Somnia testnet 1000-block
+  cap.** `RealBackend.getEvents` MUST query the chain via
+  `provider.getLogs({ address, fromBlock, toBlock })` in chunks of at most
+  `LOG_PAGE_SIZE = 1000` blocks and decode the contract's events from the
+  resulting `LogDescription` set. A single naive `eth_getLogs({fromBlock:0,
+  toBlock:latest})` MUST NOT be used — Somnia testnet's RPC reverts with
+  `"block range exceeds 1000"` and the App-level `events` array stays
+  empty. The paged scan SHOULD perform one call per page parsed against
+  the interface (not one-call-per-event-name × pages).
+- **R51 (MUST) Deployment-block plumbing for full-history scans.**
+  `RealBackend` MUST accept `RealBackendOptions.deploymentBlock`; the web
+  bundle MUST forward `import.meta.env.VITE_DEPLOYMENT_BLOCK` into that
+  option. When `deploymentBlock` is unset, the default lookback MUST be
+  `latest - 10_000` blocks (~3.5h of testnet). Operators MUST be able to
+  set `VITE_DEPLOYMENT_BLOCK` in `.env` to recover full-lifetime history
+  past the 10k-block default window for a long demo run, at the documented
+  cost of additional paged RPC calls at startup.
+- **R52 (MUST) TxMonitor hydration from the persistent JSONL sink.** The
+  Vite dev-server middleware (§2.2 R9) MUST expose a `GET /__log/tx`
+  endpoint that returns the persisted `.tmp/tx-log.jsonl` contents as a
+  JSON array. The web client MUST call a `hydrateTxLogFromSink()` helper
+  once on mount (from the `TxMonitor` component's effect that wires the
+  subscription) that fetches `GET /__log/tx` and replays each entry through
+  `ingest()`. Without this hydration the session-only ingest stream
+  silently resets header totals to zero on every page reload, even though
+  the JSONL ledger accumulated correctly.
+
+#### Detail-view auto-refresh + profile-switch preservation
+
+- **R53 (MUST) Detail re-fetches `getNegotiationView` on every event whose
+  `reqId` matches the active view.** The current `Detail.tsx` effect with
+  `[reqId, events]` deps does not catch identity-mutated state when
+  React's array dep check is fooled. Implementations MUST EITHER trigger a
+  manual refetch on every new event whose `reqId === active`, OR add a
+  short polling fallback while `state == UnderReview`. The
+  `Ruled`-then-no-refresh failure mode where the Detail page keeps
+  rendering "Request AI Decision →" after the orchestrator has delivered
+  the ruling (workaround: click Back, re-open the row) MUST be eliminated
+  — the next render after the matching event MUST reflect the new
+  on-chain state. (Full-flow ISSUE 5 + dispute ISSUE D2.)
+- **R54 (MUST) Profile-switch MUST preserve the current Detail view.**
+  Clicking Provider / Insurer / Observer in the top-bar radio while on a
+  Detail page MUST NOT drop the user back to Overview. The active
+  `reqId` + `useView` state MUST be preserved across profile change so
+  the user can flip sides without re-clicking the row. (Full-flow ISSUE
+  6.) This is required because the Insurer-side engage / accept and the
+  Provider-side accept / settle / appeal alternate within the same Detail
+  view; making the user re-navigate after every flip breaks the demo
+  cadence and exercises bugs that only surface when state is reset.
+
+#### Action coherence corrections (extends §2.3 R13/R14)
+
+- **R55 (MUST) Appeal affordance MUST be gated on `state === Denied`, not
+  on `ruled`.** When the AI rules `Approve`, the UI MUST NOT render an
+  enabled Appeal affordance. The contract reverts with
+  `"appeal: prior ruling not Deny"`
+  ([`CoverageNegotiation.sol:483`](../../contracts/contracts/CoverageNegotiation.sol#L483))
+  in that case, but the current `appeal-submit` handler swallows the
+  gas-estimation revert and leaves the textarea populated with no
+  surfaced error. Implementations MUST EITHER hide the affordance
+  entirely when `view.state !== State.Denied`, OR render a disabled
+  affordance with an inline notice
+  *"Appeals are only available when the AI has denied the request."*
+  Either way the user MUST be prevented from firing a tx that will revert
+  silently. (Dispute ISSUE D1.)
+- **R56 (MUST) Terminal-state explicit CTA.** When the active negotiation's
+  `view.terminal === true`, the Detail page MUST render a single
+  context-tailored CTA that deep-links to `Create.tsx`. Specifically:
+  - `PolicyInvalidated` → CTA copy "Policy must be revised off-chain — File
+    a corrected request →" (no in-UI engage-with-new-policy affordance —
+    the contract design forbids re-engagement at the same `reqId`; recovery
+    is a brand-new request).
+  - Other terminal states (`Settled`, `Refused`, `Withdrawn`) → a generic
+    "File a new request →" CTA.
+  The CTA MUST occupy the same Detail action-panel slot the (now-hidden)
+  state-mutation affordances would have occupied, so the user is not left
+  with a blank action panel. (Dispute ISSUE D3.)
+- **R57 (MUST) Per-party affordance set on `Approved` and `Denied`.** On
+  `Approved` state both Provider and Insurer MUST see Accept (per their
+  respective party id); both MAY see Appeal (subject to R55's
+  state-gate — moot on Approved). On `Denied` state both Provider and
+  Insurer MUST see Appeal (with the agentFeeValue cost surfaced — see
+  SPEC-0004 R29). Only Provider sees `Refuse Terms`. Both parties see
+  `Withdraw` while non-terminal. The exact affordance set the live build
+  must produce on Approved is the testid set
+  `{accept-submit, appeal-evidence, appeal-submit, feedback-text,
+  withdraw-submit}` for Insurer and that same set plus
+  `{refuse-submit}` for Provider. (Dispute flow A verification.)
+
+#### Cross-spec dependencies (additive)
+
+- The tx-ledger MUSTs (R50–R52) depend on `vite.config.ts` middleware
+  + `web/src/txLogger.ts`'s `hydrateTxLogFromSink()` helper +
+  `RealBackendOptions.deploymentBlock` plumbing in `src/contract/real.ts`
+  + `web/src/client.ts` forwarding `VITE_DEPLOYMENT_BLOCK`. All landed in
+  the design-handoff branch on 2026-06-01 (see ISSUE 7 closure).
+- R53 (Detail auto-refresh) MUST also satisfy the dispute-flow path where
+  the orchestrator delivers a `Ruled` event with a re-rule outcome (Deny
+  → Deny on second appeal, then Deny → Approve on third). Each re-rule
+  arrives as a fresh `Ruled` event for the same `reqId` and round; the
+  Detail panel MUST re-derive against the latest ruling, not against any
+  earlier one.
+- R55–R56 reuse the §2.4 R21 ErrorCard surface for the disabled-affordance
+  notice and the terminal-state CTA copy.
+
+#### Network tab + Dashboard ordering (extends R50–R52)
+
+- **R58 (MUST) Network tab shows the full chain history for the
+  configured contract, not just the current browser session.** The
+  Network tab MUST hydrate from BOTH:
+  - The chain-side paged-`getLogs` result (per R50/R51) covering
+    `[deploymentBlock, latest]` (or the default `latest - 10_000`
+    lookback when `VITE_DEPLOYMENT_BLOCK` is unset), AND
+  - The dev-server JSONL sink (per R52) for any session-persistent
+    `tx-confirmed` events surfaced by the local client that are not
+    yet captured in the chain scan (e.g., the last few seconds of
+    confirms between block-finalization and the next paged-scan
+    refresh window).
+
+  Sources MUST be deduplicated by `txHash` (chain-scan entry wins on
+  conflict, since it carries the canonical block + index pair). A
+  page reload against a contract with a non-trivial on-chain history
+  MUST render the full visible history in the Network tab — empty
+  surfaces ("no transactions yet", "waiting for first confirmed tx")
+  against a contract with prior events are a regression and indicate
+  R50, R51, or R52 is broken (same regression signal as R51's
+  reload-hydration assertion).
+- **R59 (MUST) Network tab sorted by recency, descending.**
+  Transactions in the Network tab MUST be rendered in **descending
+  block-number order — most recent at the top**. When two
+  transactions share a block, the secondary sort key MUST be
+  transaction index within the block (highest index first, since
+  later within-block txs read as "more recent"). This is the order
+  a user opening the Network tab to inspect "what just happened"
+  reads naturally; ascending-block-order or session-arrival-order
+  fails this MUST.
+- **R60 (MUST) Dashboard/Overview lists negotiations by most-recent
+  activity, descending.** The Overview rows (the "Coverage Requests"
+  list users see on the front page) MUST be sorted by **the block
+  number of each negotiation's most-recent event (any event whose
+  `reqId` matches that row), descending** — so the negotiation with
+  the latest activity sits at the top. Concretely:
+  - A new event on an existing negotiation (e.g., a fresh `Ruled`,
+    `Appealed`, `Accepted`, or `Settled` for an existing `reqId`)
+    MUST move that row up to the position determined by the new
+    event's block number.
+  - A negotiation with no events since some prior `Settled` /
+    `PolicyInvalidated` / `Refused` / `Withdrawn` terminal MUST
+    fall down the list naturally as newer negotiations push past
+    it; terminal state does NOT exclude the row from the sort.
+  - Ties (same most-recent-event block) break by `reqId`
+    descending (newer requests above older requests).
+
+  This ordering MUST apply both on first paint after a reload (when
+  the row set is derived from the paged-`getLogs` scan) AND
+  incrementally as new `tx-confirmed` events arrive during the
+  session (a row whose negotiation gets a new event MUST reorder
+  to its new position within one render cycle, per R13's
+  re-derive-from-state rule).
+
 ## Implementation plan (auxiliary)
 
 > Non-normative. Phases the polish work into landable PRs against the spec
@@ -449,8 +781,11 @@ loop-detection signal is well-understood.
   carry a `cost` field.
 - **Attribution rules:** keyed by contract method →
   - `requestAdjudication` → `Outbound to agent (fee escrow)` + value, plus `Burned (gas)`.
-  - `createContract` (if it requires a deposit) → `Outbound to contract (deposit)` or
-    `Locked (escrowed)` depending on contract semantics; otherwise `Burned (gas)` only.
+  - `createContract` → `Burned (gas)` only. Verified non-payable in
+    `contracts/contracts/CoverageNegotiation.sol:354` (signature is
+    `external returns (uint256 reqId)` — no `payable`, no `msg.value`). The
+    only value-bearing call in the negotiation flow is `requestAdjudication`
+    (see Q1 closure in §8).
   - Accept/appeal/evidence (no value) → `Burned (gas)` only.
   - `Settled` / refunds → `Inbound (refund / settlement)` on the receiving wallet.
 - **Polling:** use a single shared interval (≤30s) gated on document visibility so background
@@ -490,13 +825,43 @@ sent without the user being able to see its expected and realized cost from the 
 
 - USD pricing of STT.
 - Historical balance charting / portfolio view.
-- Wallet management (rotation, multi-account) — single signer per build, as today.
 - ERC-20 / non-native token flows — STT only in v0.
+- **Hot-swapping wallet keys without a page reload (§2.9 R44).** The web
+  client's signer is bound at module-init. Rebuilding it in place would
+  require either reactive contract bindings (large refactor) or unsound
+  state surgery (risk of partial writes being signed by the previous key
+  mid-flight). The reload contract is acceptable because the UI nudges the
+  user and the operation is rare (per-session, not per-action).
+- **Per-action signer selection** beyond the existing two-profile
+  (provider, insurer) model — e.g. an "arbiter" or "auditor" client.
+  Adding a third signer is a configuration extension; the proxy + factory
+  already support it but no v0 view consumes it.
+- Multi-account *rotation* (provider key A → provider key B mid-session)
+  beyond the Settings paste-and-reload affordance. Production v0 keeps
+  R25's MetaMask + SIWE as the rotation path; R42–R47 is the demo-loop
+  convenience.
 
 ## 8. Open questions
 
-- **Q1.** Does `createContract` require a deposit today, or is the only value-bearing call
-  `requestAdjudication`? Confirm against the merged `CoverageNegotiation.sol` so R4
-  attribution names the right "Outbound to contract" cases (or removes that label).
+- **Q1 — RESOLVED tick 149.** Does `createContract` require a deposit today,
+  or is the only value-bearing call `requestAdjudication`?
+  **Answer: only `requestAdjudication` is value-bearing.** `createContract` at
+  `contracts/contracts/CoverageNegotiation.sol:354` is declared
+  `external returns (uint256 reqId)` — non-payable, no `msg.value` reference,
+  no deposit. `requestAdjudication` at line 420 is `external payable
+  nonReentrant` (carries the agent-fee escrow). R4 attribution
+  has been tightened to drop the `(if it requires a deposit)` conditional —
+  `createContract` maps to `Burned (gas)` only.
 - **Q2.** Do we want a **funding-flow shortcut** in the UI ("send X STT from `0xdD4a…6CEA`
   to `0x2040…9128`") for the dev experience, or is that out-of-scope tooling?
+- **Q3 — RESOLVED tick 149 (was: blocking R42, now R48 after merge renumber).**
+  Which resolution path do we take for the agent-ABI drift documented in §2.9?
+  **Answer: path (c) self-deploy adopted** via
+  [Amendment 0006](../amendments/0006-self-hosted-arbiter-agent.md) (Adopted
+  2026-05-30). All Ticks A+B+C+D landed; contract redeployed at
+  `0x2c561f339a0A15cf0550cb9a0880Bb341488ac93` with `selfHosted == true` and
+  `platform == orchestrator EOA`; `npm run verify-deploy` 8/8 PASS (tick 142).
+  R42 was renumbered to R48 on PR #14 merge (per the §2.10 merge note);
+  R48 is unblocked from the deploy side. Live R48 verification still requires
+  real-mode browser-verify (externally gated on wallet refund and/or
+  `ANTHROPIC_API_KEY`).

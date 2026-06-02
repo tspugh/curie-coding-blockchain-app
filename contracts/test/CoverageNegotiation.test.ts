@@ -52,7 +52,10 @@ const FEE = ethers.parseEther("0.01"); // > mock deposit (0.001 ether)
 function ruling(
   decision: number,
   costPlusUnitPrice: bigint,
-  nadacUnitPrice: bigint = NADAC_UNIT
+  nadacUnitPrice: bigint = NADAC_UNIT,
+  policyVoidedClauseIndices: number[] = [],
+  usedReferenceIndices: number[] = [],
+  usedLeafHashes: string[] = []
 ) {
   return {
     decision,
@@ -62,6 +65,9 @@ function ruling(
     clauseRef: CLAUSE_REF,
     standardRef: STANDARD_REF,
     receiptId: RECEIPT_ID,
+    policyVoidedClauseIndices,
+    usedReferenceIndices,
+    usedLeafHashes,
   };
 }
 
@@ -99,7 +105,8 @@ async function createAs(
       quantity,
       daysSupply,
       JUSTIFICATION_HASH,
-      EVIDENCE_URI
+      EVIDENCE_URI,
+      0 /* payerLine: PartD */
     );
   return contract.count();
 }
@@ -140,7 +147,8 @@ describe("CoverageNegotiation", () => {
           QUANTITY,
           DAYS_SUPPLY,
           JUSTIFICATION_HASH,
-          EVIDENCE_URI
+          EVIDENCE_URI,
+          0 /* payerLine: PartD */
         )
     )
       .to.emit(contract, "ContractCreated")
@@ -170,7 +178,8 @@ describe("CoverageNegotiation", () => {
           0n,
           DAYS_SUPPLY,
           JUSTIFICATION_HASH,
-          EVIDENCE_URI
+          EVIDENCE_URI,
+          0 /* payerLine: PartD */
         )
     ).to.be.revertedWith("qty: zero");
 
@@ -203,6 +212,54 @@ describe("CoverageNegotiation", () => {
     expect(await platform.createRequestCalls()).to.equal(0n);
   });
 
+  it("R2b (SPEC-0004 §2.1 AC-6): createContract reverts when providerAddr == insurerAddr (self-contract)", async () => {
+    const { contract } = await deploy();
+    const [provider] = await ethers.getSigners();
+    await expect(
+      contract.connect(provider).createContract(
+        PROVIDER_ID, INSURER_ID,
+        provider.address, provider.address,  // SAME address → self-contract
+        DRUG_REF, REQUESTED, QUANTITY, DAYS_SUPPLY,
+        JUSTIFICATION_HASH, EVIDENCE_URI,
+        0 /* payerLine: PartD */
+      )
+    ).to.be.revertedWith("create: self-contract");
+  });
+
+  it("UNIT-2-followup-B: createContract guards order — addr: zero precedes create: self-contract", async () => {
+    // Pins the ordering of the createContract require chain. If a future refactor
+    // swaps the `addr: zero` and `create: self-contract` lines, the (zero, zero)
+    // case would silently change revert string and downstream consumers parsing
+    // revert messages would degrade. SPEC-0004 §2.1 AC-6 + structural invariant.
+    const { contract } = await deploy();
+    const [provider] = await ethers.getSigners();
+    const ZERO_ADDR = ethers.ZeroAddress;
+    const args = (providerAddr: string, insurerAddr: string) =>
+      [PROVIDER_ID, INSURER_ID, providerAddr, insurerAddr, DRUG_REF, REQUESTED,
+       QUANTITY, DAYS_SUPPLY, JUSTIFICATION_HASH, EVIDENCE_URI, 0] as const;
+
+    // provider == 0, insurer != 0 → addr: zero
+    await expect(
+      contract.connect(provider).createContract(...args(ZERO_ADDR, provider.address))
+    ).to.be.revertedWith("addr: zero");
+
+    // provider != 0, insurer == 0 → addr: zero
+    await expect(
+      contract.connect(provider).createContract(...args(provider.address, ZERO_ADDR))
+    ).to.be.revertedWith("addr: zero");
+
+    // provider == insurer == 0 → addr: zero (NOT "create: self-contract" — ordering matters)
+    await expect(
+      contract.connect(provider).createContract(...args(ZERO_ADDR, ZERO_ADDR))
+    ).to.be.revertedWith("addr: zero");
+
+    // provider == insurer != 0 → create: self-contract (already covered above; restated
+    // here so the ordering invariant is documented in one place).
+    await expect(
+      contract.connect(provider).createContract(...args(provider.address, provider.address))
+    ).to.be.revertedWith("create: self-contract");
+  });
+
   it("T4 (R6/R9): adjudication fires the agent → UnderReview; mock records the createRequest", async () => {
     const { platform, contract } = await deploy();
     const [provider, insurer] = await ethers.getSigners();
@@ -222,6 +279,30 @@ describe("CoverageNegotiation", () => {
     // The forwarded selector is handleResponse's (the real Somnia callback).
     const sel = contract.interface.getFunction("handleResponse").selector;
     expect(await platform.lastCallbackSelector()).to.equal(sel);
+  });
+
+  it("SPEC-0004 §3.5: PacketSubmitted emitted on every agent fire (requestAdjudication, submitEvidence, appeal)", async () => {
+    const { platform, contract } = await deploy();
+    const [provider, insurer] = await ethers.getSigners();
+    const target = await contract.getAddress();
+    const reqId = await createAs(contract, provider, insurer.address);
+    await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+    // initial requestAdjudication — round 1
+    await expect(contract.connect(provider).requestAdjudication(reqId, { value: FEE }))
+      .to.emit(contract, "PacketSubmitted")
+      .withArgs(reqId, 1n, EVIDENCE_URI, EVIDENCE_URI);
+    const rid1 = await platform.lastRequestId();
+    // NeedMoreEvidence → submitEvidence re-fire emits PacketSubmitted with round 2
+    await platform.triggerRuling(target, rid1, ruling(Decision.NeedMoreEvidence, 0n));
+    await expect(contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI_2, { value: FEE }))
+      .to.emit(contract, "PacketSubmitted")
+      .withArgs(reqId, 2n, EVIDENCE_URI_2, EVIDENCE_URI_2);
+    const rid2 = await platform.lastRequestId();
+    // Deny → appeal re-fire emits PacketSubmitted with round 3
+    await platform.triggerRuling(target, rid2, ruling(Decision.Deny, 0n));
+    await expect(contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE }))
+      .to.emit(contract, "PacketSubmitted")
+      .withArgs(reqId, 3n, EVIDENCE_URI, EVIDENCE_URI);
   });
 
   it("T4 (R6a): deny → 0; refs surfaced & stored; need_more_evidence & failure & timeout → EvidenceRequested", async () => {
@@ -250,7 +331,7 @@ describe("CoverageNegotiation", () => {
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
       await expect(platform.triggerRuling(target, requestId, ruling(Decision.Deny, 150n)))
         .to.emit(contract, "Ruled")
-        .withArgs(reqId, requestId, Decision.Deny, 0n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID);
+        .withArgs(reqId, requestId, Decision.Deny, 0n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, [], [], []);
       expect(await contract.stateOf(reqId)).to.equal(State.Denied);
       expect(await contract.coveredAmountOf(reqId)).to.equal(0n);
     }
@@ -304,7 +385,7 @@ describe("CoverageNegotiation", () => {
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
       await expect(platform.triggerRuling(target, requestId, ruling(Decision.Approve, 150n)))
         .to.emit(contract, "Ruled")
-        .withArgs(reqId, requestId, Decision.Approve, 1500n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID);
+        .withArgs(reqId, requestId, Decision.Approve, 1500n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, [], [], []);
       expect(await contract.coveredAmountOf(reqId)).to.equal(1500n);
       expect((await contract.getNegotiation(reqId)).coveredAmount).to.equal(1500n);
 
@@ -322,7 +403,7 @@ describe("CoverageNegotiation", () => {
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
       await expect(platform.triggerRuling(target, requestId, ruling(Decision.Approve, 500n)))
         .to.emit(contract, "Ruled")
-        .withArgs(reqId, requestId, Decision.Approve, 2000n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID);
+        .withArgs(reqId, requestId, Decision.Approve, 2000n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, [], [], []);
       expect(await contract.coveredAmountOf(reqId)).to.equal(2000n);
       const basis = await contract.priceBasisOf(reqId);
       expect(basis.costPlusTotal).to.equal(5000n); // 500 × 10
@@ -369,7 +450,7 @@ describe("CoverageNegotiation", () => {
     const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
     await expect(platform.triggerRuling(target, requestId, ruling(Decision.Approve, HUGE)))
       .to.emit(contract, "Ruled")
-      .withArgs(reqId, requestId, Decision.Approve, 2000n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID);
+      .withArgs(reqId, requestId, Decision.Approve, 2000n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, [], [], []);
     expect(await contract.stateOf(reqId)).to.equal(State.Approved);
     expect(await contract.coveredAmountOf(reqId)).to.equal(2000n); // requested binds (cap saturated)
 
@@ -391,7 +472,7 @@ describe("CoverageNegotiation", () => {
       .to.emit(contract, "PolicyFlagged")
       .withArgs(reqId, CLAUSE_REF, STANDARD_REF)
       .and.to.emit(contract, "Ruled")
-      .withArgs(reqId, requestId, Decision.PolicyInvalid, 0n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID)
+      .withArgs(reqId, requestId, Decision.PolicyInvalid, 0n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, [], [], [])
       .and.to.emit(contract, "PolicyInvalidated")
       .withArgs(reqId, CLAUSE_REF, STANDARD_REF);
 
@@ -427,11 +508,14 @@ describe("CoverageNegotiation", () => {
     ).to.be.revertedWith("appeal: needs evidence");
 
     // appeal with new evidence (round 1 < maxRounds 2) → re-fires, round becomes 2.
+    expect((await contract.getNegotiation(reqId)).appealRound).to.equal(0); // before bump
     await expect(contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URI_2, REASON_HASH, { value: FEE }))
       .to.emit(contract, "Appealed")
       .withArgs(reqId, PROVIDER_ID, EVIDENCE_URI_2, 2n);
     expect(await contract.stateOf(reqId)).to.equal(State.UnderReview);
     expect(await contract.roundOf(reqId)).to.equal(2n);
+    // SPEC-0004 R13: appealRound advances the LADDER position on each successful appeal.
+    expect((await contract.getNegotiation(reqId)).appealRound).to.equal(1);
 
     // Resolve the re-fired round (deny again), then a further appeal at round>=maxRounds → Deadlocked.
     const rid2 = await platform.lastRequestId();
@@ -442,6 +526,18 @@ describe("CoverageNegotiation", () => {
       .to.emit(contract, "Deadlocked")
       .withArgs(reqId, 2n);
     expect(await contract.stateOf(reqId)).to.equal(State.Deadlocked);
+  });
+
+  it("R14a (SPEC-0004 §2.4): appeal from Approved reverts — only Deny justifies advancing the ladder", async () => {
+    const { platform, contract } = await deploy();
+    const [provider, insurer] = await ethers.getSigners();
+    const target = await contract.getAddress();
+    const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+    await platform.triggerRuling(target, requestId, ruling(Decision.Approve, 0n));
+    expect(await contract.stateOf(reqId)).to.equal(State.Approved);
+    await expect(
+      contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI_2, REASON_HASH, { value: FEE })
+    ).to.be.revertedWith("appeal: prior ruling not Deny");
   });
 
   it("T6/T8 (R6c/R8): both accept → settle emits Settled(coveredAmount, feePerParty 50/50)", async () => {
@@ -515,7 +611,8 @@ describe("CoverageNegotiation", () => {
           QUANTITY,
           DAYS_SUPPLY,
           JUSTIFICATION_HASH,
-          EVIDENCE_URI
+          EVIDENCE_URI,
+          0 /* payerLine: PartD */
         )
     ).to.be.revertedWith("auth: not provider");
 
@@ -569,23 +666,14 @@ describe("CoverageNegotiation", () => {
     const n = await contract.connect(attacker).getNegotiation(reqId);
     expect(n.providerAddr).to.equal(provider.address);
 
-    // --- Single shared wallet (R12/R13): providerAddr == insurerAddr; one signer does both
-    //     sides, parties distinguished by partyId. ---
-    const solo = provider; // one wallet plays both roles
-    await contract
-      .connect(solo)
-      .createContract(PROVIDER_ID, INSURER_ID, solo.address, solo.address, DRUG_REF, REQUESTED, QUANTITY, DAYS_SUPPLY, JUSTIFICATION_HASH, EVIDENCE_URI);
-    const soloId = await contract.count();
-    // same wallet engages (insurer side) and adjudicates (provider side).
-    await contract.connect(solo).insurerEngage(soloId, POLICY_HASH, POLICY_URI);
-    await contract.connect(solo).requestAdjudication(soloId, { value: FEE });
-    const soloReq = await platform.lastRequestId();
-    await platform.triggerRuling(target, soloReq, ruling(Decision.Approve, 100n));
-    // same wallet accepts BOTH sides (distinguished by partyId), then settles.
-    await contract.connect(solo).accept(soloId, PROVIDER_ID);
-    await contract.connect(solo).accept(soloId, INSURER_ID);
-    await expect(contract.connect(solo).settle(soloId)).to.emit(contract, "Settled");
-    expect(await contract.stateOf(soloId)).to.equal(State.Settled);
+    // --- SPEC-0004 R2b (supersedes SPEC-0001 R13): providerAddr == insurerAddr is now
+    //     rejected at createContract. The single-shared-wallet scenario that was valid
+    //     under R13 is no longer supported; the demo explicitly rejects self-contracting. ---
+    await expect(
+      contract
+        .connect(provider)
+        .createContract(PROVIDER_ID, INSURER_ID, provider.address, provider.address, DRUG_REF, REQUESTED, QUANTITY, DAYS_SUPPLY, JUSTIFICATION_HASH, EVIDENCE_URI, 0 /* payerLine: PartD */)
+    ).to.be.revertedWith("create: self-contract");
   });
 
   it("R9 (fee model): underfunded reverts; exact fee forwarded; overpayment refunded; no trapped caller ETH", async () => {
@@ -664,6 +752,34 @@ describe("CoverageNegotiation", () => {
     expect(balBefore - balAfter).to.equal(gas);
     expect(await contract.stateOf(reqId)).to.equal(State.Deadlocked);
     expect(await ethers.provider.getBalance(target)).to.equal(0n);
+    // SPEC-0004 R13: `appealRound` MUST NOT bump on the deadlock-cap short-circuit
+    // path — the ladder advances only when an appeal actually fires the agent.
+    const n = await contract.getNegotiation(reqId);
+    expect(n.appealRound).to.equal(0);
+  });
+
+  it("R9 (deadlock submitEvidence): submitEvidence at the round cap deadlocks and refunds the full msg.value (no agent fires)", async () => {
+    const { platform, contract } = await deploy();
+    const [provider, insurer] = await ethers.getSigners();
+    const target = await contract.getAddress();
+    await contract.setMaxRounds(1n); // first ruling already at the cap
+
+    const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+    // NeedMoreEvidence ruling routes to EvidenceRequested with round == maxRounds.
+    await platform.triggerRuling(target, requestId, ruling(Decision.NeedMoreEvidence, 0n));
+    expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested);
+    expect(await contract.roundOf(reqId)).to.equal(1n); // round == maxRounds
+
+    const value = ethers.parseEther("0.02");
+    const balBefore = await ethers.provider.getBalance(provider.address);
+    const tx = await contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI_2, { value });
+    const rc = await tx.wait();
+    const gas = rc!.gasUsed * rc!.gasPrice;
+    const balAfter = await ethers.provider.getBalance(provider.address);
+    // Deadlocked: no fee charged, full value refunded → net cost is just gas.
+    expect(balBefore - balAfter).to.equal(gas);
+    expect(await contract.stateOf(reqId)).to.equal(State.Deadlocked);
+    expect(await ethers.provider.getBalance(target)).to.equal(0n);
   });
 
   it("T10 (guards): invalid transitions revert; handleResponse rejects non-platform caller; unknown id reverts", async () => {
@@ -679,9 +795,10 @@ describe("CoverageNegotiation", () => {
     await expect(contract.connect(provider).accept(reqId, PROVIDER_ID)).to.be.revertedWith("accept: not ruled");
     await expect(
       contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
-    ).to.be.revertedWith("appeal: not ruled");
+    ).to.be.revertedWith("appeal: prior ruling not Deny");
+    // submitEvidence reverts on the state guard before the fee check — no value needed here.
     await expect(
-      contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI, { value: FEE })
+      contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI)
     ).to.be.revertedWith("evidence: wrong state");
 
     // Non-platform caller cannot invoke the callback. Encode the new arbiter tuple.
@@ -758,5 +875,682 @@ describe("CoverageNegotiation", () => {
       .to.emit(contract, "FundsWithdrawn")
       .withArgs(owner.address, bal);
     expect(await ethers.provider.getBalance(target)).to.equal(0n);
+  });
+
+  // -----------------------------------------------------------------------
+  // UNIT-2-followup-A: appeal() reverts from every non-Denied state.
+  //
+  // The contract checks `require(n.state == State.Denied, "appeal: prior ruling
+  // not Deny")` as its FIRST guard — before auth — so ALL nine non-Denied states
+  // produce exactly that revert string.  `Open` is already covered by T10
+  // (~line 757 above); `Denied` is the only state from which appeal succeeds
+  // (T6 R6c).  This suite drives a FRESH deploy for each target state and
+  // asserts the unanimous revert.
+  // -----------------------------------------------------------------------
+  describe("UNIT-2-followup-A: appeal reverts from every non-Denied state", () => {
+    /**
+     * Drive a fresh deploy to the named state, then assert that calling
+     * appeal() reverts with "appeal: prior ruling not Deny".
+     *
+     * State-driving notes:
+     *  - Ready           : createAs + insurerEngage
+     *  - UnderReview     : createEngageAdjudicate (agent in flight, no ruling yet)
+     *  - EvidenceRequested: createEngageAdjudicate + triggerRuling(NeedMoreEvidence)
+     *  - Approved        : createEngageAdjudicate + triggerRuling(Approve)
+     *  - Settled         : Approved + both accept + settle
+     *  - Deadlocked      : setMaxRounds(1) + createEngageAdjudicate + triggerRuling(Deny)
+     *                      + appeal() deadlocks at cap → second appeal attempt from Deadlocked
+     *  - PolicyInvalidated: createEngageAdjudicate + triggerRuling(PolicyInvalid)
+     *  - ProviderRefused : createAs + insurerEngage + provider.refuse(reqId, reasonHash)
+     *  - Withdrawn       : createAs + provider.withdraw(reqId)
+     */
+
+    it("Ready: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+      expect(await contract.stateOf(reqId)).to.equal(State.Ready);
+      await expect(
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+
+    it("UnderReview: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const { reqId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+      expect(await contract.stateOf(reqId)).to.equal(State.UnderReview);
+      await expect(
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+
+    it("EvidenceRequested: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+      await platform.triggerRuling(target, requestId, ruling(Decision.NeedMoreEvidence, 0n));
+      expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested);
+      await expect(
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+
+    it("Approved: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+      await platform.triggerRuling(target, requestId, ruling(Decision.Approve, 150n));
+      expect(await contract.stateOf(reqId)).to.equal(State.Approved);
+      await expect(
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+
+    it("Settled: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
+      await platform.triggerRuling(target, requestId, ruling(Decision.Approve, 120n));
+      await contract.connect(provider).accept(reqId, PROVIDER_ID);
+      await contract.connect(insurer).accept(reqId, INSURER_ID);
+      await contract.connect(insurer).settle(reqId);
+      expect(await contract.stateOf(reqId)).to.equal(State.Settled);
+      // Settled is terminal; the state guard fires before any other check.
+      await expect(
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+
+    it("Deadlocked: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      // setMaxRounds(1) so the first appeal immediately deadlocks.
+      await contract.setMaxRounds(1n);
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+      await platform.triggerRuling(target, requestId, ruling(Decision.Deny, 0n));
+      // This appeal at round == maxRounds transitions to Deadlocked (no second fire).
+      await contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE });
+      expect(await contract.stateOf(reqId)).to.equal(State.Deadlocked);
+      // Now attempt a second appeal from Deadlocked.
+      await expect(
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+
+    it("PolicyInvalidated: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+      await platform.triggerRuling(target, requestId, ruling(Decision.PolicyInvalid, 0n));
+      expect(await contract.stateOf(reqId)).to.equal(State.PolicyInvalidated);
+      await expect(
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+
+    it("ProviderRefused: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+      await contract.connect(provider).refuse(reqId, REASON_HASH);
+      expect(await contract.stateOf(reqId)).to.equal(State.ProviderRefused);
+      // appeal() checks state first (before auth), so even this terminal state
+      // reverts with the state guard message.
+      await expect(
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+
+    it("Withdrawn: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(provider).withdraw(reqId);
+      expect(await contract.stateOf(reqId)).to.equal(State.Withdrawn);
+      await expect(
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+  });
+
+  describe("R23: policyVoidedClauseIndices propagation", () => {
+    it("Approve ruling with policyVoidedClauseIndices=[2] propagates the populated array as the 8th Ruled arg", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
+
+      await expect(
+        platform.triggerRuling(target, requestId, ruling(Decision.Approve, 150n, NADAC_UNIT, [2]))
+      )
+        .to.emit(contract, "Ruled")
+        .withArgs(reqId, requestId, Decision.Approve, 1500n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, [2n], [], []);
+
+      expect(await contract.stateOf(reqId)).to.equal(State.Approved);
+    });
+  });
+
+  describe("R11: usedReferenceIndices + usedLeafHashes propagation", () => {
+    it("Approve ruling with usedReferenceIndices=[0] and usedLeafHashes=[0x1111...] propagates both as the 9th and 10th Ruled args", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
+
+      const leafHash = "0x" + "11".repeat(32);
+
+      await expect(
+        platform.triggerRuling(
+          target,
+          requestId,
+          ruling(Decision.Approve, 150n, NADAC_UNIT, [], [0], [leafHash])
+        )
+      )
+        .to.emit(contract, "Ruled")
+        .withArgs(reqId, requestId, Decision.Approve, 1500n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, [], [0n], [leafHash]);
+
+      expect(await contract.stateOf(reqId)).to.equal(State.Approved);
+    });
+  });
+
+  describe("Amendment 0006: self-hosted mode storage + setter", () => {
+    it("selfHosted defaults to false on a fresh deploy", async () => {
+      const { contract } = await deploy();
+      expect(await contract.selfHosted()).to.equal(false);
+    });
+
+    it("setPlatformSelfHosted flips selfHosted to true and updates platform", async () => {
+      const { contract } = await deploy();
+      const [, , orchestrator] = await ethers.getSigners();
+      await contract.setPlatformSelfHosted(orchestrator.address);
+      expect(await contract.selfHosted()).to.equal(true);
+      expect(await contract.platform()).to.equal(orchestrator.address);
+    });
+
+    it("setPlatform clears selfHosted back to false (reversibility)", async () => {
+      const { platform, contract } = await deploy();
+      const [, , orchestrator] = await ethers.getSigners();
+      await contract.setPlatformSelfHosted(orchestrator.address);
+      expect(await contract.selfHosted()).to.equal(true);
+      await contract.setPlatform(await platform.getAddress());
+      expect(await contract.selfHosted()).to.equal(false);
+      expect(await contract.platform()).to.equal(await platform.getAddress());
+    });
+
+    it("setPlatformSelfHosted is owner-only (non-owner reverts)", async () => {
+      const { contract } = await deploy();
+      const [, nonOwner, orchestrator] = await ethers.getSigners();
+      await expect(
+        contract.connect(nonOwner).setPlatformSelfHosted(orchestrator.address)
+      ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
+    });
+  });
+
+  describe("Amendment 0006: self-hosted _fireAgent branch", () => {
+    it("requestAdjudication in self-hosted mode reaches UnderReview without platform calls", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer, orchestrator] = await ethers.getSigners();
+      await contract.setPlatformSelfHosted(orchestrator.address);
+      const reward = ethers.parseEther("0.05");
+      await contract.setAgentReward(reward);
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      const before = await ethers.provider.getBalance(orchestrator.address);
+      await expect(contract.connect(provider).requestAdjudication(reqId, { value: reward }))
+        .to.emit(contract, "RulingRequested")
+        .and.to.emit(contract, "PacketSubmitted");
+
+      // State machine: UnderReview, awaiting orchestrator's handleResponse.
+      expect(await contract.stateOf(reqId)).to.equal(State.UnderReview);
+
+      // Fee flowed to the orchestrator EOA.
+      const after = await ethers.provider.getBalance(orchestrator.address);
+      expect(after - before).to.equal(reward);
+
+      // _requestToNegotiation populated with a non-zero synthetic requestId.
+      const n = await contract.getNegotiation(reqId);
+      expect(n.pendingRequestId).to.not.equal(0n);
+    });
+
+    it("synthetic requestId is unique across two same-block fires", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer, orchestrator] = await ethers.getSigners();
+      await contract.setPlatformSelfHosted(orchestrator.address);
+      await contract.setAgentReward(0n); // free demo mode
+
+      const reqIdA = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqIdA, POLICY_HASH, POLICY_URI);
+      const reqIdB = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqIdB, POLICY_HASH, POLICY_URI);
+
+      await contract.connect(provider).requestAdjudication(reqIdA);
+      await contract.connect(provider).requestAdjudication(reqIdB);
+
+      const nA = await contract.getNegotiation(reqIdA);
+      const nB = await contract.getNegotiation(reqIdB);
+      expect(nA.pendingRequestId).to.not.equal(0n);
+      expect(nB.pendingRequestId).to.not.equal(0n);
+      expect(nA.pendingRequestId).to.not.equal(nB.pendingRequestId);
+    });
+
+    it("self-hosted underfunded msg.value reverts with fee: underfunded", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer, orchestrator] = await ethers.getSigners();
+      await contract.setPlatformSelfHosted(orchestrator.address);
+      await contract.setAgentReward(ethers.parseEther("0.05"));
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      await expect(
+        contract.connect(provider).requestAdjudication(reqId, { value: ethers.parseEther("0.01") })
+      ).to.be.revertedWith("fee: underfunded");
+    });
+
+    it("self-hosted overpayment refunds excess to caller", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer, orchestrator] = await ethers.getSigners();
+      await contract.setPlatformSelfHosted(orchestrator.address);
+      const reward = ethers.parseEther("0.05");
+      const overpay = ethers.parseEther("0.10");
+      await contract.setAgentReward(reward);
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      const orchBefore = await ethers.provider.getBalance(orchestrator.address);
+      const tx = await contract.connect(provider).requestAdjudication(reqId, { value: overpay });
+      const receipt = await tx.wait();
+      const gasCost = receipt!.gasUsed * receipt!.gasPrice;
+      const orchAfter = await ethers.provider.getBalance(orchestrator.address);
+
+      // Orchestrator received exactly the reward.
+      expect(orchAfter - orchBefore).to.equal(reward);
+
+      // Provider net out = reward + gas (overpay was refunded). Verifying the
+      // contract's balance is 0 (no trapped funds) is the cleaner invariant.
+      expect(await ethers.provider.getBalance(await contract.getAddress())).to.equal(0n);
+      void gasCost;
+    });
+
+    it("orchestrator handleResponse round-trip: Approve ruling drives state → Approved", async () => {
+      // Closes the tick-118 Opus-review LOW: verifies the full self-hosted
+      // round-trip end-to-end, not just the fire half. Orchestrator EOA fires
+      // handleResponse directly with an encoded 10-tuple ruling.
+      const { contract } = await deploy();
+      const [provider, insurer, orchestrator] = await ethers.getSigners();
+      await contract.setPlatformSelfHosted(orchestrator.address);
+      await contract.setAgentReward(0n);
+
+      // Fire the agent through the self-hosted path; capture synthetic requestId.
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+      await contract.connect(provider).requestAdjudication(reqId);
+      const requestId = (await contract.getNegotiation(reqId)).pendingRequestId;
+
+      // Build the 10-tuple result via the orchestrator's actual encoder
+      // (`scripts/lib/ruling-abi.ts`) — this is the R26 mirror linkage. If the
+      // orchestrator's encoder shape ever drifts from `_fireAgentSelfHosted`'s
+      // decoder, this `handleResponse` call reverts inside the Solidity
+      // `abi.decode` and the test fails loud. Dynamic import sidesteps the
+      // CJS/ESM boundary (hardhat ts-node uses CJS; the lib lives under root
+      // package.json `type: module`).
+      //
+      // **Values are chosen to make the linkage byte-sensitive.** A trivial
+      // Approve with 200 wei + all-empty arrays encodes identically under
+      // many type-list permutations (Decision=0 fits any uint width; empty
+      // arrays encode as a single length=0 word regardless of element type).
+      // The values below exercise: (a) costPlusUnitPrice = 10^18, so any
+      // encoder-type-list permutation that maps this field to a narrow uint
+      // (e.g. uint8) either throws `value out-of-bounds` at encode time or
+      // decodes to a wrong value the contract logic rejects; (b) populated
+      // uint16[] and bytes32[] so element-type drift in the dynamic tail
+      // produces a decoder revert. Adjacent bytes32-vs-bytes32 swaps (rows
+      // 3/4/5) remain byte-invisible to this test by construction — those
+      // are covered by the static type-list check in
+      // `scripts/check-ruling-abi.ts`.
+      const ruleMod = await import("../../scripts/lib/ruling-abi.ts");
+      const orchestratorEncodeRuling = ruleMod.encodeRuling;
+      const result = orchestratorEncodeRuling({
+        decision: Decision.Approve,
+        costPlusUnitPrice: 10n ** 18n, // 1 ether; doesn't fit in uint8/uint16
+        nadacUnitPrice: NADAC_UNIT,
+        rationaleHash: RATIONALE_HASH,
+        clauseRef: CLAUSE_REF,
+        standardRef: STANDARD_REF,
+        receiptId: RECEIPT_ID,
+        policyVoidedClauseIndices: [], // Approve → must be empty per Zod superRefine
+        usedReferenceIndices: [1, 7, 42, 65535], // populated uint16[]
+        usedLeafHashes: [
+          ethers.id("leaf:r26-mirror:a"),
+          ethers.id("leaf:r26-mirror:b"),
+        ], // populated bytes32[]
+      });
+      const response = {
+        validator: orchestrator.address,
+        result,
+        status: ResponseStatus.Success,
+        receipt: RECEIPT_ID,
+        timestamp: 0n,
+        executionCost: 0n,
+      };
+      const emptyRequest = {
+        id: requestId,
+        requester: await contract.getAddress(),
+        callbackAddress: await contract.getAddress(),
+        callbackSelector: "0x00000000",
+        subcommittee: [],
+        responses: [],
+        responseCount: 0n,
+        failureCount: 0n,
+        threshold: 0n,
+        createdAt: 0n,
+        deadline: 0n,
+        status: ResponseStatus.Success,
+        consensusType: 0,
+        remainingBudget: 0n,
+        perAgentBudget: 0n,
+      };
+
+      // Orchestrator EOA delivers the ruling — proves _requestToNegotiation maps
+      // the synthetic requestId back to reqId AND msg.sender == platform passes.
+      await expect(
+        contract
+          .connect(orchestrator)
+          .handleResponse(requestId, [response], ResponseStatus.Success, emptyRequest)
+      ).to.emit(contract, "Ruled");
+
+      expect(await contract.stateOf(reqId)).to.equal(State.Approved);
+    });
+  });
+
+  describe("admin setters: success + onlyOwner branch coverage (tick 133)", () => {
+    // Narrows the contracts/ branch-coverage gap surfaced by the tick-132
+    // `npx hardhat coverage` run (76.83% → 81.10% after this block). The 3
+    // setters below had only the assignment branch tested transitively; the
+    // `onlyOwner` revert branch was uncovered. One success + one revert test
+    // per setter. The remaining gap (81.10% → ≥85%) is deferred to a
+    // follow-up tick — `CoverageNegotiation.sol`'s state-machine branches
+    // outside the setters need targeted tests of their own.
+
+    it("setAgentId: owner updates value", async () => {
+      const { contract } = await deploy();
+      const newAgentId = 42n; // arbitrary nonzero; setter has no input validation
+      await contract.setAgentId(newAgentId);
+      expect(await contract.agentId()).to.equal(newAgentId);
+    });
+
+    it("setAgentId: non-owner reverts with OwnableUnauthorizedAccount", async () => {
+      const { contract } = await deploy();
+      const [, nonOwner] = await ethers.getSigners();
+      await expect(
+        contract.connect(nonOwner).setAgentId(42n)
+      ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
+    });
+
+    it("setRulingTimeout: owner updates value", async () => {
+      const { contract } = await deploy();
+      const newTimeout = 3600n; // 1 hour; setter has no input validation
+      await contract.setRulingTimeout(newTimeout);
+      expect(await contract.rulingTimeout()).to.equal(newTimeout);
+    });
+
+    it("setRulingTimeout: non-owner reverts with OwnableUnauthorizedAccount", async () => {
+      const { contract } = await deploy();
+      const [, nonOwner] = await ethers.getSigners();
+      await expect(
+        contract.connect(nonOwner).setRulingTimeout(3600n)
+      ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
+    });
+
+    it("setAgentEvidenceUrl: owner updates value", async () => {
+      const { contract } = await deploy();
+      const newUrl = "https://example.test/evidence";
+      await contract.setAgentEvidenceUrl(newUrl);
+      expect(await contract.agentEvidenceUrl()).to.equal(newUrl);
+    });
+
+    it("setAgentEvidenceUrl: non-owner reverts with OwnableUnauthorizedAccount", async () => {
+      const { contract } = await deploy();
+      const [, nonOwner] = await ethers.getSigners();
+      await expect(
+        contract.connect(nonOwner).setAgentEvidenceUrl("https://attacker.test")
+      ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
+    });
+
+    it("MockAgentPlatform.setDeposit: new value reflected by getRequestDeposit", async () => {
+      // Closes the mock's function-coverage gap (5/6 → 6/6) per the tick-132
+      // report. Cheap; MockAgentPlatform is a test double, no owner gate.
+      const { platform } = await deploy();
+      await platform.setDeposit(0n);
+      expect(await platform.getRequestDeposit()).to.equal(0n);
+      await platform.setDeposit(ethers.parseEther("0.5"));
+      expect(await platform.getRequestDeposit()).to.equal(ethers.parseEther("0.5"));
+    });
+
+    it("MockAgentPlatform.createRequest: underfunded msg.value reverts with 'mock: underfunded'", async () => {
+      // Closes the mock's revert-branch coverage (50% → 100% branch). The
+      // existing tests all pay the required deposit; this one calls direct
+      // with msg.value=0 (< platform.deposit) and asserts the require fires.
+      // callbackAddress isn't dereferenced before the deposit check (verified
+      // against MockAgentPlatform.sol:61 — require is the first statement),
+      // so any address works.
+      const { platform } = await deploy();
+      const [signer] = await ethers.getSigners();
+      await expect(
+        platform.createRequest(
+          0n,
+          signer.address,
+          "0x00000000",
+          "0x",
+          { value: 0n },
+        )
+      ).to.be.revertedWith("mock: underfunded");
+    });
+  });
+
+  describe("admin setters: remaining onlyOwner branch coverage (tick 134)", () => {
+    // Continues the tick-133 work. Closes the remaining setter onlyOwner
+    // revert arms (setPlatform / setAgentReward / setMaxRounds / withdrawFunds)
+    // plus the value-validation reverts on setMaxRounds and withdrawFunds.
+    // HTML coverage report inspection (tick 134) identified 31 uncovered
+    // branch arms in CoverageNegotiation.sol; this block closes ~7-8 of them,
+    // targeting the gate jump from 80.86% → ≥85%.
+
+    it("setPlatform: non-owner reverts with OwnableUnauthorizedAccount", async () => {
+      const { contract, platform } = await deploy();
+      const [, nonOwner] = await ethers.getSigners();
+      await expect(
+        contract.connect(nonOwner).setPlatform(await platform.getAddress())
+      ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
+    });
+
+    it("setAgentReward: non-owner reverts with OwnableUnauthorizedAccount", async () => {
+      const { contract } = await deploy();
+      const [, nonOwner] = await ethers.getSigners();
+      await expect(
+        contract.connect(nonOwner).setAgentReward(ethers.parseEther("0.01"))
+      ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
+    });
+
+    it("setMaxRounds: non-owner reverts with OwnableUnauthorizedAccount", async () => {
+      const { contract } = await deploy();
+      const [, nonOwner] = await ethers.getSigners();
+      await expect(
+        contract.connect(nonOwner).setMaxRounds(3n)
+      ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
+    });
+
+    it("setMaxRounds: zero value reverts with 'maxRounds: < 1' (R6c invariant)", async () => {
+      const { contract } = await deploy();
+      await expect(contract.setMaxRounds(0n)).to.be.revertedWith("maxRounds: < 1");
+    });
+
+    it("withdrawFunds: non-owner reverts with OwnableUnauthorizedAccount", async () => {
+      const { contract } = await deploy();
+      const [, nonOwner] = await ethers.getSigners();
+      await expect(
+        contract.connect(nonOwner).withdrawFunds(nonOwner.address, 0n)
+      ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
+    });
+
+    it("withdrawFunds: zero address recipient reverts with 'funds: zero addr'", async () => {
+      const { contract } = await deploy();
+      await expect(
+        contract.withdrawFunds(ethers.ZeroAddress, 0n)
+      ).to.be.revertedWith("funds: zero addr");
+    });
+
+    it("withdrawFunds: amount > balance reverts with 'funds: insufficient'", async () => {
+      const { contract } = await deploy();
+      const [owner] = await ethers.getSigners();
+      // Fresh contract has zero balance; asking for any nonzero amount
+      // exceeds the balance and trips the second require.
+      await expect(
+        contract.withdrawFunds(owner.address, 1n)
+      ).to.be.revertedWith("funds: insufficient");
+    });
+
+    it("createContract: zero justificationHash skips ContentCommitted emit (line 394 else-branch)", async () => {
+      // Closes the `if (justificationHash != bytes32(0))` else-branch at
+      // CoverageNegotiation.sol:394. The existing createAs helper always
+      // passes a nonzero JUSTIFICATION_HASH. Asserts ContractCreated fires
+      // but ContentCommitted does NOT.
+      const { contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const ZERO_HASH = ethers.ZeroHash;
+      const tx = contract
+        .connect(provider)
+        .createContract(
+          PROVIDER_ID,
+          INSURER_ID,
+          provider.address,
+          insurer.address,
+          DRUG_REF,
+          REQUESTED,
+          QUANTITY,
+          DAYS_SUPPLY,
+          ZERO_HASH, // justificationHash = bytes32(0) → else branch
+          EVIDENCE_URI,
+          0, // payerLine
+        );
+      await expect(tx)
+        .to.emit(contract, "ContractCreated")
+        .and.to.not.emit(contract, "ContentCommitted");
+    });
+  });
+
+  describe("transfer-failure branches via RevertingReceiver mock (tick 135)", () => {
+    // Closes the "require(ok, ...)" branches that follow native
+    // `.call{value: x}("")` patterns. Each branch needs a recipient whose
+    // `receive()` reverts so the inner `.call` returns false. Pushes
+    // contracts/ branch coverage past the 85% gate.
+
+    it("withdrawFunds: reverting recipient trips 'funds: transfer failed' (line 339)", async () => {
+      const { contract } = await deploy();
+      const Reverter = await ethers.getContractFactory("RevertingReceiver");
+      const reverter = await Reverter.deploy();
+      await reverter.waitForDeployment();
+
+      // Fund the contract directly via Hardhat's setBalance — there's no
+      // receive()/fallback() so we can't transfer in normally, and the
+      // payable entry points all forward the value through immediately.
+      const contractAddr = await contract.getAddress();
+      await ethers.provider.send("hardhat_setBalance", [
+        contractAddr,
+        "0x1000000000000000", // ~0.072 ether
+      ]);
+
+      await expect(
+        contract.withdrawFunds(await reverter.getAddress(), 1n)
+      ).to.be.revertedWith("funds: transfer failed");
+    });
+
+    it("_fireAgentSelfHosted: reverting platform trips 'fee: orchestrator transfer failed' (line 919)", async () => {
+      const { contract } = await deploy();
+      const Reverter = await ethers.getContractFactory("RevertingReceiver");
+      const reverter = await Reverter.deploy();
+      await reverter.waitForDeployment();
+      const [provider, insurer] = await ethers.getSigners();
+
+      // Configure self-hosted with the reverting contract as platform.
+      // setAgentReward > 0 so _fireAgentSelfHosted has a fee to forward.
+      const fee = ethers.parseEther("0.01");
+      await contract.setPlatformSelfHosted(await reverter.getAddress());
+      await contract.setAgentReward(fee);
+
+      // Create + engage so adjudication is reachable.
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      // Fire — _fireAgentSelfHosted tries to .call{value: fee}() the platform
+      // (which is the RevertingReceiver). Recipient reverts → ok=false →
+      // require(feeOk, "fee: orchestrator transfer failed") fires.
+      await expect(
+        contract.connect(provider).requestAdjudication(reqId, { value: fee })
+      ).to.be.revertedWith("fee: orchestrator transfer failed");
+    });
+  });
+
+  describe("state-guard reverts (tick 137 branch coverage polish)", () => {
+    // Continues ticks 133-135's branch-coverage close. Each test exercises a
+    // state-precondition `require` from the wrong State, closing the revert-
+    // arm Istanbul tracks. Coverage gate is already passing (85.80% on
+    // CoverageNegotiation.sol after tick 135); these add safety margin.
+
+    it("requestAdjudication: pre-engage state == Open trips 'adjudicate: not Ready' (line 422)", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      // Create but DO NOT engage — state stays Open, not Ready.
+      const reqId = await createAs(contract, provider, insurer.address);
+      expect(await contract.stateOf(reqId)).to.equal(State.Open);
+      await expect(
+        contract.connect(provider).requestAdjudication(reqId)
+      ).to.be.revertedWith("adjudicate: not Ready");
+    });
+
+    it("submitEvidence: state == Ready (no adjudication yet) trips 'evidence: wrong state' (line 437)", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      // Create + engage but DO NOT requestAdjudication — state stays Ready.
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+      expect(await contract.stateOf(reqId)).to.equal(State.Ready);
+      await expect(
+        contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI)
+      ).to.be.revertedWith("evidence: wrong state");
+    });
+
+    it("onRulingTimeout: state == Open (no fire yet) trips 'timeout: not UnderReview' (line 572)", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      // Fresh negotiation in Open state — onRulingTimeout requires UnderReview.
+      const reqId = await createAs(contract, provider, insurer.address);
+      expect(await contract.stateOf(reqId)).to.equal(State.Open);
+      await expect(
+        contract.connect(provider).onRulingTimeout(reqId)
+      ).to.be.revertedWith("timeout: not UnderReview");
+    });
+
+    it("appeal: state == Ready (no ruling yet) trips 'appeal: prior ruling not Deny' (line 481)", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+      // State is Ready, not Denied.
+      await expect(
+        contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URI, ethers.id("appeal:reason"))
+      ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
   });
 });

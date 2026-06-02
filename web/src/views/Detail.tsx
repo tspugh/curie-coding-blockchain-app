@@ -7,7 +7,12 @@ import {
   verifyContent,
   txUrl,
   SOMNIA_TESTNET,
+  LADDERS,
+  PayerLine,
+  stageNameFor,
+  policiesForLine,
   type CoverageEvent,
+  type CuratedPolicy,
   type NegotiationView,
   type PolicyCommitment,
   type PriceBasis,
@@ -21,12 +26,13 @@ import {
   STANDARD_REF,
 } from "../client.js";
 import { SAMPLE_CASE } from "../sampleCase.js";
+import { ErrorCard } from "../components/ErrorCard.js";
 import {
   FDA_DRUG_LABEL,
   FDA_INDICATION_TEXT,
   FDA_LABEL_URL,
 } from "../fdaIndication.js";
-import { describeEvent, fmtAmount, shortHex } from "../shared.js";
+import { describeEvent, eventAttribution, eventTone, fmtAmount, shortHex } from "../shared.js";
 
 interface DetailProps {
   readonly reqId: bigint;
@@ -88,6 +94,120 @@ const STEPPER_STEPS: readonly {
   },
 ];
 
+/**
+ * Display name for a payer line — symbolic enum reads "PartD" but the prototype
+ * surfaces "Medicare Part D" / "Commercial" / "Medicaid". Mirrors Overview.tsx's
+ * payerLineDisplay (kept inline rather than shared to keep the diff tight; a
+ * shared helper is a small future NIT closure).
+ */
+/**
+ * SPEC-0005 R14: serialize a curated policy into the single-string body the
+ * insurer commits off-chain. The on-chain payload is the keccak256 of THIS
+ * string, so the format MUST be stable for clause-level replay; do not
+ * reorder or relabel without bumping the policy id.
+ */
+function renderCuratedPolicyText(policy: CuratedPolicy): string {
+  const head = `${policy.name}. ${policy.summary}`;
+  const clauseLines = policy.clauses.map(
+    (c) => `Clause ${c.id}${c.voids ? " (FLAGGED)" : ""}: ${c.text}`,
+  );
+  return [head, ...clauseLines].join(" ");
+}
+
+/**
+ * SPEC-0005 R15: serialize a custom (insurer-composed) policy. Each non-empty
+ * textarea line becomes one clause; clauses are numbered `CUSTOM-N` so the
+ * format mirrors `renderCuratedPolicyText` and downstream consumers can rely
+ * on the same shape. Empty name + empty clauses yield "" so the gating check
+ * sees an empty body.
+ */
+function buildCustomPolicyText(name: string, clauses: string): string {
+  const trimmedName = name.trim();
+  const lines = clauses.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+  if (trimmedName === "" && lines.length === 0) return "";
+  const head = `${trimmedName || "Custom policy"}. Custom composition.`;
+  const clauseLines = lines.map((text, i) => `Clause CUSTOM-${i + 1}: ${text}`);
+  return [head, ...clauseLines].join(" ");
+}
+
+function payerLineDisplay(line: PayerLine): string {
+  switch (line) {
+    case PayerLine.PartD: return "Medicare Part D";
+    case PayerLine.Commercial: return "Commercial";
+    case PayerLine.Medicaid: return "Medicaid";
+  }
+}
+
+/** Compact statutory-window display, e.g. "60 days". Null → empty string. */
+function windowDaysDisplay(d: number | null): string {
+  return d == null ? "" : `${d} day${d === 1 ? "" : "s"}`;
+}
+
+/** Compact threshold display in dollars, e.g. "$190 AIC". Null → empty. */
+function thresholdDisplay(cents: number | null): string {
+  if (cents == null) return "";
+  const dollars = Math.round(cents / 100);
+  return `$${dollars.toLocaleString()} AIC`;
+}
+
+interface AppealLadderProps {
+  readonly payerLine: PayerLine;
+  readonly appealRound: number;
+}
+
+/**
+ * Appeal-ladder card (SPEC-0004 §2.4 R15/R17, prototype screens.jsx:233-266).
+ * Renders LADDERS[payerLine] as a row of stage cards. The active card
+ * (i === appealRound) is highlighted; previous (i < appealRound) show ✓;
+ * future (i > appealRound + 1) dim. Header caption shows the current stage
+ * name + window-days + threshold from the ladder row.
+ */
+function AppealLadder({ payerLine, appealRound }: AppealLadderProps) {
+  const stages = LADDERS[payerLine];
+  const currentStage = stages[appealRound];
+  const currentName = stageNameFor(payerLine, appealRound);
+
+  return (
+    <section className="appeal-ladder card">
+      <header className="appeal-ladder-head">
+        <div className="section-label">Appeal ladder · {payerLineDisplay(payerLine)}</div>
+        <div className="appeal-ladder-meta">
+          currently at <strong>{currentName}</strong>
+          {currentStage?.windowDays != null && (
+            <> · file within {windowDaysDisplay(currentStage.windowDays)}</>
+          )}
+          {currentStage?.thresholdCents != null && (
+            <> · {thresholdDisplay(currentStage.thresholdCents)}</>
+          )}
+        </div>
+      </header>
+      <div className="appeal-ladder-grid">
+        {stages.map((s, i) => {
+          const isCurrent = i === appealRound;
+          const isPassed = i < appealRound;
+          const isDistantFuture = !isCurrent && !isPassed && i > appealRound + 1;
+          const cls =
+            "appeal-stage" +
+            (isCurrent ? " is-current" : "") +
+            (isPassed ? " is-passed" : "") +
+            (isDistantFuture ? " is-dim" : "");
+          return (
+            <div key={i} className={cls}>
+              <div className="appeal-stage-head">
+                <span className="appeal-stage-badge">
+                  {isPassed ? "✓" : i}
+                </span>
+                <span className="appeal-stage-name">{s.name}</span>
+              </div>
+              <div className="appeal-stage-desc">{s.description}</div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function getNextStep(
   state: State,
   isProvider: boolean,
@@ -116,10 +236,30 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   const [view, setView] = useState<NegotiationView | null>(null);
   const [policy, setPolicy] = useState<PolicyCommitment | null>(null);
   const [priceBasis, setPriceBasis] = useState<PriceBasis | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Error state is `unknown` so the raw caught value (Error object, string, etc.)
+  // can flow into ErrorCard, which runs its own R16 revert-reason mapping via
+  // extractRevertReason (which requires an object — string messages would lose the
+  // mapping). Validation errors below pass plain strings (already user-facing).
+  const [error, setError] = useState<unknown>(null);
 
   const [policyText, setPolicyText] = useState("");
-  const [policyChoice, setPolicyChoice] = useState<"compliant" | "noncompliant" | null>(null);
+  // SPEC-0005 R14: the policy choice is the curated policy's id, or the
+  // sentinel "custom" when the insurer is composing their own (R15), or
+  // null when nothing's selected yet.
+  //
+  // Followup NIT (tracked, not blocking): the "custom" sentinel shares its
+  // string namespace with curated policy ids. A curated policy named
+  // literally "custom" would collide. The library currently uses
+  // hyphenated slugs (partd-formulary-adalimumab, …) so the collision is
+  // implausible; the cleaner shape is a tagged union
+  // `{kind: "curated"; id: string} | {kind: "custom"} | null` — defer
+  // until a second sentinel is needed.
+  const [policyChoice, setPolicyChoice] = useState<string | null>(null);
+  // SPEC-0005 R15: custom-policy composer state. `customName` is the policy
+  // title; `customClauses` is a newline-separated list — each non-empty line
+  // becomes a single clause in the rendered text body.
+  const [customName, setCustomName] = useState("");
+  const [customClauses, setCustomClauses] = useState("");
   const [decision, setDecision] = useState<Decision>(getNextDecision());
   const [appealEvidence, setAppealEvidence] = useState("");
   const [evidenceText, setEvidenceText] = useState("");
@@ -149,19 +289,21 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
           setPriceBasis(pb);
         }
       } catch (err) {
-        if (!cancelled)
-          setError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setError(err);
       }
     })();
     return () => { cancelled = true; };
   }, [reqId, events]);
 
+  // Forward the raw error to ErrorCard, which runs the SPEC-0003 R16
+  // revert-reason mapping itself. (Pre-formatting the message here would
+  // double-render the headline + collapse "what to do" into the headline.)
   async function run(action: () => Promise<unknown>) {
     setError(null);
     try {
       await action();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(err);
     }
   }
 
@@ -169,7 +311,13 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
     return (
       <section className="view detail">
         <button type="button" onClick={onBack}>← Back</button>
-        {error ? <p className="error">{error}</p> : <p className="hint">Loading…</p>}
+        {/* Loading-state error sits in a single-line shell with no surrounding
+            content; the polished ErrorCard format adds visual weight that
+            distracts from the back-affordance. Keep the simple `<p>` for now
+            and migrate when the loading state grows real layout. */}
+        {error
+          ? <p className="error">{error instanceof Error ? error.message : String(error)}</p>
+          : <p className="hint">Loading…</p>}
       </section>
     );
   }
@@ -239,9 +387,11 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
         })}
       </ol>
 
-      {error && <p className="error">{error}</p>}
+      {error !== null && error !== undefined && (
+        <ErrorCard error={error} onDismiss={() => setError(null)} />
+      )}
 
-      <div className="detail-grid">
+      <div className={`detail-grid${isInsurer ? " is-insurer" : ""}`}>
         {/* Request details */}
         <div className="card facts">
           <h2>Request Details</h2>
@@ -286,6 +436,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
           <button
             type="button"
             className="proof-toggle"
+            data-testid="proof-toggle"
             onClick={() => setShowProof((v) => !v)}
           >
             {showProof ? "▲ Hide" : "▼ View"} blockchain proof
@@ -387,6 +538,24 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                 <dd data-testid="ruling-covered">{fmtAmount(lastRuled.coveredAmount)}</dd>
                 <dt>Round</dt>
                 <dd data-testid="ruling-decision">{n.round.toString()}</dd>
+                {/* SPEC-0004 §3.5 R11: replay-anchor (cited packet entries). */}
+                {lastRuled.usedReferenceIndices.length > 0 && (
+                  <>
+                    <dt>Cited references</dt>
+                    <dd data-testid="ruling-used-refs">
+                      [{lastRuled.usedReferenceIndices.join(", ")}]
+                    </dd>
+                  </>
+                )}
+                {/* SPEC-0004 §3.5 R23: voided clauses (Approve-via-policy-void). */}
+                {lastRuled.policyVoidedClauseIndices.length > 0 && (
+                  <>
+                    <dt>Voided clauses</dt>
+                    <dd data-testid="ruling-voided-clauses">
+                      [{lastRuled.policyVoidedClauseIndices.join(", ")}]
+                    </dd>
+                  </>
+                )}
               </dl>
               {(lastRuled || settled) && (
                 <VerifyOnChain event={settled ?? lastRuled!} />
@@ -446,7 +615,12 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
         </div>
       )}
 
-      <div className="detail-grid">
+      <AppealLadder
+        payerLine={n.payerLine}
+        appealRound={n.appealRound}
+      />
+
+      <div className={`detail-grid${isInsurer ? " is-insurer" : ""}`}>
         <div className="card actions">
           {nextStep && isParty && (
             <div className="next-step" data-testid="next-step-banner">
@@ -461,33 +635,149 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
             <div className="action">
               <p className="action-label">Choose a policy to attach:</p>
               <div className="policy-cards">
+                {policiesForLine(n.payerLine).map((policy) => {
+                  // SPEC-0005 R14: render one card per curated policy that
+                  // targets this negotiation's payer line. Preserve the legacy
+                  // testids on the corresponding canonical entries (the
+                  // canonical compliant Part D formulary keeps the
+                  // `engage-load-compliant` testid; the demo non-compliant
+                  // policy keeps `engage-noncompliant-toggle`) so the existing
+                  // harness keeps working unchanged.
+                  const isBad = policy.clauses.some((c) => c.voids);
+                  const legacyTestid =
+                    policy.id === "partd-formulary-adalimumab"
+                      ? "engage-load-compliant"
+                      : policy.id === "demo-bad-adalimumab-noncompliant"
+                        ? "engage-noncompliant-toggle"
+                        : `engage-policy-${policy.id}`;
+                  const selected = policyChoice === policy.id;
+                  return (
+                    <button
+                      key={policy.id}
+                      type="button"
+                      data-testid={legacyTestid}
+                      className={`policy-card ${isBad ? "noncompliant" : "compliant"}${selected ? " selected" : ""}`}
+                      onClick={() => {
+                        // Compose a single text body from the policy's
+                        // name + clauses for the off-chain commit; the
+                        // arbiter reads structured slices via R10 packets.
+                        const body = renderCuratedPolicyText(policy);
+                        setPolicyText(body);
+                        setPolicyChoice(policy.id);
+                        if (isBad) {
+                          // Pre-steer the simulated AI: bad policy → AI
+                          // asks for more evidence (R23 surfaces the
+                          // voided-clause indices on Ruled).
+                          setDecision(Decision.NeedMoreEvidence);
+                          setNextDecision(Decision.NeedMoreEvidence);
+                        }
+                      }}
+                    >
+                      <span className="policy-card-icon">{isBad ? "⚠" : "✓"}</span>
+                      <strong>{policy.name}</strong>
+                      <p>{policy.summary}</p>
+                    </button>
+                  );
+                })}
+                {/* SPEC-0005 R15: free-text custom policy — the insurer can
+                    compose their own policy at engage time. */}
                 <button
                   type="button"
-                  data-testid="engage-load-compliant"
-                  className={`policy-card compliant${policyChoice === "compliant" ? " selected" : ""}`}
-                  onClick={() => { setPolicyText(SAMPLE_CASE.policyText); setPolicyChoice("compliant"); }}
-                >
-                  <span className="policy-card-icon">✓</span>
-                  <strong>Standard Coverage Policy</strong>
-                  <p>Medicare Part D formulary — covers Adalimumab with prior authorization for approved indications.</p>
-                </button>
-                <button
-                  type="button"
-                  data-testid="engage-noncompliant-toggle"
-                  className={`policy-card noncompliant${policyChoice === "noncompliant" ? " selected" : ""}`}
+                  data-testid="engage-policy-custom"
+                  className={`policy-card${policyChoice === "custom" ? " selected" : ""}`}
                   onClick={() => {
-                    setPolicyText(SAMPLE_CASE.nonCompliantPolicyText);
-                    setPolicyChoice("noncompliant");
-                    // Pre-steer the simulated AI outcome: non-compliant policy → AI asks for more evidence
-                    setDecision(Decision.NeedMoreEvidence);
-                    setNextDecision(Decision.NeedMoreEvidence);
+                    setPolicyChoice("custom");
+                    // Compose the on-chain text from the current composer
+                    // state (could be empty until the user types).
+                    setPolicyText(buildCustomPolicyText(customName, customClauses));
                   }}
                 >
-                  <span className="policy-card-icon">⚠</span>
-                  <strong>Non-Compliant Policy (Demo)</strong>
-                  <p>Contains a clause that contradicts FDA guidelines. AI will detect and void it.</p>
+                  <span className="policy-card-icon">✎</span>
+                  <strong>Custom policy</strong>
+                  <p>Compose your own policy: name + 1..N clauses, hashed and committed off-chain.</p>
                 </button>
               </div>
+              {/* SPEC-0005 R15: composer is visible when "custom" is selected;
+                  edits stay in sync with policyText (and therefore the R16
+                  hash preview below). */}
+              {policyChoice === "custom" && (
+                <div className="custom-policy-composer" data-testid="custom-policy-composer">
+                  <label>
+                    Policy name
+                    <input
+                      type="text"
+                      data-testid="custom-policy-name"
+                      value={customName}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setCustomName(next);
+                        setPolicyText(buildCustomPolicyText(next, customClauses));
+                      }}
+                      placeholder="e.g. Plan-Z PA criteria for Drug X"
+                    />
+                  </label>
+                  <label>
+                    Clauses (one per line)
+                    <textarea
+                      data-testid="custom-policy-clauses"
+                      rows={5}
+                      value={customClauses}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setCustomClauses(next);
+                        setPolicyText(buildCustomPolicyText(customName, next));
+                      }}
+                      placeholder={"Clause 1 body…\nClause 2 body…"}
+                    />
+                  </label>
+                </div>
+              )}
+              {/* SPEC-0005 R16: read-only preview of the selected policy
+                  before submit. Mirrors Create.tsx's .hash-preview pattern
+                  so the insurer sees exactly what will be committed
+                  on-chain (the keccak256 of the rendered text body). Works
+                  for both curated AND custom selections. */}
+              {policyChoice && (() => {
+                let displayName: string;
+                let displaySummary: string;
+                let clauseCount: number;
+                if (policyChoice === "custom") {
+                  const lines = customClauses.split("\n").filter((l) => l.trim().length > 0);
+                  displayName = customName.trim() || "Custom policy (unnamed)";
+                  displaySummary = lines.length === 0
+                    ? "No clauses yet — add at least one line below to enable Engage."
+                    : `Custom composition with ${lines.length} clause${lines.length === 1 ? "" : "s"}.`;
+                  clauseCount = lines.length;
+                } else {
+                  const chosen = policiesForLine(n.payerLine).find(
+                    (p) => p.id === policyChoice,
+                  );
+                  if (!chosen) return null;
+                  displayName = chosen.name;
+                  displaySummary = chosen.summary;
+                  clauseCount = chosen.clauses.length;
+                }
+                const previewHash = hashContent(policyText);
+                return (
+                  <div className="policy-preview" data-testid="policy-preview">
+                    <div className="policy-preview-head">
+                      <strong>{displayName}</strong>
+                      <span className="policy-preview-clauses">
+                        {clauseCount} clause{clauseCount === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                    <p className="policy-preview-summary">{displaySummary}</p>
+                    <div className="hash-preview">
+                      <span className="hash-preview-chars">
+                        {policyText.length} chars · stays in your wallet / agent
+                      </span>
+                      <code className="hash-preview-hash" title={previewHash}>
+                        hash {shortHex(previewHash)}
+                      </code>
+                    </div>
+                  </div>
+                );
+              })()}
               {policyChoice && (
                 <button
                   type="button"
@@ -527,6 +817,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                       <button
                         key={d}
                         type="button"
+                        data-testid={`decision-${cls}`}
                         className={`decision-option ${cls}${decision === d ? " selected" : ""}`}
                         onClick={() => setDecision(d)}
                       >
@@ -728,12 +1019,33 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
             {timeline.length === 0 ? (
               <li className="empty">No events yet.</li>
             ) : (
-              timeline.map((e, i) => (
-                <li key={`${e.name}-${i}`} className="ev-row">
-                  <span className="ev-name">
-                    {FRIENDLY_EVENT[e.name] ?? e.name}
-                  </span>
-                  <span className="ev-desc">{describeEvent(e)}</span>
+              // Newest-first per prototype EventLog (screens.jsx:391).
+              [...timeline].reverse().map((e, i) => (
+                <li
+                  key={`${e.txHash ?? "noTx"}-${e.name}-${i}`}
+                  className={`ev-row tone-${eventTone(e.name)}`}
+                >
+                  <div className="ev-row-head">
+                    <span className="ev-name">
+                      {FRIENDLY_EVENT[e.name] ?? e.name}
+                    </span>
+                  </div>
+                  <div className="ev-desc">{describeEvent(e)}</div>
+                  <div className="ev-row-foot">
+                    {e.txHash ? (
+                      <a
+                        className="ev-tx-chip"
+                        href={txUrl(SOMNIA_TESTNET, e.txHash)}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {shortHex(e.txHash)}
+                      </a>
+                    ) : (
+                      <span className="ev-tx-chip is-empty">no tx</span>
+                    )}
+                    <span className="ev-attr">{eventAttribution(e)}</span>
+                  </div>
                 </li>
               ))
             )}

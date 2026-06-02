@@ -41,7 +41,11 @@ const client = createClient({
   },
 });
 const provider = createProviderAgent(client);
-const insurer = createInsurerAgent(client);
+// SPEC-0004 R2b: providerAddr != insurerAddr per request. The simulated backend's
+// ANY_CALLER mode lets us reuse one client + one negotiation backend while binding
+// the insurer agent to a distinct synthetic address.
+const INSURER_DEMO_ADDR = "0x" + "00".repeat(19) + "02";
+const insurer = createInsurerAgent(client, { addressOverride: INSURER_DEMO_ADDR });
 
 let passed = 0;
 const check = (desc, cond) => {
@@ -58,6 +62,7 @@ const baseScript = {
   requestedAmount: 4200n,
   quantity: 6n, // 6 dispensed units; drives the deterministic cap (R2/R6a)
   daysSupply: 28n, // clinical context only — never enters the price math (R2)
+  payerLine: 0, // PayerLine.PartD — SPEC-0004 R13
 };
 
 async function main() {
@@ -169,7 +174,7 @@ async function main() {
       },
     });
     const capProvider = createProviderAgent(capClient);
-    const capInsurer = createInsurerAgent(capClient);
+    const capInsurer = createInsurerAgent(capClient, { addressOverride: INSURER_DEMO_ADDR });
     const capScript = { ...baseScript, requestedAmount: REQUESTED, quantity: QTY, daysSupply: 30n };
     const ct = await runNegotiation(capClient.negotiation, capProvider, capInsurer, capScript);
     const expectedCap = UNIT * QTY; // 6000

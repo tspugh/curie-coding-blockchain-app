@@ -10,9 +10,13 @@ import {
     ConsensusType
 } from "../ISomniaAgent.sol";
 
-/// @dev Minimal view used to probe the requesting contract's state mid-`createRequest`.
-interface IStateProbe {
+/// @dev Probe interface for verifying the requesting contract's state mid-`createRequest`.
+///      `currentlyFiringReqId` exposes which negotiation is in-flight; `stateOf` reads
+///      that negotiation's state. Together they confirm the CEI invariant (UnderReview
+///      is set before the external platform call) without needing to decode the payload.
+interface IFiringProbe {
     function stateOf(uint256 reqId) external view returns (uint8);
+    function currentlyFiringReqId() external view returns (uint256);
 }
 
 /// @title MockAgentPlatform
@@ -65,13 +69,11 @@ contract MockAgentPlatform is IAgentRequester {
         lastRequestId = requestId;
         createRequestCalls += 1;
 
-        // Probe the requester's state mid-call (reqId is the first word of payload).
-        // A view call — no state change — so it is safe for every test.
-        uint256 reqIdFromPayload;
-        assembly {
-            reqIdFromPayload := calldataload(payload.offset)
-        }
-        observedStateDuringCreate = IStateProbe(callbackAddress).stateOf(reqIdFromPayload);
+        // Probe the requester's state mid-call using the transparency slot.
+        // `currentlyFiringReqId()` returns exactly which negotiation is being fired,
+        // eliminating any payload-decoding assumptions. A view call — no state change.
+        uint256 reqId = IFiringProbe(callbackAddress).currentlyFiringReqId();
+        observedStateDuringCreate = IFiringProbe(callbackAddress).stateOf(reqId);
     }
 
     /// @dev The arbiter ruling fields the contract decodes from `responses[0].result`.
@@ -84,12 +86,16 @@ contract MockAgentPlatform is IAgentRequester {
         bytes32 clauseRef; // policy clause the agent relied on
         bytes32 standardRef; // public standard cited for a policy flag (R6b)
         uint256 receiptId; // off-chain receipt pointer to surface
+        uint16[] policyVoidedClauseIndices; // SPEC-0004 §3.5 R23: clause indices voided on policy-void path
+        uint16[] usedReferenceIndices; // SPEC-0004 §3.5 R11: packet entry indices the ruling relied on
+        bytes32[] usedLeafHashes; // SPEC-0004 §3.5 R11: leaf hashes for cited references (replay-verification anchor)
     }
 
     /// @notice Drive a successful necessity ruling back into the target as the
     ///         platform would, encoding the arbiter tuple the contract decodes:
     ///         `(decision, costPlusUnitPrice, nadacUnitPrice, rationaleHash, clauseRef,
-    ///         standardRef, receiptId)`.
+    ///         standardRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices,
+    ///         usedLeafHashes)`.
     /// @param target The CoverageNegotiation contract (implements handleResponse).
     /// @param requestId The request to resolve.
     /// @param r The ruling fields (see {@link Ruling}).
@@ -98,7 +104,7 @@ contract MockAgentPlatform is IAgentRequester {
         responses[0] = Response({
             validator: address(this),
             result: abi.encode(
-                r.decision, r.costPlusUnitPrice, r.nadacUnitPrice, r.rationaleHash, r.clauseRef, r.standardRef, r.receiptId
+                r.decision, r.costPlusUnitPrice, r.nadacUnitPrice, r.rationaleHash, r.clauseRef, r.standardRef, r.receiptId, r.policyVoidedClauseIndices, r.usedReferenceIndices, r.usedLeafHashes
             ),
             status: ResponseStatus.Success,
             receipt: r.receiptId,

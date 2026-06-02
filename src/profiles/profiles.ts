@@ -22,6 +22,12 @@ export interface Profile {
   readonly label: string;
   /** On-chain party id used for `appeal` / `accept` / `createContract` etc. */
   readonly partyId: bigint;
+  /**
+   * Short one-line summary of what this role does in the demo. Surfaced in the
+   * Settings profile picker (`web/src/views/Settings.tsx`) as the sub-line.
+   * Optional so legacy callers passing custom profiles don't break.
+   */
+  readonly description?: string;
 }
 
 /** Options for {@link ProfileRegistry}. */
@@ -34,8 +40,18 @@ export interface ProfileRegistryOptions {
 
 /** Two sensible default identities for the demo loop (provider + insurer). */
 export const DEFAULT_PROFILES: readonly Profile[] = [
-  { id: "provider", label: "Provider", partyId: 1n },
-  { id: "insurer", label: "Insurer", partyId: 2n },
+  {
+    id: "provider",
+    label: "Provider",
+    partyId: 1n,
+    description: "Files coverage-exception requests with attached clinical evidence.",
+  },
+  {
+    id: "insurer",
+    label: "Insurer",
+    partyId: 2n,
+    description: "Attaches the coverage policy and accepts or appeals the arbiter ruling.",
+  },
 ];
 
 /**
@@ -101,6 +117,27 @@ export class ProfileRegistry {
   /** Register (or replace) a profile. */
   addProfile(profile: Profile): void {
     this.profiles.set(profile.id, profile);
+  }
+
+  /**
+   * Drop a profile from the registry (SPEC-0005 R12 — reactive removal as
+   * the operator deletes runtime DemoUsers in Settings). Throws if `id` is
+   * unknown or is the currently active profile (caller must switch first to
+   * avoid an orphan activeId — that guard also implicitly protects the
+   * "last remaining profile" case, since a single-entry registry must
+   * have that entry active).
+   * @returns true when the entry was removed.
+   */
+  removeProfile(id: string): boolean {
+    if (!this.profiles.has(id)) {
+      throw new Error(`Unknown profile "${id}".`);
+    }
+    if (this.activeId === id) {
+      throw new Error(
+        `Cannot remove the active profile "${id}" — switch first.`,
+      );
+    }
+    return this.profiles.delete(id);
   }
 
   /** Look up a profile by id, or `undefined`. */

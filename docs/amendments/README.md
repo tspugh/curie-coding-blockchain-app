@@ -37,3 +37,6 @@ For richer lifecycle notes see [`docs/reference/curie/amendments/README.md`](../
 | [A-0002](0002-architecture-brainstorm-2026-04-05.md) | Original architecture brainstorm | Superseded by Somnia chain-native pivot (2026-05-14) |
 | [A-0003](0003-ai-mediated-drug-coverage-exception-arbitration.md) | AI-mediated drug coverage-exception arbitration | Accepted |
 | [A-0004](0004-actors-are-workflow-teams-async-not-live-individuals.md) | Actors are workflow teams (async), not live individuals | Accepted |
+| [A-0005](0005-policy-void-r23-supersedes-r6b.md) | SPEC-0004 R23 supersedes SPEC-0001 R6b for the on-label policy-void case | Adopted |
+| [A-0006a](0006-self-hosted-arbiter-agent.md) | Self-hosted arbiter agent via off-chain orchestrator | Adopted (2026-05-30; all Ticks A+B+C+D landed; deployed at `0x2c561f33…488ac93` on Somnia testnet, tick 139) |
+| [A-0006b](0006-relationship-channels-vs-per-case-negotiations.md) | Reframe contracts as provider↔insurer channels; cases flow as evidence under them | Proposed |

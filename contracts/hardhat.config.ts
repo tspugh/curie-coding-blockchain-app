@@ -18,6 +18,14 @@ const config: HardhatUserConfig = {
     version: "0.8.24",
     settings: {
       optimizer: { enabled: true, runs: 200 },
+      // viaIR is required since tick 49 — the abi.decode tuple in
+      // CoverageNegotiation.handleResponse grew from 7 → 8 (tick 49, R23
+      // `policyVoidedClauseIndices`) and now → 10 (tick 50, R11
+      // `usedReferenceIndices` + `usedLeafHashes`), pushing the standard
+      // codegen past the EVM stack limit. The Yul IR pipeline manages stack
+      // pressure for us. Note for redeployment + Blockscout verification:
+      // this flag MUST match across all environments.
+      viaIR: true,
     },
   },
   networks: {

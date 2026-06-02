@@ -1,0 +1,11 @@
+{
+  "payerLine": "PartD",
+  "planId": "S5810-001",
+  "formularyRelease": {
+    "line": "PartD",
+    "planId": "S5810-001",
+    "releaseDate": "2026-01-01",
+    "sourceUrl": "https://www.cms.gov/medicare/prescription-drug-coverage/formulary/downloads/S5810-001_formulary.zip",
+    "contentHash": "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+  }
+}

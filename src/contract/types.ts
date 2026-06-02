@@ -16,6 +16,7 @@ import type {
   CoverageEventListener,
   Negotiation,
   NegotiationView,
+  PayerLine,
   State,
   Unsubscribe,
   WalletMode,
@@ -36,6 +37,11 @@ export interface CreateContractParams {
   readonly providerAddr: string;
   /** Insurer wallet address (auth — R11). */
   readonly insurerAddr: string;
+  /**
+   * Payer line governing the appeal ladder (SPEC-0004 R13). Determines the
+   * stage names + window/threshold table the UI renders against.
+   */
+  readonly payerLine: PayerLine;
   /** Opaque 0x-bytes32 RxNorm/NDC drug reference. */
   readonly drugRef: string;
   /** The provider's billed / requested amount. */
