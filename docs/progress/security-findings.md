@@ -1,3 +1,185 @@
+## 2026-06-04 (refresh 11) — SPEC-0006 R21 pre-submit evidence-URL liveness check (security-review, TOTAL-STICKLER re-run)
+
+**Date:** 2026-06-04
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-derivation from source; did not trust the refresh-10 write-up
+**Base:** `origin/main`
+**Branch:** `spec-6-implementation` (working tree clean except for the four `docs/progress/*.md` review notes)
+**Unit under review:** SPEC-0006 R21 — pre-submit evidence-URL liveness check. Shipped implementation:
+- `probeUrlLiveness(url, sim)` helper + 24 h per-URL memo cache + `formatLivenessError`/`clearLivenessCache`/`seedLivenessCacheEntry` (`web/src/urlLiveness.ts`);
+- pure server-side fetch logic `executeProbe(url, timeout=10_000)` (`web/src/probeHandler.ts`), factored out of `vite.config.ts` for unit-testability;
+- the `GET /__probe?url=<encoded>` Vite dev-server middleware (`vite.config.ts` `urlProbePlugin`, L108-154);
+- pure submit-gate / banner-visibility helpers `isSubmitBlockedByLiveness` / `shouldShowLivenessBanner` (`web/src/livenessGate.ts`);
+- the debounced (`PROBE_DEBOUNCE_MS = 600`) `useEffect` + `data-testid="url-liveness-error"` banner + `create-submit` disable-gate in `web/src/views/Create.tsx` (L21-22, L27-28, L48-110, L415-417, L435-441);
+- unit tests `urlLiveness.test.ts`, `probeHandler.test.ts`, `livenessGate.test.ts`, `views/Create.liveness.test.ts`.
+**Verdict:** PASS (zero findings)
+
+### Hard gate — independently re-derived this run
+
+| Gate | Result | Evidence (re-verified line-by-line) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | R21 adds **no on-chain field**. It is a pre-submit, client-side gate that runs *before* `createContract` and persists nothing on-chain; `probeUrlLiveness`/`executeProbe` handle only the public `agentEvidenceUrl` (curated MedlinePlus/FDA-label URLs from `drugEvidenceMap.ts`, or a manual public override). The patient justification body still stays off-chain — only its `keccak256` `justificationHash` is committed. Diff-wide PHI-token scan (`\b\d{3}-\d{2}-\d{4}\b`, `social security`, `date of birth`, `\bdob\b`, `\bmrn\b`, `medical record`, `patient [A-Z][a-z]+ [A-Z]`, `\bssn\b`) over **added** code lines (`*.ts/*.tsx/*.sol/*.mjs/*.js`) returned only benign hits: the synthetic negative-test probe `"Is semaglutide necessary for patient John S with T2DM?"` (`CoverageNegotiation.test.ts:2336`) — an input asserted to be **rejected** with `revertedWith("evidence: hint required")` (T11e, never stored) — plus PHI-*absence* regression assertions and a PHI-absence comment. R21 fixtures are synthetic public URLs (`https://medlineplus.gov/druginfo/meds/a603010.html`, `...DEAD_SYNTHETIC_ENTRY.html`); `urlLiveness.test.ts` ships an explicit NO-PHI regression test (SSN/DOB/phone/email regex over the fixtures, all negative). |
+| No secrets | PASS | 64-hex / `private[_ ]?key` / `api[_ ]?key` / `mnemonic` / `secret` / `bearer` / `BEGIN…PRIVATE` / `password` scan over **added** code lines returned only two benign hits: a `VITE_PRIVATE_KEY` *comment* in `verify-deploy.ts` documenting that the key is used solely to derive the operator address, and the synthetic test hash `0xdeadbeef…0001`. Neither is a secret. The probe sends **no credentials** — `executeProbe` issues `fetch(url, { method: "GET", headers: { Range: "bytes=0-0" }, signal, redirect: "follow" })`, a single `Range` header only. Branch-wide the diff is a net secret-surface *reduction*: it deletes the banned self-host path (`scripts/orchestrator-real.ts` −456, `contracts/scripts/setup-selfhosted-2026-05-30.ts` −16); no live `@anthropic-ai/sdk` / `new Anthropic` / `ANTHROPIC_API_KEY` import remains in `src/`, `scripts/`, `web/src/`. `.env`/`.env.*` are gitignored and **untracked** (only `.env.example` is tracked, with empty placeholder values); no env file appears in the diff; `.gitignore` changes only ADD ignores (`.codesign/`, `*.bak.*`, `coverage/`) — never un-ignore a secret. |
+| Signing-key hygiene | PASS | R21 performs no signing and touches no key material — it is a read-only liveness probe with no wallet/signer construction anywhere in its added lines. Branch-wide: `scripts/verify-deploy.ts` reads `VITE_PRIVATE_KEY` only to derive `wallet.address` (`new ethers.Wallet(PRIVATE_KEY).address`, L76-77) and logs **only the public operator address** (`console.log(  operator: ${operatorAddr})`, L83) — never the key, never a signed/sent tx. No key is logged, embedded, or persisted by this unit. |
+
+### SSRF surface assessment (documented, not a finding — re-verified)
+
+The `GET /__probe?url=<encoded>` middleware performs a **server-side fetch of a
+caller-supplied URL** — a textbook SSRF shape. It is **not a finding** under this gate,
+for reasons re-verified in source this run:
+
+- **Dev-server-only, never shipped.** `urlProbePlugin` registers exclusively inside
+  `configureServer(server)` (`vite.config.ts:129`), the Vite dev-server hook. It is
+  absent from the production `vite build` bundle and from `vite preview` (only
+  `allowedHosts` appears under `preview`). No production HTTP surface exposes it. This
+  mirrors the pre-existing, already-accepted `/__log/tx` dev sink.
+- **Single-developer local trust boundary.** The dev server binds locally; the only
+  external exposure is the opt-in quick-tunnel (`allowedHosts: [".trycloudflare.com",
+  ".ts.net"]`) — an explicit, ephemeral developer action, not a deployed service.
+- **Bounded blast radius — body never returned.** `executeProbe` downloads ≤ 1 byte
+  (`Range: bytes=0-0`), runs under a 10 s `AbortController` timeout, and returns **only**
+  `{ ok: boolean, status: number, error?: string }`. The response *body is never read or
+  forwarded to the browser*, so the endpoint cannot exfiltrate internal-service content;
+  it leaks at most a boolean + numeric status of the attacker-known URL. `redirect:
+  "follow"` + `status < 400` is intentional (a followed-3xx reads ok:true) and does not
+  change the body-confidentiality property.
+
+Tracked so the surface is visible: if `/__probe` is ever promoted to a production/edge
+function it MUST gain an allowlist (or a deny-list of RFC-1918 / link-local /
+metadata-endpoint targets) before shipping. No action required for the dev-only R21 unit.
+
+### Deliberate deviation from the unit wording (not a finding)
+
+The unit task describes a HEAD-first probe with a bare-GET fallback. The shipped
+`executeProbe` issues a single `Range: bytes=0-0` GET directly and omits HEAD entirely,
+documented as deliberate in both `probeHandler.ts` and `vite.config.ts`: the probe runs
+server-side (no CORS), so the CORS-workaround motivation for HEAD disappears, and a
+Range-GET is universally supported while avoiding a two-round-trip cost. This is a
+behavioral simplification with no security impact (it strictly downloads *less* data than
+a full GET and still respects the 10 s timeout).
+
+### XSS / web review
+
+- No new HTML sink: `dangerouslySetInnerHTML` / `innerHTML` / `eval(` / `new Function` /
+  `document.write` scan over **added** `web/**` lines returned nothing. The
+  `url-liveness-error` banner renders the status/error via auto-escaping JSX text
+  interpolation only (`formatLivenessError(urlLivenessResult!)`); the interpolated
+  `error` originates from the dev-server probe (a server-side fetch error message), not
+  from a stored on-chain value.
+- Sim-mode bypass + submit gate re-verified in `livenessGate.ts` + `Create.tsx`: in sim
+  mode (`!IS_REAL`) `isSubmitBlockedByLiveness` returns `false` and
+  `shouldShowLivenessBanner` returns `false` (effect also returns early, never probes);
+  in real mode the button stays disabled until `urlLivenessResult.ok === true`.
+
+### Verification (this gate)
+
+- `node --import tsx --test web/src/urlLiveness.test.ts web/src/probeHandler.test.ts web/src/livenessGate.test.ts web/src/views/Create.liveness.test.ts` → **55/55 pass** (urlLiveness 18, probeHandler 14, livenessGate 16, Create.liveness 7).
+- `node --import tsx --test "web/src/**/*.test.ts"` → **80/80 pass** (no regression in the drugEvidenceMap / shared suites).
+- `node --import tsx --test "src/**/*.test.ts" "web/src/**/*.test.ts"` → **322/322 pass** (full lib suite).
+- `npx tsc -p tsconfig.json --noEmit` → clean (exit 0).
+
+> Note vs refresh-10: the refresh-10 entry's counts ("30/30" urlLiveness, "55/55" web/src) are stale — the R21 fetch logic was split into `probeHandler.ts` and the gate logic into `livenessGate.ts`, each with their own suites, and a `Create.liveness.test.ts` was added; the R21 unit now totals 55 tests, the full `web/src/**` suite 80, and the full lib suite 322. The substantive PASS verdict is unchanged; this refresh re-derives it against the current tree.
+
+### Verdict: PASS (zero findings)
+
+---
+
+## 2026-06-03 (refresh 10) — SPEC-0006 R21 pre-submit evidence-URL liveness check (security-review, TOTAL-STICKLER re-run)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-derivation from source, not trusting the refresh-9 write-up
+**Base:** `origin/main`
+**Branch:** `spec-6-implementation` (working tree clean)
+**Unit under review:** SPEC-0006 R21 — pre-submit evidence-URL liveness check.
+The shipped implementation comprises:
+- `probeUrlLiveness(url, sim)` helper + 24 h per-URL memo cache (`web/src/urlLiveness.ts`);
+- the pure server-side fetch logic `executeProbe(url, timeout=10_000)`
+  (`web/src/probeHandler.ts`) — factored out of `vite.config.ts` so it is
+  unit-testable without a Vite server;
+- the `GET /__probe?url=<encoded>` Vite dev-server middleware
+  (`vite.config.ts` `urlProbePlugin`, L108-154);
+- the debounced (`PROBE_DEBOUNCE_MS = 600`) `useEffect` + `data-testid="url-liveness-error"`
+  banner + `create-submit` disable-gate in `web/src/views/Create.tsx`
+  (L67-109, L414-422, L438-445);
+- unit tests `web/src/urlLiveness.test.ts` (30 tests) + `web/src/probeHandler.test.ts`.
+**Verdict:** PASS (zero findings)
+
+### Hard gate — independently re-derived this run
+
+| Gate | Result | Evidence (re-verified line-by-line) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | R21 adds **no on-chain field**. It is a pre-submit, client-side gate that runs *before* `createContract` and persists nothing on-chain; `probeUrlLiveness`/`executeProbe` handle only the public `agentEvidenceUrl` (curated MedlinePlus/FDA-label URLs from `drugEvidenceMap.ts`, or a manual public override). The patient justification body still stays off-chain — only its `keccak256` `justificationHash` is committed. Diff-wide PHI-token scan (`\b\d{3}-\d{2}-\d{4}\b`, `social security`, `date of birth`, `\bmrn\b`, `medical record`, `patient [A-Z][a-z]+ [A-Z]`) over **added** code lines (`*.ts/*.tsx/*.sol/*.mjs/*.js`) returned only two hits, both benign: (a) the synthetic negative-test probe `"Is semaglutide necessary for patient John S with T2DM?"` — an input the contract is asserted to **reject** (`revertedWith("evidence: hint required")`), never stored; and (b) a PHI-*absence* comment. R21 fixtures are synthetic public URLs (`https://medlineplus.gov/druginfo/meds/a603010.html`, `...DEAD_SYNTHETIC_ENTRY.html`); `urlLiveness.test.ts` ships an explicit NO-PHI regression test (SSN/DOB/phone/email regex over the fixtures, all negative). |
+| No secrets | PASS | 64-hex / `private[_ ]?key` / `api[_ ]?key` / `mnemonic` / `bearer` / `BEGIN…PRIVATE` scan over **added** code lines returned only: a `VITE_PRIVATE_KEY` *comment* in `verify-deploy.ts` documenting that the key is used solely to derive the operator address, and the obviously-synthetic test hash `0xdeadbeef…0001`. Neither is a secret. The probe sends no credentials — `executeProbe` issues `fetch(url, { method: "GET", headers: { Range: "bytes=0-0" }, signal, redirect: "follow" })`, a single `Range` header only. Branch-wide the diff is a net secret-surface *reduction*: it deletes the banned self-host path (`scripts/orchestrator-real.ts`, `contracts/scripts/setup-selfhosted-2026-05-30.ts`; no live `@anthropic-ai/sdk`/`ANTHROPIC_API_KEY` import remains in code). `.env`/`.env.*`/`.tmp/`/`coverage/` are gitignored; no env file in the diff; `.gitignore` changes only ADD ignores. |
+| Signing-key hygiene | PASS | R21 performs no signing and touches no key material — it is a read-only liveness probe with no wallet/signer construction. Branch-wide: `scripts/verify-deploy.ts` reads `VITE_PRIVATE_KEY` only to derive `wallet.address` and logs **only the public operator address** (`console.log(operator: ${operatorAddr})`) — never the key, never a signed/sent tx. No key is logged, embedded, or persisted by this unit. |
+
+### SSRF surface assessment (documented, not a finding — re-verified)
+
+The `GET /__probe?url=<encoded>` middleware performs a **server-side fetch of a
+caller-supplied URL** — a textbook SSRF shape. It is **not a finding** under this gate,
+for reasons re-verified in source this run:
+
+- **Dev-server-only, never shipped.** `urlProbePlugin` registers exclusively inside
+  `configureServer(server)` (`vite.config.ts:129`), the Vite dev-server hook. It is
+  absent from the production `vite build` bundle and from `vite preview` (only
+  `allowedHosts` appears under `preview`). No production HTTP surface exposes it. This
+  mirrors the pre-existing, already-accepted `/__log/tx` dev sink.
+- **Single-developer local trust boundary.** The dev server binds locally; the only
+  external exposure is the opt-in quick-tunnel (`allowedHosts: [".trycloudflare.com",
+  ".ts.net"]`) — an explicit, ephemeral developer action, not a deployed service.
+- **Bounded blast radius — body never returned.** `executeProbe` downloads ≤ 1 byte
+  (`Range: bytes=0-0`), runs under a 10 s `AbortController` timeout, and returns **only**
+  `{ ok: boolean, status: number, error?: string }`. The response *body is never read or
+  forwarded to the browser*, so the endpoint cannot exfiltrate internal-service content;
+  it leaks at most a boolean + numeric status of the attacker-known URL. `redirect:
+  "follow"` + `status < 400` is intentional (a followed-3xx reads ok:true) and does not
+  change the body-confidentiality property.
+
+Tracked so the surface is visible: if `/__probe` is ever promoted to a production/edge
+function it MUST gain an allowlist (or a deny-list of RFC-1918 / link-local /
+metadata-endpoint targets) before shipping. No action required for the dev-only R21 unit.
+
+### Deliberate deviation from the unit wording (not a finding)
+
+The unit task describes a HEAD-first probe with a bare-GET fallback. The shipped
+`executeProbe` issues a single `Range: bytes=0-0` GET directly and omits HEAD entirely,
+documented as deliberate in both `probeHandler.ts` and `vite.config.ts`: the probe runs
+server-side (no CORS), so the CORS-workaround motivation for HEAD disappears, and a
+Range-GET is universally supported while avoiding a two-round-trip cost. This is a
+behavioral simplification with no security impact (it strictly downloads *less* data than
+a full GET and still respects the 10 s timeout).
+
+### XSS / web review
+
+- No new HTML sink: `dangerouslySetInnerHTML` / `innerHTML` / `eval(` / `new Function` /
+  `document.write` scan over **added** `web/**` lines returned nothing. The
+  `url-liveness-error` banner renders the status/error via auto-escaping JSX text
+  interpolation only; the interpolated `error` originates from the dev-server probe
+  (a server-side fetch error message), not from a stored on-chain value.
+- Sim-mode bypass + submit gate re-verified in `Create.tsx`: in sim mode (`!IS_REAL`) the
+  effect returns early (never probes) and the `create-submit` disable clause skips the
+  liveness check; in real mode the button stays disabled until
+  `urlLivenessResult?.ok === true`.
+
+### Verification (this gate)
+
+- `node --import tsx --test web/src/urlLiveness.test.ts web/src/probeHandler.test.ts` →
+  **30/30 pass** for urlLiveness (cache hit, clean-cache + TTL-expiry re-fetch, sim
+  bypass ×2, non-2xx 404/403/500 → ok:false, network error + AbortError/timeout →
+  ok:false, negative caching, URL-specific keys, result-shape, banner-interpolation ×2,
+  NO-PHI invariant) plus the probeHandler suite.
+- `node --import tsx --test "web/src/**/*.test.ts"` → **55/55 pass** (no regression in the
+  drugEvidenceMap suite).
+- `npx tsc -p tsconfig.json --noEmit` → clean (exit 0).
+
+> Note vs refresh-9: the refresh-9 entry's test counts ("13/13", "38/38") are stale — the
+> urlLiveness suite has since grown to 30 tests and the `web/src/**` suite to 55, and the
+> probe fetch logic was refactored into `web/src/probeHandler.ts` (`executeProbe`) with
+> `vite.config.ts` reduced to the HTTP wrapper. The substantive PASS verdict is unchanged;
+> this refresh re-derives it against the current tree.
+
+### Verdict: PASS (zero findings)
+
+---
+
 ## 2026-06-03 (refresh 9) — SPEC-0006 R21 pre-submit evidence-URL liveness check (security-review, TOTAL-STICKLER)
 
 **Date:** 2026-06-03

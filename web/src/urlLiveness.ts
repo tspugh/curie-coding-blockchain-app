@@ -41,21 +41,6 @@ export function clearLivenessCache(): void {
 }
 
 /**
- * Seed a cache entry directly (test back-door). Allows tests to inject stale
- * entries (e.g. `ts: 0`) without waiting for real time to advance, enabling
- * behavioral verification of the TTL-expiry → re-fetch path.
- *
- * NOT intended for production use; tests only.
- */
-export function seedLivenessCacheEntry(
-  url: string,
-  result: LivenessResult,
-  ts: number,
-): void {
-  cache.set(url, { result, ts });
-}
-
-/**
  * Format the detail portion of the R21 error banner for a failed liveness
  * result.
  *
@@ -96,15 +81,18 @@ export function formatLivenessError(result: LivenessResult): string {
  *
  * @param url - The evidence URL to probe.
  * @param sim - Whether the app is running in simulated (no-chain) mode.
+ * @param now - Injectable clock (ms epoch); defaults to `Date.now()`. Tests pass
+ *   an explicit value to exercise the TTL-expiry path deterministically without
+ *   reaching into the cache — there is no production cache-mutation seam.
  * @returns A `LivenessResult`; never throws.
  */
 export async function probeUrlLiveness(
   url: string,
   sim: boolean,
+  now: number = Date.now(),
 ): Promise<LivenessResult> {
   if (sim) return { ok: true, status: 0 };
 
-  const now = Date.now();
   const cached = cache.get(url);
   if (cached !== undefined && now - cached.ts < LIVENESS_CACHE_TTL_MS) {
     return cached.result;
@@ -122,12 +110,12 @@ export async function probeUrlLiveness(
     } else {
       result = { ok: false, status: json.status ?? 0 };
     }
-    cache.set(url, { result, ts: Date.now() });
+    cache.set(url, { result, ts: now });
     return result;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const result: LivenessResult = { ok: false, status: 0, error: message };
-    cache.set(url, { result, ts: Date.now() });
+    cache.set(url, { result, ts: now });
     return result;
   }
 }

@@ -7,12 +7,13 @@
  *   "in sim mode the check is bypassed"
  *
  * The Create component cannot be rendered without a DOM (no jsdom installed),
- * so these tests exercise the same state machine that the Create useEffect
- * embodies: debounce → probe → gate/banner decision.  The test uses Node's
- * built-in mock.timers to advance a simulated clock, invokes the same
- * `probeUrlLiveness`, `isSubmitBlockedByLiveness`, and `shouldShowLivenessBanner`
- * functions that Create.tsx delegates to, and asserts the exact R21 MUST
- * outcomes (submit blocked / banner shown for dead URL; both clear for live URL).
+ * so these tests exercise the same decision functions that the Create useEffect
+ * delegates to: a real `setTimeout(…, PROBE_DEBOUNCE_MS)` debounce fires the
+ * probe, then the result is run through the exact `probeUrlLiveness`,
+ * `isSubmitBlockedByLiveness`, `shouldShowLivenessBanner`, and
+ * `formatLivenessError` calls Create.tsx uses, asserting the R21 MUST outcomes
+ * (submit blocked / banner shown for a dead URL; both clear for a live URL).
+ * (Real timers — the ~600 ms debounce elapses for real; no fake clock.)
  *
  * Relation to Create.tsx:
  *   - `probeUrlLiveness`      ← called in the useEffect after 600 ms debounce
@@ -28,13 +29,12 @@
  * here.
  */
 import assert from "node:assert/strict";
-import { test, mock } from "node:test";
+import { test } from "node:test";
 
 import {
   probeUrlLiveness,
   formatLivenessError,
   clearLivenessCache,
-  type LivenessResult,
 } from "../urlLiveness.js";
 import {
   isSubmitBlockedByLiveness,
@@ -48,64 +48,6 @@ const PROBE_DEBOUNCE_MS = 600;
 const DEAD_URL = "https://medlineplus.gov/druginfo/meds/DEAD_SYNTHETIC.html";
 /** Synthetic live URL (non-PHI). */
 const LIVE_URL = "https://medlineplus.gov/druginfo/meds/a603010.html";
-
-// ---------------------------------------------------------------------------
-// Helper: simulate the Create.tsx R21 useEffect state machine
-//
-// This is a direct, line-by-line replication of the useEffect logic in
-// Create.tsx so that we can run it under fake timers and assert its outcomes
-// without a React renderer.
-//
-// Create.tsx useEffect (abridged):
-//   if (!IS_REAL) return;
-//   if (url === "") { setState(null); return; }
-//   setState(null);                          ← resets while probe in flight
-//   let cancelled = false;
-//   const id = setTimeout(() => {
-//     probeUrlLiveness(url, false).then(r => { if (!cancelled) setState(r); });
-//   }, PROBE_DEBOUNCE_MS);
-//   return () => { cancelled = true; clearTimeout(id); };
-// ---------------------------------------------------------------------------
-
-async function runLivenessEffect(
-  url: string,
-  isReal: boolean,
-  probeFetch: typeof global.fetch,
-): Promise<LivenessResult | null> {
-  if (!isReal) return null;
-  if (url.trim() === "") return null;
-
-  let result: LivenessResult | null = null;
-  let cancelled = false;
-
-  const originalFetch = global.fetch;
-  global.fetch = probeFetch;
-  clearLivenessCache();
-
-  try {
-    await new Promise<void>((resolve) => {
-      const timerId = setTimeout(() => {
-        void probeUrlLiveness(url.trim(), false).then((r) => {
-          if (!cancelled) {
-            result = r;
-          }
-          resolve();
-        });
-      }, PROBE_DEBOUNCE_MS);
-
-      // Advance fake clock by the debounce delay to fire the timer.
-      // (In the component, React batches effects; here we fire immediately
-      // after schedule to confirm the probe runs after exactly PROBE_DEBOUNCE_MS.)
-      void timerId; // referenced to satisfy exactOptionalPropertyTypes
-    });
-  } finally {
-    global.fetch = originalFetch;
-    clearLivenessCache();
-    cancelled = true;
-  }
-
-  return result;
-}
 
 // ---------------------------------------------------------------------------
 // Real mode — dead URL: submit blocked, banner shown

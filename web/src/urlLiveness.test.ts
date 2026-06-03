@@ -5,8 +5,8 @@
  * Covers:
  *   - Cache hit: a second call for the same URL within 24 h returns the cached
  *     result without issuing a new fetch.
- *   - Cache miss / TTL-expiry: a stale entry (ts injected via seedLivenessCacheEntry)
- *     triggers a re-fetch.
+ *   - Cache TTL: a within-24 h hit is reused; past the TTL it re-fetches —
+ *     verified deterministically via the injected `now` clock (no back-door).
  *   - Sim-mode bypass: in simulated mode `probeUrlLiveness` resolves immediately
  *     without any network I/O.
  *   - Non-2xx response: `/__probe` returning `{ ok: false, status: 404 }` →
@@ -25,7 +25,6 @@ import { test } from "node:test";
 import {
   probeUrlLiveness,
   clearLivenessCache,
-  seedLivenessCacheEntry,
   formatLivenessError,
   LIVENESS_CACHE_TTL_MS,
 } from "./urlLiveness.js";
@@ -100,10 +99,10 @@ test("cache miss: expired or absent entry triggers a new fetch", async () => {
   }
 });
 
-test("cache miss: entry older than LIVENESS_CACHE_TTL_MS triggers a re-fetch", async () => {
-  // Behavioral test: inject a stale entry (ts=0, well beyond the 24 h TTL)
-  // via the seedLivenessCacheEntry back-door, then call probeUrlLiveness and
-  // assert that it issues a new fetch (TTL-expiry → re-fetch path).
+test("cache TTL: a hit within 24 h is reused; past the TTL it re-fetches (injected clock)", async () => {
+  // Behavioral test using the injected `now` clock — no cache back-door. We
+  // populate the cache at logical time t0, confirm a call just before the TTL
+  // boundary is a cache hit (no new fetch), and a call just past it re-fetches.
   let fetchCallCount = 0;
   const originalFetch = global.fetch;
   global.fetch = async (_input: RequestInfo | URL, _init?: RequestInit) => {
@@ -124,14 +123,22 @@ test("cache miss: entry older than LIVENESS_CACHE_TTL_MS triggers a re-fetch", a
       "LIVENESS_CACHE_TTL_MS must equal 24 h in ms",
     );
 
-    // Seed a stale entry: ts=0 means it expired (Date.now() - 0 >> TTL).
-    seedLivenessCacheEntry(SYNTHETIC_URL, { ok: true, status: 200 }, 0);
+    const t0 = 1_000_000_000;
 
-    // The cache has an entry, but it is stale — must re-fetch.
-    assert.equal(fetchCallCount, 0, "no fetch before calling probeUrlLiveness");
-    const result = await probeUrlLiveness(SYNTHETIC_URL, /* sim= */ false);
-    assert.equal(result.ok, true, "probe should return ok:true from fresh fetch");
-    assert.equal(fetchCallCount, 1, "stale entry must trigger exactly one re-fetch");
+    // 1) First call at t0 populates the cache (one fetch).
+    const r1 = await probeUrlLiveness(SYNTHETIC_URL, /* sim= */ false, t0);
+    assert.equal(r1.ok, true);
+    assert.equal(fetchCallCount, 1, "first call must fetch");
+
+    // 2) Call just BEFORE the TTL boundary → cache hit, no new fetch.
+    const r2 = await probeUrlLiveness(SYNTHETIC_URL, false, t0 + LIVENESS_CACHE_TTL_MS - 1);
+    assert.equal(r2.ok, true);
+    assert.equal(fetchCallCount, 1, "within-TTL call must be served from cache");
+
+    // 3) Call just AT/PAST the TTL boundary → stale, must re-fetch.
+    const r3 = await probeUrlLiveness(SYNTHETIC_URL, false, t0 + LIVENESS_CACHE_TTL_MS);
+    assert.equal(r3.ok, true);
+    assert.equal(fetchCallCount, 2, "expired entry must trigger exactly one re-fetch");
   } finally {
     global.fetch = originalFetch;
     clearLivenessCache();

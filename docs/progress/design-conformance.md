@@ -1,9 +1,9 @@
 # Design Conformance Report — spec-6-implementation
 
-**Date:** 2026-06-03
+**Date:** 2026-06-04
 **Branch:** `spec-6-implementation`
 **Threshold:** ≥ 90 % to pass
-**Review pass:** R21 URL-liveness sprint (pre-submit evidence-URL liveness check).
+**Review pass:** R21 URL-liveness sprint (pre-submit evidence-URL liveness check) — re-verified pass.
 
 ## What was verified in this pass
 
@@ -11,14 +11,20 @@ Compared `web/src/` component tree against `docs/reference/ui-prototype-handoff/
 
 1. **`web/src/urlLiveness.ts`** — `probeUrlLiveness(url, sim)` helper: routes `GET /__probe?url=<encoded>` in real mode; resolves `true` immediately in sim mode without network I/O. `Map<string, { ok: boolean; ts: number }>` 24 h memo cache (`LIVENESS_CACHE_TTL_MS = 24 * 60 * 60 * 1000`). `clearLivenessCache()` exported for tests. **IMPLEMENTED.**
 2. **`vite.config.ts`** — `urlProbePlugin()`: `GET /__probe` Vite dev-server middleware. Server-side `fetch` with `Range: bytes=0-0` header under a 10 s `AbortSignal` timeout. Returns `{ ok: boolean, status: number, error?: string }`. Plugin registered alongside `txLogSinkPlugin()`. **IMPLEMENTED.**
-3. **`web/src/views/Create.tsx`** — `probeUrlLiveness` import; `IS_REAL` constant; `PROBE_DEBOUNCE_MS = 600`; `urlLivenessOk: boolean | null` state (null = not yet checked or URL empty); `useEffect` fires on every `agentEvidenceUrl` change, resets to `null` immediately, fires probe after 600 ms debounce in real mode, bypassed entirely in sim mode; `data-testid="url-liveness-error"` error banner rendered when `IS_REAL && urlLivenessOk === false`; `create-submit` disabled when `IS_REAL && urlLivenessOk !== true`. **IMPLEMENTED.**
-4. **`web/src/urlLiveness.test.ts`** — 16 unit tests covering: cache hit (second call within 24 h does not re-fetch), cache miss (clean cache triggers fetch), TTL constant value check, stale-entry re-fetch (ts=0 injected via `seedLivenessCacheEntry`), sim-mode bypass (no fetch called; resolves true), sim-mode DEAD_URL bypass, non-2xx 404 → false, non-2xx 500 with error string → false, non-2xx 403 → false, network TypeError → false, AbortError → false, negative caching (false cached, not re-fetched), distinct-URL isolation (two fetches for two URLs), ok:true result carries status, error-message interpolation for HTTP status, error-message interpolation for network error, PHI-free fixture invariant. **All 16 pass.**
+3. **`web/src/views/Create.tsx`** — `probeUrlLiveness`, `formatLivenessError`, `isSubmitBlockedByLiveness`, `shouldShowLivenessBanner` imports; `IS_REAL` constant; `PROBE_DEBOUNCE_MS = 600`; `urlLivenessResult: LivenessResult | null` state (null = not yet checked or URL empty or probe in flight); `useEffect` fires on every `agentEvidenceUrl` change, resets to `null` immediately, fires probe after 600 ms debounce in real mode (bypassed entirely in sim mode), stale-response guard via `cancelled` flag in cleanup closure; `data-testid="url-liveness-error"` error banner rendered via `shouldShowLivenessBanner(IS_REAL, urlLivenessResult)`; `create-submit` disabled via `isSubmitBlockedByLiveness(IS_REAL, urlLivenessResult)`. **IMPLEMENTED.**
+4. **`web/src/urlLiveness.test.ts`** — 18 unit tests covering: cache hit (second call within 24 h does not re-fetch), cache miss (clean cache triggers fetch), TTL constant value check, stale-entry re-fetch (ts=0 injected via `seedLivenessCacheEntry`), sim-mode bypass (no fetch called; resolves true), sim-mode DEAD_URL bypass, non-2xx 404 → false, non-2xx 500 with error string → false, non-2xx 403 → false, network TypeError → false, AbortError → false, negative caching (false cached, not re-fetched), distinct-URL isolation (two fetches for two URLs), ok:true result carries status, `formatLivenessError` HTTP-status interpolation, `formatLivenessError` network-error interpolation, `formatLivenessError` network-error fallback (status=0/no error), `formatLivenessError` ok:true no-op, PHI-free fixture invariant. **All 18 pass.**
 
-**Test gate:** `node --import tsx --test "web/src/urlLiveness.test.ts"` → `16 pass, 0 fail`.
+5. **`web/src/livenessGate.ts`** — extracted `isSubmitBlockedByLiveness` / `shouldShowLivenessBanner` pure gate helpers (unit-testable without React or Vite). `Create.tsx` imports these. **IMPLEMENTED.**
+
+6. **`web/src/probeHandler.ts`** — extracted server-side fetch logic (`executeProbe`) from `vite.config.ts` so the Range-GET + 10 s timeout logic can be unit-tested independently. `vite.config.ts` delegates to `executeProbe`. **IMPLEMENTED.**
+
+7. **`vite.config.ts` merge conflict** — a merge conflict (UU status) existed between the R21 branch work and an earlier ancestor. Resolved by accepting ours (stage 2), which is the full implementation including `urlProbePlugin` + `import { executeProbe }`. The "theirs" side was the pre-R21 version without the probe plugin. **RESOLVED.**
+
+**Test gate:** `node --import tsx --test "web/src/urlLiveness.test.ts"` → `18 pass, 0 fail`.
 
 ---
 
-**Changes since commitRationale sprint:** SPEC-0006 R21 pre-submit evidence-URL liveness check implemented end-to-end. Net-new additions: `web/src/urlLiveness.ts` (helper + 24 h memo cache + `clearLivenessCache`), `web/src/urlLiveness.test.ts` (13 tests, all pass), `vite.config.ts` (`urlProbePlugin` — `/__probe` middleware with Range-limited GET + 10 s timeout), `web/src/views/Create.tsx` (import, `IS_REAL`, `PROBE_DEBOUNCE_MS`, `urlLivenessOk` state, 600 ms debounced `useEffect`, `url-liveness-error` banner, submit gate). Create surface score holds at 93 % (R21 is a form-gate web-plus addition; no prototype gap closed/opened). Overall score holds at ~93 %.
+**Changes since commitRationale sprint:** SPEC-0006 R21 pre-submit evidence-URL liveness check implemented end-to-end. Net-new additions: `web/src/urlLiveness.ts` (helper + 24 h memo cache + `clearLivenessCache` + `seedLivenessCacheEntry` + `formatLivenessError`), `web/src/urlLiveness.test.ts` (18 tests, all pass), `web/src/probeHandler.ts` (`executeProbe` — server-side Range-GET + 10 s timeout, extracted from vite plugin for testability), `vite.config.ts` (`urlProbePlugin` — `/__probe` middleware delegating to `executeProbe`; merge conflict resolved accepting ours), `web/src/views/Create.tsx` (import, `IS_REAL`, `PROBE_DEBOUNCE_MS`, `urlLivenessResult: LivenessResult | null` state, 600 ms debounced `useEffect` with stale-response guard, `url-liveness-error` banner via `shouldShowLivenessBanner`, submit gate via `isSubmitBlockedByLiveness`), `web/src/livenessGate.ts` (pure gate helpers for testability). Create surface score holds at 93 % (R21 is a form-gate web-plus addition; no prototype gap closed/opened). Overall score holds at ~93 %.
 
 ---
 
@@ -50,9 +56,9 @@ Weighted average of six surfaces:
 
 ## Headline verdict
 
-The R21 URL-liveness sprint implements all four R21 components end-to-end: `urlLiveness.ts` helper + 24 h cache, `vite.config.ts` `/__probe` middleware (Range-limited GET, 10 s timeout), `Create.tsx` debounced `useEffect` + `urlLivenessOk` state + `url-liveness-error` banner + submit gate, and 16 unit tests (all pass). Design conformance score holds at ~93 % — R21 is a spec-gate addition above the prototype baseline.
+The R21 URL-liveness sprint implements all R21 components end-to-end: `urlLiveness.ts` (helper + 24 h memo cache + `formatLivenessError`), `probeHandler.ts` (server-side `executeProbe` with Range-GET + 10 s timeout), `vite.config.ts` `/__probe` middleware (delegates to `executeProbe`; merge conflict resolved), `livenessGate.ts` (pure `isSubmitBlockedByLiveness` / `shouldShowLivenessBanner` helpers), `Create.tsx` (600 ms debounced `useEffect` + stale-response guard + `urlLivenessResult: LivenessResult | null` state + `url-liveness-error` banner + submit gate), and 18 unit tests (all pass). Design conformance score holds at ~93 % — R21 is a spec-gate addition above the prototype baseline.
 
-**Unit gate: PASS** — 16 urlLiveness tests pass in `test:lib` (`web/src/urlLiveness.test.ts`).
+**Unit gate: PASS** — 18 urlLiveness tests pass (`web/src/urlLiveness.test.ts`).
 
 ---
 
@@ -136,7 +142,7 @@ _(Remaining gaps: drug/Rx metadata bar, rxnorm/NDC fact rows, evidence provenanc
 | Drug-name → evidence auto-fill | Not in prototype (web+) | `applyDrugLookup` triggers case-insensitive `evidenceForDrug()` lookup → sets `agentEvidenceUrl` + `agentPromptHint` state on match | **Web+** |
 | Evidence URL field (auto-fill + override) | Prototype: `screens.jsx:487–490` (single "Supporting evidence" URL, no auto-fill) | Two fields: `Evidence URL · auto-filled from drug map; override allowed` + `Agent Prompt Hint · auto-filled from drug map; override allowed` | **Match+** (extends prototype) |
 | Submit disabled when evidence fields empty | Not in prototype | `disabled={busy \|\| balanceBlock !== null \|\| agentEvidenceUrl.trim() === "" \|\| agentPromptHint.trim() === ""}` | **Web+** (form-validation gate) |
-| R21 URL-liveness check (SPEC-0006) | Not in prototype (web+) | `probeUrlLiveness` debounced 600 ms on `agentEvidenceUrl`; `urlLivenessOk` state; `url-liveness-error` banner when false; submit disabled when `IS_REAL && urlLivenessOk !== true`; bypassed in sim mode | **Web+** |
+| R21 URL-liveness check (SPEC-0006) | Not in prototype (web+) | `probeUrlLiveness` debounced 600 ms on `agentEvidenceUrl`; `urlLivenessResult: LivenessResult | null` state; `url-liveness-error` banner via `shouldShowLivenessBanner`; submit disabled via `isSubmitBlockedByLiveness`; stale-response guard in `useEffect` cleanup; bypassed in sim mode | **Web+** |
 | `onSubmit` uses state values (no hardcoded URL/hint) | N/A | `agentEvidenceUrl: agentEvidenceUrl.trim()`, `agentPromptHint: agentPromptHint.trim()` — no fallback constant | **Clean** |
 | 3-col grid: qty / days / amount | `screens.jsx:481–485` | 2-row layout: qty+days `.row`, then amount separately | Partial |
 | Supporting evidence URL | `screens.jsx:487–490` | Present as separate `create-evidence` field | Match |
@@ -260,5 +266,5 @@ These are polish-level gaps with low demo impact.
 | 38–121 | SPEC-0005 sprint: R7 CDS Hooks prefill, R10/R11 Users panel, R12 reactive pill-row, R13 DemoMode toggle, R14/R15 custom policy composer, R16 policy hash preview | Settings +2 pp (90 % → 92 %); all other surfaces held |
 | **Drug-evidence map sprint** | `drugEvidenceMap.ts` (6 R18 drugs + brand aliases); Create.tsx: drug-name triggers `evidenceForDrug()` → auto-fills Evidence URL + Prompt Hint; manual override retained; submit disabled when either field empty; `onSubmit` uses state values | Create **+5 pp** (88 % → 93 %); Overall **+1 pp** (~92 % → **~93 %**) |
 | **commitRationale sprint** | All 5 stack layers confirmed implemented: `abi.ts` entry, `ContractBackend` interface, `RealBackend._send` wrapper, `SimulatedBackend` emit-to-history path, `RulingRationaleCard` in `Detail.tsx` (R25 web+). 8 `commitRationale` tests in `simulated.transitions.test.ts` pass. | Detail **+1 pp** (87 % → 88 %); Overall held at **~93 %** |
-| **R21 URL-liveness sprint** | `urlLiveness.ts` (helper + 24 h memo cache); `urlLiveness.test.ts` (16 tests, all pass); `vite.config.ts` `urlProbePlugin` (`/__probe` Range-limited GET + 10 s timeout); `Create.tsx` (import, 600 ms debounced `useEffect`, `urlLivenessOk` state, `url-liveness-error` banner, submit gate). | Create held at 93 % (web-plus addition above prototype baseline); Overall held at **~93 %** |
+| **R21 URL-liveness sprint** | `urlLiveness.ts` (helper + 24 h memo cache + `formatLivenessError`); `urlLiveness.test.ts` (18 tests, all pass); `probeHandler.ts` (server-side `executeProbe`); `vite.config.ts` `urlProbePlugin` (`/__probe` Range-limited GET + 10 s timeout; merge conflict resolved); `livenessGate.ts` (pure gate helpers); `Create.tsx` (import, 600 ms debounced `useEffect` with stale-response guard, `urlLivenessResult` state, `url-liveness-error` banner, submit gate). | Create held at 93 % (web-plus addition above prototype baseline); Overall held at **~93 %** |
 | **Total (ticks 32 → R21 URL-liveness sprint)** | | **+11 pp overall from tick-31 baseline (82 % → ~93 %)** |
