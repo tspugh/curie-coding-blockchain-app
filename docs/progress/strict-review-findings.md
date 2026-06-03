@@ -1,3 +1,76 @@
+## Tick 87 — SPEC-0006 R16/R18 drug-evidence map + Create.tsx wiring (strict-review, re-run)
+
+**Date:** 2026-06-03
+**Scope:** `web/src/drugEvidenceMap.ts`, `web/src/drugEvidenceMap.test.ts`,
+`web/src/views/Create.tsx` — the same Unit re-reviewed after the tick-86 LOW
+finding was remediated in the working tree. Reviewed against SPEC-0006 R16, R17,
+R18, R20 and the §3.8 design sketch, with whole-codebase context.
+
+**Verdict:** PASS — zero findings.
+
+### Remediation confirmed (was the tick-86 LOW)
+- `web/src/drugEvidenceMap.test.ts:253-266` — the prior presence-only test
+  (`assert.ok(hint.length >= 20)`) with a comment claiming a drug-specificity
+  check it did not perform is **fixed**. The test now asserts
+  `hint.toLowerCase().includes(key)` for every entry (key = lowercase INN), and
+  the comment honestly describes that invariant. A generic one-size-fits-all
+  template (e.g. "Is coverage medically necessary?") now fails because it does
+  not contain the INN — so the test genuinely defends AC4 / R15 ("the hardcoded
+  generic prompt is deleted"). Independently re-derived: all six production
+  hints begin "Evaluate whether {inn} …", so they pass; a generic template
+  cannot. Comment no longer lies; assertion checks correctness, not presence.
+
+### CRITICAL / MEDIUM / LOW
+- (none)
+
+### Strict-category sweep (this Unit's scope)
+- **Over-engineering / abstraction bloat:** none. Flat `Readonly<Record>` +
+  brand-alias table + one private `normalise()` is the minimum shape for
+  case-insensitive + brand-alias + parenthetical-strip lookup. No premature
+  generality (no `defaultIndication`/`drugName` fields — correctly scoped out;
+  the key already IS the normalised drug name).
+- **Weak tests:** none remaining. No mocks (pure in-memory map — integration
+  not applicable). Correctness asserted: brand→INN aliasing equality on
+  `evidenceUrl`, case-folding, paren-strip, and INN-in-hint invariant. 25/25
+  green via `node --import tsx --test web/src/**/*.test.ts`.
+- **Missing edge cases:** empty / whitespace-only / unknown drug all tested →
+  `null` (keeps `create-submit` disabled, R17/R20). No concurrency or revert
+  surface in a pure synchronous lookup.
+- **Dead code / unused exports:** none. `DRUG_EVIDENCE_MAP`, `evidenceForDrug`,
+  `EvidenceEntry` all consumed (Create.tsx imports `evidenceForDrug`; test
+  imports all three). `BRAND_ALIASES` + `normalise` module-private, both used.
+- **Lying / restating comments:** the one lying comment was the tick-86 finding,
+  now corrected. Remaining comments (Create.tsx onSubmit R14/R15 block,
+  module doc-comments) describe intent/PHI-safety, not restating code.
+- **Spec drift from R-intent:** conforms. All six R18 INNs keyed; auto-fill on
+  drug-name entry (`applyDrugLookup` on the drug input's `onChange`, and on the
+  two demo loaders); manual override preserved (both inputs editable;
+  `applyDrugLookup` only *sets* on a hit, never clears — by design, so it won't
+  fight the user); `create-submit` disabled while either field is empty
+  (`agentEvidenceUrl.trim() === "" || agentPromptHint.trim() === ""`). The old
+  hardcoded MedlinePlus-root URL + generic prompt are gone — `onSubmit` passes
+  `agentEvidenceUrl.trim()` / `agentPromptHint.trim()` from state; grep for
+  `medlineplus|a603010|"medically necessary and FDA"` finds no fallback outside
+  the curated map and tests.
+- **Backwards-compat hacks:** none.
+- **Copy-paste vs DRY / premature abstraction:** the eight brand-alias tests are
+  repetitive but each pins a distinct alias→INN mapping (legitimate per-case
+  assertions, not duplicated logic). No abstraction warranted.
+
+### Whole-codebase / cross-cutting
+- End-to-end wiring intact: `createContract` (both backends) accepts and stores
+  `agentEvidenceUrl` / `agentPromptHint` (`src/types/coverage.types.ts:152/154`,
+  `src/contract/real.ts:143/277`, `src/contract/simulated.ts:300-307/346-347`),
+  with the simulated backend enforcing R14 (≤512) / R15 (≤1024 + PHI
+  name-pattern guard) — defense-in-depth behind the UI gate.
+- `tsc --noEmit -p web/tsconfig.json` reports **zero** errors in `Create.tsx`
+  and `drugEvidenceMap.ts`. The lone remaining web typecheck error
+  (`web/src/client.ts:193` `deploymentBlock: number | undefined`) is
+  pre-existing on `origin/main` (the `?? undefined` from
+  `VITE_DEPLOYMENT_BLOCK`), in a file this Unit does not touch — out of scope.
+
+---
+
 ## Tick 86 — SPEC-0006 R16/R18 drug-evidence map + Create.tsx wiring (strict-review)
 
 **Date:** 2026-06-03

@@ -250,18 +250,17 @@ test("evidenceForDrug returns non-null for each canonical R18 drug name", () => 
   }
 });
 
-test("every entry's promptHint references a drug-specific question (not generic R/A boilerplate)", () => {
-  // AC4: the hardcoded generic prompt 'Is coverage for X medically necessary
-  // and FDA-approved?' template must be replaced with drug-specific hints
-  // populated from the map, not reconstructed from a single template.
-  // We verify each hint is at least 20 chars and mentions the drug (or its
-  // indication) — a pure generic template would fail this on brand-name-only
-  // entries where the hint doesn't reference the drug name specifically.
-  for (const [_key, entry] of Object.entries(DRUG_EVIDENCE_MAP)) {
-    const hint = (entry as EvidenceEntry).promptHint;
+test("every entry's promptHint contains the canonical INN name (not a generic template)", () => {
+  // AC4: the hardcoded generic prompt must be replaced with drug-specific hints.
+  // Each entry is keyed by lowercase INN; the promptHint must contain that same
+  // INN string so a generic one-size-fits-all template cannot pass.
+  // (All six production promptHints begin with "Evaluate whether {inn} ..."
+  // which satisfies this invariant.)
+  for (const [key, entry] of Object.entries(DRUG_EVIDENCE_MAP)) {
+    const hint = (entry as EvidenceEntry).promptHint.toLowerCase();
     assert.ok(
-      hint.length >= 20,
-      `promptHint for entry is suspiciously short (< 20 chars): "${hint}"`,
+      hint.includes(key),
+      `promptHint for "${key}" does not contain the INN "${key}": "${(entry as EvidenceEntry).promptHint}"`,
     );
   }
 });

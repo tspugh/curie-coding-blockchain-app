@@ -1,10 +1,63 @@
 # Browser-verify
 
-Last run: SPEC-0006 R18 unit — 2026-06-03 — **sim-mode harness 97/97 PASS** across
-22 scenarios. SPEC-0006 R14/R15/R17 (agentEvidenceUrl + agentPromptHint) and
-SPEC-0006 R18 (drugEvidenceMap, Create.tsx auto-fill + form validation) landed.
-Harness updated to match SPEC-0006 R24 semantics (coveredAmount = requestedAmount,
-no AI price cap; ruling-meta metadata rows removed per simplified 4-arg Ruled event).
+Last run: SPEC-0006 R18 re-verify — 2026-06-03 — **sim-mode harness 97/97 PASS** across
+22 scenarios. drugEvidenceMap unit tests 25/25 PASS (updated AC4 assertion to require
+INN name present in promptHint). All E2E scenarios green against feat/drug-evidence-map
+branch HEAD.
+
+## SPEC-0006 R18 re-verify — drugEvidenceMap unit test update + E2E confirmation
+
+Branch: `feat/drug-evidence-map` — unstaged change to `web/src/drugEvidenceMap.test.ts`:
+tightened the AC4 "no generic prompt" assertion from a minimum-length check to requiring
+the lowercase INN key appear in the promptHint string. All 25 unit tests PASS. All 97
+E2E assertions PASS.
+
+### Unit tests — 25/25 PASS
+
+Run: `node --import tsx --test "web/src/drugEvidenceMap.test.ts"`
+
+```
+# tests 25
+# pass 25
+# fail 0
+```
+
+Covers: AC1 (map structure + 6 R18 entries), AC2 (brand-name aliases, case-insensitive,
+RxNorm/NDC suffix strip), AC3 (null for unknown/empty/whitespace → submit disabled),
+AC4 (each promptHint contains its canonical INN key, not a generic template), PHI-free
+invariant (no SSN/DOB/phone/email patterns).
+
+### E2E harness — 97/97 PASS
+
+Build: `VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run web:build`
+Run: `SKIP_SERVE=1 SKIP_BUILD=1 CHROME_PATH=/usr/bin/chromium-browser bash web/tests/agent-browser/run.sh`
+
+```
+Scenario A  happy-path lifecycle           7/7
+Scenario B  no PHI on-chain                3/3
+Scenario C  adjudication gating            1/1
+Scenario C2 policy invalidated             4/4
+Scenario D  profile switching              4/4
+Scenario E  sample case prefill            7/7
+Scenario F  note verify                    2/2
+Scenario G  observer / non-party           3/3
+Scenario H  CDS Hooks prefill              4/4
+Scenario I  persisted users                4/4
+Scenario J  demo-mode toggle               8/8
+Scenario K  key-paste derives address      6/6
+Scenario L3 provider refuse                5/5
+Scenario L1 evidence resubmit              5/5
+Scenario L2 appeal                         5/5
+Scenario L4 withdraw                       4/4
+Scenario L10 payer-line round-trip         2/2
+Scenario L7  custom-policy composer        4/4
+Scenario L5  provider feedback note        3/3
+Scenario M1  denial happy-path             6/6
+Scenario M2  NeedMoreEvidence -> Denied    5/5
+Scenario M3  appeal -> Denied              5/5
+──────────────────────────────────────────
+Total: 97 passed, 0 failed
+```
 
 ## SPEC-0006 R18 unit — drugEvidenceMap + Create.tsx
 
