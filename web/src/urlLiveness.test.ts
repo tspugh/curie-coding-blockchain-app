@@ -26,6 +26,7 @@ import {
   probeUrlLiveness,
   clearLivenessCache,
   seedLivenessCacheEntry,
+  formatLivenessError,
   LIVENESS_CACHE_TTL_MS,
 } from "./urlLiveness.js";
 
@@ -373,77 +374,57 @@ test("ok:true result carries the status field from the proxy payload", async () 
 });
 
 // ---------------------------------------------------------------------------
-// Error banner message shape (pins the spec-mandated interpolation contract)
+// formatLivenessError — pins the spec-mandated banner interpolation contract
+// (calls the REAL exported function from urlLiveness.ts, not local copies)
 // ---------------------------------------------------------------------------
 
-test("error message interpolation: HTTP status produces spec-required error string", async () => {
-  // This test exercises the interpolation logic that Create.tsx applies to
-  // a LivenessResult. It pins the contract between urlLiveness.ts result
-  // shape and the exact spec string:
-  //   "evidence URL unreachable (HTTP <code> or <error>) — fix the URL or
-  //    pick a known drug from the list"
-  const originalFetch = global.fetch;
-  global.fetch = async (_input: RequestInfo | URL, _init?: RequestInit) => {
-    return new Response(JSON.stringify({ ok: false, status: 404 }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
-  };
-
-  try {
-    clearLivenessCache();
-    const result = await probeUrlLiveness(DEAD_URL, /* sim= */ false);
-    assert.equal(result.ok, false);
-    assert.equal(result.status, 404);
-
-    // Simulate the interpolation Create.tsx now performs:
-    const detail = result.status > 0
-      ? `HTTP ${result.status}`
-      : (!result.ok && result.error) ?? "network error";
-    const banner = `evidence URL unreachable (${detail}) — fix the URL or pick a known drug from the list`;
-    assert.ok(
-      banner.includes("HTTP 404"),
-      `banner must include 'HTTP 404'; got: ${banner}`,
-    );
-    assert.ok(
-      banner.includes("fix the URL or pick a known drug from the list"),
-      `banner must include affordance; got: ${banner}`,
-    );
-  } finally {
-    global.fetch = originalFetch;
-    clearLivenessCache();
-  }
+test("formatLivenessError: HTTP status → 'evidence URL unreachable (HTTP 404) — fix…'", () => {
+  // Directly calls the exported production function — test fails if the
+  // function is deleted or the spec string changes.
+  const banner = formatLivenessError({ ok: false, status: 404 });
+  assert.ok(
+    banner.includes("HTTP 404"),
+    `banner must include 'HTTP 404'; got: ${banner}`,
+  );
+  assert.ok(
+    banner.includes("evidence URL unreachable"),
+    `banner must start with spec prefix; got: ${banner}`,
+  );
+  assert.ok(
+    banner.includes("fix the URL or pick a known drug from the list"),
+    `banner must include affordance; got: ${banner}`,
+  );
 });
 
-test("error message interpolation: network error produces spec-required error string", async () => {
-  const originalFetch = global.fetch;
-  global.fetch = async (_input: RequestInfo | URL, _init?: RequestInit) => {
-    throw new TypeError("Failed to fetch");
-  };
+test("formatLivenessError: network error → 'evidence URL unreachable (Failed to fetch) — fix…'", () => {
+  const banner = formatLivenessError({ ok: false, status: 0, error: "Failed to fetch" });
+  assert.ok(
+    banner.includes("Failed to fetch"),
+    `banner must include thrown message; got: ${banner}`,
+  );
+  assert.ok(
+    banner.includes("evidence URL unreachable"),
+    `banner must start with spec prefix; got: ${banner}`,
+  );
+  assert.ok(
+    banner.includes("fix the URL or pick a known drug from the list"),
+    `banner must include affordance; got: ${banner}`,
+  );
+});
 
-  try {
-    clearLivenessCache();
-    const result = await probeUrlLiveness(DEAD_URL, /* sim= */ false);
-    assert.equal(result.ok, false);
-    assert.equal(result.status, 0);
+test("formatLivenessError: missing error and status=0 → 'network error' fallback", () => {
+  // ok:false with no error and status=0 — must fall back to 'network error'
+  const banner = formatLivenessError({ ok: false, status: 0 });
+  assert.ok(
+    banner.includes("network error"),
+    `banner must include 'network error' fallback; got: ${banner}`,
+  );
+});
 
-    // Network error path: status is 0, so interpolation uses the error string.
-    const detail = result.status > 0
-      ? `HTTP ${result.status}`
-      : (!result.ok && result.error) ?? "network error";
-    const banner = `evidence URL unreachable (${detail}) — fix the URL or pick a known drug from the list`;
-    assert.ok(
-      banner.includes("Failed to fetch"),
-      `banner must include thrown message; got: ${banner}`,
-    );
-    assert.ok(
-      banner.includes("fix the URL or pick a known drug from the list"),
-      `banner must include affordance; got: ${banner}`,
-    );
-  } finally {
-    global.fetch = originalFetch;
-    clearLivenessCache();
-  }
+test("formatLivenessError: ok:true result → empty string (no-op for callers that don't branch)", () => {
+  // Must return empty string so callers can call it unconditionally.
+  const banner = formatLivenessError({ ok: true, status: 200 });
+  assert.equal(banner, "", "ok:true must return empty string");
 });
 
 // ---------------------------------------------------------------------------

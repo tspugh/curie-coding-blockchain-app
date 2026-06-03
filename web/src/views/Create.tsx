@@ -18,7 +18,8 @@ import { useWalletBalance } from "../hooks/useWalletBalance.js";
 import { ErrorCard } from "../components/ErrorCard.js";
 import { AGENT_FEE_RESERVE_WEI } from "../config.js";
 import { evidenceForDrug } from "../drugEvidenceMap.js";
-import { probeUrlLiveness, type LivenessResult } from "../urlLiveness.js";
+import { probeUrlLiveness, formatLivenessError, type LivenessResult } from "../urlLiveness.js";
+import { isSubmitBlockedByLiveness, shouldShowLivenessBanner } from "../livenessGate.js";
 
 /** True when the wallet mode is "real" (on-chain). False in simulated mode. */
 const IS_REAL = import.meta.env.VITE_WALLET_MODE === "real";
@@ -73,8 +74,8 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
   // its cleanup closure. If a slower probe for an older URL resolves after a
   // newer effect has already fired, the `.then()` checks `cancelled` and
   // discards the stale result, preventing it from clobbering the current
-  // verdict. The 600 ms debounce only cancels the timer; the AbortController
-  // in probeUrlLiveness cancels the in-flight `/__probe` fetch.
+  // verdict. The 600 ms debounce cancels the timer; stale in-flight responses
+  // are discarded via the `cancelled` flag.
   useEffect(() => {
     if (!IS_REAL) {
       // Sim mode: never probe; leave result as null so the submit gate
@@ -411,13 +412,9 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
           </span>
         </div>
 
-        {IS_REAL && urlLivenessResult !== null && !urlLivenessResult.ok && (
+        {shouldShowLivenessBanner(IS_REAL, urlLivenessResult) && (
           <p className="error" data-testid="url-liveness-error">
-            evidence URL unreachable (
-            {urlLivenessResult.status > 0
-              ? `HTTP ${urlLivenessResult.status}`
-              : (urlLivenessResult as { ok: false; status: number; error?: string }).error ?? "network error"}
-            ) — fix the URL or pick a known drug from the list
+            {formatLivenessError(urlLivenessResult!)}
           </p>
         )}
 
@@ -441,7 +438,7 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
             balanceBlock !== null ||
             agentEvidenceUrl.trim() === "" ||
             agentPromptHint.trim() === "" ||
-            (IS_REAL && (urlLivenessResult === null || !urlLivenessResult.ok))
+            isSubmitBlockedByLiveness(IS_REAL, urlLivenessResult)
           }
         >
           {busy ? "Submitting…" : "Submit Request →"}

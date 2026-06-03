@@ -7,7 +7,8 @@
  * don't hammer the dev-server proxy.
  *
  * The return type carries the full proxy payload (`ok`, `status`, `error`) so
- * that callers can interpolate the spec-mandated inline error message:
+ * that callers can interpolate the spec-mandated inline error message via
+ * `formatLivenessError`:
  *   "evidence URL unreachable (HTTP <code> or <error>) — fix the URL or pick
  *    a known drug from the list"
  *
@@ -52,6 +53,30 @@ export function seedLivenessCacheEntry(
   ts: number,
 ): void {
   cache.set(url, { result, ts });
+}
+
+/**
+ * Format the detail portion of the R21 error banner for a failed liveness
+ * result.
+ *
+ * Returns the spec-mandated full string:
+ *   "evidence URL unreachable (HTTP <code>) — fix the URL or pick a known drug from the list"
+ * or
+ *   "evidence URL unreachable (<error message>) — fix the URL or pick a known drug from the list"
+ *
+ * Only meaningful when `result.ok === false`; calling it on an ok:true result
+ * is a no-op that returns an empty string so callers never need to branch.
+ *
+ * PHI-FREE: only forwards HTTP status codes and network error strings; no
+ * patient identifiers are involved.
+ */
+export function formatLivenessError(result: LivenessResult): string {
+  if (result.ok) return "";
+  const detail =
+    result.status > 0
+      ? `HTTP ${result.status}`
+      : result.error ?? "network error";
+  return `evidence URL unreachable (${detail}) — fix the URL or pick a known drug from the list`;
 }
 
 /**
