@@ -1,10 +1,98 @@
 # Browser-verify
 
-Last run: SPEC-0006 R21 evidence-URL liveness check re-verify — 2026-06-03 —
-**sim-mode harness 109/109 PASS** across 23 scenarios. Unit tests 280/280 PASS.
+Last run: SPEC-0006 R21 browser-verify re-run — 2026-06-04 —
+**sim-mode harness 109/109 PASS** across 23 scenarios. Unit tests 322/322 PASS.
 SPEC-0006 R21 implementation confirmed complete end-to-end: `urlLiveness.ts`,
 `urlLiveness.test.ts`, `Create.tsx` useEffect + liveness banner, `vite.config.ts`
-`urlProbePlugin` middleware — all green.
+`urlProbePlugin` middleware, `livenessGate.ts`, `probeHandler.ts`,
+`Create.liveness.test.ts` — all green.
+
+## SPEC-0006 R21 browser-verify re-run — 2026-06-04
+
+Branch: `spec-6-implementation`
+
+### Unit tests — 322/322 PASS
+
+Run: `npm run test:lib`
+
+```
+# tests 322
+# suites 0
+# pass 322
+# fail 0
+# duration_ms 6867
+```
+
+urlLiveness.test.ts: cache hit, miss, TTL-expiry, sim-mode bypass, non-2xx, network
+error, AbortError, negative caching, URL-keying, formatLivenessError banner text,
+PHI-free invariant — all green.
+Create.liveness.test.ts: real-mode dead URL (submit blocked + banner shown), real-mode
+live URL (submit unblocked + banner hidden), sim-mode bypass (not blocked regardless),
+stale-response guard (latest result drives gate), pending-null gate, network-error gate,
+PHI-free invariant — all green.
+probeHandler.test.ts: executeProbe Range-GET happy path, 4xx/5xx → ok:false, AbortError
+timeout, non-HTTP error — all green.
+
+### E2E harness — 109/109 PASS
+
+Build: `VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run build && VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run web:build`
+Run: `SKIP_SERVE=1 SKIP_BUILD=1 CHROME_PATH=$HOME/.cache/ms-playwright/chromium-1223/chrome-linux/chrome bash web/tests/agent-browser/run.sh`
+
+```
+Scenario A   happy-path lifecycle            7/7
+Scenario B   no PHI on-chain                 3/3
+Scenario C   adjudication gating             1/1
+Scenario C2  policy invalidated              4/4
+Scenario D   profile switching               4/4
+Scenario E   sample case prefill             7/7
+Scenario F   note verify                     2/2
+Scenario G   observer / non-party            3/3
+Scenario H   CDS Hooks prefill               4/4
+Scenario I   persisted users                 4/4
+Scenario J   demo-mode toggle                8/8
+Scenario K   key-paste derives address       6/6
+Scenario L3  provider refuse                 5/5
+Scenario L1  evidence resubmit               5/5
+Scenario L2  appeal                          5/5
+Scenario L4  withdraw                        4/4
+Scenario L10 payer-line round-trip           2/2
+Scenario L7  custom-policy composer          4/4
+Scenario L5  provider feedback note          3/3
+Scenario M1  denial happy-path               6/6
+Scenario M2  NeedMoreEvidence -> Denied      5/5
+Scenario M3  appeal -> Denied                5/5
+Scenario R25 commitRationale + rationale card 12/12
+──────────────────────────────────────────
+Total: 109 passed, 0 failed
+```
+
+All scenarios pass with SPEC-0006 R21 implementation:
+- Sim mode: liveness gate bypassed (`IS_REAL=false`); `create-submit` unblocked.
+- Drug-map auto-fill populates `agentEvidenceUrl` + `agentPromptHint` for all recognised drug names.
+- `url-liveness-error` banner renders only in real mode when `urlLivenessResult.ok === false`.
+
+### R21 implementation summary (complete as of this run)
+
+- **`web/src/urlLiveness.ts`** — `probeUrlLiveness(url, sim)` with 24 h per-URL memo
+  cache (`Map<string, {result: LivenessResult; ts: number}>`), sim-mode bypass resolves
+  `{ok:true}` immediately, `clearLivenessCache()` + `seedLivenessCacheEntry()` for tests,
+  `formatLivenessError()` spec-mandated banner text interpolation.
+- **`web/src/urlLiveness.test.ts`** — 16 unit tests covering all required cases.
+- **`web/src/livenessGate.ts`** — `isSubmitBlockedByLiveness` + `shouldShowLivenessBanner`
+  pure gate predicates extracted for independent unit testing.
+- **`web/src/views/Create.liveness.test.ts`** — 7 unit tests for the Create.tsx R21
+  gate state machine (dead URL blocks + shows banner, live URL unblocks, sim bypasses,
+  stale-response guard, pending-null, network error, PHI-free).
+- **`web/src/probeHandler.ts`** — `executeProbe(url, timeout)` server-side fetch logic
+  with Range-GET, 10 s AbortSignal, and structured ProbeResult return.
+- **`web/src/probeHandler.test.ts`** — unit tests for executeProbe.
+- **`web/src/views/Create.tsx`** — `useEffect` fires `probeUrlLiveness` on every
+  `agentEvidenceUrl` change (600 ms debounce), stale-response cancellation via
+  `cancelled` flag; stores `urlLivenessResult: LivenessResult | null`; renders
+  `data-testid="url-liveness-error"` banner via `shouldShowLivenessBanner`; keeps
+  `create-submit` disabled via `isSubmitBlockedByLiveness` until `ok===true` in real mode.
+- **`vite.config.ts`** — `urlProbePlugin()` registers `GET /__probe?url=<encoded>`
+  middleware delegating to `executeProbe`; returns `{ok, status, error?}` JSON.
 
 ## SPEC-0006 R21 — pre-submit evidence-URL liveness check re-verify
 
