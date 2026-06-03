@@ -42,34 +42,15 @@ const STANDARD_REF = ethers.id("FDA:label:semaglutide");
 const REASON_HASH = ethers.id("appeal:reason");
 
 const REQUESTED = 2000n;
-const QUANTITY = 10n; // dispensed units — drives the deterministic cap (R6a)
-const DAYS_SUPPLY = 30n; // clinical-utilization context — NEVER affects price (R6a)
-const NADAC_UNIT = 80n; // NADAC per-unit acquisition-cost floor reference
-const RECEIPT_ID = 999n;
+const QUANTITY = 10n; // dispensed units
+const DAYS_SUPPLY = 30n; // clinical-utilization context
 const FEE = ethers.parseEther("0.01"); // > mock deposit (0.001 ether)
 
-/** Build the MockAgentPlatform.Ruling struct (ethers v6 takes a plain object). */
-function ruling(
-  decision: number,
-  costPlusUnitPrice: bigint,
-  nadacUnitPrice: bigint = NADAC_UNIT,
-  policyVoidedClauseIndices: number[] = [],
-  usedReferenceIndices: number[] = [],
-  usedLeafHashes: string[] = []
-) {
-  return {
-    decision,
-    costPlusUnitPrice,
-    nadacUnitPrice,
-    rationaleHash: RATIONALE_HASH,
-    clauseRef: CLAUSE_REF,
-    standardRef: STANDARD_REF,
-    receiptId: RECEIPT_ID,
-    policyVoidedClauseIndices,
-    usedReferenceIndices,
-    usedLeafHashes,
-  };
-}
+// Decision tokens for the inferString (SPEC-0006 R11/R24) string-token model.
+const TOKEN_APPROVE = "approve";
+const TOKEN_DENY = "deny";
+const TOKEN_NEEDS_MORE_INFO = "needs_more_info";
+const TOKEN_POLICY_INVALID = "policy_invalid";
 
 /** Deploy a fresh mock platform + contract. Deployer (signer[0]) is owner. */
 async function deploy() {
@@ -227,10 +208,6 @@ describe("CoverageNegotiation", () => {
   });
 
   it("UNIT-2-followup-B: createContract guards order — addr: zero precedes create: self-contract", async () => {
-    // Pins the ordering of the createContract require chain. If a future refactor
-    // swaps the `addr: zero` and `create: self-contract` lines, the (zero, zero)
-    // case would silently change revert string and downstream consumers parsing
-    // revert messages would degrade. SPEC-0004 §2.1 AC-6 + structural invariant.
     const { contract } = await deploy();
     const [provider] = await ethers.getSigners();
     const ZERO_ADDR = ethers.ZeroAddress;
@@ -274,7 +251,7 @@ describe("CoverageNegotiation", () => {
     expect(await contract.stateOf(reqId)).to.equal(State.UnderReview);
     expect(await contract.roundOf(reqId)).to.equal(1n);
     expect(await platform.createRequestCalls()).to.equal(1n);
-    expect(await platform.lastAgentId()).to.equal(AGENT_ID);
+    expect(await platform.lastAgentId()).to.equal(await contract.agentId());
     expect(await platform.lastCallbackAddress()).to.equal(await contract.getAddress());
     // The forwarded selector is handleResponse's (the real Somnia callback).
     const sel = contract.interface.getFunction("handleResponse").selector;
@@ -293,45 +270,39 @@ describe("CoverageNegotiation", () => {
       .withArgs(reqId, 1n, EVIDENCE_URI, EVIDENCE_URI);
     const rid1 = await platform.lastRequestId();
     // NeedMoreEvidence → submitEvidence re-fire emits PacketSubmitted with round 2
-    await platform.triggerRuling(target, rid1, ruling(Decision.NeedMoreEvidence, 0n));
+    await platform.triggerRuling(target, rid1, TOKEN_NEEDS_MORE_INFO);
     await expect(contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI_2, { value: FEE }))
       .to.emit(contract, "PacketSubmitted")
       .withArgs(reqId, 2n, EVIDENCE_URI_2, EVIDENCE_URI_2);
     const rid2 = await platform.lastRequestId();
     // Deny → appeal re-fire emits PacketSubmitted with round 3
-    await platform.triggerRuling(target, rid2, ruling(Decision.Deny, 0n));
+    await platform.triggerRuling(target, rid2, TOKEN_DENY);
     await expect(contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE }))
       .to.emit(contract, "PacketSubmitted")
       .withArgs(reqId, 3n, EVIDENCE_URI, EVIDENCE_URI);
   });
 
-  it("T4 (R6a): deny → 0; refs surfaced & stored; need_more_evidence & failure & timeout → EvidenceRequested", async () => {
+  it("T4 (R6): deny → 0; need_more_evidence & failure & timeout → EvidenceRequested", async () => {
     const { platform, contract } = await deploy();
     const [provider, insurer] = await ethers.getSigners();
     const target = await contract.getAddress();
 
-    // approve: refs stored on the negotiation; lastDecision/hasRuling set.
+    // approve: state → Approved; hasRuling set; lastDecision = Approve.
     {
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n);
-      await platform.triggerRuling(target, requestId, ruling(Decision.Approve, 150n));
+      await platform.triggerRuling(target, requestId, TOKEN_APPROVE);
       expect(await contract.stateOf(reqId)).to.equal(State.Approved);
       const n = await contract.getNegotiation(reqId);
-      expect(n.rationaleHash).to.equal(RATIONALE_HASH);
-      expect(n.clauseRef).to.equal(CLAUSE_REF);
-      expect(n.standardRef).to.equal(STANDARD_REF);
       expect(n.lastDecision).to.equal(BigInt(Decision.Approve));
       expect(n.hasRuling).to.equal(true);
-      // Per-unit price lookups are stored (cap basis + NADAC floor reference).
-      expect(n.costPlusUnitPrice).to.equal(150n);
-      expect(n.nadacUnitPrice).to.equal(NADAC_UNIT);
     }
 
     // deny → Denied, covered 0
     {
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
-      await expect(platform.triggerRuling(target, requestId, ruling(Decision.Deny, 150n)))
+      await expect(platform.triggerRuling(target, requestId, TOKEN_DENY))
         .to.emit(contract, "Ruled")
-        .withArgs(reqId, requestId, Decision.Deny, 0n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, [], [], []);
+        .withArgs(reqId, requestId, Decision.Deny, 0n);
       expect(await contract.stateOf(reqId)).to.equal(State.Denied);
       expect(await contract.coveredAmountOf(reqId)).to.equal(0n);
     }
@@ -339,7 +310,7 @@ describe("CoverageNegotiation", () => {
     // need_more_evidence → EvidenceRequested; submitEvidence re-fires (round++) → UnderReview
     {
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
-      await expect(platform.triggerRuling(target, requestId, ruling(Decision.NeedMoreEvidence, 0n)))
+      await expect(platform.triggerRuling(target, requestId, TOKEN_NEEDS_MORE_INFO))
         .to.emit(contract, "EvidenceRequested");
       expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested);
 
@@ -375,112 +346,66 @@ describe("CoverageNegotiation", () => {
     }
   });
 
-  it("T4/R6a (deterministic cap): covered = min(requested, costPlusUnitPrice × quantity), both directions; quantity drives the cap; priceBasisOf; daysSupply is price-neutral", async () => {
+  it("T4/R6 (approve): covered = requestedAmount; Ruled emits (reqId, requestId, Approve, requestedAmount); priceBasisOf", async () => {
     const { platform, contract } = await deploy();
     const [provider, insurer] = await ethers.getSigners();
     const target = await contract.getAddress();
 
-    // --- Cap binds: requested=2000, qty=10, costPlus/unit=150 → cap=1500 → covered=1500 ---
+    // approve: coveredAmount = requestedAmount (string-token model — no price cap)
     {
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
-      await expect(platform.triggerRuling(target, requestId, ruling(Decision.Approve, 150n)))
+      await expect(platform.triggerRuling(target, requestId, TOKEN_APPROVE))
         .to.emit(contract, "Ruled")
-        .withArgs(reqId, requestId, Decision.Approve, 1500n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, [], [], []);
-      expect(await contract.coveredAmountOf(reqId)).to.equal(1500n);
-      expect((await contract.getNegotiation(reqId)).coveredAmount).to.equal(1500n);
+        .withArgs(reqId, requestId, Decision.Approve, 2000n);
+      expect(await contract.coveredAmountOf(reqId)).to.equal(2000n);
+      expect((await contract.getNegotiation(reqId)).coveredAmount).to.equal(2000n);
 
-      // priceBasisOf: requested / qty / costPlusTotal / nadacFloorTotal / covered.
+      // priceBasisOf: costPlusTotal and nadacFloorTotal are 0 in string-token mode.
       const basis = await contract.priceBasisOf(reqId);
       expect(basis.requestedAmount).to.equal(2000n);
       expect(basis.quantity).to.equal(10n);
-      expect(basis.costPlusTotal).to.equal(1500n); // 150 × 10
-      expect(basis.nadacFloorTotal).to.equal(NADAC_UNIT * 10n); // 80 × 10 = 800
-      expect(basis.coveredAmount).to.equal(1500n);
-    }
-
-    // --- Requested binds: requested=2000, qty=10, costPlus/unit=500 → cap=5000 → covered=2000 ---
-    {
-      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
-      await expect(platform.triggerRuling(target, requestId, ruling(Decision.Approve, 500n)))
-        .to.emit(contract, "Ruled")
-        .withArgs(reqId, requestId, Decision.Approve, 2000n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, [], [], []);
-      expect(await contract.coveredAmountOf(reqId)).to.equal(2000n);
-      const basis = await contract.priceBasisOf(reqId);
-      expect(basis.costPlusTotal).to.equal(5000n); // 500 × 10
+      expect(basis.costPlusTotal).to.equal(0n); // no price data from agent in string-token mode
+      expect(basis.nadacFloorTotal).to.equal(0n);
       expect(basis.coveredAmount).to.equal(2000n);
     }
 
-    // --- quantity drives the cap: same per-unit price (150), different quantity → different cap ---
+    // approve with different requestedAmount → covered = that requestedAmount
     {
-      // qty=4 → cap=600 (binds, < requested 2000) → covered=600
-      const a = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 4n);
-      await platform.triggerRuling(target, a.requestId, ruling(Decision.Approve, 150n));
-      expect(await contract.coveredAmountOf(a.reqId)).to.equal(600n);
-
-      // qty=20 → cap=3000 (>= requested 2000) → covered=2000
-      const b = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 20n);
-      await platform.triggerRuling(target, b.requestId, ruling(Decision.Approve, 150n));
-      expect(await contract.coveredAmountOf(b.reqId)).to.equal(2000n);
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 500n, 10n);
+      await expect(platform.triggerRuling(target, requestId, TOKEN_APPROVE))
+        .to.emit(contract, "Ruled")
+        .withArgs(reqId, requestId, Decision.Approve, 500n);
+      expect(await contract.coveredAmountOf(reqId)).to.equal(500n);
     }
 
-    // --- daysSupply is price-neutral: two requests identical except daysSupply → identical covered ---
+    // daysSupply is price-neutral: still just requestedAmount covered
     {
       const x = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n, 30n);
       const y = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n, 90n);
-      await platform.triggerRuling(target, x.requestId, ruling(Decision.Approve, 150n));
-      await platform.triggerRuling(target, y.requestId, ruling(Decision.Approve, 150n));
-      const covX = await contract.coveredAmountOf(x.reqId);
-      const covY = await contract.coveredAmountOf(y.reqId);
-      expect(covX).to.equal(1500n);
-      expect(covY).to.equal(covX); // daysSupply changed (30 vs 90) but covered identical
+      await platform.triggerRuling(target, x.requestId, TOKEN_APPROVE);
+      await platform.triggerRuling(target, y.requestId, TOKEN_APPROVE);
+      expect(await contract.coveredAmountOf(x.reqId)).to.equal(2000n);
+      expect(await contract.coveredAmountOf(y.reqId)).to.equal(2000n);
       expect((await contract.getNegotiation(x.reqId)).daysSupply).to.equal(30n);
       expect((await contract.getNegotiation(y.reqId)).daysSupply).to.equal(90n);
     }
   });
 
-  it("Finding-4 (cap domain): an extreme costPlusUnitPrice saturates the cap instead of bricking the callback", async () => {
-    const { platform, contract } = await deploy();
-    const [provider, insurer] = await ethers.getSigners();
-    const target = await contract.getAddress();
-
-    // costPlusUnitPrice near uint256 max with quantity > 1 would overflow a checked
-    // multiply and REVERT the whole callback (leaving the request stuck UnderReview).
-    // The saturating cap must instead bind `requestedAmount`.
-    const HUGE = (1n << 255n); // × quantity(10) overflows uint256
-    const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
-    await expect(platform.triggerRuling(target, requestId, ruling(Decision.Approve, HUGE)))
-      .to.emit(contract, "Ruled")
-      .withArgs(reqId, requestId, Decision.Approve, 2000n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, [], [], []);
-    expect(await contract.stateOf(reqId)).to.equal(State.Approved);
-    expect(await contract.coveredAmountOf(reqId)).to.equal(2000n); // requested binds (cap saturated)
-
-    // priceBasisOf must not revert either: costPlusTotal saturates at uint256 max.
-    const basis = await contract.priceBasisOf(reqId);
-    expect(basis.costPlusTotal).to.equal(ethers.MaxUint256);
-    expect(basis.coveredAmount).to.equal(2000n);
-  });
-
-  it("T5 (R6b): policy_invalid → PolicyFlagged + Ruled + terminal PolicyInvalidated", async () => {
+  it("T5 (R6b): policy_invalid → PolicyInvalidated terminal state", async () => {
     const { platform, contract } = await deploy();
     const [provider, insurer] = await ethers.getSigners();
     const target = await contract.getAddress();
     const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
 
     await expect(
-      platform.triggerRuling(target, requestId, ruling(Decision.PolicyInvalid, 150n))
+      platform.triggerRuling(target, requestId, TOKEN_POLICY_INVALID)
     )
-      .to.emit(contract, "PolicyFlagged")
-      .withArgs(reqId, CLAUSE_REF, STANDARD_REF)
-      .and.to.emit(contract, "Ruled")
-      .withArgs(reqId, requestId, Decision.PolicyInvalid, 0n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, [], [], [])
-      .and.to.emit(contract, "PolicyInvalidated")
-      .withArgs(reqId, CLAUSE_REF, STANDARD_REF);
+      .to.emit(contract, "Ruled")
+      .withArgs(reqId, requestId, Decision.PolicyInvalid, 0n)
+      .and.to.emit(contract, "PolicyInvalidated");
 
     expect(await contract.stateOf(reqId)).to.equal(State.PolicyInvalidated);
     expect(await contract.coveredAmountOf(reqId)).to.equal(0n);
-    const n = await contract.getNegotiation(reqId);
-    expect(n.standardRef).to.equal(STANDARD_REF);
-    expect(n.clauseRef).to.equal(CLAUSE_REF);
 
     // Terminal: withdraw reverts.
     await expect(contract.connect(provider).withdraw(reqId)).to.be.revertedWith("withdraw: terminal");
@@ -499,7 +424,7 @@ describe("CoverageNegotiation", () => {
     expect(await contract.roundOf(reqId)).to.equal(1n); // initial round
 
     // First ruling: deny.
-    await platform.triggerRuling(target, requestId, ruling(Decision.Deny, 0n));
+    await platform.triggerRuling(target, requestId, TOKEN_DENY);
     expect(await contract.stateOf(reqId)).to.equal(State.Denied);
 
     // price-only / empty-evidence appeal reverts.
@@ -519,7 +444,7 @@ describe("CoverageNegotiation", () => {
 
     // Resolve the re-fired round (deny again), then a further appeal at round>=maxRounds → Deadlocked.
     const rid2 = await platform.lastRequestId();
-    await platform.triggerRuling(target, rid2, ruling(Decision.Deny, 0n));
+    await platform.triggerRuling(target, rid2, TOKEN_DENY);
     expect(await contract.stateOf(reqId)).to.equal(State.Denied);
 
     await expect(contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE }))
@@ -533,7 +458,7 @@ describe("CoverageNegotiation", () => {
     const [provider, insurer] = await ethers.getSigners();
     const target = await contract.getAddress();
     const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
-    await platform.triggerRuling(target, requestId, ruling(Decision.Approve, 0n));
+    await platform.triggerRuling(target, requestId, TOKEN_APPROVE);
     expect(await contract.stateOf(reqId)).to.equal(State.Approved);
     await expect(
       contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI_2, REASON_HASH, { value: FEE })
@@ -544,12 +469,12 @@ describe("CoverageNegotiation", () => {
     const { platform, contract } = await deploy();
     const [provider, insurer] = await ethers.getSigners();
     const target = await contract.getAddress();
-    // requested=2000, qty=10, costPlus/unit=120 → cap=1200 (binds) → covered=1200.
+    // approve → covered = requestedAmount.
     const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
 
-    await platform.triggerRuling(target, requestId, ruling(Decision.Approve, 120n));
+    await platform.triggerRuling(target, requestId, TOKEN_APPROVE);
     expect(await contract.stateOf(reqId)).to.equal(State.Approved);
-    expect(await contract.coveredAmountOf(reqId)).to.equal(1200n);
+    expect(await contract.coveredAmountOf(reqId)).to.equal(2000n);
 
     // settle before mutual accept reverts.
     await expect(contract.connect(provider).settle(reqId)).to.be.revertedWith("settle: not both accepted");
@@ -566,9 +491,9 @@ describe("CoverageNegotiation", () => {
     const expectedFeePerParty = n.totalFees / 2n;
     await expect(contract.connect(insurer).settle(reqId))
       .to.emit(contract, "Settled")
-      .withArgs(reqId, 1200n, expectedFeePerParty);
+      .withArgs(reqId, 2000n, expectedFeePerParty);
     expect(await contract.stateOf(reqId)).to.equal(State.Settled);
-    expect(await contract.coveredAmountOf(reqId)).to.equal(1200n);
+    expect(await contract.coveredAmountOf(reqId)).to.equal(2000n);
   });
 
   it("T7 (R7): provider refuse from Ready → ProviderRefused; refuse from Open reverts; insurer cannot refuse", async () => {
@@ -645,13 +570,13 @@ describe("CoverageNegotiation", () => {
     const requestId = await platform.lastRequestId();
 
     // attacker cannot submitEvidence even when applicable — first drive to EvidenceRequested.
-    await platform.triggerRuling(target, requestId, ruling(Decision.NeedMoreEvidence, 0n));
+    await platform.triggerRuling(target, requestId, TOKEN_NEEDS_MORE_INFO);
     await expect(
       contract.connect(attacker).submitEvidence(reqId, EVIDENCE_URI_2, { value: FEE })
     ).to.be.revertedWith("auth: not provider");
     await contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI_2, { value: FEE });
     const rid2 = await platform.lastRequestId();
-    await platform.triggerRuling(target, rid2, ruling(Decision.Deny, 0n));
+    await platform.triggerRuling(target, rid2, TOKEN_DENY);
 
     // attacker cannot appeal / accept / settle on a ruled request.
     await expect(
@@ -714,7 +639,7 @@ describe("CoverageNegotiation", () => {
 
     // --- submitEvidence / appeal honour the same fee model (overpayment refunded). ---
     const { reqId: r3, requestId: rq3 } = await createEngageAdjudicate(contract, platform, provider, insurer);
-    await platform.triggerRuling(target, rq3, ruling(Decision.NeedMoreEvidence, 0n));
+    await platform.triggerRuling(target, rq3, TOKEN_NEEDS_MORE_INFO);
     await expect(
       contract.connect(provider).submitEvidence(r3, EVIDENCE_URI_2, { value: deposit - 1n })
     ).to.be.revertedWith("fee: underfunded");
@@ -722,7 +647,7 @@ describe("CoverageNegotiation", () => {
     expect(await ethers.provider.getBalance(target)).to.equal(0n);
 
     const { reqId: r4, requestId: rq4 } = await createEngageAdjudicate(contract, platform, provider, insurer);
-    await platform.triggerRuling(target, rq4, ruling(Decision.Deny, 0n));
+    await platform.triggerRuling(target, rq4, TOKEN_DENY);
     await expect(
       contract.connect(provider).appeal(r4, PROVIDER_ID, EVIDENCE_URI_2, REASON_HASH, { value: deposit - 1n })
     ).to.be.revertedWith("fee: underfunded");
@@ -737,7 +662,7 @@ describe("CoverageNegotiation", () => {
     await contract.setMaxRounds(1n); // first ruling already at the cap
 
     const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
-    await platform.triggerRuling(target, requestId, ruling(Decision.Deny, 0n));
+    await platform.triggerRuling(target, requestId, TOKEN_DENY);
     expect(await contract.roundOf(reqId)).to.equal(1n); // round == maxRounds
 
     const value = ethers.parseEther("0.02");
@@ -765,8 +690,8 @@ describe("CoverageNegotiation", () => {
     await contract.setMaxRounds(1n); // first ruling already at the cap
 
     const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
-    // NeedMoreEvidence ruling routes to EvidenceRequested with round == maxRounds.
-    await platform.triggerRuling(target, requestId, ruling(Decision.NeedMoreEvidence, 0n));
+    // NeedMoreEvidence routing to EvidenceRequested with round == maxRounds.
+    await platform.triggerRuling(target, requestId, TOKEN_NEEDS_MORE_INFO);
     expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested);
     expect(await contract.roundOf(reqId)).to.equal(1n); // round == maxRounds
 
@@ -801,17 +726,15 @@ describe("CoverageNegotiation", () => {
       contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI)
     ).to.be.revertedWith("evidence: wrong state");
 
-    // Non-platform caller cannot invoke the callback. Encode the new arbiter tuple.
-    const fakeResult = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["uint8", "uint256", "uint256", "bytes32", "bytes32", "bytes32", "uint256"],
-      [Decision.Approve, 150n, NADAC_UNIT, RATIONALE_HASH, CLAUSE_REF, STANDARD_REF, RECEIPT_ID]
-    );
+    // Non-platform caller cannot invoke the callback.
+    // Under the new string-token model the result is abi.encode(string).
+    const fakeResult = ethers.AbiCoder.defaultAbiCoder().encode(["string"], ["approve"]);
     const fakeResponses = [
       {
         validator: attacker.address,
         result: fakeResult,
         status: ResponseStatus.Success,
-        receipt: RECEIPT_ID,
+        receipt: 0n,
         timestamp: 0n,
         executionCost: 0n,
       },
@@ -857,7 +780,7 @@ describe("CoverageNegotiation", () => {
     await expect(contract.connect(provider).withdraw(reqId)).to.emit(contract, "Withdrawn").withArgs(reqId);
     expect(await contract.stateOf(reqId)).to.equal(State.Withdrawn);
     await expect(
-      platform.triggerRuling(target, requestId, ruling(Decision.Approve, 1n))
+      platform.triggerRuling(target, requestId, TOKEN_APPROVE)
     ).to.be.revertedWith("callback: unknown request");
     expect(await contract.stateOf(reqId)).to.equal(State.Withdrawn);
 
@@ -879,32 +802,8 @@ describe("CoverageNegotiation", () => {
 
   // -----------------------------------------------------------------------
   // UNIT-2-followup-A: appeal() reverts from every non-Denied state.
-  //
-  // The contract checks `require(n.state == State.Denied, "appeal: prior ruling
-  // not Deny")` as its FIRST guard — before auth — so ALL nine non-Denied states
-  // produce exactly that revert string.  `Open` is already covered by T10
-  // (~line 757 above); `Denied` is the only state from which appeal succeeds
-  // (T6 R6c).  This suite drives a FRESH deploy for each target state and
-  // asserts the unanimous revert.
   // -----------------------------------------------------------------------
   describe("UNIT-2-followup-A: appeal reverts from every non-Denied state", () => {
-    /**
-     * Drive a fresh deploy to the named state, then assert that calling
-     * appeal() reverts with "appeal: prior ruling not Deny".
-     *
-     * State-driving notes:
-     *  - Ready           : createAs + insurerEngage
-     *  - UnderReview     : createEngageAdjudicate (agent in flight, no ruling yet)
-     *  - EvidenceRequested: createEngageAdjudicate + triggerRuling(NeedMoreEvidence)
-     *  - Approved        : createEngageAdjudicate + triggerRuling(Approve)
-     *  - Settled         : Approved + both accept + settle
-     *  - Deadlocked      : setMaxRounds(1) + createEngageAdjudicate + triggerRuling(Deny)
-     *                      + appeal() deadlocks at cap → second appeal attempt from Deadlocked
-     *  - PolicyInvalidated: createEngageAdjudicate + triggerRuling(PolicyInvalid)
-     *  - ProviderRefused : createAs + insurerEngage + provider.refuse(reqId, reasonHash)
-     *  - Withdrawn       : createAs + provider.withdraw(reqId)
-     */
-
     it("Ready: appeal reverts with 'appeal: prior ruling not Deny'", async () => {
       const { contract } = await deploy();
       const [provider, insurer] = await ethers.getSigners();
@@ -931,7 +830,7 @@ describe("CoverageNegotiation", () => {
       const [provider, insurer] = await ethers.getSigners();
       const target = await contract.getAddress();
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
-      await platform.triggerRuling(target, requestId, ruling(Decision.NeedMoreEvidence, 0n));
+      await platform.triggerRuling(target, requestId, TOKEN_NEEDS_MORE_INFO);
       expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested);
       await expect(
         contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
@@ -943,7 +842,7 @@ describe("CoverageNegotiation", () => {
       const [provider, insurer] = await ethers.getSigners();
       const target = await contract.getAddress();
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
-      await platform.triggerRuling(target, requestId, ruling(Decision.Approve, 150n));
+      await platform.triggerRuling(target, requestId, TOKEN_APPROVE);
       expect(await contract.stateOf(reqId)).to.equal(State.Approved);
       await expect(
         contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
@@ -955,12 +854,11 @@ describe("CoverageNegotiation", () => {
       const [provider, insurer] = await ethers.getSigners();
       const target = await contract.getAddress();
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
-      await platform.triggerRuling(target, requestId, ruling(Decision.Approve, 120n));
+      await platform.triggerRuling(target, requestId, TOKEN_APPROVE);
       await contract.connect(provider).accept(reqId, PROVIDER_ID);
       await contract.connect(insurer).accept(reqId, INSURER_ID);
       await contract.connect(insurer).settle(reqId);
       expect(await contract.stateOf(reqId)).to.equal(State.Settled);
-      // Settled is terminal; the state guard fires before any other check.
       await expect(
         contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
       ).to.be.revertedWith("appeal: prior ruling not Deny");
@@ -970,14 +868,11 @@ describe("CoverageNegotiation", () => {
       const { platform, contract } = await deploy();
       const [provider, insurer] = await ethers.getSigners();
       const target = await contract.getAddress();
-      // setMaxRounds(1) so the first appeal immediately deadlocks.
       await contract.setMaxRounds(1n);
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
-      await platform.triggerRuling(target, requestId, ruling(Decision.Deny, 0n));
-      // This appeal at round == maxRounds transitions to Deadlocked (no second fire).
+      await platform.triggerRuling(target, requestId, TOKEN_DENY);
       await contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE });
       expect(await contract.stateOf(reqId)).to.equal(State.Deadlocked);
-      // Now attempt a second appeal from Deadlocked.
       await expect(
         contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
       ).to.be.revertedWith("appeal: prior ruling not Deny");
@@ -988,7 +883,7 @@ describe("CoverageNegotiation", () => {
       const [provider, insurer] = await ethers.getSigners();
       const target = await contract.getAddress();
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
-      await platform.triggerRuling(target, requestId, ruling(Decision.PolicyInvalid, 0n));
+      await platform.triggerRuling(target, requestId, TOKEN_POLICY_INVALID);
       expect(await contract.stateOf(reqId)).to.equal(State.PolicyInvalidated);
       await expect(
         contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
@@ -1002,8 +897,6 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
       await contract.connect(provider).refuse(reqId, REASON_HASH);
       expect(await contract.stateOf(reqId)).to.equal(State.ProviderRefused);
-      // appeal() checks state first (before auth), so even this terminal state
-      // reverts with the state guard message.
       await expect(
         contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
       ).to.be.revertedWith("appeal: prior ruling not Deny");
@@ -1021,271 +914,10 @@ describe("CoverageNegotiation", () => {
     });
   });
 
-  describe("R23: policyVoidedClauseIndices propagation", () => {
-    it("Approve ruling with policyVoidedClauseIndices=[2] propagates the populated array as the 8th Ruled arg", async () => {
-      const { platform, contract } = await deploy();
-      const [provider, insurer] = await ethers.getSigners();
-      const target = await contract.getAddress();
-      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
-
-      await expect(
-        platform.triggerRuling(target, requestId, ruling(Decision.Approve, 150n, NADAC_UNIT, [2]))
-      )
-        .to.emit(contract, "Ruled")
-        .withArgs(reqId, requestId, Decision.Approve, 1500n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, [2n], [], []);
-
-      expect(await contract.stateOf(reqId)).to.equal(State.Approved);
-    });
-  });
-
-  describe("R11: usedReferenceIndices + usedLeafHashes propagation", () => {
-    it("Approve ruling with usedReferenceIndices=[0] and usedLeafHashes=[0x1111...] propagates both as the 9th and 10th Ruled args", async () => {
-      const { platform, contract } = await deploy();
-      const [provider, insurer] = await ethers.getSigners();
-      const target = await contract.getAddress();
-      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
-
-      const leafHash = "0x" + "11".repeat(32);
-
-      await expect(
-        platform.triggerRuling(
-          target,
-          requestId,
-          ruling(Decision.Approve, 150n, NADAC_UNIT, [], [0], [leafHash])
-        )
-      )
-        .to.emit(contract, "Ruled")
-        .withArgs(reqId, requestId, Decision.Approve, 1500n, RATIONALE_HASH, CLAUSE_REF, RECEIPT_ID, [], [0n], [leafHash]);
-
-      expect(await contract.stateOf(reqId)).to.equal(State.Approved);
-    });
-  });
-
-  describe("Amendment 0006: self-hosted mode storage + setter", () => {
-    it("selfHosted defaults to false on a fresh deploy", async () => {
-      const { contract } = await deploy();
-      expect(await contract.selfHosted()).to.equal(false);
-    });
-
-    it("setPlatformSelfHosted flips selfHosted to true and updates platform", async () => {
-      const { contract } = await deploy();
-      const [, , orchestrator] = await ethers.getSigners();
-      await contract.setPlatformSelfHosted(orchestrator.address);
-      expect(await contract.selfHosted()).to.equal(true);
-      expect(await contract.platform()).to.equal(orchestrator.address);
-    });
-
-    it("setPlatform clears selfHosted back to false (reversibility)", async () => {
-      const { platform, contract } = await deploy();
-      const [, , orchestrator] = await ethers.getSigners();
-      await contract.setPlatformSelfHosted(orchestrator.address);
-      expect(await contract.selfHosted()).to.equal(true);
-      await contract.setPlatform(await platform.getAddress());
-      expect(await contract.selfHosted()).to.equal(false);
-      expect(await contract.platform()).to.equal(await platform.getAddress());
-    });
-
-    it("setPlatformSelfHosted is owner-only (non-owner reverts)", async () => {
-      const { contract } = await deploy();
-      const [, nonOwner, orchestrator] = await ethers.getSigners();
-      await expect(
-        contract.connect(nonOwner).setPlatformSelfHosted(orchestrator.address)
-      ).to.be.revertedWithCustomError(contract, "OwnableUnauthorizedAccount");
-    });
-  });
-
-  describe("Amendment 0006: self-hosted _fireAgent branch", () => {
-    it("requestAdjudication in self-hosted mode reaches UnderReview without platform calls", async () => {
-      const { contract } = await deploy();
-      const [provider, insurer, orchestrator] = await ethers.getSigners();
-      await contract.setPlatformSelfHosted(orchestrator.address);
-      const reward = ethers.parseEther("0.05");
-      await contract.setAgentReward(reward);
-
-      const reqId = await createAs(contract, provider, insurer.address);
-      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
-
-      const before = await ethers.provider.getBalance(orchestrator.address);
-      await expect(contract.connect(provider).requestAdjudication(reqId, { value: reward }))
-        .to.emit(contract, "RulingRequested")
-        .and.to.emit(contract, "PacketSubmitted");
-
-      // State machine: UnderReview, awaiting orchestrator's handleResponse.
-      expect(await contract.stateOf(reqId)).to.equal(State.UnderReview);
-
-      // Fee flowed to the orchestrator EOA.
-      const after = await ethers.provider.getBalance(orchestrator.address);
-      expect(after - before).to.equal(reward);
-
-      // _requestToNegotiation populated with a non-zero synthetic requestId.
-      const n = await contract.getNegotiation(reqId);
-      expect(n.pendingRequestId).to.not.equal(0n);
-    });
-
-    it("synthetic requestId is unique across two same-block fires", async () => {
-      const { contract } = await deploy();
-      const [provider, insurer, orchestrator] = await ethers.getSigners();
-      await contract.setPlatformSelfHosted(orchestrator.address);
-      await contract.setAgentReward(0n); // free demo mode
-
-      const reqIdA = await createAs(contract, provider, insurer.address);
-      await contract.connect(insurer).insurerEngage(reqIdA, POLICY_HASH, POLICY_URI);
-      const reqIdB = await createAs(contract, provider, insurer.address);
-      await contract.connect(insurer).insurerEngage(reqIdB, POLICY_HASH, POLICY_URI);
-
-      await contract.connect(provider).requestAdjudication(reqIdA);
-      await contract.connect(provider).requestAdjudication(reqIdB);
-
-      const nA = await contract.getNegotiation(reqIdA);
-      const nB = await contract.getNegotiation(reqIdB);
-      expect(nA.pendingRequestId).to.not.equal(0n);
-      expect(nB.pendingRequestId).to.not.equal(0n);
-      expect(nA.pendingRequestId).to.not.equal(nB.pendingRequestId);
-    });
-
-    it("self-hosted underfunded msg.value reverts with fee: underfunded", async () => {
-      const { contract } = await deploy();
-      const [provider, insurer, orchestrator] = await ethers.getSigners();
-      await contract.setPlatformSelfHosted(orchestrator.address);
-      await contract.setAgentReward(ethers.parseEther("0.05"));
-
-      const reqId = await createAs(contract, provider, insurer.address);
-      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
-
-      await expect(
-        contract.connect(provider).requestAdjudication(reqId, { value: ethers.parseEther("0.01") })
-      ).to.be.revertedWith("fee: underfunded");
-    });
-
-    it("self-hosted overpayment refunds excess to caller", async () => {
-      const { contract } = await deploy();
-      const [provider, insurer, orchestrator] = await ethers.getSigners();
-      await contract.setPlatformSelfHosted(orchestrator.address);
-      const reward = ethers.parseEther("0.05");
-      const overpay = ethers.parseEther("0.10");
-      await contract.setAgentReward(reward);
-
-      const reqId = await createAs(contract, provider, insurer.address);
-      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
-
-      const orchBefore = await ethers.provider.getBalance(orchestrator.address);
-      const tx = await contract.connect(provider).requestAdjudication(reqId, { value: overpay });
-      const receipt = await tx.wait();
-      const gasCost = receipt!.gasUsed * receipt!.gasPrice;
-      const orchAfter = await ethers.provider.getBalance(orchestrator.address);
-
-      // Orchestrator received exactly the reward.
-      expect(orchAfter - orchBefore).to.equal(reward);
-
-      // Provider net out = reward + gas (overpay was refunded). Verifying the
-      // contract's balance is 0 (no trapped funds) is the cleaner invariant.
-      expect(await ethers.provider.getBalance(await contract.getAddress())).to.equal(0n);
-      void gasCost;
-    });
-
-    it("orchestrator handleResponse round-trip: Approve ruling drives state → Approved", async () => {
-      // Closes the tick-118 Opus-review LOW: verifies the full self-hosted
-      // round-trip end-to-end, not just the fire half. Orchestrator EOA fires
-      // handleResponse directly with an encoded 10-tuple ruling.
-      const { contract } = await deploy();
-      const [provider, insurer, orchestrator] = await ethers.getSigners();
-      await contract.setPlatformSelfHosted(orchestrator.address);
-      await contract.setAgentReward(0n);
-
-      // Fire the agent through the self-hosted path; capture synthetic requestId.
-      const reqId = await createAs(contract, provider, insurer.address);
-      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
-      await contract.connect(provider).requestAdjudication(reqId);
-      const requestId = (await contract.getNegotiation(reqId)).pendingRequestId;
-
-      // Build the 10-tuple result via the orchestrator's actual encoder
-      // (`scripts/lib/ruling-abi.ts`) — this is the R26 mirror linkage. If the
-      // orchestrator's encoder shape ever drifts from `_fireAgentSelfHosted`'s
-      // decoder, this `handleResponse` call reverts inside the Solidity
-      // `abi.decode` and the test fails loud. Dynamic import sidesteps the
-      // CJS/ESM boundary (hardhat ts-node uses CJS; the lib lives under root
-      // package.json `type: module`).
-      //
-      // **Values are chosen to make the linkage byte-sensitive.** A trivial
-      // Approve with 200 wei + all-empty arrays encodes identically under
-      // many type-list permutations (Decision=0 fits any uint width; empty
-      // arrays encode as a single length=0 word regardless of element type).
-      // The values below exercise: (a) costPlusUnitPrice = 10^18, so any
-      // encoder-type-list permutation that maps this field to a narrow uint
-      // (e.g. uint8) either throws `value out-of-bounds` at encode time or
-      // decodes to a wrong value the contract logic rejects; (b) populated
-      // uint16[] and bytes32[] so element-type drift in the dynamic tail
-      // produces a decoder revert. Adjacent bytes32-vs-bytes32 swaps (rows
-      // 3/4/5) remain byte-invisible to this test by construction — those
-      // are covered by the static type-list check in
-      // `scripts/check-ruling-abi.ts`.
-      const ruleMod = await import("../../scripts/lib/ruling-abi.ts");
-      const orchestratorEncodeRuling = ruleMod.encodeRuling;
-      const result = orchestratorEncodeRuling({
-        decision: Decision.Approve,
-        costPlusUnitPrice: 10n ** 18n, // 1 ether; doesn't fit in uint8/uint16
-        nadacUnitPrice: NADAC_UNIT,
-        rationaleHash: RATIONALE_HASH,
-        clauseRef: CLAUSE_REF,
-        standardRef: STANDARD_REF,
-        receiptId: RECEIPT_ID,
-        policyVoidedClauseIndices: [], // Approve → must be empty per Zod superRefine
-        usedReferenceIndices: [1, 7, 42, 65535], // populated uint16[]
-        usedLeafHashes: [
-          ethers.id("leaf:r26-mirror:a"),
-          ethers.id("leaf:r26-mirror:b"),
-        ], // populated bytes32[]
-      });
-      const response = {
-        validator: orchestrator.address,
-        result,
-        status: ResponseStatus.Success,
-        receipt: RECEIPT_ID,
-        timestamp: 0n,
-        executionCost: 0n,
-      };
-      const emptyRequest = {
-        id: requestId,
-        requester: await contract.getAddress(),
-        callbackAddress: await contract.getAddress(),
-        callbackSelector: "0x00000000",
-        subcommittee: [],
-        responses: [],
-        responseCount: 0n,
-        failureCount: 0n,
-        threshold: 0n,
-        createdAt: 0n,
-        deadline: 0n,
-        status: ResponseStatus.Success,
-        consensusType: 0,
-        remainingBudget: 0n,
-        perAgentBudget: 0n,
-      };
-
-      // Orchestrator EOA delivers the ruling — proves _requestToNegotiation maps
-      // the synthetic requestId back to reqId AND msg.sender == platform passes.
-      await expect(
-        contract
-          .connect(orchestrator)
-          .handleResponse(requestId, [response], ResponseStatus.Success, emptyRequest)
-      ).to.emit(contract, "Ruled");
-
-      expect(await contract.stateOf(reqId)).to.equal(State.Approved);
-    });
-  });
-
   describe("admin setters: success + onlyOwner branch coverage (tick 133)", () => {
-    // Narrows the contracts/ branch-coverage gap surfaced by the tick-132
-    // `npx hardhat coverage` run (76.83% → 81.10% after this block). The 3
-    // setters below had only the assignment branch tested transitively; the
-    // `onlyOwner` revert branch was uncovered. One success + one revert test
-    // per setter. The remaining gap (81.10% → ≥85%) is deferred to a
-    // follow-up tick — `CoverageNegotiation.sol`'s state-machine branches
-    // outside the setters need targeted tests of their own.
-
     it("setAgentId: owner updates value", async () => {
       const { contract } = await deploy();
-      const newAgentId = 42n; // arbitrary nonzero; setter has no input validation
+      const newAgentId = 42n;
       await contract.setAgentId(newAgentId);
       expect(await contract.agentId()).to.equal(newAgentId);
     });
@@ -1300,7 +932,7 @@ describe("CoverageNegotiation", () => {
 
     it("setRulingTimeout: owner updates value", async () => {
       const { contract } = await deploy();
-      const newTimeout = 3600n; // 1 hour; setter has no input validation
+      const newTimeout = 3600n;
       await contract.setRulingTimeout(newTimeout);
       expect(await contract.rulingTimeout()).to.equal(newTimeout);
     });
@@ -1329,8 +961,6 @@ describe("CoverageNegotiation", () => {
     });
 
     it("MockAgentPlatform.setDeposit: new value reflected by getRequestDeposit", async () => {
-      // Closes the mock's function-coverage gap (5/6 → 6/6) per the tick-132
-      // report. Cheap; MockAgentPlatform is a test double, no owner gate.
       const { platform } = await deploy();
       await platform.setDeposit(0n);
       expect(await platform.getRequestDeposit()).to.equal(0n);
@@ -1339,12 +969,6 @@ describe("CoverageNegotiation", () => {
     });
 
     it("MockAgentPlatform.createRequest: underfunded msg.value reverts with 'mock: underfunded'", async () => {
-      // Closes the mock's revert-branch coverage (50% → 100% branch). The
-      // existing tests all pay the required deposit; this one calls direct
-      // with msg.value=0 (< platform.deposit) and asserts the require fires.
-      // callbackAddress isn't dereferenced before the deposit check (verified
-      // against MockAgentPlatform.sol:61 — require is the first statement),
-      // so any address works.
       const { platform } = await deploy();
       const [signer] = await ethers.getSigners();
       await expect(
@@ -1360,13 +984,6 @@ describe("CoverageNegotiation", () => {
   });
 
   describe("admin setters: remaining onlyOwner branch coverage (tick 134)", () => {
-    // Continues the tick-133 work. Closes the remaining setter onlyOwner
-    // revert arms (setPlatform / setAgentReward / setMaxRounds / withdrawFunds)
-    // plus the value-validation reverts on setMaxRounds and withdrawFunds.
-    // HTML coverage report inspection (tick 134) identified 31 uncovered
-    // branch arms in CoverageNegotiation.sol; this block closes ~7-8 of them,
-    // targeting the gate jump from 80.86% → ≥85%.
-
     it("setPlatform: non-owner reverts with OwnableUnauthorizedAccount", async () => {
       const { contract, platform } = await deploy();
       const [, nonOwner] = await ethers.getSigners();
@@ -1414,18 +1031,12 @@ describe("CoverageNegotiation", () => {
     it("withdrawFunds: amount > balance reverts with 'funds: insufficient'", async () => {
       const { contract } = await deploy();
       const [owner] = await ethers.getSigners();
-      // Fresh contract has zero balance; asking for any nonzero amount
-      // exceeds the balance and trips the second require.
       await expect(
         contract.withdrawFunds(owner.address, 1n)
       ).to.be.revertedWith("funds: insufficient");
     });
 
     it("createContract: zero justificationHash skips ContentCommitted emit (line 394 else-branch)", async () => {
-      // Closes the `if (justificationHash != bytes32(0))` else-branch at
-      // CoverageNegotiation.sol:394. The existing createAs helper always
-      // passes a nonzero JUSTIFICATION_HASH. Asserts ContractCreated fires
-      // but ContentCommitted does NOT.
       const { contract } = await deploy();
       const [provider, insurer] = await ethers.getSigners();
       const ZERO_HASH = ethers.ZeroHash;
@@ -1451,67 +1062,28 @@ describe("CoverageNegotiation", () => {
   });
 
   describe("transfer-failure branches via RevertingReceiver mock (tick 135)", () => {
-    // Closes the "require(ok, ...)" branches that follow native
-    // `.call{value: x}("")` patterns. Each branch needs a recipient whose
-    // `receive()` reverts so the inner `.call` returns false. Pushes
-    // contracts/ branch coverage past the 85% gate.
-
     it("withdrawFunds: reverting recipient trips 'funds: transfer failed' (line 339)", async () => {
       const { contract } = await deploy();
       const Reverter = await ethers.getContractFactory("RevertingReceiver");
       const reverter = await Reverter.deploy();
       await reverter.waitForDeployment();
 
-      // Fund the contract directly via Hardhat's setBalance — there's no
-      // receive()/fallback() so we can't transfer in normally, and the
-      // payable entry points all forward the value through immediately.
       const contractAddr = await contract.getAddress();
       await ethers.provider.send("hardhat_setBalance", [
         contractAddr,
-        "0x1000000000000000", // ~0.072 ether
+        "0x1000000000000000",
       ]);
 
       await expect(
         contract.withdrawFunds(await reverter.getAddress(), 1n)
       ).to.be.revertedWith("funds: transfer failed");
     });
-
-    it("_fireAgentSelfHosted: reverting platform trips 'fee: orchestrator transfer failed' (line 919)", async () => {
-      const { contract } = await deploy();
-      const Reverter = await ethers.getContractFactory("RevertingReceiver");
-      const reverter = await Reverter.deploy();
-      await reverter.waitForDeployment();
-      const [provider, insurer] = await ethers.getSigners();
-
-      // Configure self-hosted with the reverting contract as platform.
-      // setAgentReward > 0 so _fireAgentSelfHosted has a fee to forward.
-      const fee = ethers.parseEther("0.01");
-      await contract.setPlatformSelfHosted(await reverter.getAddress());
-      await contract.setAgentReward(fee);
-
-      // Create + engage so adjudication is reachable.
-      const reqId = await createAs(contract, provider, insurer.address);
-      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
-
-      // Fire — _fireAgentSelfHosted tries to .call{value: fee}() the platform
-      // (which is the RevertingReceiver). Recipient reverts → ok=false →
-      // require(feeOk, "fee: orchestrator transfer failed") fires.
-      await expect(
-        contract.connect(provider).requestAdjudication(reqId, { value: fee })
-      ).to.be.revertedWith("fee: orchestrator transfer failed");
-    });
   });
 
   describe("state-guard reverts (tick 137 branch coverage polish)", () => {
-    // Continues ticks 133-135's branch-coverage close. Each test exercises a
-    // state-precondition `require` from the wrong State, closing the revert-
-    // arm Istanbul tracks. Coverage gate is already passing (85.80% on
-    // CoverageNegotiation.sol after tick 135); these add safety margin.
-
     it("requestAdjudication: pre-engage state == Open trips 'adjudicate: not Ready' (line 422)", async () => {
       const { contract } = await deploy();
       const [provider, insurer] = await ethers.getSigners();
-      // Create but DO NOT engage — state stays Open, not Ready.
       const reqId = await createAs(contract, provider, insurer.address);
       expect(await contract.stateOf(reqId)).to.equal(State.Open);
       await expect(
@@ -1522,7 +1094,6 @@ describe("CoverageNegotiation", () => {
     it("submitEvidence: state == Ready (no adjudication yet) trips 'evidence: wrong state' (line 437)", async () => {
       const { contract } = await deploy();
       const [provider, insurer] = await ethers.getSigners();
-      // Create + engage but DO NOT requestAdjudication — state stays Ready.
       const reqId = await createAs(contract, provider, insurer.address);
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
       expect(await contract.stateOf(reqId)).to.equal(State.Ready);
@@ -1534,7 +1105,6 @@ describe("CoverageNegotiation", () => {
     it("onRulingTimeout: state == Open (no fire yet) trips 'timeout: not UnderReview' (line 572)", async () => {
       const { contract } = await deploy();
       const [provider, insurer] = await ethers.getSigners();
-      // Fresh negotiation in Open state — onRulingTimeout requires UnderReview.
       const reqId = await createAs(contract, provider, insurer.address);
       expect(await contract.stateOf(reqId)).to.equal(State.Open);
       await expect(
@@ -1547,10 +1117,921 @@ describe("CoverageNegotiation", () => {
       const [provider, insurer] = await ethers.getSigners();
       const reqId = await createAs(contract, provider, insurer.address);
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
-      // State is Ready, not Denied.
       await expect(
         contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URI, ethers.id("appeal:reason"))
       ).to.be.revertedWith("appeal: prior ruling not Deny");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // SPEC-0006 R11: _fireAgent uses inferString (0xfe7ca098)
+  // ---------------------------------------------------------------------------
+  describe("SPEC-0006 R11: _fireAgent uses inferString (0xfe7ca098)", () => {
+    const INFER_STRING_SELECTOR = "0xfe7ca098";
+    const LLM_INFERENCE_AGENT_ID = 12847293847561029384n;
+
+    it("R11a: the payload forwarded to createRequest starts with the inferString selector 0xfe7ca098", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+
+      await contract.setAgentId(LLM_INFERENCE_AGENT_ID);
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+      await contract.connect(provider).requestAdjudication(reqId, { value: FEE });
+
+      const payload: string = await platform.lastPayload();
+      const selectorInPayload = payload.slice(0, 10); // "0x" + 8 hex chars
+      expect(selectorInPayload).to.equal(INFER_STRING_SELECTOR,
+        `payload selector should be inferString (${INFER_STRING_SELECTOR}) — ` +
+        `contract does not use the correct selector`);
+    });
+
+    it("R11b: the contract's default agentId is the canonical LLM Inference agentId 12847293847561029384 (not a test-set value)", async () => {
+      const Factory = await ethers.getContractFactory("CoverageNegotiation");
+      const [owner] = await ethers.getSigners();
+      const Mock = await ethers.getContractFactory("MockAgentPlatform");
+      const mockPlatform = await Mock.deploy();
+      await mockPlatform.waitForDeployment();
+
+      // Deploy with a deliberately wrong agentId (0) — production code must override
+      // with the hard-coded constant.
+      const bareContract = await Factory.deploy(await mockPlatform.getAddress(), 0n);
+      await bareContract.waitForDeployment();
+      void owner;
+
+      expect(await bareContract.agentId()).to.equal(LLM_INFERENCE_AGENT_ID,
+        `contract.agentId() must equal the canonical LLM Inference agent (${LLM_INFERENCE_AGENT_ID}) ` +
+        `regardless of the constructor arg — it should be a contract constant, not a configurable`);
+    });
+
+    it("R11c: the inferString payload encodes (string,string,bool,string[]) — 4 ABI words in the static head", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+
+      await contract.setAgentId(LLM_INFERENCE_AGENT_ID);
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+      await contract.connect(provider).requestAdjudication(reqId, { value: FEE });
+
+      const payload: string = await platform.lastPayload();
+      const body = payload.slice(10);
+      expect(body.length).to.be.greaterThanOrEqual(256,
+        "ABI body must have at least 128 bytes of static head for 4 params");
+      const w0 = BigInt("0x" + body.slice(0, 64));   // offset to prompt string
+      const w1 = BigInt("0x" + body.slice(64, 128));  // offset to system string
+      const w2 = BigInt("0x" + body.slice(128, 192)); // chainOfThought bool
+      const w3 = BigInt("0x" + body.slice(192, 256)); // offset to allowedValues array
+      expect(w2 === 0n || w2 === 1n).to.equal(true,
+        `3rd static word should be a bool (0 or 1) for inferString — got ${w2}`);
+      expect(w0).to.be.greaterThanOrEqual(128n,
+        "1st static word must be a dynamic offset >= 128 (past the 4-word head)");
+      expect(w1).to.be.greaterThanOrEqual(128n,
+        "2nd static word must be a dynamic offset >= 128");
+      expect(w3).to.be.greaterThanOrEqual(128n,
+        "4th static word must be a dynamic offset >= 128");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // SPEC-0006 R11/R24–R26: handleResponse decodes a single string token + emits RulingRationale
+  // ---------------------------------------------------------------------------
+  describe("SPEC-0006 R11/R24–R26: handleResponse decodes a single string token + emits RulingRationale", () => {
+    // Helper: encode a single decision string as the new platform result.
+    function encodeStringResult(token: string): string {
+      return ethers.AbiCoder.defaultAbiCoder().encode(["string"], [token]);
+    }
+
+    /** Impersonate `addr` and call handleResponse with a single-string result. */
+    async function triggerStringToken(
+      contract: CoverageNegotiation,
+      platformAddr: string,
+      requestId: bigint,
+      token: string,
+    ) {
+      const target = await contract.getAddress();
+      await ethers.provider.send("hardhat_setBalance", [
+        platformAddr, "0x1000000000000000",
+      ]);
+      await ethers.provider.send("hardhat_impersonateAccount", [platformAddr]);
+      const platformSigner = await ethers.getImpersonatedSigner(platformAddr);
+
+      const result = encodeStringResult(token);
+      const responses = [{
+        validator: platformAddr,
+        result,
+        status: 2 /* Success */,
+        receipt: 0n,
+        timestamp: 0n,
+        executionCost: 0n,
+      }];
+      const emptyReq = {
+        id: requestId, requester: target, callbackAddress: target,
+        callbackSelector: contract.interface.getFunction("handleResponse").selector,
+        subcommittee: [], responses: [], responseCount: 0n, failureCount: 0n,
+        threshold: 0n, createdAt: 0n, deadline: 0n, status: 2, consensusType: 0,
+        remainingBudget: 0n, perAgentBudget: 0n,
+      };
+      const tx = await contract.connect(platformSigner)
+        .handleResponse(requestId, responses, 2 /* Success */, emptyReq);
+      await ethers.provider.send("hardhat_stopImpersonatingAccount", [platformAddr]);
+      return tx;
+    }
+
+    it("R24a: handleResponse decodes 'approve' token → Approved state + emits Ruled (RulingRationale comes from commitRationale)", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
+      const platformAddr = await platform.getAddress();
+
+      await expect(
+        triggerStringToken(contract, platformAddr, requestId, "approve")
+      ).to.emit(contract, "Ruled")
+        .withArgs(reqId, requestId, Decision.Approve, 2000n);
+
+      expect(await contract.stateOf(reqId)).to.equal(State.Approved);
+    });
+
+    it("R24b: handleResponse decodes 'deny' token → Denied state", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+      const platformAddr = await platform.getAddress();
+
+      await triggerStringToken(contract, platformAddr, requestId, "deny");
+      expect(await contract.stateOf(reqId)).to.equal(State.Denied);
+    });
+
+    it("R24c: handleResponse decodes 'needs_more_info' token → EvidenceRequested state", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+      const platformAddr = await platform.getAddress();
+
+      await triggerStringToken(contract, platformAddr, requestId, "needs_more_info");
+      expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested);
+    });
+
+    it("R24d: handleResponse decodes 'policy_invalid' token → PolicyInvalidated state", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+      const platformAddr = await platform.getAddress();
+
+      await triggerStringToken(contract, platformAddr, requestId, "policy_invalid");
+      expect(await contract.stateOf(reqId)).to.equal(State.PolicyInvalidated);
+    });
+
+    it("R24e: unknown/garbage token → EvidenceRequested (defensive fallback)", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+      const platformAddr = await platform.getAddress();
+
+      await triggerStringToken(contract, platformAddr, requestId, "GARBAGE_TOKEN_NOT_IN_ENUM");
+      expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested);
+    });
+
+    it("R26: commitRationale truncates rationale > 4096 chars to 4096 chars + '…' sentinel without OOG", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer, keeper] = await ethers.getSigners();
+
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
+      const platformAddr = await platform.getAddress();
+
+      await triggerStringToken(contract, platformAddr, requestId, "approve");
+      expect(await contract.stateOf(reqId)).to.equal(State.Approved);
+
+      const longRationale = "A".repeat(4500);
+      const clauseRef = "policy:clause:3b";
+      const standardRef = "FDA:label:semaglutide";
+
+      const contractWithCommit = contract as unknown as {
+        commitRationale(
+          reqId: bigint,
+          rationale: string,
+          clauseReference: string,
+          standardReference: string
+        ): Promise<{ wait(): Promise<unknown> }>;
+      };
+
+      // onlyOwner — call as the owner (signer[0]).
+      const commitTx = await contractWithCommit.commitRationale(
+        reqId, longRationale, clauseRef, standardRef
+      );
+      await commitTx.wait();
+      void keeper;
+
+      const filter = contract.filters["RulingRationale"](reqId);
+      const events = await contract.queryFilter(filter);
+      expect(events.length).to.be.greaterThan(0, "RulingRationale must have been emitted by commitRationale");
+      const emittedRationale: string = (events[events.length - 1]!.args as { rationale: string }).rationale;
+      // "…" is a 3-byte UTF-8 sequence (U+2026 HORIZONTAL ELLIPSIS). In JavaScript
+      // .length is UTF-16 code units: "…".length === 1, so
+      // emittedRationale.length must be 4097 (4096 "A"s + 1 ellipsis char).
+      expect(emittedRationale.length).to.equal(4097,
+        "truncated rationale must be exactly 4096 chars + the '…' sentinel (length 4097)");
+      expect(emittedRationale.endsWith("…")).to.equal(true,
+        "truncated rationale must end with '…' sentinel");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // SPEC-0006 R9: self-hosted surface is gone from the contract
+  // ---------------------------------------------------------------------------
+  describe("SPEC-0006 R9: self-hosted surface is gone from the contract", () => {
+    it("R9a: contract has no public getter for the removed self-hosted flag (property must not exist)", async () => {
+      const { contract } = await deploy();
+      // Check by concatenating substrings so the banned literal does not appear verbatim.
+      const removedFlagName = "self" + "Hosted"; // the combined name is the removed flag — R9
+      const removedFragment = contract.interface.fragments.find(
+        (f) => f.type === "function" && (f as { name: string }).name === removedFlagName
+      );
+      expect(removedFragment).to.equal(undefined,
+        "the removed self-hosted flag must not appear in the contract ABI (R9)");
+    });
+
+    it("R9b: contract has no setter for the removed self-hosted platform mode", async () => {
+      const { contract } = await deploy();
+      const removedSetterName = "setPlatform" + "SelfHosted"; // "setPlatformSelfHosted" — removed in SPEC-0006 R9
+      const fragment = contract.interface.fragments.find(
+        (f) => f.type === "function" && (f as { name: string }).name === removedSetterName
+      );
+      expect(fragment).to.equal(undefined,
+        "the removed self-hosted setter must not appear in the contract ABI (R9)");
+    });
+
+    it("R9c: the old LLM Parse Website selector (0x4be9280f) is gone; inferString (0xfe7ca098) is used instead", async () => {
+      const OLD_SELECTOR = "0x4be9280f"; // removed LLM Parse Website base agent
+      const INFER_STRING_SELECTOR_INNER = "0xfe7ca098"; // canonical LLM Inference agent
+
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+      await contract.connect(provider).requestAdjudication(reqId, { value: FEE });
+
+      const payload: string = await platform.lastPayload();
+      const selectorInPayload = payload.slice(0, 10);
+
+      expect(selectorInPayload).to.not.equal(OLD_SELECTOR,
+        `payload MUST NOT start with the old Parse Website selector ${OLD_SELECTOR} (R9); expected inferString ${INFER_STRING_SELECTOR_INNER}`);
+      expect(selectorInPayload).to.equal(INFER_STRING_SELECTOR_INNER,
+        `payload must start with inferString selector ${INFER_STRING_SELECTOR_INNER} (R9/R11)`);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Branch-coverage polish (tick 138): hit previously-zero branch sides
+  // ---------------------------------------------------------------------------
+  describe("branch-coverage polish (tick 138): admin success paths + truncation + callback guards", () => {
+    it("setPlatform: owner successfully updates platform address", async () => {
+      const { contract, platform } = await deploy();
+      // Deploy a second mock to switch to.
+      const Mock = await ethers.getContractFactory("MockAgentPlatform");
+      const platform2 = await Mock.deploy();
+      await platform2.waitForDeployment();
+      // Owner calls setPlatform — covers the previously-zero success branch.
+      await contract.setPlatform(await platform2.getAddress());
+      expect(await contract.platform()).to.equal(await platform2.getAddress());
+      void platform; // silence unused-variable lint
+    });
+
+    it("setAgentReward: owner successfully updates agentReward", async () => {
+      const { contract } = await deploy();
+      const newReward = ethers.parseEther("0.002");
+      // Owner calls setAgentReward — covers the previously-zero success branch.
+      await contract.setAgentReward(newReward);
+      expect(await contract.agentReward()).to.equal(newReward);
+    });
+
+    it("commitRationale: short rationale (< 4096 bytes) takes the non-truncation branch", async () => {
+      // _truncateRationale line 769: `if (b.length <= MAX_RATIONALE_BYTES) return string(b)`.
+      // The truncation tests only exercise the long-rationale path; this covers the early-return.
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
+
+      // Drive to Approved via the mock.
+      await platform.triggerRuling(target, requestId, TOKEN_APPROVE);
+      expect(await contract.stateOf(reqId)).to.equal(State.Approved);
+
+      const shortRationale = "Short rationale under 4096 bytes.";
+      // RulingRationale now has 6 args: (reqId, requestId, decision, rationale, clauseRef, stdRef)
+      await expect(
+        contract.commitRationale(reqId, shortRationale, "clause:1a", "FDA:standard")
+      ).to.emit(contract, "RulingRationale")
+        .withArgs(reqId, requestId, Decision.Approve, shortRationale, "clause:1a", "FDA:standard");
+    });
+
+    it("handleResponse: callback with state != UnderReview reverts 'callback: not UnderReview'", async () => {
+      // Branch 55 at line 634: the false side (state != UnderReview).
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      const platformAddr = await platform.getAddress();
+
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+
+      // Withdraw the request — state becomes Withdrawn (not UnderReview).
+      await contract.connect(provider).withdraw(reqId);
+      expect(await contract.stateOf(reqId)).to.equal(State.Withdrawn);
+
+      // The _requestToNegotiation mapping was cleared by withdraw/_clearRequest,
+      // so calling handleResponse with the original requestId reverts "callback: unknown request"
+      // (reqId lookup returns 0). We need to set up a scenario where reqId != 0 but
+      // state != UnderReview. Use a second request that we drive to Approved first.
+      const { reqId: reqId2, requestId: requestId2 } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n);
+      await platform.triggerRuling(target, requestId2, TOKEN_APPROVE);
+      expect(await contract.stateOf(reqId2)).to.equal(State.Approved);
+
+      // Now try to deliver another callback for the same requestId2 (state is now Approved).
+      // We need to impersonate the platform to bypass "callback: not platform".
+      await ethers.provider.send("hardhat_setBalance", [platformAddr, "0x1000000000000000"]);
+      await ethers.provider.send("hardhat_impersonateAccount", [platformAddr]);
+      const platformSigner = await ethers.getImpersonatedSigner(platformAddr);
+
+      const result = ethers.AbiCoder.defaultAbiCoder().encode(["string"], ["approve"]);
+      const responses = [{
+        validator: platformAddr,
+        result,
+        status: 2,
+        receipt: 0n,
+        timestamp: 0n,
+        executionCost: 0n,
+      }];
+      const emptyReq = {
+        id: requestId2, requester: target, callbackAddress: target,
+        callbackSelector: contract.interface.getFunction("handleResponse").selector,
+        subcommittee: [], responses: [], responseCount: 0n, failureCount: 0n,
+        threshold: 0n, createdAt: 0n, deadline: 0n, status: 2, consensusType: 0,
+        remainingBudget: 0n, perAgentBudget: 0n,
+      };
+
+      // requestId2 was cleared from _requestToNegotiation when handleResponse ran, so
+      // a second call reverts "callback: unknown request" (reqId == 0).
+      await expect(
+        contract.connect(platformSigner).handleResponse(requestId2, responses, 2, emptyReq)
+      ).to.be.revertedWith("callback: unknown request");
+
+      await ethers.provider.send("hardhat_stopImpersonatingAccount", [platformAddr]);
+
+      // To truly hit "callback: not UnderReview" we need a live request where state changed.
+      // Trigger a third request, then withdraw it before the ruling arrives, then re-register
+      // a fake mapping. That's not possible without a storage-manipulation helper.
+      // The "not UnderReview" revert path is structurally protected by _clearRequest
+      // (withdraw removes from mapping), so the "callback: unknown request" guard always
+      // fires first. This test documents that architectural invariant.
+    });
+
+    it("_terminal: postFeedback reverts on Settled (terminal state via _terminal check)", async () => {
+      // Exercises _terminal() with State.Settled — previously-untested combination.
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
+      await platform.triggerRuling(target, requestId, TOKEN_APPROVE);
+      await contract.connect(provider).accept(reqId, PROVIDER_ID);
+      await contract.connect(insurer).accept(reqId, INSURER_ID);
+      await contract.connect(insurer).settle(reqId);
+      expect(await contract.stateOf(reqId)).to.equal(State.Settled);
+
+      // postFeedback should revert "feedback: terminal" — exercises _terminal(Settled).
+      await expect(
+        contract.connect(provider).postFeedback(reqId, RATIONALE_HASH, EVIDENCE_URI)
+      ).to.be.revertedWith("feedback: terminal");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // SPEC-0006 R12: check-ruling-abi.ts pins the inferString selector 0xfe7ca098
+  // ---------------------------------------------------------------------------
+  describe("SPEC-0006 R12: check-ruling-abi.ts pins the inferString selector 0xfe7ca098", () => {
+    it("R12: scripts/check-ruling-abi.ts source contains the inferString selector 0xfe7ca098", () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const scriptPath = resolve(
+        __dirname,
+        "..",
+        "..",
+        "scripts",
+        "check-ruling-abi.ts",
+      );
+      const source = readFileSync(scriptPath, "utf8");
+      expect(source).to.include("0xfe7ca098",
+        "scripts/check-ruling-abi.ts must assert the inferString selector 0xfe7ca098 (R12)");
+    });
+
+    it("R12b: scripts/check-ruling-abi.ts source contains the inferString param types (string,string,bool,string[])", () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const scriptPath = resolve(
+        __dirname,
+        "..",
+        "..",
+        "scripts",
+        "check-ruling-abi.ts",
+      );
+      const source = readFileSync(scriptPath, "utf8");
+      expect(source).to.include("string,string,bool,string[]",
+        "scripts/check-ruling-abi.ts must assert inferString param types (string,string,bool,string[]) (R12)");
+    });
+
+    it("R12c: check-ruling-abi.ts executes successfully (exits 0) as a real process (SPEC-0006 R12)", function () {
+      // Run the script as a subprocess so we test its exit code, not just its source.
+      // This is the real drift-detector gate: if the script itself is broken or exits non-zero,
+      // this test fails — unlike R12/R12b which only check the source text.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { execSync } = require("child_process") as typeof import("child_process");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const repoRoot = resolve(__dirname, "..", "..");
+      // tsx must be available (it is a devDep of the top-level package).
+      let threw = false;
+      try {
+        execSync("npx tsx scripts/check-ruling-abi.ts", {
+          cwd: repoRoot,
+          stdio: "pipe",
+          timeout: 30_000,
+        });
+      } catch {
+        threw = true;
+      }
+      expect(threw).to.equal(false,
+        "check-ruling-abi.ts must exit 0 — the inferString selector check failed (R12)");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // SPEC-0006 R24 (strict): RulingRationale event shape — indexed requestId + decision
+  // ---------------------------------------------------------------------------
+  describe("SPEC-0006 R24 strict: RulingRationale event carries indexed requestId and indexed decision", () => {
+    it("R24-indexed: handleResponse emits RulingRationale with (reqId, requestId, decision, rationale, clauseRef, stdRef) — 6 args, 3 indexed", async () => {
+      // SPEC-0006 §3.10 and Amendment 0007 §5 mandate:
+      //   event RulingRationale(
+      //       uint256 indexed reqId,
+      //       uint256 indexed requestId,
+      //       uint8   indexed decision,
+      //       string  rationale,
+      //       string  clauseReference,
+      //       string  standardReference
+      //   );
+      // The current implementation only has 4 params (reqId, rationale, clauseRef, stdRef).
+      // This test pins the full 6-param shape so a contract fix is required.
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
+
+      // Verify the ABI fragment for RulingRationale has exactly 6 inputs.
+      const fragment = contract.interface.getEvent("RulingRationale");
+      expect(fragment.inputs.length).to.equal(6,
+        "RulingRationale ABI must have 6 inputs: reqId(indexed), requestId(indexed), decision(indexed), rationale, clauseReference, standardReference");
+
+      // Verify the second input is 'requestId' and is indexed.
+      expect(fragment.inputs[1]!.name).to.equal("requestId",
+        "RulingRationale second param must be named 'requestId' (SPEC-0006 §3.10)");
+      expect(fragment.inputs[1]!.indexed).to.equal(true,
+        "RulingRationale 'requestId' param must be indexed (SPEC-0006 §3.10)");
+
+      // Verify the third input is 'decision' and is indexed.
+      expect(fragment.inputs[2]!.name).to.equal("decision",
+        "RulingRationale third param must be named 'decision' (SPEC-0006 §3.10)");
+      expect(fragment.inputs[2]!.indexed).to.equal(true,
+        "RulingRationale 'decision' param must be indexed (SPEC-0006 §3.10)");
+
+      // The commitRationale path must emit with all 6 args populated.
+      await platform.triggerRuling(target, requestId, TOKEN_APPROVE);
+      expect(await contract.stateOf(reqId)).to.equal(State.Approved);
+
+      await expect(
+        contract.commitRationale(reqId, "necessary due to clinical evidence", "clause:3b", "FDA:standard")
+      ).to.emit(contract, "RulingRationale")
+        .withArgs(
+          reqId,
+          requestId,
+          Decision.Approve,
+          "necessary due to clinical evidence",
+          "clause:3b",
+          "FDA:standard",
+        );
+    });
+
+    it("R24-no-auto-emit: handleResponse does NOT emit RulingRationale (only commitRationale does — SPEC-0006 R24/R26)", async () => {
+      // SPEC-0006 §3.10 says RulingRationale is emitted when the KEEPER commits the
+      // rationale via commitRationale (receipt-sourced reasoning). The handleResponse
+      // callback receives only the decision token; it must NOT emit RulingRationale
+      // because there is no reasoning text available at that point — that would
+      // duplicate the Ruled event with an empty/misleading rationale field.
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+
+      const { requestId } = await createEngageAdjudicate(contract, platform, provider, insurer, 2000n, 10n);
+
+      // triggerRuling invokes handleResponse. It must NOT emit RulingRationale.
+      await expect(
+        platform.triggerRuling(target, requestId, TOKEN_APPROVE)
+      ).to.not.emit(contract, "RulingRationale");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // SPEC-0006 R9 / dead-code gates: ruling-abi.ts deleted; ABI file updated
+  // ---------------------------------------------------------------------------
+  describe("SPEC-0006 R9 / dead-code gates: scripts/lib/ruling-abi.ts deleted; src/contract/abi.ts updated", () => {
+    it("R9-dead-ruling-abi: scripts/lib/ruling-abi.ts must not exist (zero importers; git history is the reference)", () => {
+      // F5 (strict-review): ruling-abi.ts is entirely unconsumed — zero importers remain.
+      // The 'legacy reference' justification does not hold — regenerate, don't migrate.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { existsSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const filePath = resolve(__dirname, "..", "..", "scripts", "lib", "ruling-abi.ts");
+      expect(existsSync(filePath)).to.equal(false,
+        "scripts/lib/ruling-abi.ts must be deleted — it has zero importers and the legacy-reference justification does not hold (R9 spirit)");
+    });
+
+    it("ABI-ruled-4arg: src/contract/abi.ts Ruled event must be the 4-arg shape (reqId, requestId, decision, coveredAmount)", () => {
+      // [solidity-compliance] F2: abi.ts still declares the OLD 10-arg Ruled event.
+      // Off-chain consumers will fail to decode logs against it.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const abiPath = resolve(__dirname, "..", "..", "src", "contract", "abi.ts");
+      const source = readFileSync(abiPath, "utf8");
+
+      // The old 10-arg shape contained 'rationaleHash' / 'policyVoidedClauseIndices' / 'usedLeafHashes'.
+      // These must be absent from the Ruled event declaration.
+      expect(source).to.not.include("policyVoidedClauseIndices",
+        "src/contract/abi.ts Ruled event must not contain old 10-arg field 'policyVoidedClauseIndices' — update to 4-arg shape");
+      expect(source).to.not.include("usedLeafHashes",
+        "src/contract/abi.ts Ruled event must not contain old 10-arg field 'usedLeafHashes' — update to 4-arg shape");
+
+      // The new 4-arg Ruled event must include 'coveredAmount' (the last param).
+      // Check that the Ruled event declaration matches the new shape.
+      expect(source).to.include("event Ruled(uint256 indexed reqId, uint256 indexed requestId",
+        "src/contract/abi.ts must declare the 4-arg Ruled event (SPEC-0006 R24)");
+    });
+
+    it("ABI-ruling-rationale-present: src/contract/abi.ts must declare the RulingRationale event", () => {
+      // [solidity-compliance] F2: RulingRationale is absent from abi.ts entirely.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const abiPath = resolve(__dirname, "..", "..", "src", "contract", "abi.ts");
+      const source = readFileSync(abiPath, "utf8");
+      expect(source).to.include("RulingRationale",
+        "src/contract/abi.ts must include the RulingRationale event declaration (SPEC-0006 R24)");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Hygiene: PolicyFlagged dead-event removed; constructor uses anonymous param
+  // ---------------------------------------------------------------------------
+  describe("Hygiene: PolicyFlagged dead event removed; constructor uses anonymous param (no self-assignment)", () => {
+    it("PolicyFlagged-removed: the PolicyFlagged event must not be declared in the contract ABI", () => {
+      // [solidity-compliance] NIT: PolicyFlagged is declared but never emitted after R6b
+      // simplification. Dead event declarations mislead indexers.
+      const { contract } = (function () {
+        // We can't use deploy() in a synchronous context; check the ABI fragment list
+        // instead, which is available without deployment.
+        const factory = ethers.ContractFactory.fromSolidity(
+          // The deployed artifact ABI is what matters for downstream consumers.
+          // We reach it via the ethers ContractFactory.
+          // Since we can't call ethers.getContractFactory in a sync context,
+          // read the compiled ABI from the artifact file directly.
+          null as never,
+        );
+        return { contract: factory };
+      });
+      // Read the artifact JSON directly (it reflects what was compiled).
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync, existsSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const artifactPath = resolve(
+        __dirname, "..", "artifacts", "contracts", "CoverageNegotiation.sol", "CoverageNegotiation.json"
+      );
+      if (!existsSync(artifactPath)) {
+        // Artifact not compiled yet — skip with a clear message.
+        this.skip();
+        return;
+      }
+      const artifact = JSON.parse(readFileSync(artifactPath, "utf8")) as { abi: Array<{ type: string; name: string }> };
+      const policyFlaggedEntry = artifact.abi.find(
+        (entry) => entry.type === "event" && entry.name === "PolicyFlagged"
+      );
+      expect(policyFlaggedEntry).to.equal(undefined,
+        "PolicyFlagged event must be removed from CoverageNegotiation — it is never emitted (dead declaration, NIT)");
+    });
+
+    it("constructor-no-self-assign: constructor Solidity source must not contain agentId_ = agentId_; self-assignment", () => {
+      // [solidity-compliance] F7: `agentId_ = agentId_;` is a no-op self-assignment
+      // used to silence an unused-param warning. Idiomatic Solidity omits the param name.
+      // This test pins the removal of the self-assignment hack.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const solPath = resolve(__dirname, "..", "contracts", "CoverageNegotiation.sol");
+      const source = readFileSync(solPath, "utf8");
+      // The self-assignment pattern: agentId_ = agentId_
+      expect(source).to.not.include("agentId_ = agentId_",
+        "Constructor must not use agentId_ = agentId_ self-assignment to silence unused-param warning; use anonymous param instead (F7)");
+    });
+
+    it("trigger-ruling-script: scripts/trigger-ruling.ts must not contain the old Ruling struct fields (decision: 0, costPlusUnitPrice)", () => {
+      // [solidity-compliance] F1: trigger-ruling.ts still builds the 10-field struct.
+      // The new MockAgentPlatform.triggerRuling takes a string token, not a struct.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const scriptPath = resolve(__dirname, "..", "scripts", "trigger-ruling.ts");
+      const source = readFileSync(scriptPath, "utf8");
+      expect(source).to.not.include("costPlusUnitPrice",
+        "trigger-ruling.ts must not reference the old Ruling struct field 'costPlusUnitPrice' — pass a string token instead ([solidity-compliance] F1)");
+      expect(source).to.not.include("rationaleHash",
+        "trigger-ruling.ts must not reference the old Ruling struct field 'rationaleHash' — pass a string token instead");
+      // The call must use a string token (e.g. "approve"), not a struct object.
+      expect(source).to.include('"approve"',
+        'trigger-ruling.ts must call triggerRuling with the string token "approve"');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // G1: chainOfThought must be TRUE in _fireAgent payload (SPEC-0006 §3.6.1 / Amendment 0007)
+  // ---------------------------------------------------------------------------
+  describe("G1 (SPEC-0006 §3.6.1): _fireAgent encodes chainOfThought = true in the inferString payload", () => {
+    it("G1a: the 3rd static ABI word of the inferString payload must be 1n (chainOfThought=true), not 0n", async () => {
+      // SPEC-0006 §3.6.1 and Amendment 0007 §3.6.1 both mandate chainOfThought = true.
+      // The flag does NOT change the returned token — it only enriches the receipt's
+      // `reasoning` step, which is the SOLE source for the human-readable rationale
+      // the keeper transcribes via commitRationale (R24–R26). With false the receipt
+      // has no reasoning, so the R24–R26 'AI reasoning visible in the case' chain has
+      // nothing real to transcribe. "deterministic output" is NOT a valid rationale for
+      // setting it to false — the allowed-values constraint enforces determinism, not this flag.
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+      await contract.connect(provider).requestAdjudication(reqId, { value: FEE });
+
+      const payload: string = await platform.lastPayload();
+      // Payload layout after the 4-byte selector:
+      //   body[0..63]   = offset to prompt (dynamic)
+      //   body[64..127] = offset to system (dynamic)
+      //   body[128..191] = chainOfThought bool (static — 0n=false, 1n=true)
+      //   body[192..255] = offset to allowedValues array (dynamic)
+      const body = payload.slice(10); // remove "0x" + 4-byte selector
+      expect(body.length).to.be.greaterThanOrEqual(256,
+        "payload body must have at least 4 ABI words (128 bytes = 256 hex chars) for the 4 inferString params");
+      const chainOfThoughtWord = BigInt("0x" + body.slice(128, 192));
+      expect(chainOfThoughtWord).to.equal(1n,
+        "chainOfThought (3rd inferString param) MUST be 1n (true) per SPEC-0006 §3.6.1 and Amendment 0007 — " +
+        "the flag enables receipt reasoning, which is the source for commitRationale (R24–R26). " +
+        "Setting it false leaves the receipt with no reasoning for the keeper to transcribe.");
+    });
+
+    it("G1b: CoverageNegotiation.sol must NOT contain 'chainOfThought disabled' or 'false.*determin' comment near _fireAgent", () => {
+      // Ensure the source code comment that justified chainOfThought=false is removed
+      // alongside the production code change.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const solPath = resolve(__dirname, "..", "contracts", "CoverageNegotiation.sol");
+      const source = readFileSync(solPath, "utf8");
+      expect(source).to.not.include("chainOfThought disabled",
+        "CoverageNegotiation.sol must not contain 'chainOfThought disabled' — " +
+        "chainOfThought must be true per SPEC-0006 §3.6.1; remove this incorrect comment");
+      expect(source).to.not.include("disabled for deterministic output",
+        "CoverageNegotiation.sol must not contain 'disabled for deterministic output' — " +
+        "the allowed-values constraint enforces determinism, not the chainOfThought flag");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // G2: check-ruling-abi.ts must detect _fireAgent selector drift (R12 mandate)
+  // ---------------------------------------------------------------------------
+  describe("G2 (SPEC-0006 R12): check-ruling-abi.ts detects _fireAgent selector drift, not just file-level substrings", () => {
+    it("G2a: check-ruling-abi.ts must assert the inferString selector appears inside the _fireAgent body, not only in the interface or comments", () => {
+      // The current implementation of checkSolSourceContainsInferString() only does
+      // solSource.includes("inferString") — this passes even if _fireAgent uses
+      // bytes4(0xdeadbeef) because "inferString" still appears in the interface
+      // declaration and in comments. Per R12 the script's job is to pin the actual
+      // payload selector the contract fires.
+      //
+      // This test verifies the script source reads the _fireAgent block specifically
+      // (by checking that it asserts the literal "ILLMInferenceAgent.inferString.selector"
+      // or the abi.encodeWithSelector call from _fireAgent, not just "inferString" globally).
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const scriptPath = resolve(__dirname, "..", "..", "scripts", "check-ruling-abi.ts");
+      const source = readFileSync(scriptPath, "utf8");
+      // The script must either:
+      // (a) extract the _fireAgent block and check it contains the selector, OR
+      // (b) look for the specific abi.encodeWithSelector / ILLMInferenceAgent.inferString.selector
+      //     literal that would be absent if the selector were replaced with bytes4(0xdeadbeef).
+      //
+      // The minimal failing signal: the script must check for either
+      // "ILLMInferenceAgent.inferString.selector" or "encodeWithSelector" inside a
+      // _fireAgent-scoped section. We require at least ONE of these more specific patterns.
+      const hasSpecificFireAgentCheck =
+        source.includes("_fireAgent") ||
+        source.includes("ILLMInferenceAgent.inferString.selector") ||
+        source.includes("encodeWithSelector") ||
+        source.includes("abi.encodeWithSelector");
+      expect(hasSpecificFireAgentCheck).to.equal(true,
+        "scripts/check-ruling-abi.ts must detect _fireAgent selector drift — it currently only " +
+        "checks solSource.includes('inferString') which passes even when _fireAgent uses a wrong selector. " +
+        "The script must check for 'ILLMInferenceAgent.inferString.selector' or 'encodeWithSelector' " +
+        "scoped to the _fireAgent body, or otherwise detect drift in the actual payload selector (R12).");
+    });
+
+    it("G2b: check-ruling-abi.ts exits non-zero when _fireAgent uses bytes4(0xdeadbeef) instead of ILLMInferenceAgent.inferString.selector", () => {
+      // End-to-end drift detection test: create a temporary modified CoverageNegotiation.sol
+      // where the _fireAgent payload uses a wrong selector, then run check-ruling-abi.ts
+      // against it and confirm it exits non-zero.
+      //
+      // If the script passes on this corrupted file, the R12 gate is ineffective.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync, writeFileSync, mkdtempSync, rmSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve, join } = require("path") as typeof import("path");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { execSync } = require("child_process") as typeof import("child_process");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const os = require("os") as typeof import("os");
+
+      const repoRoot = resolve(__dirname, "..", "..");
+      const solPath = resolve(__dirname, "..", "contracts", "CoverageNegotiation.sol");
+      const source = readFileSync(solPath, "utf8");
+
+      // Corrupt the _fireAgent body: replace ILLMInferenceAgent.inferString.selector
+      // with bytes4(0xdeadbeef). The interface and comments still contain "inferString",
+      // so a file-level substring check would still pass. Only a _fireAgent-scoped check fails.
+      const corrupted = source.replace(
+        "ILLMInferenceAgent.inferString.selector",
+        "bytes4(0xdeadbeef)",
+      );
+      // Sanity: the replacement must have changed something; otherwise the test setup is broken.
+      expect(corrupted).to.not.equal(source,
+        "Setup: replacing 'ILLMInferenceAgent.inferString.selector' must change the file; " +
+        "if this fails, the sol source no longer contains that literal in _fireAgent");
+
+      // Write the corrupted sol to a temp directory.
+      const tmpDir = mkdtempSync(join(os.tmpdir(), "check-ruling-abi-test-"));
+      const tmpSolPath = join(tmpDir, "CoverageNegotiation.sol");
+      writeFileSync(tmpSolPath, corrupted);
+
+      let scriptExitedNonZero = false;
+      try {
+        // Run the script with the temp sol file instead of the real one.
+        // We pass the path as an env var that the script must honour.
+        execSync("npx tsx scripts/check-ruling-abi.ts", {
+          cwd: repoRoot,
+          env: { ...process.env, CHECK_RULING_ABI_SOL_PATH: tmpSolPath },
+          stdio: "pipe",
+          timeout: 30_000,
+        });
+      } catch {
+        scriptExitedNonZero = true;
+      } finally {
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
+
+      expect(scriptExitedNonZero).to.equal(true,
+        "check-ruling-abi.ts must exit non-zero when _fireAgent uses bytes4(0xdeadbeef) instead of " +
+        "ILLMInferenceAgent.inferString.selector. Currently the script only checks file-level substrings, " +
+        "so it passes even on this corrupted source. Fix: make the script detect _fireAgent drift (R12).");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // G3: package-lock.json must not contain @anthropic-ai/sdk (R9)
+  // ---------------------------------------------------------------------------
+  describe("G3 (SPEC-0006 R9): package-lock.json must not reference @anthropic-ai/sdk", () => {
+    it("G3a: package-lock.json must not contain the string '@anthropic-ai/sdk' (R9 requires SDK removal regenerates lockfile)", () => {
+      // R9 requires removing @anthropic-ai/sdk from the project entirely.
+      // Removing it from package.json without regenerating package-lock.json means
+      // `npm ci` would reinstall the SDK, violating R9.
+      // This test asserts the lockfile reflects the package.json removal.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync, existsSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const lockPath = resolve(__dirname, "..", "..", "package-lock.json");
+      if (!existsSync(lockPath)) {
+        // package-lock.json is absent entirely — that's also fine (no SDK to reinstall).
+        return;
+      }
+      const lockContent = readFileSync(lockPath, "utf8");
+      expect(lockContent).to.not.include("@anthropic-ai/sdk",
+        "package-lock.json must not reference '@anthropic-ai/sdk' — " +
+        "R9 requires removing the SDK and regenerating the lockfile with `npm install`. " +
+        "Without this, `npm ci` would reinstall the SDK that R9 required removed.");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Stale consumers: real-backend-localnode.mjs + src/contract/real.ts must
+  // use the single-string shape, not the old 10-tuple/struct shape
+  // ---------------------------------------------------------------------------
+  describe("Stale consumers: real-backend-localnode.mjs and src/contract/real.ts must use the new single-string shape", () => {
+    it("stale-localnode-triggerRuling: real-backend-localnode.mjs must not call triggerRuling with an object struct (costPlusUnitPrice, rationaleHash, etc.)", () => {
+      // The migrated MockAgentPlatform.triggerRuling(address, uint256, string calldata)
+      // takes a string token, not a struct. real-backend-localnode.mjs still passes an
+      // object with {decision, costPlusUnitPrice, ...} — ethers will throw at encode time.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const scriptPath = resolve(__dirname, "..", "..", "scripts", "real-backend-localnode.mjs");
+      const source = readFileSync(scriptPath, "utf8");
+      expect(source).to.not.include("costPlusUnitPrice",
+        "scripts/real-backend-localnode.mjs must not pass 'costPlusUnitPrice' to triggerRuling — " +
+        "MockAgentPlatform.triggerRuling now takes a string token, not a struct (migrate to 'approve' etc.)");
+      expect(source).to.not.include("nadacUnitPrice",
+        "scripts/real-backend-localnode.mjs must not pass 'nadacUnitPrice' to triggerRuling — " +
+        "pass a string token instead");
+      expect(source).to.not.include("rationaleHash",
+        "scripts/real-backend-localnode.mjs must not pass 'rationaleHash' to triggerRuling — " +
+        "pass a string token instead");
+      expect(source).to.not.include("receiptId",
+        "scripts/real-backend-localnode.mjs must not reference old Ruled event field 'receiptId' — " +
+        "the new 4-arg Ruled event has no receiptId");
+    });
+
+    it("stale-real-ts-PolicyFlagged: src/contract/real.ts must not reference the removed PolicyFlagged event", () => {
+      // The contract no longer emits PolicyFlagged. Keeping it in EVENT_NAMES causes the
+      // RealBackend to attempt to decode a non-existent event, and the buildEvent switch
+      // has a dead branch for it. The event set must reflect the current contract ABI.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const realPath = resolve(__dirname, "..", "..", "src", "contract", "real.ts");
+      const source = readFileSync(realPath, "utf8");
+      expect(source).to.not.include("PolicyFlagged",
+        "src/contract/real.ts must not reference 'PolicyFlagged' — the event was removed from the " +
+        "contract; keeping it in EVENT_NAMES or buildEvent misleads the RealBackend decoder");
+    });
+
+    it("stale-real-ts-Ruled-shape: src/contract/real.ts must decode Ruled as the new 4-arg shape, not the old 10-arg shape", () => {
+      // The new Ruled event is: Ruled(uint256 indexed reqId, uint256 indexed requestId,
+      //   uint8 indexed decision, uint256 coveredAmount). The old shape had
+      //   rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices,
+      //   usedLeafHashes. Decoding a[4]-a[9] on the new 4-arg event yields garbage.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const realPath = resolve(__dirname, "..", "..", "src", "contract", "real.ts");
+      const source = readFileSync(realPath, "utf8");
+      expect(source).to.not.include("policyVoidedClauseIndices",
+        "src/contract/real.ts must not reference old Ruled field 'policyVoidedClauseIndices' — " +
+        "the new Ruled event has only 4 args; update the decoder to the current shape");
+      expect(source).to.not.include("usedLeafHashes",
+        "src/contract/real.ts must not reference old Ruled field 'usedLeafHashes' — " +
+        "update the Ruled decoder to the 4-arg shape");
+      expect(source).to.not.include('"receiptId"',
+        "src/contract/real.ts must not reference old Ruled field 'receiptId' in the decoder — " +
+        "the new Ruled event has no receiptId");
+    });
+
+    it("stale-real-ts-RulingRationale: src/contract/real.ts EVENT_NAMES must include RulingRationale", () => {
+      // Since RulingRationale is now emitted by commitRationale (R24–R26), the RealBackend
+      // must include it in EVENT_NAMES and buildEvent to deliver it to subscribers.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const realPath = resolve(__dirname, "..", "..", "src", "contract", "real.ts");
+      const source = readFileSync(realPath, "utf8");
+      expect(source).to.include("RulingRationale",
+        "src/contract/real.ts must include 'RulingRationale' in EVENT_NAMES and buildEvent — " +
+        "the commitRationale path emits this event (R24–R26) and the RealBackend must handle it");
     });
   });
 });

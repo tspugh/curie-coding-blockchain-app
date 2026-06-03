@@ -4,15 +4,12 @@ import { ethers, network } from "hardhat";
  * SPEC-0004 §2.7 R25 probe (option a2): read the on-chain AgentRegistry
  * entry for the LLM Parse Website base agent and surface its IPFS metadata.
  *
- * Purpose: discover whether the agent's registered metadata blob carries
- * the function signature our `CoverageNegotiation` contract should be
- * targeting. PR #14's isolation test established that the selector we
- * emit (0x4be9280f for
- * `ExtractANumber(string,string,uint256,uint256,string,string,bool,uint8)`)
- * is rejected at every validator's viem ABI-decode, but the on-chain
- * registry struct holds `string ipfsMetadata` — that blob is the
- * authoritative-but-off-chain part. Fetching it tells us whether option
- * (a2) from docs/research/agent-abi-drift-2026-05-30.md can resolve R25.
+ * Purpose: read the on-chain AgentRegistry entry and surface IPFS metadata.
+ * The on-chain registry struct holds `string ipfsMetadata` — that blob is
+ * the authoritative-but-off-chain descriptor for the agent's ABI surface.
+ * Useful for comparing a deployed agent's capabilities against what the
+ * CoverageNegotiation contract expects (SPEC-0006 R11: inferString,
+ * selector 0xfe7ca098).
  *
  * Read-only. No transactions. Safe to run from any (even un-funded)
  * wallet — the script does not require `accounts: [PRIVATE_KEY]`.

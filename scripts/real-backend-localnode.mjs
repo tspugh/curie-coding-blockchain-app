@@ -18,6 +18,11 @@
  * Run via scripts/real-backend-localnode.sh (starts the node, builds, tears down).
  * Reads the compiled Hardhat artifacts from contracts/artifacts/ and the library
  * from dist/ — so `npm run build` and a contracts compile must precede it.
+ *
+ * SPEC-0006 R11/R24: MockAgentPlatform.triggerRuling now takes a single string
+ * decision token (e.g. "approve") instead of the old 10-field struct. The
+ * contract's handleResponse decodes that string and maps it to a Decision.
+ * On approve, coveredAmount = requestedAmount (no AI-chosen price cap).
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -42,16 +47,11 @@ const DRUG = ethers.id("DRUG:adalimumab");
 const JUSTIFICATION = ethers.id("synthetic-justification-content");
 const POLICY = ethers.id("insurer-policy-body");
 const POLICY_URI = ethers.id("insurer-policy-uri");
-const RATIONALE = ethers.id("rationale");
-const CLAUSE = ethers.id("clause-3a");
-const STANDARD = ethers.id("FDA-label");
 const REQUESTED = 2000n;
-const QUANTITY = 2n; // dispensed units; drives the deterministic cap (R2/R6a)
+const QUANTITY = 2n; // dispensed units
 const DAYS_SUPPLY = 28n; // clinical context only — never enters the price math (R2)
-const COST_PLUS_UNIT = 750n; // Mark Cuban Cost Plus per-unit -> cap total 1500
-const NADAC_UNIT = 400n; // NADAC per-unit acquisition-cost FLOOR reference only
-const CAP = COST_PLUS_UNIT * QUANTITY; // 1500 < requested 2000 -> covered == cap (R6a)
-const RECEIPT = 123n;
+// In string-token mode, approve sets coveredAmount = requestedAmount (no AI price cap).
+const COVERED_ON_APPROVE = REQUESTED;
 const FEE = ethers.parseEther("0.01"); // > mock deposit (0.001)
 
 function artifact(rel) {
@@ -146,37 +146,19 @@ async function main() {
   check("requestAdjudication fires the agent -> UnderReview (R6/R9)", realStates.at(-1) === State.UnderReview);
 
   // Deliver the ruling the way the platform would: callback into the contract.
+  // SPEC-0006 R11/R24: MockAgentPlatform.triggerRuling takes a single string token
+  // (the inferString return value). The contract decodes it into a Decision enum.
   const mockAsSigner = new ethers.Contract(mockAddr, mockArt.abi, signer);
   const requestId = await mockAsSigner.lastRequestId();
-  await (
-    await mockAsSigner.triggerRuling(contractAddr, requestId, {
-      decision: Number(Decision.Approve),
-      costPlusUnitPrice: COST_PLUS_UNIT,
-      nadacUnitPrice: NADAC_UNIT,
-      rationaleHash: RATIONALE,
-      clauseRef: CLAUSE,
-      standardRef: STANDARD,
-      receiptId: RECEIPT,
-    })
-  ).wait();
+  await (await mockAsSigner.triggerRuling(contractAddr, requestId, "approve")).wait();
   await snap(reqId);
   check("platform callback (approve) -> Approved", realStates.at(-1) === State.Approved);
 
+  // In string-token mode, approve sets coveredAmount = requestedAmount (SPEC-0006).
   const covered = await real.coveredAmountOf(reqId);
   check(
-    "covered amount is deterministic min(requested, costPlusUnitPrice*quantity), the CAP (R6a)",
-    covered === CAP && CAP < REQUESTED,
-  );
-
-  // The contract's priceBasisOf exposes the deterministic breakdown (R6a/R10).
-  const basis = await real.priceBasisOf(reqId);
-  check(
-    "priceBasisOf: totals = per-unit x quantity; NADAC is a floor ref, not the cap (R6a/R10)",
-    basis.requestedAmount === REQUESTED &&
-      basis.quantity === QUANTITY &&
-      basis.costPlusTotal === COST_PLUS_UNIT * QUANTITY &&
-      basis.nadacFloorTotal === NADAC_UNIT * QUANTITY &&
-      basis.coveredAmount === CAP,
+    "covered amount equals requestedAmount on approve (string-token model — SPEC-0006)",
+    covered === COVERED_ON_APPROVE && covered === REQUESTED,
   );
 
   // Both parties accept the ruling, then settle (single wallet acts as both — R12).
@@ -187,7 +169,7 @@ async function main() {
   const nFinal = await real.getNegotiation(reqId);
   check(
     "both accept + settle -> Settled, covered recorded",
-    realStates.at(-1) === State.Settled && nFinal.coveredAmount === CAP,
+    realStates.at(-1) === State.Settled && nFinal.coveredAmount === COVERED_ON_APPROVE,
   );
 
   // --- R16: the subscription delivered the key timeline events ---
@@ -199,9 +181,10 @@ async function main() {
   });
   check("live subscription delivered the timeline (R16)", got);
   const ruled = events.find((e) => e.name === "Ruled");
+  // New 4-arg Ruled event: (reqId, requestId, decision, coveredAmount) — SPEC-0006 R24.
   check(
-    "Ruled event carries the decision + covered + receipt",
-    ruled?.decision === Decision.Approve && ruled?.coveredAmount === CAP && ruled?.receiptId === RECEIPT,
+    "Ruled event carries the decision + coveredAmount (new 4-arg shape — SPEC-0006 R24)",
+    ruled?.decision === Decision.Approve && ruled?.coveredAmount === COVERED_ON_APPROVE,
   );
 
   // --- T10/R16: reconstruct the timeline from eth_getLogs, independently ---
@@ -223,8 +206,8 @@ async function main() {
   );
   const ruledFromLogs = history.find((e) => e.name === "Ruled");
   check(
-    "reconstructed Ruled carries decision + covered + receipt",
-    ruledFromLogs?.decision === Decision.Approve && ruledFromLogs?.coveredAmount === CAP && ruledFromLogs?.receiptId === RECEIPT,
+    "reconstructed Ruled carries decision + coveredAmount (new 4-arg shape)",
+    ruledFromLogs?.decision === Decision.Approve && ruledFromLogs?.coveredAmount === COVERED_ON_APPROVE,
   );
   await fresh.close();
 
@@ -235,8 +218,6 @@ async function main() {
   const sim = new SimulatedBackend({
     autoResolve: false,
     decision: Decision.Approve,
-    costPlusUnitPrice: COST_PLUS_UNIT,
-    nadacUnitPrice: NADAC_UNIT,
   });
   const simStates = [];
   const sreqId = await sim.createContract({
@@ -264,13 +245,10 @@ async function main() {
   await sim.settle(sreqId);
   simStates.push(await sim.stateOf(sreqId));
 
-  check("simulated covered amount matches deterministic min (R6a)", (await sim.coveredAmountOf(sreqId)) === CAP);
-  const simBasis = await sim.priceBasisOf(sreqId);
+  // In string-token mode, covered = requestedAmount on approve.
   check(
-    "simulated priceBasisOf mirrors the contract's deterministic breakdown (R6a/R10)",
-    simBasis.costPlusTotal === COST_PLUS_UNIT * QUANTITY &&
-      simBasis.nadacFloorTotal === NADAC_UNIT * QUANTITY &&
-      simBasis.coveredAmount === CAP,
+    "simulated covered amount equals requestedAmount on approve (string-token model)",
+    (await sim.coveredAmountOf(sreqId)) === REQUESTED,
   );
 
   // The simulated backend exposes the same getEvents() reconstruction (R16/T10).

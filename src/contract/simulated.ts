@@ -681,30 +681,27 @@ export class SimulatedBackend implements CoverageNegotiationClient {
 
     if (decision === Decision.PolicyInvalid) {
       // R6b: a relied-on clause contradicts a public standard — void the contract.
+      // SPEC-0006 R24: emit 4-arg Ruled (no PolicyFlagged — removed from contract).
       n.coveredAmount = 0n;
       n.state = State.PolicyInvalidated;
-      this.emit({ name: "PolicyFlagged", reqId, clauseRef, standardRef });
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes });
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n });
       this.emit({ name: "PolicyInvalidated", reqId, clauseRef, standardRef });
       return;
     }
 
     if (decision === Decision.Approve) {
-      // R6a: deterministic covered amount = min(requested, costPlusUnitPrice * quantity)
-      // — never AI-chosen. Mirrors the contract exactly (NADAC is a floor ref only).
-      const cap = n.costPlusUnitPrice * n.quantity;
-      const covered = n.requestedAmount < cap ? n.requestedAmount : cap;
+      // SPEC-0006 R24: on approve, coveredAmount = requestedAmount (no AI price cap).
+      const covered = n.requestedAmount;
       n.coveredAmount = covered;
       n.state = State.Approved;
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: covered, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes });
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: covered });
     } else if (decision === Decision.Deny) {
       n.coveredAmount = 0n;
       n.state = State.Denied;
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes });
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n });
     } else {
       // NeedMoreEvidence
       n.state = State.EvidenceRequested;
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes });
       this.emit({ name: "EvidenceRequested", reqId });
     }
   }

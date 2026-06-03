@@ -1,4 +1,165 @@
-# Coverage — spec-4-implementation branch
+# Coverage — spec-6-implementation branch
+
+---
+
+## 2026-06-03 (refresh) — SPEC-0006 cascade + 76-test hardhat suite
+
+**Date:** 2026-06-03 · **Branch:** `spec-6-implementation`
+**Tool (contracts/):** `npx hardhat coverage` (solidity-coverage v0.8.17)
+**Tool (src/):** `node --import tsx --test --experimental-test-coverage "src/**/*.test.ts"` (Node v22)
+**Tests (contracts/):** 76/76 PASS · **Tests (src/):** 209/209 PASS
+
+### Changes from prior entry
+
+| Area | Change |
+|---|---|
+| `contracts/test/CoverageNegotiation.test.ts` | +9 SPEC-0006 tests (R11a/b/c, R24a–e, R26, R9a/b/c, R24-indexed, R24-no-auto-emit, R9-dead-ruling-abi, ABI-ruled-4arg, ABI-ruling-rationale-present, PolicyFlagged-removed, constructor-no-self-assign, trigger-ruling-script, R12, R12b, R12c — total 76 passing) |
+| `contracts/contracts/CoverageNegotiation.sol` | Fully updated per SPEC-0006: `inferString` payload (R11), `handleResponse` decodes single string token (R24–R26), self-hosted surface deleted (R9), `RulingRationale` event 6-param shape with indexed requestId+decision, anonymous constructor param |
+| `contracts/contracts/mocks/MockAgentPlatform.sol` | `triggerRuling` accepts `string calldata decisionToken` (ABI-encodes it) |
+| `scripts/check-ruling-abi.ts` | Pins `inferString` selector `0xfe7ca098` (R12) |
+| `scripts/orchestrator-real.ts` | Deleted (R9 self-hosted surface removal) |
+| `scripts/lib/ruling-abi.ts` | Deleted (zero importers) |
+
+### Coverage results
+
+#### contracts/
+
+```
+--------------------------|----------|----------|----------|----------|----------------|
+File                      |  % Stmts | % Branch |  % Funcs |  % Lines |Uncovered Lines |
+--------------------------|----------|----------|----------|----------|----------------|
+ contracts/               |    96.91 |    85.00 |   100.00 |    97.84 |                |
+  CoverageNegotiation.sol |    96.91 |    85.00 |   100.00 |    97.84 |... 874,876,877 |
+  ISomniaAgent.sol        |   100.00 |   100.00 |   100.00 |   100.00 |                |
+ contracts/mocks/         |   100.00 |   100.00 |   100.00 |   100.00 |                |
+  MockAgentPlatform.sol   |   100.00 |   100.00 |   100.00 |   100.00 |                |
+  RevertingReceiver.sol   |   100.00 |   100.00 |   100.00 |   100.00 |                |
+--------------------------|----------|----------|----------|----------|----------------|
+All files                 |    97.04 |    85.19 |   100.00 |    98.05 |                |
+--------------------------|----------|----------|----------|----------|----------------|
+```
+
+**Line: 98.05% PASS · Branch: 85.19% PASS** (threshold: ≥ 85% both)
+
+Remaining uncovered lines in `CoverageNegotiation.sol` (lines 874, 876, 877):
+- These are inside `_benchmarkCap`'s overflow-detection path (`unchecked` block). The fields `costPlusUnitPrice` and `nadacUnitPrice` are reserved at 0 in string-token mode (SPEC-0006) and have no public setter, making this path structurally unreachable via the contract ABI. Retained for `priceBasisOf` API compatibility only.
+
+#### src/
+
+```
+# ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# file                                               | line % | branch % | funcs % | uncovered lines
+# ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# src/contract/simulated.ts                          |  95.06 |    75.45 |   70.00 | 76 93-94 135-143 145 147-149 151 159-161 163-165 173-175 186 188-189 217-218 261 286-293
+# src/wallet/wallet.ts                               |  89.04 |    84.00 |   77.78 | 12-19 30-36 52
+# src/userStore.ts                                   | 100.00 |    93.10 |   90.00 |
+# src/integrations/cds-hooks/mapper.ts               | 100.00 |    95.65 |  100.00 |
+# (all other src/ source files)                      | 100.00 |   100.00 |  100.00 |
+# ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# all files                                          |  99.07 |    93.37 |   96.00 |
+# ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+```
+
+**Aggregate line: 99.07% PASS · Aggregate branch: 93.37% PASS** (threshold: ≥ 85% both)
+
+Per-file notes on files below 85% branch individually:
+- `src/contract/simulated.ts` branch **75.45%** — below 85% *per-file*. Uncovered branches are simulation-layer paths for lesser-exercised transitions (`postFeedback`, `onRulingTimeout`, `settle`, `withdraw`, `refuse`, guard-failure paths). The tree aggregate (93.37%) is above threshold. This file is a long-standing gap; adding targeted tests would close it.
+- `src/wallet/wallet.ts` branch **84.00%** — below 85% *per-file*. Uncovered lines 12–19, 30–36, 52 are `RealWallet` construction requiring a live provider (known-exempt path). Tree aggregate is above threshold.
+
+#### web/src/
+
+No unit test framework wired (React/Vite frontend; only e2e browser tests exist under `web/tests/agent-browser/`). Coverage cannot be measured. Browser-verify remains the correctness signal for `web/src/`.
+
+### Overall verdict
+
+| Scope | Line % | Branch % | Threshold | Pass? |
+|---|---|---|---|---|
+| `contracts/` | 98.05 | 85.19 | ≥ 85% both | **PASS** |
+| `src/` (aggregate) | 99.07 | 93.37 | ≥ 85% both | **PASS** |
+| `web/src/` | n/a | n/a | ≥ 85% both | NOT MEASURED (no unit harness) |
+
+**OVERALL: PASS** for the two measurable trees. `web/src/` remains unmeasured.
+
+Per-file under-covered files (below 85% branch individually, though tree aggregates pass):
+- `src/contract/simulated.ts`: 75.45% branch
+- `src/wallet/wallet.ts`: 84.00% branch
+
+---
+
+## 2026-06-03 — SPEC-0006 cascade implementation + coverage gate verification
+
+**Date:** 2026-06-03 · **Branch:** `spec-6-implementation`
+**Tool (contracts/):** `npx hardhat coverage` (solidity-coverage)
+**Tool (src/):** `npx c8 --reporter=text --include="src/**" node --import tsx --test "src/**/*.test.ts"`
+**Tests (contracts/):** 67/67 PASS · **Tests (src/):** 209/209 PASS
+
+### Changes in this session
+
+| Area | Change |
+|---|---|
+| `contracts/contracts/CoverageNegotiation.sol` | Already fully updated: `inferString` payload (SPEC-0006 R11), `handleResponse` decodes single string token + emits `RulingRationale` (R24–R26), self-hosted surface deleted (R9) |
+| `contracts/contracts/mocks/MockAgentPlatform.sol` | Already updated: `triggerRuling` supplies ABI-encoded `string` token |
+| `scripts/check-ruling-abi.ts` | Already updated: pins `inferString` selector `0xfe7ca098` (R12) |
+| `scripts/orchestrator-real.ts` | Already deleted (R9 self-hosted surface removal) |
+| `contracts/test/CoverageNegotiation.test.ts` | Added 5 branch-coverage-polish tests (tick 138): `setPlatform` owner success, `setAgentReward` owner success, `commitRationale` short-rationale non-truncation path, `handleResponse` post-withdraw callback guard, `_terminal` Settled path via `postFeedback` |
+
+### Coverage results
+
+#### contracts/
+
+```
+--------------------------|----------|----------|----------|----------|----------------|
+File                      |  % Stmts | % Branch |  % Funcs |  % Lines |Uncovered Lines |
+--------------------------|----------|----------|----------|----------|----------------|
+ contracts/               |    96.95 |    85.00 |   100.00 |    97.86 |                |
+  CoverageNegotiation.sol |    96.95 |    85.00 |   100.00 |    97.86 |... 872,874,875 |
+  ISomniaAgent.sol        |   100.00 |   100.00 |   100.00 |   100.00 |                |
+ contracts/mocks/         |   100.00 |   100.00 |   100.00 |   100.00 |                |
+  MockAgentPlatform.sol   |   100.00 |   100.00 |   100.00 |   100.00 |                |
+  RevertingReceiver.sol   |   100.00 |   100.00 |   100.00 |   100.00 |                |
+--------------------------|----------|----------|----------|----------|----------------|
+All files                 |    97.08 |    85.19 |   100.00 |    98.07 |                |
+--------------------------|----------|----------|----------|----------|----------------|
+```
+
+**Line: 98.07% PASS · Branch: 85.19% PASS** (threshold: ≥ 85% both)
+
+Remaining uncovered lines in `CoverageNegotiation.sol` (lines 872, 874, 875):
+- These are inside `_benchmarkCap`'s overflow-detection path. The fields `costPlusUnitPrice` and `nadacUnitPrice` are reserved at 0 in string-token mode (SPEC-0006) and have no public setter, making this path structurally unreachable via the contract ABI. The code is retained for API compatibility only.
+
+#### src/
+
+```
+-----------------------------------|---------|----------|---------|---------|-----------------------
+File                               | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s
+-----------------------------------|---------|----------|---------|---------|-----------------------
+All files                          |   96.87 |    88.44 |   86.23 |   96.87 |
+ contract/simulated.ts             |   90.48 |    75.45 |   71.73 |   90.48 | ...667,676-677,791-803
+ integrations/cds-hooks/mapper.ts  |  100.00 |    95.55 |  100.00 |  100.00 | 82,84
+ protocol/scenarioFixtures...      |   99.18 |    85.71 |  100.00 |   99.18 | 121
+ users/userStore.ts                |   94.87 |    92.85 |   87.50 |   94.87 | 77-84
+ wallet/wallet.ts                  |   95.20 |    88.46 |   85.71 |   95.20 | 112-117,144
+ (all others)                      |  100.00 |   100.00 |  100.00 |  100.00 |
+-----------------------------------|---------|----------|---------|---------|-----------------------
+```
+
+**Line: 96.87% PASS · Branch: 88.44% PASS** (threshold: ≥ 85% both)
+
+Note on `contract/simulated.ts` branch 75.45%: this is one file within the aggregate; the tree aggregate (88.44%) is above threshold. The uncovered branches in `simulated.ts` are in simulation-layer paths not exercised by the current test suite.
+
+#### web/src/
+
+No unit test framework wired (React/Vite frontend; only e2e browser tests exist under `web/tests/agent-browser/`). Coverage cannot be measured. The threshold cannot be evaluated for this tree. Browser-verify remains the correctness signal for `web/src/`.
+
+### Overall verdict
+
+| Scope | Line % | Branch % | Threshold | Pass? |
+|---|---|---|---|---|
+| `contracts/` | 98.07 | 85.19 | ≥ 85% both | **PASS** |
+| `src/` | 96.87 | 88.44 | ≥ 85% both | **PASS** |
+| `web/src/` | n/a | n/a | ≥ 85% both | NOT MEASURED (no unit harness) |
+
+**OVERALL: PASS** for the two measurable trees. `web/src/` remains unmeasured; it is a browser React app with no unit test framework configured.
 
 ---
 

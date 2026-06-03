@@ -8953,3 +8953,206 @@ label all carry the state honestly; the missing style rule is a
 visual-polish gap that the spec does not require.
 
 ### Verdict: PASS (zero findings)
+
+---
+
+## SPEC-0006 R9/R11/R12/R24–R26 cascade strict-review (inferString pivot)
+
+**Scope reviewed:** the diff in `.` vs `origin/main` for the named cascade unit —
+`_fireAgent` ExtractANumber→inferString payload (R11), `handleResponse` single-string
+decode + `RulingRationale` emit (R24–R26), deletion of the self-hosted surface +
+`scripts/orchestrator-real.ts` + `@anthropic-ai/sdk` (R9), and the `inferString`
+selector pin in `scripts/check-ruling-abi.ts` (R12). Cross-checked against
+SPEC-0006 §2.3/§2.4/§2.8/§3.3/§3.10, Amendment 0007, and whole-codebase context.
+
+**Build state:** clean compile (8 Solidity files), `npx hardhat test` 67/67 passing,
+`tsx scripts/check-ruling-abi.ts` exits 0.
+
+What landed correctly (no finding): the `ILLMInferenceAgent.inferString` interface +
+`0xfe7ca098` selector are right; `_fireAgent`'s actual payload selector IS covered by
+a real integration test (R11a reads `MockAgentPlatform.lastPayload()`); the
+self-hosted surface (`selfHosted`, `setPlatformSelfHosted`, `_fireAgentSelfHosted`,
+`_selfHostedNonce`, `IParseWebsiteAgent`), `orchestrator-real.ts`, and the
+`@anthropic-ai/sdk` dependency are fully gone from active code (only deliberate
+string-concatenated negative assertions remain in tests); `MockAgentPlatform.triggerRuling`
+and all Hardhat tests supply a single ABI-encoded `string`; `_truncateRationale`
+4096-byte cap is correct and tested.
+
+### Findings
+
+**F1 (spec drift — R24 event signature). `RulingRationale` is missing the
+`indexed requestId` and `indexed decision` fields the spec mandates.**
+SPEC-0006 R24 (§2.8) and §3.10 — and Amendment 0007 §5 — specify:
+```solidity
+event RulingRationale(uint256 indexed reqId, uint256 indexed requestId,
+                      uint8 indexed decision, string rationale,
+                      string clauseReference, string standardReference);
+```
+Implemented (`CoverageNegotiation.sol:250`):
+```solidity
+event RulingRationale(uint256 indexed reqId, string rationale,
+                      string clauseReference, string standardReference);
+```
+The two indexed topics (`requestId`, `decision`) are dropped. A UI/indexer can no
+longer filter rationale by request or decision as R24 designed. This is the named
+unit's primary deliverable, so the divergence is in-scope.
+
+**F2 (weak test / spec drift — R12). `scripts/check-ruling-abi.ts` does NOT fail
+when `_fireAgent`'s payload encoding diverges from the pinned selector — the exact
+thing R12 requires it to catch.** R12: "MUST fail if Curie's `_fireAgent`
+payload-encoding diverges from the pinned shape." The script only does substring
+checks: `solSource.includes("inferString")` and
+`solSource.includes("string,string,bool,string[]")`. Both strings live in the
+`ILLMInferenceAgent` interface declaration and in comments, independent of what
+`_fireAgent` actually encodes. Proven empirically: replacing
+`ILLMInferenceAgent.inferString.selector` in `_fireAgent` with
+`bytes4(0xdeadbeef)` and re-running the script still exits 0 ("check PASS"). The
+script asserts presence-of-literal, not correctness-of-encoding. (The real coverage
+comes from Hardhat R11a, not this script.)
+
+**F3 (weak test — R12 Hardhat tests assert presence, not behavior).** The R12/R12b
+Hardhat tests (`CoverageNegotiation.test.ts:1517,1534`) only assert that the
+`check-ruling-abi.ts` *source text* contains the literals `0xfe7ca098` and
+`string,string,bool,string[]`. They never run the script or assert it catches drift,
+so they cannot detect F2. A drift detector whose only test is "the detector's source
+mentions the selector" provides no drift protection.
+
+**F4 (spec drift — R24 content). `handleResponse` emits `RulingRationale` with the
+raw decision token as the `rationale` text, contradicting "the agent's real
+reasoning."** At `CoverageNegotiation.sol:670` and `:687`,
+`emit RulingRationale(reqId, token, "", "")` puts the bare token ("approve",
+"deny", …) into the `rationale` string. SPEC-0006 §2.8/R24 says `RulingRationale`
+carries "the agent's real reasoning"; §3.10 says it is emitted "conditional on the
+response carrying a non-empty rationale." A single decision token is not reasoning —
+it duplicates `Ruled.decision` and gives the UI nothing to show. The spec's intended
+reasoning source is the keeper `commitRationale` path; emitting a second, content-empty
+`RulingRationale` from `handleResponse` is misleading (the comment even calls it a
+correlation aid, which is what the indexed `reqId` on `Ruled` already provides).
+
+**F5 (dead code / unjustified backwards-compat — R9 spirit). `scripts/lib/ruling-abi.ts`
+is now entirely unconsumed but retained.** Its only consumer was the deleted
+`scripts/orchestrator-real.ts`. A repo-wide grep finds zero remaining importers of
+`encodeRuling` / `RULING_ABI_TYPES` / `Ruling`. The file's own header admits "it is
+NOT used by the current contract" and justifies retention "for any off-chain tooling
+that still needs to produce legacy-shaped payloads … against older deployed
+contracts" — a hypothetical consumer that does not exist. Under SPEC-0006's
+"regenerate, don't migrate" and R9's mandate to remove the legacy ruling surface from
+active paths, this dead module + its exported `encodeRuling`/`RULING_ABI_TYPES`
+should be deleted, not preserved as a 10-tuple reference (git history is the
+reference).
+
+**F6 (dead code — reserved struct fields + `priceBasisOf` API-compat shim).** The
+`Negotiation` struct retains `costPlusUnitPrice` / `nadacUnitPrice` (now hard-wired to
+0, comment "reserved; 0 in string-token mode"), and `priceBasisOf` + `_benchmarkCap`
+are kept solely "for API compatibility with the demo price gauge." Under the
+inferString model the agent supplies no prices and Approve sets
+`coveredAmount = requestedAmount` unconditionally, so these fields/functions are
+permanently dead in the contract-execution path. (NIT-adjacent: Amendment 0007 §3.6.2
+actually wants a curated `benchmarkUnitPrice` cap re-introduced via `createContract`;
+the implementation instead removed the cap entirely and left the old price plumbing as
+dead reserved slots — neither the old nor the amended price model is coherent.)
+
+**F7 (comment-that-restates + no-op self-assignment — minor). Constructor
+`agentId_ = agentId_;`** at `CoverageNegotiation.sol:284` is a no-op self-assignment
+whose only purpose is to silence an unused-parameter warning, with a 2-line comment
+explaining it. Solidity's idiomatic suppression is to omit the parameter name
+(`constructor(address platform_, uint256 /*agentId_*/)`); the self-assignment +
+explanatory comment is noisier than the construct it replaces. The retained
+`agentId_` parameter itself is an unjustified backwards-compat hack — it is silently
+ignored, so deploy scripts passing an agentId get a false sense of configurability
+(the test R11b even has to assert the arg is ignored).
+
+### Verdict: FAIL — 7 findings (F1–F4 in-scope spec drift / weak tests; F5–F7 dead
+code + backwards-compat cruft). The cascade behavior compiles and the happy-path
+tests pass, but R24's event shape and R12's drift-detector intent are not met, and
+the legacy ruling-abi surface was left as dead code rather than removed.
+
+---
+
+## SPEC-0006 R9/R11/R12/R24–R26 cascade — re-review (post-remediation)
+
+**Date:** 2026-06-03
+**Scope:** re-gatekeeper of the same cascade unit (`_fireAgent` inferString payload
+R11; `handleResponse` single-string decode + `RulingRationale` R24–R26; self-hosted
+surface + `orchestrator-real.ts` + `@anthropic-ai/sdk` deletion R9; `inferString`
+selector pin R12) against the CURRENT working tree vs `origin/main`. Independently
+verified, not trusting the prior tick's ledger.
+
+**Build state:** clean compile; `npx hardhat test` 76/76 passing;
+`tsx scripts/check-ruling-abi.ts` exits 0.
+
+**Prior tick remediation confirmed (no longer findings):**
+- F1 (RulingRationale event missing indexed `requestId`/`decision`) — FIXED.
+  `CoverageNegotiation.sol:254` now declares the full 6-arg / 3-indexed shape; pinned
+  by test `R24-indexed`.
+- F3 (R12 tests asserted source-text only) — PARTIALLY fixed: `R12c` now executes the
+  script as a subprocess and asserts exit 0. (Does not assert it *catches* drift — see
+  F2 below, still live.)
+- F4 (`handleResponse` emitting the bare token as rationale) — FIXED. `handleResponse`
+  no longer emits `RulingRationale`; rationale comes only from the keeper
+  `commitRationale` path. Pinned by `R24-no-auto-emit`.
+- F5 (`scripts/lib/ruling-abi.ts` dead module retained) — FIXED. File deleted (`D` in
+  git status); pinned by `R9-dead-ruling-abi`.
+- F7 (constructor `agentId_ = agentId_;` self-assign) — FIXED. Constructor now uses an
+  anonymous `uint256` param; pinned by `constructor-no-self-assign`.
+
+### Findings (still live)
+
+**G1 (spec drift — R11/R24–R26, in-scope). `_fireAgent` hardcodes
+`chainOfThought = false`, contradicting Amendment 0007 §3.6.1 and SPEC-0006 §2.8
+(line 747), which mandate `chainOfThought = true`.** At
+`CoverageNegotiation.sol:816` the inferString payload passes `false` with the comment
+"chainOfThought disabled for deterministic output". The spec is explicit that
+`chainOfThought = true` "does not change the on-chain `response` (still one
+constrained token)" — it ONLY enriches the receipt's `reasoning` step, which §2.8 / R24
+names as the *sole* source of the human-readable rationale the keeper later transcribes
+via `commitRationale`. With `false`, the receipt carries no reasoning step, so the
+entire R24–R26 "AI reasoning visible in the case" chain has nothing real to commit —
+the rationale event becomes keeper-authored prose, not the model's chain-of-thought.
+The comment's stated reason ("deterministic output") is a non-sequitur: the spec says
+the flag does not affect the returned token. This is the cascade unit's payload (R11)
+and it breaks the unit's own R24 deliverable.
+
+**G2 (weak test / spec-letter drift — R12). `scripts/check-ruling-abi.ts` still does
+NOT fail when `_fireAgent`'s payload encoding diverges from the pinned selector — the
+exact thing R12 mandates it catch.** R12: "MUST fail if Curie's `_fireAgent`
+payload-encoding diverges from the pinned shape." The script only substring-checks the
+whole `.sol` file (`solSource.includes("inferString")`,
+`solSource.includes("string,string,bool,string[]")`) — both literals live in the
+`ILLMInferenceAgent` interface declaration and in comments, independent of what
+`_fireAgent` actually encodes. Empirically reproduced: replacing
+`ILLMInferenceAgent.inferString.selector` in `_fireAgent` with `bytes4(0xdeadbeef)`
+and re-running the script still exits 0 ("check PASS"). The new `R12c` test only
+asserts the script exits 0 on the happy path; it never corrupts `_fireAgent` and
+asserts a non-zero exit, so it cannot detect this gap.
+*Mitigation (reduces severity, does not clear the finding):* the Hardhat tests `R11a`
+and `R11c` read `MockAgentPlatform.lastPayload()` and assert the real on-chain payload
+begins with `0xfe7ca098` and has the 4-word inferString head — so `_fireAgent` drift IS
+caught by the suite as a whole, just not by the script R12 names. Spec-letter unmet,
+functional intent covered elsewhere.
+
+**G3 (R9 cleanup gap — stale lockfile re-introduces the deleted dependency).**
+`package.json` correctly drops `@anthropic-ai/sdk` and the `orchestrator:real` script,
+but `package-lock.json` was never regenerated — it is not in the diff vs `origin/main`
+at all and still pins `"@anthropic-ai/sdk": "^0.100.1"`. `npm ci` would reinstall the
+Anthropic SDK that R9 requires removed. Run `npm install` to refresh the lockfile.
+
+**G4 (dead code — reserved price fields + `priceBasisOf`/`_benchmarkCap` API-compat
+shim; whole-codebase context, adjacent to the unit).** The `Negotiation` struct keeps
+`costPlusUnitPrice`/`nadacUnitPrice` (`:109–110`, hard-wired 0, "reserved; 0 in
+string-token mode"), and `priceBasisOf` (`:713`) + `_benchmarkCap` (`:871`) are
+retained "for API compat" returning zeros. Under the inferString model the agent emits
+no prices and Approve sets `coveredAmount = requestedAmount` unconditionally, so these
+slots/functions are permanently dead in the execution path. (Note: Amendment 0007
+§3.6.2 actually wants a curated `benchmarkUnitPrice` cap re-introduced via
+`createContract`; the implementation instead removed the cap and left the old price
+plumbing as dead reserved slots — neither the old nor the amended price model is
+coherent.) Tangential to the named R-numbers but a real dead-code finding under
+whole-codebase review.
+
+### Verdict: FAIL — 4 live findings (G1 in-scope spec drift breaking the unit's own
+R24 deliverable; G2 spec-letter R12 gap, functionally mitigated; G3 R9 lockfile
+cleanup gap; G4 dead price plumbing). The cascade compiles, all 76 tests pass, and the
+prior tick's F1/F3/F4/F5/F7 were remediated — but `chainOfThought=false` (G1) silently
+defeats the reasoning-capture the same unit is supposed to deliver, and R12's
+`_fireAgent` drift gate (G2) remains unmet by the script the requirement names.

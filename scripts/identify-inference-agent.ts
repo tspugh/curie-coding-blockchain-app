@@ -61,10 +61,8 @@ const OTHER_AGENT_ABIS = [
   // JSON API
   { canonical: "fetchUint(string,string,uint8)", name: "fetchUint (JSON API)" },
   { canonical: "fetchString(string,string)", name: "fetchString (JSON API)" },
-  // LLM Parse Website
-  { canonical: "ExtractANumber(string,string,uint256,uint256,string,string,bool,uint8,uint8)", name: "ExtractANumber 9-param (LLM Parse Website)" },
-  { canonical: "ExtractANumber(string,string,uint256,uint256,string,string,bool,uint8)", name: "ExtractANumber 8-param (legacy)" },
-  { canonical: "ExtractString(string,string,string[],string,string,bool,uint8,uint8)", name: "ExtractString variant" },
+  // LLM Parse Website (legacy base agent — superseded by LLM Inference in SPEC-0006)
+  { canonical: "ExtractString(string,string,string[],string,string,bool,uint8,uint8)", name: "ExtractString variant (LLM Parse Website)" },
 ];
 
 function selectorOf(canonical: string): string {

@@ -406,7 +406,7 @@ export class RealBackend implements CoverageNegotiationClient {
     "PacketSubmitted",
     "RulingRequested",
     "Ruled",
-    "PolicyFlagged",
+    "RulingRationale",
     "PolicyInvalidated",
     "EvidenceRequested",
     "EvidenceSubmitted",
@@ -551,22 +551,30 @@ export class RealBackend implements CoverageNegotiationClient {
       case "RulingRequested":
         return { name, reqId, requestId: a[1] as bigint, fee: a[2] as bigint, ...meta };
       case "Ruled":
+        // SPEC-0006 R24: 4-arg shape: (reqId indexed, requestId indexed, decision indexed, coveredAmount).
+        // Rationale is now emitted separately via the RulingRationale event (commitRationale).
         return {
           name,
           reqId,
           requestId: a[1] as bigint,
           decision: Number(a[2]) as Decision,
           coveredAmount: a[3] as bigint,
-          rationaleHash: a[4] as string,
-          clauseRef: a[5] as string,
-          receiptId: a[6] as bigint,
-          policyVoidedClauseIndices: ((a[7] as bigint[] | undefined) ?? []).map(Number),
-          usedReferenceIndices: ((a[8] as bigint[] | undefined) ?? []).map(Number),
-          usedLeafHashes: ((a[9] as `0x${string}`[] | undefined) ?? []),
           ...meta,
         };
-      case "PolicyFlagged":
-        return { name, reqId, clauseRef: a[1] as string, standardRef: a[2] as string, ...meta };
+      case "RulingRationale":
+        // SPEC-0006 R24–R26: emitted by commitRationale.
+        // Args: (reqId indexed, requestId indexed, decision indexed, rationale string,
+        //        clauseReference string, standardReference string)
+        return {
+          name,
+          reqId,
+          requestId: a[1] as bigint,
+          decision: Number(a[2]) as Decision,
+          rationale: a[3] as string,
+          clauseReference: a[4] as string,
+          standardReference: a[5] as string,
+          ...meta,
+        };
       case "PolicyInvalidated":
         return { name, reqId, clauseRef: a[1] as string, standardRef: a[2] as string, ...meta };
       case "EvidenceRequested":

@@ -1,3 +1,58 @@
+## 2026-06-03 — SPEC-0006 `inferString` cascade (security-review)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode)
+**Base:** `origin/main` (d7b5190)
+**Branch:** `spec-6-implementation` + uncommitted working tree (the `inferString` cascade)
+**Scope:** diff in `.` vs `origin/main`, including the uncommitted contract/scripts changes.
+**Verdict:** PASS (zero findings)
+
+### Result
+
+No high- or medium-confidence security vulnerabilities identified. The change set is
+primarily a *removal* of attack surface (self-hosted orchestrator path, secret-consuming
+SDK) plus a payload/decoder swap. Net security improvement.
+
+### Hard gate
+
+| Gate | Status | Evidence |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | R4 hard invariant preserved — only `bytes32` hashes/refs, amounts, codes, addresses, ids on-chain. The `inferString` prompt references only the public MedlinePlus drug-info URL (`agentEvidenceUrl`), no patient data. `commitRationale` stores `keccak256` of clause/standard references; the free-text `rationale` is keeper-supplied with no patient-data path and is byte-truncated at `MAX_RATIONALE_BYTES` (4096). Hardhat tests use synthetic decision tokens (`TOKEN_APPROVE`/`TOKEN_DENY`/`TOKEN_NEEDS_MORE_INFO`/`TOKEN_POLICY_INVALID`) only. PHI marker scan (patient/DOB/SSN/MRN/name/medical-record) over added `.sol`/`.ts`/`.json` lines: no matches. |
+| No secrets | PASS | No hardcoded keys/tokens/private keys added. The diff *deletes* the secret-consuming surface: `@anthropic-ai/sdk` removed from `package.json`; `scripts/orchestrator-real.ts` deleted (it read `ANTHROPIC_API_KEY` / `VITE_PRIVATE_KEY` from env); `orchestrator:real` npm script removed. `scripts/verify-deploy.ts` reads `VITE_PRIVATE_KEY` from `.env` only to derive an address (`ethers.Wallet(...).address`), no transactions signed/sent. Only public 40-hex wallet addresses appear in deleted code/docs — no 64-hex private keys. |
+| Signing-key hygiene | PASS | The Amendment-0006 self-hosted EOA-as-platform path is fully removed (`selfHosted` bool, `setPlatformSelfHosted`, `_fireAgentSelfHosted`, `_selfHostedNonce`, `IParseWebsiteAgent`). That path forwarded native value via plain `.call{value}` to a trusted EOA and minted synthetic requestIds; removing it shrinks the trusted-key surface. The platform callback gate `require(msg.sender == address(platform), "callback: not platform")` (CoverageNegotiation.sol:628) is intact. All admin mutators (`setPlatform`, `setAgentId`, `setAgentReward`, `setRulingTimeout`, `setAgentEvidenceUrl`, `setMaxRounds`, `withdrawFunds`, and the new keeper `commitRationale`) remain `onlyOwner`. |
+
+### Standard categories examined
+
+- **Injection** (SQL / command / path / template / XXE / NoSQL): no new untrusted-input →
+  shell / filesystem / DB / template paths. The TS scripts read only a fixed `.sol` path
+  and their own source (`readFileSync` on `import.meta.url`) — no user-controlled paths.
+- **Auth / authz**: callback gate preserved; all setters + the new `commitRationale`
+  keeper entry are `onlyOwner`. No new privilege boundary crossed.
+- **Crypto / randomness**: the keccak-seeded synthetic-requestId path is *removed*, not
+  added; no weak crypto, no new randomness dependency. `_tokenToDecision` compares
+  `keccak256` token hashes (constant-set membership) — standard.
+- **Code execution / deserialization**: `handleResponse` now `abi.decode(..., (string))`
+  a single token; unknown/malformed tokens fall through *defensively* to non-terminal
+  `NeedMoreEvidence` (fail-safe — never advances to a terminal state on garbage input).
+- **Data exposure**: no sensitive data logged; `verify-deploy` prints only RPC URL,
+  contract address, and a derived operator address (public).
+- **`vite.config.ts` `allowedHosts` += `.ts.net`**: dev/preview-server only (not the
+  production build), Tailscale-controlled domain resolvable only on the tailnet or via
+  Funnel ACLs, extending an existing `.trycloudflare.com` wildcard. Not an exploitable
+  production surface; excluded as a dev-only convenience.
+
+### Files reviewed
+
+`contracts/contracts/CoverageNegotiation.sol`, `MockAgentPlatform.sol`,
+`RevertingReceiver.sol`, `contracts/test/CoverageNegotiation.test.ts`,
+`scripts/check-ruling-abi.ts`, `scripts/lib/ruling-abi.ts`,
+`scripts/identify-inference-agent.ts`, `scripts/verify-deploy.ts`,
+`contracts/scripts/probe-agent-abi.ts`, `package.json`, `.gitignore`, `vite.config.ts`;
+deletions `scripts/orchestrator-real.ts`,
+`contracts/scripts/setup-selfhosted-2026-05-30.ts`.
+
+---
+
 ## Tick 119 — R25 Tick B (self-hosted _fireAgent) security review
 
 **Date:** 2026-05-30

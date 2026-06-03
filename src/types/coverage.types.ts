@@ -190,7 +190,7 @@ export type CoverageEventName =
   | "PacketSubmitted"
   | "RulingRequested"
   | "Ruled"
-  | "PolicyFlagged"
+  | "RulingRationale"
   | "PolicyInvalidated"
   | "EvidenceRequested"
   | "EvidenceSubmitted"
@@ -264,26 +264,31 @@ export interface PacketSubmittedEvent extends BaseEvent {
   readonly packetUrl: string;
 }
 
+/**
+ * SPEC-0006 R24: 4-arg Ruled event emitted by handleResponse.
+ * Shape: (reqId indexed, requestId indexed, decision indexed, coveredAmount).
+ * The rationale is now committed separately via commitRationale → RulingRationale event.
+ */
 export interface RuledEvent extends BaseEvent {
   readonly name: "Ruled";
   readonly requestId: bigint;
   readonly decision: Decision;
   readonly coveredAmount: bigint;
-  readonly rationaleHash: string;
-  readonly clauseRef: string;
-  readonly receiptId: bigint;
-  // SPEC-0004 §3.5 R23: clause indices voided per R23's on-label-policy-void path (amendment 0005).
-  readonly policyVoidedClauseIndices: readonly number[];
-  /** SPEC-0004 §3.5 R11: packet-entry indices the ruling relied on. */
-  readonly usedReferenceIndices: readonly number[];
-  /** SPEC-0004 §3.5 R11: leaf hashes for the cited references (replay-verification anchor). */
-  readonly usedLeafHashes: readonly `0x${string}`[];
 }
 
-export interface PolicyFlaggedEvent extends BaseEvent {
-  readonly name: "PolicyFlagged";
-  readonly clauseRef: string;
-  readonly standardRef: string;
+/**
+ * SPEC-0006 R24–R26: emitted by commitRationale after the keeper transcribes
+ * the agent's chain-of-thought from the receipt.
+ * Shape: (reqId indexed, requestId indexed, decision indexed, rationale string,
+ *         clauseReference string, standardReference string).
+ */
+export interface RulingRationaleEvent extends BaseEvent {
+  readonly name: "RulingRationale";
+  readonly requestId: bigint;
+  readonly decision: Decision;
+  readonly rationale: string;
+  readonly clauseReference: string;
+  readonly standardReference: string;
 }
 
 export interface PolicyInvalidatedEvent extends BaseEvent {
@@ -354,7 +359,7 @@ export type CoverageEvent =
   | PacketSubmittedEvent
   | RulingRequestedEvent
   | RuledEvent
-  | PolicyFlaggedEvent
+  | RulingRationaleEvent
   | PolicyInvalidatedEvent
   | EvidenceRequestedEvent
   | EvidenceSubmittedEvent

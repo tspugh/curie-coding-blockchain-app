@@ -1,19 +1,12 @@
 #!/usr/bin/env tsx
 /**
  * verify-deploy — read-only sanity check that a deployed
- * `CoverageNegotiation` contract is correctly configured for Amendment
- * 0006 self-hosted-orchestrator mode.
- *
- * After running Tick C (`npm --prefix contracts run deploy:somnia` +
- * `setPlatformSelfHosted`), an operator should be able to run this script
- * and see every check pass. Catches misconfigurations that would otherwise
- * only surface when the orchestrator tries to `handleResponse` and is
- * rejected with "callback: not platform" or similar.
+ * `CoverageNegotiation` contract is correctly configured for SPEC-0006
+ * canonical platform mode (LLM Inference agent, inferString selector).
  *
  * Reads from `.env`:
- *   VITE_PRIVATE_KEY      — used only to derive the orchestrator address;
- *                           NO transactions are sent, just `ethers.Wallet`
- *                           construction for the address comparison.
+ *   VITE_PRIVATE_KEY      — used only to derive the operator address;
+ *                           NO transactions are sent.
  *   VITE_CONTRACT_ADDRESS — the deployed contract to verify.
  *   VITE_RPC_URL          — optional override of the Somnia testnet RPC.
  *
@@ -58,9 +51,11 @@ const CONTRACT_ADDRESS = require_("VITE_CONTRACT_ADDRESS");
 const RPC_URL =
   env.VITE_RPC_URL ?? env.RPC_URL ?? "https://api.infra.testnet.somnia.network/";
 
+// Canonical LLM Inference agent id (SPEC-0006 R11).
+const LLM_INFERENCE_AGENT_ID = 12847293847561029384n;
+
 // Minimal view-only ABI — only what we need to check.
 const ABI = [
-  "function selfHosted() external view returns (bool)",
   "function platform() external view returns (address)",
   "function agentId() external view returns (uint256)",
   "function agentReward() external view returns (uint256)",
@@ -79,13 +74,13 @@ interface Check {
 async function main() {
   const provider = new ethers.JsonRpcProvider(RPC_URL);
   const wallet = new ethers.Wallet(PRIVATE_KEY);
-  const orchestratorAddr = wallet.address;
+  const operatorAddr = wallet.address;
   const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
 
   console.log(`verify-deploy`);
-  console.log(`  rpc:          ${RPC_URL}`);
-  console.log(`  contract:     ${CONTRACT_ADDRESS}`);
-  console.log(`  orchestrator: ${orchestratorAddr}`);
+  console.log(`  rpc:      ${RPC_URL}`);
+  console.log(`  contract: ${CONTRACT_ADDRESS}`);
+  console.log(`  operator: ${operatorAddr}`);
   console.log();
 
   const checks: Check[] = [];
@@ -99,39 +94,28 @@ async function main() {
     pass: codeBytes > 0,
   });
   if (codeBytes === 0) {
-    // Nothing else will work; fail fast.
     printResults(checks);
     process.exit(1);
   }
 
-  // 2. selfHosted == true (Amendment 0006).
-  const selfHosted: boolean = await contract.selfHosted();
-  checks.push({
-    name: "selfHosted == true",
-    actual: String(selfHosted),
-    expected: "true",
-    pass: selfHosted === true,
-  });
-
-  // 3. platform == orchestrator EOA.
+  // 2. platform is set (nonzero address — canonical platform mode).
   const platform: string = await contract.platform();
   checks.push({
-    name: "platform == orchestrator EOA",
+    name: "platform set (nonzero)",
     actual: platform,
-    expected: orchestratorAddr,
-    pass: platform.toLowerCase() === orchestratorAddr.toLowerCase(),
+    pass: platform !== ethers.ZeroAddress,
   });
 
-  // 4. agentId set (any nonzero value; specific value not critical post-A0006).
+  // 3. agentId == canonical LLM Inference agent id (SPEC-0006 R11).
   const agentId: bigint = await contract.agentId();
   checks.push({
-    name: "agentId set (nonzero)",
+    name: "agentId == LLM Inference agent (SPEC-0006 R11)",
     actual: agentId.toString(),
-    pass: agentId > 0n,
+    expected: LLM_INFERENCE_AGENT_ID.toString(),
+    pass: agentId === LLM_INFERENCE_AGENT_ID,
   });
 
-  // 5. agentReward sane (must be > 0 OR the orchestrator must opt to fund from
-  //    elsewhere; we just print, don't assert).
+  // 4. agentReward informational.
   const agentReward: bigint = await contract.agentReward();
   checks.push({
     name: "agentReward (informational)",
@@ -139,7 +123,7 @@ async function main() {
     pass: true,
   });
 
-  // 6. rulingTimeout sane (must be > 0 — orchestrator needs a deadline window).
+  // 5. rulingTimeout > 0.
   const rulingTimeout: bigint = await contract.rulingTimeout();
   checks.push({
     name: "rulingTimeout > 0",
@@ -147,7 +131,7 @@ async function main() {
     pass: rulingTimeout > 0n,
   });
 
-  // 7. maxRounds sane (must be >= 1 per the contract's R6c invariant).
+  // 6. maxRounds >= 1 per the contract's R6c invariant.
   const maxRounds: bigint = await contract.maxRounds();
   checks.push({
     name: "maxRounds >= 1",
@@ -155,13 +139,12 @@ async function main() {
     pass: maxRounds >= 1n,
   });
 
-  // 8. owner is the orchestrator EOA (so future admin calls go through).
+  // 7. owner informational (admin calls go through the owner).
   const owner: string = await contract.owner();
   checks.push({
-    name: "owner == orchestrator EOA (admin path)",
+    name: "owner (informational)",
     actual: owner,
-    expected: orchestratorAddr,
-    pass: owner.toLowerCase() === orchestratorAddr.toLowerCase(),
+    pass: true,
   });
 
   printResults(checks);

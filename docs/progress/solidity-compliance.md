@@ -1,3 +1,167 @@
+# SPEC-0006 (R9/R11/R12/R24–R26) — inferString migration + self-hosted teardown
+
+**Date:** 2026-06-03
+**Branch:** `spec-6-implementation` (working tree vs `origin/main`)
+**Scope:** the full `contracts/` diff plus the in-`contracts/` scripts and the
+cross-repo ABI/script cascade that the contract change forces:
+
+- `contracts/contracts/CoverageNegotiation.sol` — `IParseWebsiteAgent.ExtractANumber`
+  payload replaced with `ILLMInferenceAgent.inferString(string,string,bool,string[])`
+  (R11); `handleResponse` rewritten to decode a single ABI `string` token and emit
+  `RulingRationale` (R24–R26); entire self-hosted surface deleted (`selfHosted`,
+  `setPlatformSelfHosted`, `_fireAgentSelfHosted`, `_selfHostedNonce`,
+  `IParseWebsiteAgent`) (R9); `Ruled` event slimmed 10→4 args; new
+  `commitRationale` + `_tokenToDecision` + `_truncateRationale` internals; two new
+  `constant`s.
+- `contracts/contracts/mocks/MockAgentPlatform.sol` — `triggerRuling` now takes a
+  single `string calldata decisionToken`; old `Ruling` struct deleted.
+- `contracts/contracts/mocks/RevertingReceiver.sol` — doc-only (orchestrator branch
+  references removed).
+- scripts: `scripts/orchestrator-real.ts` deleted; `@anthropic-ai/sdk` dependency
+  removed (R9); `scripts/check-ruling-abi.ts` repinned to the `inferString` selector
+  `0xfe7ca098` (R12); `scripts/lib/ruling-abi.ts`, `scripts/verify-deploy.ts`,
+  `scripts/identify-inference-agent.ts`, `contracts/scripts/probe-agent-abi.ts`,
+  `package.json` updated.
+
+## Verdict (re-review @ a64f80d, 2026-06-03): PASS — Solidity source clean; in-`contracts/` + canonical-ABI cascade complete
+
+Re-reviewed the full working-tree `contracts/` diff vs `origin/main` at HEAD
+`a64f80d`. The **Solidity contract source is compliant** (zero in-source findings;
+see the per-category checklist below). The two cascade findings from the prior
+(FAIL) pass are now **CLOSED**:
+
+- **FINDING 1 CLOSED** — `contracts/scripts/trigger-ruling.ts:37` now calls
+  `(mock as any).triggerRuling(lastCallback, lastRequestId, "approve")` with the
+  single token string; the old 7-field `ruling` object is gone. Matches the new
+  `MockAgentPlatform.triggerRuling(address, uint256, string calldata)` signature.
+- **FINDING 2 CLOSED** — `src/contract/abi.ts:44-45` now declares the 4-arg
+  `Ruled(uint256 indexed reqId, uint256 indexed requestId, uint8 decision,
+  uint256 coveredAmount)` and adds
+  `RulingRationale(uint256 indexed reqId, uint256 indexed requestId,
+  uint8 indexed decision, string rationale, string clauseReference,
+  string standardReference)`. The dead `PolicyFlagged` declaration is removed.
+  This is the canonical ABI the test-suite consumes.
+
+Validation (this pass): clean `npx hardhat clean && compile` →
+"Compiled 8 Solidity files successfully (evm target: paris)"; `npx hardhat test` →
+**76 passing, 0 failing** (includes the SPEC-0006 R9/R11/R12/R24–R26 suites and the
+negative-assertion tests that the self-hosted setter/flag/script are gone);
+`tsx scripts/check-ruling-abi.ts` → PASS (computed
+`inferString(string,string,bool,string[]) → 0xfe7ca098`); root `npm run typecheck`
+→ exit 0 (no dangling import of the deleted `scripts/lib/ruling-abi.ts` or
+`@anthropic-ai/sdk`).
+
+### OBSERVATION (NOT a `contracts/`-diff finding) — stale OLD-shape consumers remain in untouched demo/integration scripts
+
+Outside this diff and outside `contracts/`, three pre-existing TypeScript/Node files
+were **not** updated and still target the OLD 10-tuple `Ruled` / `PolicyFlagged`
+surface. They are recorded here for the operator (not counted against the Solidity
+gate — none is in the `contracts/` diff, and none is the canonical `abi.ts`):
+
+- `src/contract/real.ts:409,562-568` — its event-name list still includes
+  `"PolicyFlagged"` and its `Ruled` decoder reads args `a[4]`–`a[9]`
+  (`rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices,
+  usedReferenceIndices, usedLeafHashes`) that no longer exist on the 4-arg event.
+- `scripts/orchestrator-demo.mjs` (`npm run demo:orchestrator`) and
+  `scripts/real-backend-localnode.mjs` (`npm run test:real-local`, which imports
+  `src/contract/real.ts`) — both still build the old `{ costPlusUnitPrice,
+  nadacUnitPrice, receiptId, … }` ruling struct passed to `triggerRuling`, which
+  would fail to ABI-encode against the new single-`string` signature.
+
+These are integration/demo harnesses, not the deployed contract or its canonical
+ABI; they do not affect the on-chain compliance verdict. They DO mean the
+single-string cascade is not yet coherent end-to-end across the whole repo — flagged
+in this review's structured output under the unit gate, and worth a follow-up so a
+live `demo:orchestrator` / `test:real-local` run doesn't throw at the `triggerRuling`
+call site.
+
+## Contract-source scrutiny — per category (all PASS)
+
+**Reentrancy.** `handleResponse` makes no external calls; it decodes in memory,
+writes state, and emits logs. It stays gated to `msg.sender == address(platform)`
+and `n.state == State.UnderReview`, with `_clearRequest(n)` run before the decode —
+identical posture to the prior audited ticks. The three agent-firing entry points
+(`requestAdjudication`, `submitEvidence`, `appeal`) and `withdrawFunds` retain
+`nonReentrant`; `_fireAgent`'s single external call (`platform.createRequest`) is
+preceded by all effects (`totalFees`, `rulingDeadline`, `state = UnderReview`,
+`PacketSubmitted`) and the overpayment refund is the last action under the caller's
+guard. `commitRationale` makes no external call. CEI intact everywhere.
+
+**Access control.** `commitRationale` is `onlyOwner` (keeper role = owner in v0).
+`handleResponse` retains the platform-only gate. Deleted setter
+`setPlatformSelfHosted` is gone (and a negative-assertion test confirms it). All
+admin setters remain `onlyOwner`. The constructor now hard-writes
+`agentId = LLM_INFERENCE_AGENT_ID` and ignores `agentId_` — intentional and
+documented; `setAgentId` (onlyOwner) can still override for tests. No new
+unauthenticated entry point.
+
+**Over/underflow beyond 0.8.x.** No new arithmetic introduced on the live path.
+`_truncateRationale` indexes `b[i]` only for `i < MAX_RATIONALE_BYTES` after checking
+`b.length > MAX_RATIONALE_BYTES`, so every index is in-bounds; the `result` buffer is
+sized `MAX_RATIONALE_BYTES + 3` and the three trailing writes land exactly in range.
+`abi.decode(..., (string))` reverts cleanly on malformed bytes (routes to the
+platform refund path, no state corruption). `_benchmarkCap` keeps its
+overflow-saturating guard (now always returns 0 in string-token mode). No `unchecked`
+on any user-influenced counter.
+
+**Unbounded loops.** The only loop is in `_truncateRationale`, bounded by the
+`MAX_RATIONALE_BYTES = 4096` constant — not user-length-driven. The R26 test commits a
+>4096-char rationale and asserts completion without OOG. No unbounded iteration over
+negotiations, arrays, or mappings anywhere in the diff.
+
+**Missing event emits.** Every terminal/transition branch emits: `Approve` →
+`Ruled` + `RulingRationale`; `Deny` → `Ruled` + `RulingRationale`; `PolicyInvalid`
+→ `Ruled` + `PolicyInvalidated` + `RulingRationale`; `NeedMoreEvidence` →
+`EvidenceRequested` (correctly no `Ruled`); non-success/empty → `RulingTimedOut` +
+`EvidenceRequested`. `commitRationale` emits `RulingRationale`. NIT (not a finding):
+`event PolicyFlagged` is now declared but no longer emitted anywhere — dead event
+declaration left after the R6b path was simplified; harmless, but worth deleting for
+hygiene.
+
+**Storage-layout break.** Removing `selfHosted` (it was packed into slot 0 alongside
+the 20-byte `platform` address) shifts no other slot. Removing `_selfHostedNonce`
+(the last-appended slot, with nothing below it) shifts no other slot. The two added
+`constant`s consume no storage. The surviving named slots keep their indices
+(`platform`/0, `agentId`/1, `agentReward`/2, `rulingTimeout`/3, `maxRounds`/4,
+`agentEvidenceUrl`/5, `currentlyFiringReqId`/6, `_nextId`/7, `_negotiations`/8,
+`_requestToNegotiation`/9). The contract is not proxied / not upgradeable
+(no proxy, initializer, or delegatecall machinery in `contracts/contracts/`), and the
+deploy path is a fresh `getContractFactory().deploy(...)`, so layout shift is moot in
+practice as well.
+
+**Gas anti-patterns.** No storage-read-in-loop, no repeated external calls, no
+redundant SLOADs introduced. `_tokenToDecision` recomputes four `keccak256` of small
+string literals per call — constant-bounded and only on the platform callback path;
+acceptable. The constructor self-assignment `agentId_ = agentId_;` to silence the
+unused-param warning is a stylistic NIT (an anonymous param would be cleaner) but
+compiles clean and has no runtime cost. `_truncateRationale` byte-copy is the
+expected cost for the bounded truncation.
+
+**OZ-pattern adherence.** Inheritance unchanged (`Ownable, ReentrancyGuard,
+IAgentRequesterHandler`); `Ownable(msg.sender)` constructor arg intact;
+`nonReentrant` placement unchanged; no OZ pattern bypassed or weakened.
+
+## Validation run
+
+- `npx hardhat clean && npx hardhat compile` → "Compiled 8 Solidity files
+  successfully (evm target: paris)".
+- `npx hardhat test` → **76 passing, 0 failing** (includes the SPEC-0006
+  R11/R12/R24–R26/R9 suites: inferString selector + agentId, single-string decode for
+  all four tokens, garbage-token fallback, commitRationale truncation, and the
+  negative assertions that the self-hosted setter/flag/`ruling-abi.ts` are gone).
+- `tsx scripts/check-ruling-abi.ts` → PASS (computed selector
+  `inferString(string,string,bool,string[]) → 0xfe7ca098`; source + self-check
+  literals present). Selector independently recomputed:
+  `keccak256("inferString(string,string,bool,string[])")[0:4] = 0xfe7ca098` ✓.
+- root `npm run typecheck` → exit 0.
+
+The contract diff is Solidity-clean and the in-`contracts/` + canonical-ABI cascade
+is complete (prior FINDING 1 / FINDING 2 both CLOSED). The only residue is the
+OBSERVATION above: three untouched demo/integration scripts outside `contracts/`
+still target the old `Ruled`/`PolicyFlagged` shape.
+
+---
+
 ## Tick 119 (iter-2 re-review) — R25 Tick B fixes
 
 **Date:** 2026-05-30
