@@ -215,17 +215,19 @@ while (round < maxRounds) {
     ? `\nThis is retry round ${round}. The previous attempt FAILED these gates — fix every one:\n- ${priorFindings.join('\n- ')}`
     : ''
 
+  const gitDiscipline = `\nGIT DISCIPLINE: Leave your changes UNCOMMITTED in the working tree. Do NOT run git commit, git checkout -b, git switch, git branch, git push, or git stash — the loop's dedicated commit phase makes the single commit on the current branch after all gates pass. Edit files only; never touch git refs.`
+
   await agent(
     `TDD step for repo "${repo}". Unit: ${unit.description}
 Acceptance: ${unit.acceptanceCriterion}. Spec refs: ${(unit.specRefs || []).join(', ')}.
-Write the FAILING test(s) first that pin the acceptance criterion to real behavior — no mocking of the database/contract/agent where the spec claims integration coverage (integration tests hit Somnia testnet chain 50312 + a real agent call). PHI never in fixtures — synthetic only. Run the test and confirm it currently fails for the right reason. Do not implement production code.${fixContext}`,
+Write the FAILING test(s) first that pin the acceptance criterion to real behavior — no mocking of the database/contract/agent where the spec claims integration coverage (integration tests hit Somnia testnet chain 50312 + a real agent call). PHI never in fixtures — synthetic only. Run the test and confirm it currently fails for the right reason. Do not implement production code.${gitDiscipline}${fixContext}`,
     { label: `tdd r${round}`, model: 'sonnet', phase: 'Build' },
   )
 
   await agent(
     `Implement the unit in repo "${repo}" so the failing test(s) pass. Unit: ${unit.description}
 Acceptance: ${unit.acceptanceCriterion}. Touch only what's needed. TypeScript-only; chain access via somnia-agent-kit (no REST); no PHI on-chain or in fixtures.
-After implementing: run the repo lint command and the test suite; reconcile so the new test passes and nothing else breaks; remove any TODO/FIXME/commented-out scaffolding you introduced. Leave no half-state.${fixContext}`,
+After implementing: run the repo lint command and the test suite; reconcile so the new test passes and nothing else breaks; remove any TODO/FIXME/commented-out scaffolding you introduced. Leave no half-state.${gitDiscipline}${fixContext}`,
     { label: `dev r${round}`, model: 'sonnet', phase: 'Build' },
   )
 
