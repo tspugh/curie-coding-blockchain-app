@@ -1,3 +1,88 @@
+## Amendment 0008 — real escrow settlement (TOTAL-STICKLER, re-run 2, gate FAIL)
+
+**Date:** 2026-06-03
+**Branch:** `spec-6-implementation` (working tree, uncommitted) vs `origin/main`.
+**Unit under review:** Real escrow settlement per Amendment 0008 / SPEC-0001 R8 —
+payable `insurerEngage`, `escrowAmount` on the `Negotiation` struct, escrow
+release/refund wired into `settle` and every terminal-non-settle outcome
+(`Deadlocked`, `ProviderRefused`, `PolicyInvalidated`, `Withdrawn`), CEI +
+`nonReentrant` on every value-moving path, escrow-bounded `withdrawFunds`, a
+simulated-backend mirror, and Hardhat + lib coverage.
+**Files reviewed:** `contracts/contracts/CoverageNegotiation.sol`,
+`contracts/contracts/mocks/{MockAgentPlatform,RevertingReceiver}.sol`,
+`contracts/test/CoverageNegotiation.test.ts`,
+`src/contract/{simulated,real,abi,types}.ts`,
+`src/contract/simulated.transitions.test.ts`, `src/types/coverage.types.ts`,
+`src/protocol/revertReasonMap.ts`, `src/agents/party-agent.ts`,
+`scripts/real-backend-localnode.mjs`.
+
+**Verdict: FAIL — 1 finding.** (Independent re-derivation. All six findings from
+re-run 1 below — F1 backend-default divergence, F2 unfunded engage callers, F3
+simulated `submitEvidence` round-cap gap, F4 missing `deadlock: escrow refund
+failed` mapping, F5 source-grep tests, F6 unasserted Denied `refundedToInsurer`
+— are CONFIRMED FIXED in the current tree; see "Re-run 1 findings now fixed"
+below. One NEW finding remains: a stale contract-header comment.)
+
+Build state is green: `cd contracts && npx hardhat test` → **166 passing** (full
+`A0008-*` escrow suite + every reverting-receiver transfer-failure branch);
+`npm test` (check-ruling-abi + typecheck + `test:lib` 258 + contracts 166) → all
+green; `npm run build` → exit 0. The **on-chain escrow mechanism and its tests are
+correct and genuinely well-tested** — provider nets exactly `coveredAmount`, insurer
+net = gas ± refund, `contract balance == 0` after every settled/terminal path,
+driven through the real two-agent `MockAgentPlatform` (integration, not stubbed),
+with reverting-receiver coverage on every refund/transfer branch. The single
+remaining finding is documentation-only.
+
+### Finding (must fix to clear the gate)
+
+**F-DOC (lying comment / spec-drift — contract-header NatSpec still describes the
+superseded "event marker" settlement). LOW.**
+`CoverageNegotiation.sol` lines 59–60 (the contract-level `@notice` block) still
+read: *"Both accepting settles (event marker, 50/50 fee split — R8)."* That is the
+**pre-A0008 behavior this very Unit removed.** Settlement is no longer an event
+marker: `settle` now performs a real escrow release (transfers `coveredAmount` →
+provider and refunds `escrowAmount − coveredAmount` → insurer on Approved; refunds
+the full escrow on Denied — L607–645). The `settle` function's own NatSpec
+(L607–612) is correct, but the class-header summary directly contradicts the
+implementation. Amendment 0008 §"Consequences" explicitly states "SPEC-0001 R8
+wording changes from 'event marker only' to 'real escrow release'," so leaving the
+header on the marker wording is in-scope spec-drift, not a pre-existing nit. The
+`totalFees` "50/50 fee split marker (R8)" accounting is retained as separate
+bookkeeping, but the sentence as written attributes the *settlement* to a marker.
+Fix: update lines 59–60 to describe real escrow release (covered → provider, remainder
+→ insurer; full refund on deny/terminal), keeping the fee-split note as the separate
+agent-fee accounting it now is.
+
+### Re-run 1 findings now fixed (verified this run)
+
+- **F1 (backend-default divergence): FIXED.** `RealBackend.insurerEngage`
+  (`src/contract/real.ts` L296–306) now defaults `value = depositAmount ??
+  requestedAmount`, matching `SimulatedBackend` (`simulated.ts` L391). The interface
+  JSDoc (`types.ts` L120–127) now correctly says "Defaults to `requestedAmount` … on
+  both the real and simulated backends." Both backends are interchangeable again.
+- **F2 (unfunded engage callers): FIXED (by the F1 fix).** `PartyAgent.engage`
+  (L113) and `scripts/real-backend-localnode.mjs` (L140) still omit the deposit, but
+  the real backend now defaults to `requestedAmount`, so both fund escrow correctly
+  against the A0008 contract instead of reverting `escrow: underfunded`.
+- **F3 (simulated `submitEvidence` round-cap gap): FIXED.**
+  `SimulatedBackend.submitEvidence` (`simulated.ts` L418–427) now has the round-cap →
+  `Deadlocked` + `escrowAmount = 0n` branch mirroring `appeal`, with a behavioral test
+  (`A0008-SIM-BEH: submitEvidence round-cap -> Deadlocked + escrowAmount=0n`,
+  `simulated.transitions.test.ts` L422).
+- **F4 (`deadlock: escrow refund failed` mapping): FIXED.** Added to both the
+  `RevertReason` union (`revertReasonMap.ts` L35) and `REVERT_REASON_MAP` (L208) with
+  user copy. Two Hardhat tests exercise it (`submitEvidence`/`appeal` deadlock to a
+  reverting insurer).
+- **F5 (source-grep tests): FIXED.** The three `A0008-SIM` source-text-grep tests are
+  gone; coverage now lives in the behavioral `A0008-SIM-BEH-*` suite (lib) and the
+  in-process T9/T10/T11 backend tests (Hardhat) — no source-grepping.
+- **F6 (Denied `refundedToInsurer` unasserted): FIXED.** `A0008-S2c` (L4037–4040)
+  now asserts `.withArgs(reqId, 0n, REQUESTED)` on Denied settle, and
+  `A0008-SIM-BEH: Settled event on Denied path emits refundedToInsurer == escrow`
+  (L388) asserts the value, not just field presence.
+
+---
+
 ## Amendment 0008 — real escrow settlement (TOTAL-STICKLER, re-run, gate FAIL)
 
 **Date:** 2026-06-03

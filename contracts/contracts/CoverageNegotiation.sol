@@ -56,9 +56,13 @@ interface ILLMParseWebsiteAgent {
 ///         R24–R26). On `approve` the covered amount is set to `requestedAmount`
 ///         (no AI-chosen price cap; deterministic). Either party may `accept` or
 ///         `appeal with new public evidence`; appeals re-fire the agent and are
-///         bounded to N rounds → `Deadlocked` (R6c). Both accepting settles (event
-///         marker, 50/50 fee split — R8). The provider may `refuse` the insurer's
-///         terms → `ProviderRefused` (R7).
+///         bounded to N rounds → `Deadlocked` (R6c). The insurer funds escrow at
+///         `insurerEngage`; both accepting then settles via a REAL escrow release
+///         (Amendment 0008 / R8): on Approved, `coveredAmount` → provider and the
+///         remainder → insurer; on Denied, the full escrow refunds to the insurer;
+///         every terminal-non-settle outcome refunds the full escrow. The accrued
+///         agent fees keep their separate 50/50 accounting. The provider may
+///         `refuse` the insurer's terms → `ProviderRefused` (R7).
 ///
 /// @dev HARD INVARIANT (R4): no PHI / no raw content is ever stored, nor placed in
 ///      the agent payload. Only keccak256 hashes, opaque refs (bytes32), amounts,

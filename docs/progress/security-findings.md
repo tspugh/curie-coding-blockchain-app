@@ -1,3 +1,77 @@
+## 2026-06-03 (refresh 6) — Amendment 0008 escrow: independent gate re-run (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-verification
+**Base:** `origin/main`
+**Branch:** `spec-6-implementation` + uncommitted working tree
+**Scope:** Re-ran the full security gate on the Amendment 0008 real-escrow unit (the
+`payable insurerEngage` + `escrowAmount` struct field + `settle`/terminal escrow
+release-or-refund + `withdrawFunds` escrow ring-fence) against the diff in `.` vs
+`origin/main`, re-deriving every gate result from the source rather than trusting the
+refresh-5 write-up. Compiled, ran both suites, and audited every value-moving path
+line-by-line.
+**Verdict:** PASS (zero findings)
+
+### Hard gate — independently re-derived
+
+| Gate | Status | Evidence (re-verified this run) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | A0008 adds only value plumbing — `escrowAmount` (uint256) on the struct + the `_totalEscrowHeld` accumulator; no new free-text/content field. R4 invariant intact. Diff-wide PHI-token scan (`ssn`/`social security`/`dob`/`mrn`/`medical record`/`patient name`/`\d{3}-\d{2}-\d{4}`/date shapes) over added lines returned ONLY: (a) `_containsNamePattern` guard comments, (b) PHI-*absence* assertions, (c) the synthetic negative-test probe `"…patient John S…"` that `createContract` is asserted to **reject** (never stored — T11e), and (d) synthetic prompt-hint fixtures (`"Is this drug medically necessary for the patient's condition?"`) carrying no identifier. Test fixtures use synthetic amounts (`REQUESTED`, `2000n`) + synthetic tokens (`TOKEN_APPROVE`/`TOKEN_DENY`/`"synthetic-scrape-evidence"`); evidence URLs are public (`medlineplus.gov`, `accessdata.fda.gov`). |
+| No secrets | PASS | No private keys, mnemonics, API keys, tokens, or credentials in added lines. 64-hex scan over added `.ts`/`.tsx`/`.mjs`/`.sol`/`.js` lines returned exactly one match — `0xdeadbeef…0001`, an obvious synthetic test hash, not a key. The two deterministic Anvil keys in `scripts/real-backend-localnode.mjs` are pre-existing (not in this diff's added lines), public test vectors, env-overridable. `.gitignore` changes only ADD ignores (`.codesign/`, `contracts/package-lock.json.bak.*`, `coverage/`) — never un-ignore a secret. |
+| Signing-key hygiene | PASS | No new wallet/signer/key-handling code. `real.ts insurerEngage` forwards `depositAmount ?? requestedAmount` as `{ value }` through the existing `_send` helper — no key material touched. No new owner-mutable privilege surface: `withdrawFunds` stays `onlyOwner` and is now MORE restricted (bounded by `balance − _totalEscrowHeld`). Platform-callback gate `require(msg.sender == address(platform))` intact; the new escrow refund in the `PolicyInvalidated` callback branch is CEI-protected (state + `escrowAmount = 0` + `_totalEscrowHeld -=` committed before the external `.call`). |
+
+### Value-safety — line-by-line audit (CEI + reentrancy on every ETH path)
+
+Re-read `CoverageNegotiation.sol` end-to-end. Every ETH-moving function carries
+`nonReentrant` (or is the platform-gated callback) and commits state + `escrowAmount = 0`
++ `_totalEscrowHeld -= escrow` BEFORE any `.call{value}`, with a checked return:
+
+| Path | Guard | Effects-before-interaction | Checked return |
+| --- | --- | --- | --- |
+| `insurerEngage` surplus refund (L443) | `payable nonReentrant`, `state==Open` | escrow/state/`_totalEscrowHeld+=` L454–458 before refund L465 | `require(ok,"escrow: refund failed")` |
+| `settle` Approved/Denied (L613) | `nonReentrant`, `state∈{Approved,Denied}` + both-accepted | L625–628 before L636/L642 | both `require(okP/okI,…)` |
+| `refuse` (L652) | `nonReentrant`, `_refusable` | L661–664 before L669 | `require(ok,…)` |
+| `withdraw` (L679) | `nonReentrant`, `!_terminal` | L688–691 before L696 | `require(ok,…)` |
+| `submitEvidence` deadlock (L502) | `nonReentrant`, `state==EvidenceRequested` | L507–509 before L514/L518 | both `require(ok/ok2,…)` |
+| `appeal` deadlock (L559) | `nonReentrant`, `state==Denied` | L564–566 before L571/L575 | both `require(ok/ok2,…)` |
+| `PolicyInvalidated` (decide callback L903) | `msg.sender==platform`, `state==UnderReview` | L909–912 before L919 | `require(ok,…)` |
+| `withdrawFunds` (L356) | `onlyOwner nonReentrant` | `drainable = balance − _totalEscrowHeld` L358 | `require(ok,…)` |
+
+- **Conservation.** Approved settle: `covered = requestedAmount = escrow` ⇒ remainder 0; `covered + remainder == escrow` always. Denied/terminal: full `escrow → insurer`. No path mints or forwards ETH the contract did not receive.
+- **`_totalEscrowHeld` cannot underflow or double-release.** `+= escrow` happens once, guarded by `state==Open` (engage flips to `Ready`). Every `-= escrow` is paired with a terminal/state transition that makes the path unreachable again, and reads the captured `n.escrowAmount` (already 0 after first execution). Solidity 0.8 checked arithmetic backstops it. `withdraw` from `Open` (escrow 0) subtracts 0 and skips transfer (`if (escrow > 0)`) — tested.
+- **Escrow ring-fenced from the agent-fee float.** Agent fees flow through `platform.createRequest{value}` in `_fireScrape`/`_fireDecide`; `withdrawFunds` is bounded by `_totalEscrowHeld`, so the owner can never drain live escrow (A0008-S4a). The owner *can* still reclaim the agent-fee/parked-decide-fee float — that is `withdrawFunds`'s documented purpose and a pre-existing trusted-owner surface (Amendment 0007), unchanged by and out of scope for this escrow unit; not a finding.
+
+### Off-chain mirror — re-checked field-by-field
+
+`real.ts` `RawNegotiation` (38 elements, indices 0–37) and `_decodeNegotiation` were
+re-verified against the `abi.ts getNegotiation` tuple and the Solidity struct by
+enumerating all 38 fields: `escrowAmount` at index 13, `lastRequestId` 20, `hasRuling`
+21, `agentEvidenceUrl`/`agentPromptHint` 22/23, `round` 24, trailing
+`agentPhase`/`pendingDecideFee`/`pendingFeePayer` 35–37 — all aligned. No mis-decode
+that could misattribute or leak `escrowAmount`. The simulated backend mirrors the
+payable `insurerEngage(…, depositAmount?)` signature, the `escrow: underfunded`
+rejection, sets `escrowAmount = requestedAmount` on engage, and zeroes it on every
+settle/terminal path (the refresh-5 fidelity gap is closed — verified in
+`simulated.transitions.test.ts` A0008-SIM-BEH cases). Implementation note (safe
+divergence): the amendment-doc snippet sets `escrowAmount = msg.value`; the shipped
+contract conservatively sets `escrowAmount = requestedAmount` and refunds the surplus —
+stricter, matches the unit task.
+
+### Verification run (this gate)
+
+- `npx hardhat compile` → clean (8 Solidity files, 42 typings).
+- `npx hardhat test` → **166 passing**, including A0008-S1a..S4c (engage underfund
+  revert, overpay refund, settle-approve/deny transfers, all four terminal-non-settle
+  escrow refunds, `contract balance == 0` after every settled/terminal path,
+  `withdrawFunds` cannot drain escrow) and every `RevertingReceiver` `require`-fail
+  branch (settle/refuse/withdraw/deadlock/policy_invalid/engage-refund).
+- `npm run test:lib` → **258 passing**, including simulated/real escrow-mirror parity
+  and the `DRUG_EVIDENCE_MAP` NO-PHI invariant.
+
+### Verdict: PASS (zero findings)
+
+---
+
 ## 2026-06-03 (refresh 5) — Amendment 0008: real escrow settlement (security-review, TOTAL-STICKLER)
 
 **Date:** 2026-06-03
