@@ -3,28 +3,35 @@
 **Date:** 2026-06-04
 **Branch:** `spec-6-implementation`
 **Threshold:** ≥ 90 % to pass
-**Review pass:** R21 URL-liveness sprint (pre-submit evidence-URL liveness check) — re-verified pass.
+**Review pass:** livenessDebounce extraction sprint — F4' finding from strict-review-findings.md resolved. Gate flips from FAIL to PASS.
 
 ## What was verified in this pass
 
-Compared `web/src/` component tree against `docs/reference/ui-prototype-handoff/project/` (JSX/HTML direct read — not pixel diff). Verified all SPEC-0006 R21 layers:
+Compared `web/src/` component tree against `docs/reference/ui-prototype-handoff/project/` (JSX/HTML direct read — not pixel diff). Verified all SPEC-0006 R21 layers, including the extraction of the `useEffect` debounce+stale-guard into a pure, injectable `runLivenessDebounce` helper (F4' finding resolution):
 
 1. **`web/src/urlLiveness.ts`** — `probeUrlLiveness(url, sim)` helper: routes `GET /__probe?url=<encoded>` in real mode; resolves `true` immediately in sim mode without network I/O. `Map<string, { ok: boolean; ts: number }>` 24 h memo cache (`LIVENESS_CACHE_TTL_MS = 24 * 60 * 60 * 1000`). `clearLivenessCache()` exported for tests. **IMPLEMENTED.**
 2. **`vite.config.ts`** — `urlProbePlugin()`: `GET /__probe` Vite dev-server middleware. Server-side `fetch` with `Range: bytes=0-0` header under a 10 s `AbortSignal` timeout. Returns `{ ok: boolean, status: number, error?: string }`. Plugin registered alongside `txLogSinkPlugin()`. **IMPLEMENTED.**
-3. **`web/src/views/Create.tsx`** — `probeUrlLiveness`, `formatLivenessError`, `isSubmitBlockedByLiveness`, `shouldShowLivenessBanner` imports; `IS_REAL` constant; `PROBE_DEBOUNCE_MS = 600`; `urlLivenessResult: LivenessResult | null` state (null = not yet checked or URL empty or probe in flight); `useEffect` fires on every `agentEvidenceUrl` change, resets to `null` immediately, fires probe after 600 ms debounce in real mode (bypassed entirely in sim mode), stale-response guard via `cancelled` flag in cleanup closure; `data-testid="url-liveness-error"` error banner rendered via `shouldShowLivenessBanner(IS_REAL, urlLivenessResult)`; `create-submit` disabled via `isSubmitBlockedByLiveness(IS_REAL, urlLivenessResult)`. **IMPLEMENTED.**
-4. **`web/src/urlLiveness.test.ts`** — 18 unit tests covering: cache hit (second call within 24 h does not re-fetch), cache miss (clean cache triggers fetch), TTL constant value check, stale-entry re-fetch (ts=0 injected via `seedLivenessCacheEntry`), sim-mode bypass (no fetch called; resolves true), sim-mode DEAD_URL bypass, non-2xx 404 → false, non-2xx 500 with error string → false, non-2xx 403 → false, network TypeError → false, AbortError → false, negative caching (false cached, not re-fetched), distinct-URL isolation (two fetches for two URLs), ok:true result carries status, `formatLivenessError` HTTP-status interpolation, `formatLivenessError` network-error interpolation, `formatLivenessError` network-error fallback (status=0/no error), `formatLivenessError` ok:true no-op, PHI-free fixture invariant. **All 18 pass.**
+3. **`web/src/livenessDebounce.ts`** — `runLivenessDebounce(url, isReal, onResult, options?)` pure helper extracted from `Create.tsx`'s `useEffect`. Owns the debounce timer (`PROBE_DEBOUNCE_MS = 600`) and stale-response cancellation guard (`cancelled` flag). No React import — pure function, usable in Node test runners without jsdom. Empty/whitespace URL short-circuits immediately (no timer scheduled, `onResult` never called). `options.probe` is injectable for testing. `options.debounceMs` is injectable for fast tests. Returns a cleanup `() => void` that cancels any pending timer and sets the stale guard. **IMPLEMENTED.**
 
-5. **`web/src/livenessGate.ts`** — extracted `isSubmitBlockedByLiveness` / `shouldShowLivenessBanner` pure gate helpers (unit-testable without React or Vite). `Create.tsx` imports these. **IMPLEMENTED.**
+4. **`web/src/livenessDebounce.test.ts`** — 9 unit tests covering: debounce fires after `PROBE_DEBOUNCE_MS` (`onResult` NOT called before delay, IS called once after); cleanup cancels in-flight probe result (stale-response guard — hanging probe + cleanup + resolveAll → 0 calls); empty URL short-circuit (no timer, no probe, no `onResult`); whitespace-only URL treated as empty; cleanup before debounce fires cancels timer (no probe call); sim mode (helper still schedules; `sim=true` passed to probe when `isReal=false`); `PROBE_DEBOUNCE_MS` exported and equals 600; no React import invariant (reads source file, asserts no `from "react"`); PHI-free fixture invariant. **All 9 pass.**
 
-6. **`web/src/probeHandler.ts`** — extracted server-side fetch logic (`executeProbe`) from `vite.config.ts` so the Range-GET + 10 s timeout logic can be unit-tested independently. `vite.config.ts` delegates to `executeProbe`. **IMPLEMENTED.**
+5. **`web/src/views/Create.tsx`** — `probeUrlLiveness`, `formatLivenessError`, `isSubmitBlockedByLiveness`, `shouldShowLivenessBanner`, `runLivenessDebounce` imports; `IS_REAL` constant; `urlLivenessResult: LivenessResult | null` state (null = not yet checked or URL empty or probe in flight); `useEffect` fires on every `agentEvidenceUrl` change, resets to `null` immediately, delegates to `runLivenessDebounce(agentEvidenceUrl, IS_REAL, setUrlLivenessResult)` in real mode (bypassed entirely in sim mode via early return); `data-testid="url-liveness-error"` error banner rendered via `shouldShowLivenessBanner(IS_REAL, urlLivenessResult)`; `create-submit` disabled via `isSubmitBlockedByLiveness(IS_REAL, urlLivenessResult)`. **IMPLEMENTED. F4' finding from strict-review-findings.md RESOLVED — debounce+stale-guard is no longer inlined in the useEffect; it lives in the tested pure helper.**
 
-7. **`vite.config.ts` merge conflict** — a merge conflict (UU status) existed between the R21 branch work and an earlier ancestor. Resolved by accepting ours (stage 2), which is the full implementation including `urlProbePlugin` + `import { executeProbe }`. The "theirs" side was the pre-R21 version without the probe plugin. **RESOLVED.**
+6. **`web/src/urlLiveness.test.ts`** — 18 unit tests covering: cache hit, cache miss, TTL constant, stale-entry re-fetch, sim-mode bypass, sim-mode DEAD_URL bypass, non-2xx 404/500/403 → false, network TypeError → false, AbortError → false, negative caching, distinct-URL isolation, ok:true result carries status, `formatLivenessError` HTTP-status interpolation, network-error interpolation, network-error fallback, ok:true no-op, PHI-free fixture invariant. **All 18 pass.**
 
-**Test gate:** `node --import tsx --test "web/src/urlLiveness.test.ts"` → `18 pass, 0 fail`.
+7. **`web/src/livenessGate.ts`** — extracted `isSubmitBlockedByLiveness` / `shouldShowLivenessBanner` pure gate helpers (unit-testable without React or Vite). `Create.tsx` imports these. **IMPLEMENTED.**
+
+8. **`web/src/probeHandler.ts`** — extracted server-side fetch logic (`executeProbe`) from `vite.config.ts` so the Range-GET + 10 s timeout logic can be unit-tested independently. `vite.config.ts` delegates to `executeProbe`. **IMPLEMENTED.**
+
+9. **`vite.config.ts` merge conflict** — resolved by accepting ours (stage 2), which is the full implementation including `urlProbePlugin` + `import { executeProbe }`. **RESOLVED.**
+
+**Test gate:** `node --import tsx --test "web/src/urlLiveness.test.ts"` → `18 pass, 0 fail`. `node --import tsx --test "web/src/livenessDebounce.test.ts"` → `9 pass, 0 fail`.
 
 ---
 
-**Changes since commitRationale sprint:** SPEC-0006 R21 pre-submit evidence-URL liveness check implemented end-to-end. Net-new additions: `web/src/urlLiveness.ts` (helper + 24 h memo cache + `clearLivenessCache` + `seedLivenessCacheEntry` + `formatLivenessError`), `web/src/urlLiveness.test.ts` (18 tests, all pass), `web/src/probeHandler.ts` (`executeProbe` — server-side Range-GET + 10 s timeout, extracted from vite plugin for testability), `vite.config.ts` (`urlProbePlugin` — `/__probe` middleware delegating to `executeProbe`; merge conflict resolved accepting ours), `web/src/views/Create.tsx` (import, `IS_REAL`, `PROBE_DEBOUNCE_MS`, `urlLivenessResult: LivenessResult | null` state, 600 ms debounced `useEffect` with stale-response guard, `url-liveness-error` banner via `shouldShowLivenessBanner`, submit gate via `isSubmitBlockedByLiveness`), `web/src/livenessGate.ts` (pure gate helpers for testability). Create surface score holds at 93 % (R21 is a form-gate web-plus addition; no prototype gap closed/opened). Overall score holds at ~93 %.
+**Changes this pass (livenessDebounce extraction sprint):** F4' finding from strict-review-findings.md resolved. Net-new additions: `web/src/livenessDebounce.ts` (`runLivenessDebounce` — pure, injectable helper owning the 600 ms debounce timer + stale-response cancellation guard; no React import; empty/whitespace URL short-circuits immediately; `PROBE_DEBOUNCE_MS = 600` exported), `web/src/livenessDebounce.test.ts` (9 tests: debounce firing, stale-response cancellation, empty-URL short-circuit, whitespace-only URL, early-cleanup cancels timer, sim-mode mode-pass-through, `PROBE_DEBOUNCE_MS=600` value check, no-React-import structural invariant, PHI-free fixture invariant — all 9 pass). `web/src/views/Create.tsx` updated to delegate to `runLivenessDebounce` inside the existing `useEffect` (the inline 5-line timer+cancelled logic replaced by a single `return runLivenessDebounce(agentEvidenceUrl, IS_REAL, setUrlLivenessResult)` call). The strict-review F4' gap (useEffect orchestration had zero executing tests) is now closed. Create surface score holds at 93 % (no prototype gap opened or closed). Overall score holds at ~93 %.
+
+**Changes since commitRationale sprint (R21 URL-liveness sprint):** SPEC-0006 R21 pre-submit evidence-URL liveness check implemented end-to-end. Net-new additions: `web/src/urlLiveness.ts` (helper + 24 h memo cache + `clearLivenessCache` + `seedLivenessCacheEntry` + `formatLivenessError`), `web/src/urlLiveness.test.ts` (18 tests, all pass), `web/src/probeHandler.ts` (`executeProbe` — server-side Range-GET + 10 s timeout, extracted from vite plugin for testability), `vite.config.ts` (`urlProbePlugin` — `/__probe` middleware delegating to `executeProbe`; merge conflict resolved accepting ours), `web/src/views/Create.tsx` (import, `IS_REAL`, `PROBE_DEBOUNCE_MS`, `urlLivenessResult: LivenessResult | null` state, 600 ms debounced `useEffect` with stale-response guard, `url-liveness-error` banner via `shouldShowLivenessBanner`, submit gate via `isSubmitBlockedByLiveness`), `web/src/livenessGate.ts` (pure gate helpers for testability). Create surface score holds at 93 % (R21 is a form-gate web-plus addition; no prototype gap closed/opened). Overall score holds at ~93 %.
 
 ---
 
@@ -36,11 +43,11 @@ Compared `web/src/` component tree against `docs/reference/ui-prototype-handoff/
 
 **~93 % — PASSES (threshold: 90 %)**
 
-_(Tick 14 baseline: 62 %. Tick 31: 82 %. Tick 35: 89 %. Tick 37: ~92 %. Tick ~121: ~92 %. Drug-evidence map sprint: ~93 %. commitRationale sprint: ~93 %. R21 URL-liveness sprint: ~93 %.)_
+_(Tick 14 baseline: 62 %. Tick 31: 82 %. Tick 35: 89 %. Tick 37: ~92 %. Tick ~121: ~92 %. Drug-evidence map sprint: ~93 %. commitRationale sprint: ~93 %. R21 URL-liveness sprint: ~93 %. livenessDebounce extraction sprint: ~93 %.)_
 
 Weighted average of six surfaces:
 
-| Surface | Weight | commitRationale sprint | R21 URL-liveness sprint | Weighted pts |
+| Surface | Weight | R21 URL-liveness sprint | livenessDebounce sprint | Weighted pts |
 |---|---|---|---|---|
 | Overview | 20 % | 88 % | 88 % | 17.6 |
 | Detail | 25 % | 88 % | 88 % | 22.0 |
@@ -50,15 +57,15 @@ Weighted average of six surfaces:
 | Settings | 13 % | 92 % | 92 % | 12.0 |
 | **Total** | 100 % | **~93 %** | **~93 %** | **88.3 → ~93 %** |
 
-> Methodology: per-surface scores are judged element-by-element against the prototype JSX. The weighted figure is a weighted average of the six scores. R21 (URL-liveness check) is a form-gate web-plus addition that does not close or open any prototype gap; Create score holds at 93 %.
+> Methodology: per-surface scores are judged element-by-element against the prototype JSX. The weighted figure is a weighted average of the six scores. The livenessDebounce extraction is a code-quality / testability improvement that does not close or open any prototype gap; Create score holds at 93 %.
 
 ---
 
 ## Headline verdict
 
-The R21 URL-liveness sprint implements all R21 components end-to-end: `urlLiveness.ts` (helper + 24 h memo cache + `formatLivenessError`), `probeHandler.ts` (server-side `executeProbe` with Range-GET + 10 s timeout), `vite.config.ts` `/__probe` middleware (delegates to `executeProbe`; merge conflict resolved), `livenessGate.ts` (pure `isSubmitBlockedByLiveness` / `shouldShowLivenessBanner` helpers), `Create.tsx` (600 ms debounced `useEffect` + stale-response guard + `urlLivenessResult: LivenessResult | null` state + `url-liveness-error` banner + submit gate), and 18 unit tests (all pass). Design conformance score holds at ~93 % — R21 is a spec-gate addition above the prototype baseline.
+The livenessDebounce extraction sprint resolves the only remaining strict-review FAIL finding (F4' from `docs/progress/strict-review-findings.md`): the `Create.tsx` `useEffect` debounce+stale-guard is now a pure, injectable `runLivenessDebounce` helper (`web/src/livenessDebounce.ts`) with 9 unit tests (`web/src/livenessDebounce.test.ts`) that exercise debounce firing, stale-response cancellation, and empty-URL short-circuit. `Create.tsx` delegates to the helper inside the existing `useEffect`. Design conformance score holds at ~93 % — no prototype gap was opened or closed; this sprint raises the strict-review gate from FAIL to PASS.
 
-**Unit gate: PASS** — 18 urlLiveness tests pass (`web/src/urlLiveness.test.ts`).
+**Unit gate: PASS** — 18 urlLiveness tests pass (`web/src/urlLiveness.test.ts`), 9 livenessDebounce tests pass (`web/src/livenessDebounce.test.ts`).
 
 ---
 
@@ -267,4 +274,5 @@ These are polish-level gaps with low demo impact.
 | **Drug-evidence map sprint** | `drugEvidenceMap.ts` (6 R18 drugs + brand aliases); Create.tsx: drug-name triggers `evidenceForDrug()` → auto-fills Evidence URL + Prompt Hint; manual override retained; submit disabled when either field empty; `onSubmit` uses state values | Create **+5 pp** (88 % → 93 %); Overall **+1 pp** (~92 % → **~93 %**) |
 | **commitRationale sprint** | All 5 stack layers confirmed implemented: `abi.ts` entry, `ContractBackend` interface, `RealBackend._send` wrapper, `SimulatedBackend` emit-to-history path, `RulingRationaleCard` in `Detail.tsx` (R25 web+). 8 `commitRationale` tests in `simulated.transitions.test.ts` pass. | Detail **+1 pp** (87 % → 88 %); Overall held at **~93 %** |
 | **R21 URL-liveness sprint** | `urlLiveness.ts` (helper + 24 h memo cache + `formatLivenessError`); `urlLiveness.test.ts` (18 tests, all pass); `probeHandler.ts` (server-side `executeProbe`); `vite.config.ts` `urlProbePlugin` (`/__probe` Range-limited GET + 10 s timeout; merge conflict resolved); `livenessGate.ts` (pure gate helpers); `Create.tsx` (import, 600 ms debounced `useEffect` with stale-response guard, `urlLivenessResult` state, `url-liveness-error` banner, submit gate). | Create held at 93 % (web-plus addition above prototype baseline); Overall held at **~93 %** |
-| **Total (ticks 32 → R21 URL-liveness sprint)** | | **+11 pp overall from tick-31 baseline (82 % → ~93 %)** |
+| **livenessDebounce extraction sprint** | F4' finding resolved. `livenessDebounce.ts` (`runLivenessDebounce` pure helper — debounce timer + stale-guard + empty-URL short-circuit + injectable probe; `PROBE_DEBOUNCE_MS=600`; no React import); `livenessDebounce.test.ts` (9 tests: debounce firing, stale cancellation, empty-URL, whitespace, early cleanup, sim mode, constant value, no-React invariant, PHI-free — all pass); `Create.tsx` useEffect delegates to helper. | Create held at 93 %; strict-review gate **FAIL → PASS**; Overall held at **~93 %** |
+| **Total (ticks 32 → livenessDebounce extraction sprint)** | | **+11 pp overall from tick-31 baseline (82 % → ~93 %)** |

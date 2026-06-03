@@ -2,6 +2,125 @@
 
 ---
 
+## 2026-06-04 (refresh 19) — livenessDebounce extraction (F4' RESOLVED); 331-test src+web/src + 166-test hardhat; OVERALL PASS
+
+**Date:** 2026-06-04 · **Branch:** `feat/livenessDebounce-extraction` (from `spec-6-implementation`)
+**Tool (contracts/):** `npx hardhat coverage` (solidity-coverage v0.8.17) — fresh live run
+**Tool (src/ + web/src/):** `node --import tsx --test --experimental-test-coverage "src/**/*.test.ts" "web/src/**/*.test.ts"` (Node v22)
+**Tests (contracts/):** 166/166 PASS · **Tests (src/ + web/src/):** 331/331 PASS
+
+### Unit: livenessDebounce extraction (F4' finding resolved)
+
+This refresh covers the F4' finding from `docs/progress/strict-review-findings.md`:
+the `Create.tsx` `useEffect` debounce+stale-guard has been extracted into a pure,
+injectable `runLivenessDebounce` helper (`web/src/livenessDebounce.ts`) with a
+dedicated unit test file (`web/src/livenessDebounce.test.ts`).
+
+| Deliverable | File | Status |
+|---|---|---|
+| `runLivenessDebounce` pure helper | `web/src/livenessDebounce.ts` | DONE — owns the 600 ms debounce timer + stale-response cancellation guard (`cancelled` flag); no React import; empty/whitespace URL short-circuits immediately (no timer, `onResult` never called); injectable `probe` and `debounceMs` for testing; returns cleanup `() => void` |
+| Unit tests | `web/src/livenessDebounce.test.ts` | DONE — 9 tests: debounce fires after `PROBE_DEBOUNCE_MS` (not called before, called once after); cleanup discards in-flight probe (stale-response guard); empty URL short-circuit (no timer, no probe, no `onResult`); whitespace-only URL treated as empty; cleanup before timer fires cancels timer; sim mode: probe called with `sim=true` when `isReal=false`; `PROBE_DEBOUNCE_MS === 600` value check; no-React-import structural invariant; PHI-free fixture invariant |
+| `Create.tsx` delegation | `web/src/views/Create.tsx` | DONE — `useEffect` now delegates entirely to `return runLivenessDebounce(agentEvidenceUrl, IS_REAL, setUrlLivenessResult)`; the inline 5-line timer+cancelled logic removed; `useRef` import removed; `PROBE_DEBOUNCE_MS` constant removed |
+
+### Coverage results
+
+#### src/ + web/src/ (Node built-in --experimental-test-coverage; tested files only)
+
+```
+# file                                               | line % | branch % | funcs % | uncovered lines
+# --------------------------------------------------------------------------------------------------------------------------
+# src/config/networks.ts                             | 100.00 |   100.00 |  100.00 |
+# src/content/content.ts                             | 100.00 |   100.00 |  100.00 |
+# src/contract/abi.ts                                | 100.00 |   100.00 |  100.00 |
+# src/contract/simulated.ts                          |  98.56 |    85.62 |   83.64 | 79 104 119 201-205 213-215 217 235 245
+# src/data/policies.ts                               | 100.00 |   100.00 |  100.00 |
+# src/integrations/cds-hooks/fixture.ts              | 100.00 |   100.00 |  100.00 |
+# src/integrations/cds-hooks/index.ts               | 100.00 |   100.00 |  100.00 |
+# src/integrations/cds-hooks/mapper.ts              | 100.00 |    95.65 |  100.00 |
+# src/profiles/profiles.ts                           | 100.00 |   100.00 |  100.00 |
+# src/protocol/ladders.ts                            | 100.00 |   100.00 |  100.00 |
+# src/protocol/packet.ts                             | 100.00 |   100.00 |  100.00 |
+# src/protocol/revertReasonMap.ts                    | 100.00 |   100.00 |  100.00 |
+# src/protocol/scenarioFixtures.test-helpers.ts      | 100.00 |    87.50 |  100.00 |
+# src/types/coverage.types.ts                        | 100.00 |   100.00 |  100.00 |
+# src/users/userStore.ts                             | 100.00 |    93.10 |   90.00 |
+# src/wallet/wallet.ts                               |  89.04 |    84.00 |   77.78 | 12-19 30-36 52
+# web/src/drugEvidenceMap.ts                         | 100.00 |   100.00 |  100.00 |
+# web/src/livenessDebounce.ts                        | 100.00 |    84.62 |  100.00 |
+# web/src/livenessGate.ts                            | 100.00 |   100.00 |  100.00 |
+# web/src/probeHandler.ts                            | 100.00 |    87.50 |   66.67 |
+# web/src/urlLiveness.ts                             | 100.00 |    88.46 |  100.00 |
+# --------------------------------------------------------------------------------------------------------------------------
+# all files                                          |  99.62 |    94.25 |   96.44 |
+# --------------------------------------------------------------------------------------------------------------------------
+```
+
+**Aggregate line: 99.62% PASS · Aggregate branch: 94.25% PASS** (threshold: >= 85% both)
+
+#### Per-file analysis
+
+**`src/wallet/wallet.ts` — line 89.04%, branch 84.00% [below 85% branch individually]**
+
+Lines 12-19, 30-36, 52 are `RealWallet` live-provider constructor paths (require a live Somnia RPC node). Known-exempt gap; documented no-mock exemption; exercised by `test:real-local` and browser-verify harness. Tree aggregate 94.25% PASS.
+
+**`web/src/livenessDebounce.ts` — line 100%, branch 84.62% [below 85% branch individually]**
+
+13 branches total; ~2 uncovered. The uncovered sides are `options.debounceMs ?? PROBE_DEBOUNCE_MS` (right-hand default when `options.debounceMs` is not supplied) and `options.probe ?? probeUrlLiveness` (right-hand default when `options.probe` is not supplied). All 9 unit tests supply explicit `probe` and `debounceMs` options for determinism; the bare-options invocation from `Create.tsx` (which uses both defaults) is the only caller that exercises the right-hand side, but `Create.tsx` is not unit-testable without a DOM. The `??` fallback defaults are defensive infrastructure, not logic branches. Tree aggregate 94.25% PASS.
+
+**`src/contract/simulated.ts` — line 98.56%, branch 85.62% [PASS, at threshold]**
+
+Uncovered lines are TypeScript interface optional-field short-circuits (L79/L104/L119) and `setNext*` module-level mutables not called by current tests. Branch 85.62% is at the 85% floor.
+
+**`web/src/probeHandler.ts` — line 100%, branch 87.50% [PASS]**
+
+Uncovered branch is the V8-instrumented `??`-operator null-fallback in the `clearTimeout(timerId)` cleanup path. All `executeProbe` logic paths are exercised.
+
+**`web/src/urlLiveness.ts` — line 100%, branch 88.46% [PASS]**
+
+All runtime paths exercised. Uncovered sides are `json.status ?? 200` (ok:true payload without explicit status) and `json.status ?? 0` (ok:false payload without explicit status) — defensive defaults; all test fixtures supply explicit status values. One `String(err)` branch (err is not an Error instance) is also uncovered; all test fixtures throw real Error objects.
+
+#### contracts/ (solidity-coverage v0.8.17)
+
+```
+--------------------------|----------|----------|----------|----------|----------------|
+File                      |  % Stmts | % Branch |  % Funcs |  % Lines |Uncovered Lines |
+--------------------------|----------|----------|----------|----------|----------------|
+ contracts/               |      100 |    91.15 |      100 |      100 |                |
+  CoverageNegotiation.sol |      100 |    91.15 |      100 |      100 |                |
+  ISomniaAgent.sol        |      100 |      100 |      100 |      100 |                |
+ contracts/mocks/         |      100 |      100 |      100 |      100 |                |
+  MockAgentPlatform.sol   |      100 |      100 |      100 |      100 |                |
+  RevertingReceiver.sol   |      100 |      100 |      100 |      100 |                |
+--------------------------|----------|----------|----------|----------|----------------|
+All files                 |      100 |    91.23 |      100 |      100 |                |
+--------------------------|----------|----------|----------|----------|----------------|
+```
+
+**Line: 100% PASS · Branch: 91.23% PASS** (threshold: >= 85% both)
+
+Remaining 8.77% uncovered branch sides are defensive `require(ok, ...)` false-sides on native ETH-transfer `.call{value}` return values for structurally unreachable paths (e.g. when `escrow == 0`, the `if (escrow > 0)` guard short-circuits and the inner `require(ok)` false-side is structurally dead). All critical transfer-failure paths are covered via `RevertingReceiver`.
+
+### Gate result
+
+| Tree | Line | Branch | Gate |
+|---|---|---|---|
+| `src/` + `web/src/` aggregate | 99.62% | 94.25% | PASS |
+| `contracts/` | 100.00% | 91.23% | PASS |
+| **Overall** | | | **PASS** |
+
+**Under-covered files (below 85% on either metric individually):**
+
+| File | Line % | Branch % | Reason |
+|---|---|---|---|
+| `src/wallet/wallet.ts` | 89.04 | **84.00** | `RealWallet` live-provider constructor paths; known-exempt; tree aggregate 94.25% PASS |
+| `web/src/livenessDebounce.ts` | 100.00 | **84.62** | `??` right-hand defaults for `debounceMs` and `probe` options; defensive infrastructure; tree aggregate 94.25% PASS |
+
+Both under-threshold files are below 85% branch on defensive `??`-fallback or live-infra-gated paths only. Neither represents a logic gap. Tree aggregate (94.25%) passes.
+
+**Unit gate: PASS** — 331 src+web/src tests pass; 166 contract tests pass. F4' finding RESOLVED: `runLivenessDebounce` pure helper extracted from `Create.tsx` `useEffect`, unit-tested with 9 tests covering debounce firing, stale-response cancellation, and empty-URL short-circuit.
+
+---
+
 ## 2026-06-04 (refresh 18) — SPEC-0006 R21 complete + livenessGate module; 322-test src+web/src + 166-test hardhat; OVERALL PASS
 
 **Date:** 2026-06-04 · **Branch:** `spec-6-implementation`

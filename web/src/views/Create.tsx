@@ -2,7 +2,7 @@
  * Create view: the provider files a drug coverage request.
  * Clinical justification stays off-chain; only its hash is committed on-chain (R4).
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ZERO_HASH,
   hashContent,
@@ -18,14 +18,12 @@ import { useWalletBalance } from "../hooks/useWalletBalance.js";
 import { ErrorCard } from "../components/ErrorCard.js";
 import { AGENT_FEE_RESERVE_WEI } from "../config.js";
 import { evidenceForDrug } from "../drugEvidenceMap.js";
-import { probeUrlLiveness, formatLivenessError, type LivenessResult } from "../urlLiveness.js";
+import { formatLivenessError, type LivenessResult } from "../urlLiveness.js";
 import { isSubmitBlockedByLiveness, shouldShowLivenessBanner } from "../livenessGate.js";
+import { runLivenessDebounce } from "../livenessDebounce.js";
 
 /** True when the wallet mode is "real" (on-chain). False in simulated mode. */
 const IS_REAL = import.meta.env.VITE_WALLET_MODE === "real";
-
-/** Debounce delay for evidence-URL liveness probes (ms). */
-const PROBE_DEBOUNCE_MS = 600;
 
 function fmtStt(wei: bigint): string {
   // Whole-STT integer division for the user-facing message — the cap
@@ -70,43 +68,19 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
   // the submit button disabled while the probe is in flight. Bypassed entirely
   // in sim mode.
   //
-  // Stale-response guard: each effect invocation sets a `cancelled` flag in
-  // its cleanup closure. If a slower probe for an older URL resolves after a
-  // newer effect has already fired, the `.then()` checks `cancelled` and
-  // discards the stale result, preventing it from clobbering the current
-  // verdict. The 600 ms debounce cancels the timer; stale in-flight responses
-  // are discarded via the `cancelled` flag.
+  // Debounce + stale-response-guard logic is delegated to `runLivenessDebounce`
+  // (web/src/livenessDebounce.ts) — a pure, injectable helper with no React
+  // dependency, tested in livenessDebounce.test.ts.
   useEffect(() => {
     if (!IS_REAL) {
       // Sim mode: never probe; leave result as null so the submit gate
       // falls back to the existing non-empty-field check only.
       return;
     }
-    if (agentEvidenceUrl.trim() === "") {
-      setUrlLivenessResult(null);
-      return;
-    }
     // Reset while the debounce timer runs and then while probe is in flight.
     setUrlLivenessResult(null);
 
-    let cancelled = false;
-    let timerId: ReturnType<typeof setTimeout> | null = null;
-
-    timerId = setTimeout(() => {
-      void probeUrlLiveness(agentEvidenceUrl.trim(), false).then((result) => {
-        if (!cancelled) {
-          setUrlLivenessResult(result);
-        }
-      });
-    }, PROBE_DEBOUNCE_MS);
-
-    return () => {
-      cancelled = true;
-      if (timerId !== null) {
-        clearTimeout(timerId);
-        timerId = null;
-      }
-    };
+    return runLivenessDebounce(agentEvidenceUrl, IS_REAL, setUrlLivenessResult);
   }, [agentEvidenceUrl]);
 
   /** Auto-fill evidence URL + prompt hint from the drug name map; manual override allowed. */
