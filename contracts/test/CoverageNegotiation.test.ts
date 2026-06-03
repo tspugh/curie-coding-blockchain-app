@@ -1927,19 +1927,21 @@ describe("CoverageNegotiation", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // G2: check-ruling-abi.ts must detect _fireAgent selector drift (R12 mandate)
+  // G2: check-ruling-abi.ts must detect _fireDecide selector drift (R12 mandate)
   // ---------------------------------------------------------------------------
-  describe("G2 (SPEC-0006 R12): check-ruling-abi.ts detects _fireAgent selector drift, not just file-level substrings", () => {
-    it("G2a: check-ruling-abi.ts must assert the inferString selector appears inside the _fireAgent body, not only in the interface or comments", () => {
-      // The current implementation of checkSolSourceContainsInferString() only does
-      // solSource.includes("inferString") — this passes even if _fireAgent uses
+  describe("G2 (SPEC-0006 R12): check-ruling-abi.ts detects _fireDecide selector drift, not just file-level substrings", () => {
+    it("G2a: check-ruling-abi.ts must assert the inferString selector appears inside the _fireDecide body, not only in the interface or comments", () => {
+      // The prior implementation of checkSolSourceContainsInferString() only did
+      // solSource.includes("inferString") — this passes even if _fireDecide uses
       // bytes4(0xdeadbeef) because "inferString" still appears in the interface
       // declaration and in comments. Per R12 the script's job is to pin the actual
       // payload selector the contract fires.
       //
-      // This test verifies the script source reads the _fireAgent block specifically
+      // This test verifies the script source reads the _fireDecide block specifically
       // (by checking that it asserts the literal "ILLMInferenceAgent.inferString.selector"
-      // or the abi.encodeWithSelector call from _fireAgent, not just "inferString" globally).
+      // or the abi.encodeWithSelector call from _fireDecide, not just "inferString" globally).
+      // (_fireAgent is the pre-Amendment-0007 name; the script also accepts a legacy _fireAgent
+      // fallback for backward compatibility with pre-Amendment-0007 contract copies.)
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { readFileSync } = require("fs") as typeof import("fs");
       // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -1947,28 +1949,30 @@ describe("CoverageNegotiation", () => {
       const scriptPath = resolve(__dirname, "..", "..", "scripts", "check-ruling-abi.ts");
       const source = readFileSync(scriptPath, "utf8");
       // The script must either:
-      // (a) extract the _fireAgent block and check it contains the selector, OR
+      // (a) extract the _fireDecide block and check it contains the selector, OR
       // (b) look for the specific abi.encodeWithSelector / ILLMInferenceAgent.inferString.selector
       //     literal that would be absent if the selector were replaced with bytes4(0xdeadbeef).
       //
       // The minimal failing signal: the script must check for either
       // "ILLMInferenceAgent.inferString.selector" or "encodeWithSelector" inside a
-      // _fireAgent-scoped section. We require at least ONE of these more specific patterns.
-      const hasSpecificFireAgentCheck =
+      // _fireDecide-scoped section. We require at least ONE of these more specific patterns.
+      // The legacy _fireAgent name is still referenced in the fallback path of the script.
+      const hasSpecificFireDecideCheck =
         source.includes("_fireAgent") ||
+        source.includes("_fireDecide") ||
         source.includes("ILLMInferenceAgent.inferString.selector") ||
         source.includes("encodeWithSelector") ||
         source.includes("abi.encodeWithSelector");
-      expect(hasSpecificFireAgentCheck).to.equal(true,
-        "scripts/check-ruling-abi.ts must detect _fireAgent selector drift — it currently only " +
-        "checks solSource.includes('inferString') which passes even when _fireAgent uses a wrong selector. " +
+      expect(hasSpecificFireDecideCheck).to.equal(true,
+        "scripts/check-ruling-abi.ts must detect _fireDecide selector drift — it must not " +
+        "only check solSource.includes('inferString') which passes even when _fireDecide uses a wrong selector. " +
         "The script must check for 'ILLMInferenceAgent.inferString.selector' or 'encodeWithSelector' " +
-        "scoped to the _fireAgent body, or otherwise detect drift in the actual payload selector (R12).");
+        "scoped to the _fireDecide body, or otherwise detect drift in the actual payload selector (R12).");
     });
 
-    it("G2b: check-ruling-abi.ts exits non-zero when _fireAgent uses bytes4(0xdeadbeef) instead of ILLMInferenceAgent.inferString.selector", () => {
+    it("G2b: check-ruling-abi.ts exits non-zero when _fireDecide uses bytes4(0xdeadbeef) instead of ILLMInferenceAgent.inferString.selector", () => {
       // End-to-end drift detection test: create a temporary modified CoverageNegotiation.sol
-      // where the _fireAgent payload uses a wrong selector, then run check-ruling-abi.ts
+      // where the _fireDecide payload uses a wrong selector, then run check-ruling-abi.ts
       // against it and confirm it exits non-zero.
       //
       // If the script passes on this corrupted file, the R12 gate is ineffective.

@@ -147,14 +147,28 @@ async function main() {
   await snap(reqId);
   check("requestAdjudication fires the agent -> UnderReview (R6/R9)", realStates.at(-1) === State.UnderReview);
 
-  // Deliver the ruling the way the platform would: callback into the contract.
-  // SPEC-0006 R11/R24: MockAgentPlatform.triggerRuling takes a single string token
-  // (the inferString return value). The contract decodes it into a Decision enum.
+  // Deliver the ruling the way the platform would: two-phase callback (Amendment 0007).
+  //
+  // Phase 1 — scrape: the contract fired LLM Parse Website (_fireScrape) first.
+  //   triggerRuling with a synthetic evidence string; this drives _handleScrapeResponse,
+  //   which calls _fireDecide internally (LLM Inference).
+  //
+  // Phase 2 — decide: the contract fired LLM Inference (_fireDecide).
+  //   triggerRuling with the actual decision token; this drives _handleDecideResponse
+  //   and transitions the negotiation to Approved/Denied.
+  //
+  // Mirror the Hardhat createEngageAdjudicate two-step drive.
   const mockAsSigner = new ethers.Contract(mockAddr, mockArt.abi, signer);
-  const requestId = await mockAsSigner.lastRequestId();
-  await (await mockAsSigner.triggerRuling(contractAddr, requestId, "approve")).wait();
+
+  // Phase 1: deliver scrape result (evidence string) — leaves state in UnderReview (Deciding phase).
+  const scrapeRequestId = await mockAsSigner.lastRequestId();
+  await (await mockAsSigner.triggerRuling(contractAddr, scrapeRequestId, "synthetic-scrape-evidence")).wait();
+
+  // Phase 2: deliver the decide result (decision token) — transitions to Approved.
+  const decideRequestId = await mockAsSigner.lastRequestId();
+  await (await mockAsSigner.triggerRuling(contractAddr, decideRequestId, "approve")).wait();
   await snap(reqId);
-  check("platform callback (approve) -> Approved", realStates.at(-1) === State.Approved);
+  check("platform two-phase callback (scrape→decide approve) -> Approved", realStates.at(-1) === State.Approved);
 
   // In string-token mode, approve sets coveredAmount = requestedAmount (SPEC-0006).
   const covered = await real.coveredAmountOf(reqId);
