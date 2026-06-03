@@ -2,7 +2,7 @@
  * Create view: the provider files a drug coverage request.
  * Clinical justification stays off-chain; only its hash is committed on-chain (R4).
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ZERO_HASH,
   hashContent,
@@ -18,6 +18,13 @@ import { useWalletBalance } from "../hooks/useWalletBalance.js";
 import { ErrorCard } from "../components/ErrorCard.js";
 import { AGENT_FEE_RESERVE_WEI } from "../config.js";
 import { evidenceForDrug } from "../drugEvidenceMap.js";
+import { probeUrlLiveness } from "../urlLiveness.js";
+
+/** True when the wallet mode is "real" (on-chain). False in simulated mode. */
+const IS_REAL = import.meta.env.VITE_WALLET_MODE === "real";
+
+/** Debounce delay for evidence-URL liveness probes (ms). */
+const PROBE_DEBOUNCE_MS = 600;
 
 function fmtStt(wei: bigint): string {
   // Whole-STT integer division for the user-facing message — the cap
@@ -46,10 +53,45 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
   const [committedHash, setCommittedHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // SPEC-0006 R21: null = not yet checked / URL empty, true = live, false = dead.
+  const [urlLivenessOk, setUrlLivenessOk] = useState<boolean | null>(null);
   // Set when the form is hydrated from a CDS-Hooks `order-sign` payload
   // (SPEC-0002 R7). Drives a provenance banner so users see the form
   // wasn't hand-typed.
   const [cdsProvenance, setCdsProvenance] = useState<string | null>(null);
+
+  // SPEC-0006 R21 — debounced liveness probe. Fires 600 ms after
+  // `agentEvidenceUrl` settles; resets to null immediately on change
+  // to keep the submit button disabled while the probe is in flight.
+  // Bypassed entirely in sim mode.
+  const probeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (probeTimerRef.current !== null) {
+      clearTimeout(probeTimerRef.current);
+      probeTimerRef.current = null;
+    }
+    if (!IS_REAL) {
+      // Sim mode: never probe; leave state as null so the submit gate
+      // falls back to the existing non-empty-field check only.
+      return;
+    }
+    if (agentEvidenceUrl.trim() === "") {
+      setUrlLivenessOk(null);
+      return;
+    }
+    setUrlLivenessOk(null);
+    probeTimerRef.current = setTimeout(() => {
+      void probeUrlLiveness(agentEvidenceUrl.trim(), false).then((ok) => {
+        setUrlLivenessOk(ok);
+      });
+    }, PROBE_DEBOUNCE_MS);
+    return () => {
+      if (probeTimerRef.current !== null) {
+        clearTimeout(probeTimerRef.current);
+        probeTimerRef.current = null;
+      }
+    };
+  }, [agentEvidenceUrl]);
 
   /** Auto-fill evidence URL + prompt hint from the drug name map; manual override allowed. */
   function applyDrugLookup(rawDrug: string) {
@@ -354,6 +396,13 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
           </span>
         </div>
 
+        {IS_REAL && urlLivenessOk === false && (
+          <p className="error" data-testid="url-liveness-error">
+            The evidence URL could not be reached. Please check the URL and try
+            again, or enter a different public evidence link.
+          </p>
+        )}
+
         {error && <ErrorCard error={error} onDismiss={() => setError(null)} />}
         {balanceBlock && (
           <p className="error" data-testid="balance-block">
@@ -373,7 +422,8 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
             busy ||
             balanceBlock !== null ||
             agentEvidenceUrl.trim() === "" ||
-            agentPromptHint.trim() === ""
+            agentPromptHint.trim() === "" ||
+            (IS_REAL && urlLivenessOk !== true)
           }
         >
           {busy ? "Submitting…" : "Submit Request →"}

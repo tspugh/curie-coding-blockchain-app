@@ -2,6 +2,89 @@
 
 ---
 
+## 2026-06-03 (refresh 16) — SPEC-0006 R21 urlLiveness + probePlugin; 280-test src+web/src + 166-test hardhat; OVERALL PASS
+
+**Date:** 2026-06-03 · **Branch:** `spec-6-implementation`
+**Tool (contracts/):** `npx hardhat coverage` (solidity-coverage v0.8.17) — fresh live run
+**Tool (src/ + web/src/):** `node --import tsx --test --experimental-test-coverage "src/**/*.test.ts" "web/src/**/*.test.ts"` (Node v22)
+**Tests (contracts/):** 166/166 PASS · **Tests (src/ + web/src/):** 280/280 PASS
+
+### Summary of changes verified in this run
+
+SPEC-0006 R21 pre-submit evidence-URL liveness check is fully implemented:
+
+| File | Status |
+|---|---|
+| `web/src/urlLiveness.ts` | `probeUrlLiveness(url, sim)` helper: issues `GET /__probe?url=<encoded>` in real mode; resolves `true` immediately in sim mode; 24 h per-URL memo cache (`Map<string, { ok: boolean; ts: number }>`); `clearLivenessCache()` exported for tests; exports `LIVENESS_CACHE_TTL_MS` constant |
+| `vite.config.ts` | `urlProbePlugin()`: `GET /__probe?url=<encoded>` middleware; Range-limited `GET bytes=0-0` with 10 s AbortSignal timeout; falls back to bare GET on rejection; returns `{ ok: boolean, status: number, error?: string }`; 2xx–3xx → `ok: true`; non-2xx → `ok: false`; network/timeout errors → `ok: false` |
+| `web/src/views/Create.tsx` | `useEffect` debounced 600 ms on `agentEvidenceUrl` changes; `urlLivenessOk: boolean | null` state; `data-testid="url-liveness-error"` inline error banner rendered when `false` (real mode only); `create-submit` disabled until `urlLivenessOk === true` in real mode (sim mode ignores the check) |
+| `web/src/urlLiveness.test.ts` | 14 unit tests covering: cache hit (no re-fetch), cache miss triggers fetch, stale-entry re-fetch, sim-mode bypass (two tests), non-2xx → `false` (three variants: 404, 500, 403), network error → `false` (TypeError and AbortError), negative caching, URL-specific cache keys, PHI-free invariant |
+
+### Coverage results
+
+#### src/ + web/src/ (Node built-in --experimental-test-coverage; tested files only)
+
+```
+# file                                               | line % | branch % | funcs % | uncovered lines
+# --------------------------------------------------------------------------------------------------------------------------
+# src/contract/simulated.ts                          |  98.56 |    85.62 |   83.64 | 79 104 119 201-205 213-215 217 235 245
+# src/users/userStore.ts                             | 100.00 |    93.10 |   90.00 |
+# src/wallet/wallet.ts                               |  89.04 |    84.00 |   77.78 | 12-19 30-36 52
+# web/src/urlLiveness.ts                             | 100.00 |   100.00 |  100.00 |
+# web/src/urlLiveness.test.ts                        |  98.87 |    92.00 |   88.00 | 43-45 56
+# (all other src/ + web/src/ tested files)           | 100.00 |   100.00 |  100.00 |
+# --------------------------------------------------------------------------------------------------------------------------
+# all files                                          |  99.57 |    94.95 |   97.36 |
+```
+
+**Aggregate line: 99.57% PASS · Aggregate branch: 94.95% PASS** (threshold: >= 85% both)
+
+Per-file notes:
+- `src/contract/simulated.ts` branch 85.62%: at threshold. Uncovered lines are TypeScript interface optional-field short-circuits (L79/L104/L119) and `setNext*` module-level mutables not called by current tests. Not logic gaps.
+- `src/wallet/wallet.ts` branch 84.00%: lines 12-19, 30-36, 52 are `RealWallet` live-provider constructor paths (known-exempt). Tree aggregate 94.95% PASS.
+- `web/src/urlLiveness.ts` 100% line and branch: new R21 file fully covered by its 14 unit tests.
+- `web/src/urlLiveness.test.ts` lines 43-45, 56: test helper boilerplate / import lines counted by V8 — tool artifact, not logic gaps.
+
+#### contracts/ (Hardhat + solidity-coverage)
+
+```
+--------------------------|----------|----------|----------|----------|----------------|
+File                      |  % Stmts | % Branch |  % Funcs |  % Lines |Uncovered Lines |
+--------------------------|----------|----------|----------|----------|----------------|
+ contracts/               |      100 |    91.15 |      100 |      100 |                |
+  CoverageNegotiation.sol |      100 |    91.15 |      100 |      100 |                |
+  ISomniaAgent.sol        |      100 |      100 |      100 |      100 |                |
+ contracts/mocks/         |      100 |      100 |      100 |      100 |                |
+  MockAgentPlatform.sol   |      100 |      100 |      100 |      100 |                |
+  RevertingReceiver.sol   |      100 |      100 |      100 |      100 |                |
+--------------------------|----------|----------|----------|----------|----------------|
+All files                 |      100 |    91.23 |      100 |      100 |                |
+--------------------------|----------|----------|----------|----------|----------------|
+```
+
+**Line: 100% PASS · Branch: 91.23% PASS** (threshold: >= 85% both)
+
+Remaining 8.77% uncovered branch sides are defensive `require(ok, ...)` false-sides on native ETH-transfer `.call{value}` return values for paths where the callee never rejects ETH. All critical transfer-failure paths are covered via `RevertingReceiver`.
+
+### Under-covered files (below 85% threshold on line OR branch)
+
+| File | Line % | Branch % | Threshold | Fail reason |
+|---|---|---|---|---|
+| `src/wallet/wallet.ts` | 89.04 | **84.00** | >= 85% both | Branch 84.00% — `RealWallet` live-provider constructor (lines 12-19, 30-36, 52) requires a live Somnia RPC node. Known-exempt path; tree aggregate 94.95% PASS. |
+
+### Overall verdict
+
+| Scope | Line % | Branch % | Threshold | Pass? |
+|---|---|---|---|---|
+| `contracts/` | 100 | 91.23 | >= 85% both | **PASS** |
+| `src/ + web/src/` (tested files, Node built-in) | 99.57 | 94.95 | >= 85% both | **PASS** |
+
+**OVERALL: PASS** across all measured trees.
+
+One per-file under-threshold file (`src/wallet/wallet.ts` branch 84.00%) — known-exempt `RealWallet` live-provider path; tree aggregate passes.
+
+---
+
 ## 2026-06-03 (refresh 15 — correction) — the refresh-14 73.89% was solidity-coverage flake; clean re-run is 91.15% branch (PASS)
 
 The refresh-14 entry below recorded `CoverageNegotiation.sol` branch coverage at
