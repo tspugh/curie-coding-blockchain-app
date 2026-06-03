@@ -121,11 +121,13 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
-    allowedHosts: [".trycloudflare.com"],
+    allowedHosts: [".trycloudflare.com", ".ts.net"],
   },
   preview: {
     // Allow any *.trycloudflare.com quick-tunnel host so the dev tunnel works
     // without per-session config edits. Leading-dot = subdomain wildcard.
-    allowedHosts: [".trycloudflare.com"],
+    // `.ts.net` covers Tailscale MagicDNS / Funnel hosts (resolves only on the
+    // tailnet or via Funnel ACLs); needed on the Pi where cloudflared isn't running.
+    allowedHosts: [".trycloudflare.com", ".ts.net"],
   },
 });

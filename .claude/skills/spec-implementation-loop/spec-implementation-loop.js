@@ -141,9 +141,17 @@ const VERDICT_SCHEMA = {
 phase('Orient')
 const orient = await agent(
   `You are orienting one tick of a spec-implementation loop in repo "${repo}".
-${branch ? `Assert the checked-out branch is "${branch}".` : 'Report the checked-out branch.'}
-Steps: \`git -C ${repo} status\`; read ${repo}/${stateFile} if it exists (mode, tick, queue, last focus); \`git -C ${repo} log --oneline -10\`.
-Report whether the tree is clean, the current tick, a short state summary, any unresolved findings to prioritize, and which trees (src/contracts/web) the recent + queued work touches.
+
+IMPORTANT — repo scoping: "${repo}" may be a git repo NESTED inside a parent/outer
+git repo (e.g. an app repo inside a PM repo). You MUST inspect ONLY "${repo}".
+Run EVERY git command with the \`-C ${repo}\` flag — never a bare \`git status\`/
+\`git log\` (a bare command reports your shell's cwd, which may be the OUTER repo).
+The reported \`branch\` and \`clean\` fields MUST describe "${repo}" exclusively;
+completely ignore the state, branch, and untracked files of any parent or sibling
+repo. If the outer repo is dirty but "${repo}" is clean, report clean: true.
+${branch ? `The checked-out branch of "${repo}" MUST be "${branch}" — assert it via \`git -C ${repo} rev-parse --abbrev-ref HEAD\`.` : 'Report the checked-out branch of "${repo}".'}
+Steps: \`git -C ${repo} status --porcelain\` (clean ⇔ empty output) and \`git -C ${repo} rev-parse --abbrev-ref HEAD\`; read ${repo}/${stateFile} if it exists (mode, tick, queue, last focus); \`git -C ${repo} log --oneline -10\`.
+Report whether THE "${repo}" tree is clean, the current tick, a short state summary, any unresolved findings to prioritize, and which trees (src/contracts/web) the recent + queued work touches.
 Do NOT modify anything.`,
   { schema: ORIENT_SCHEMA, model: 'sonnet', phase: 'Orient' },
 )
