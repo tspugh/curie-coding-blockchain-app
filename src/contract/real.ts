@@ -164,6 +164,7 @@ interface CoverageContract extends ethers.BaseContract {
   withdraw(reqId: bigint): Promise<ethers.ContractTransactionResponse>;
   onRulingTimeout(reqId: bigint): Promise<ethers.ContractTransactionResponse>;
   postFeedback(reqId: bigint, msgHash: string, uri: string): Promise<ethers.ContractTransactionResponse>;
+  commitRationale(reqId: bigint, rationale: string, clauseReference: string, standardReference: string): Promise<ethers.ContractTransactionResponse>;
   getNegotiation(reqId: bigint): Promise<RawNegotiation>;
   stateOf(reqId: bigint): Promise<bigint | number>;
   coveredAmountOf(reqId: bigint): Promise<bigint>;
@@ -358,6 +359,19 @@ export class RealBackend implements CoverageNegotiationClient {
 
   async postFeedback(reqId: bigint, msgHash: string, uri: string): Promise<void> {
     await this._send("postFeedback", 0n, this.contract.postFeedback(reqId, msgHash, uri));
+  }
+
+  async commitRationale(
+    reqId: bigint,
+    rationale: string,
+    clauseReference: string,
+    standardReference: string,
+  ): Promise<void> {
+    await this._send(
+      "commitRationale",
+      0n,
+      this.contract.commitRationale(reqId, rationale, clauseReference, standardReference),
+    );
   }
 
   // ---------------------------------------------------------------------

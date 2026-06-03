@@ -156,6 +156,15 @@ export interface CoverageNegotiationClient {
   /** Post off-chain feedback; no state change (R4 — only the hash + ref cross). */
   postFeedback(reqId: bigint, msgHash: string, uri: string): Promise<void>;
 
+  /**
+   * Keeper commits the receipt-sourced rationale for a finalized ruling
+   * (SPEC-0006 R25/R26). Owner-only on-chain; emits `RulingRationale` with the
+   * rationale text, policy-clause reference, and public-standard reference.
+   * Called after `handleResponse` lands a ruling so the off-chain keeper can
+   * transcribe the agent's chain-of-thought onto the record without PHI (R4).
+   */
+  commitRationale(reqId: bigint, rationale: string, clauseReference: string, standardReference: string): Promise<void>;
+
   // --- Reads (mirror the contract's views) ---
 
   /** Full on-chain record for a contract. */

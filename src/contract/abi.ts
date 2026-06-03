@@ -21,6 +21,7 @@ export const COVERAGE_NEGOTIATION_ABI = [
   "function withdraw(uint256 reqId) external",
   "function onRulingTimeout(uint256 reqId) external",
   "function postFeedback(uint256 reqId, bytes32 msgHash, bytes32 uri) external",
+  "function commitRationale(uint256 reqId, string calldata rationale, string calldata clauseReference, string calldata standardReference) external",
 
   // --- Views (reads) ---
   // Negotiation tuple: order matches struct Negotiation field order exactly.

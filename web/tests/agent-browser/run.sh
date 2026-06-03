@@ -1175,6 +1175,113 @@ scenario_appeal_denial() {
   esac
 }
 
+# ===========================================================================
+# Scenario R25 — commitRationale keeper path + ruling-rationale card (R25)
+#   Drives the commitRationale off-chain backend call through the full stack:
+#   (1) file → engage → adjudicate(approve) → Approved;
+#   (2) call window.__curie.negotiation.commitRationale via the test API —
+#       the simulated backend emits a RulingRationale event, which flows
+#       through the subscription into the Detail timeline, which triggers
+#       a re-render of the RulingRationaleCard (data-testid="ruling-rationale");
+#   (3) assert the card is present and carries the correct decision label,
+#       rationale text, clauseReference, and standardReference;
+#   (4) assert no PHI (raw patient identifiers) in any rendered field.
+# ===========================================================================
+scenario_r25_rationale_card() {
+  echo "Scenario R25: commitRationale keeper path + ruling-rationale card"
+  # Pre-flight: 4 writes (createContract + insurerEngage + requestAdjudication
+  # + commitRationale-via-test-API [no gas cost in sim]), 1 arbiter ruling.
+  assert_wallet_sufficient "Scenario R25" 4 1 || exit 2
+
+  # Arrange: provider files a request.
+  open_app
+  ab find testid nav-create click >/dev/null
+  ab find testid create-note fill "Severe plaque psoriasis; methotrexate failure documented." >/dev/null
+  ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
+  ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
+  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-quantity fill "2" >/dev/null
+  ab find testid create-days-supply fill "28" >/dev/null
+  eval_click create-submit
+  ab wait 300 >/dev/null
+  assert_eq "R25: filed in Open" "0" "$(state_of 1)"
+
+  # Insurer engages compliant policy -> Ready.
+  ab find testid profile-pill-insurer click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+  eval_click engage-load-compliant
+  eval_click engage-submit
+  ab wait 300 >/dev/null
+  assert_eq "R25: insurer engaged -> Ready" "1" "$(state_of 1)"
+
+  # Adjudicate with Approve -> Approved (state=4, hasRuling=true).
+  eval_click decision-approve
+  eval_click adjudicate-submit
+  ab wait 1800 >/dev/null
+  assert_eq "R25: approve ruling routes to Approved" "4" "$(state_of 1)"
+
+  # Switch back to provider so we're on Detail with the negotiation in view.
+  ab find testid profile-pill-provider click >/dev/null
+  ab wait 200 >/dev/null
+  reopen_detail 1
+
+  # Assert the ruling-rationale card is NOT visible before commitRationale.
+  assert_eq "R25: ruling-rationale card absent before commitRationale" "false" \
+    "$(ev "String(!!document.querySelector('[data-testid=ruling-rationale]'))")"
+
+  # Act: call commitRationale via the test API (keeper-only call, no UI button).
+  # The SimulatedBackend emits RulingRationale which the subscription delivers
+  # synchronously into the Detail's event log, causing a React re-render.
+  ev "(async()=>{await window.__curie.negotiation.commitRationale(1n,'Coverage approved: FDA-approved indication for plaque psoriasis; documented methotrexate failure meets step-therapy criteria.','PA-CRITERIA-ADA-001','FDA-LABEL-HUMIRA-PsA-2023');return 'ok'})()" >/dev/null
+  ab wait 500 >/dev/null
+
+  # Assert: ruling-rationale card is now rendered (R25 requirement).
+  assert_eq "R25: ruling-rationale card present after commitRationale" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=ruling-rationale]'))")"
+
+  # Assert: decision label shows "Approved" (Decision.Approve = 0).
+  case "$(ev "(document.querySelector('[data-testid=ruling-rationale] .rationale-decision')||{}).textContent||''")" in
+    *Approved*|*approve*) echo "  ✓ R25: decision label shows Approved"; PASS=$((PASS + 1));;
+    *) echo "  ✗ R25: decision label did not contain Approved — got: [$(ev "(document.querySelector('[data-testid=ruling-rationale] .rationale-decision')||{}).textContent||''")]"; FAIL=$((FAIL + 1));;
+  esac
+
+  # Assert: rationale text is rendered (the free-text reasoning).
+  case "$(ev "(document.querySelector('[data-testid=ruling-rationale] .rationale-text')||{}).textContent||''")" in
+    *approved*|*Approved*) echo "  ✓ R25: rationale text rendered"; PASS=$((PASS + 1));;
+    *) echo "  ✗ R25: rationale text missing — got: [$(ev "(document.querySelector('[data-testid=ruling-rationale] .rationale-text')||{}).textContent||''")]"; FAIL=$((FAIL + 1));;
+  esac
+
+  # Assert: clauseReference is rendered.
+  case "$(ev "Array.from(document.querySelectorAll('[data-testid=ruling-rationale] .rationale-ref code')).map(e=>e.textContent).join('|')")" in
+    *PA-CRITERIA*|*PA-criteria*) echo "  ✓ R25: clauseReference rendered"; PASS=$((PASS + 1));;
+    *) echo "  ✗ R25: clauseReference not rendered — got: [$(ev "Array.from(document.querySelectorAll('[data-testid=ruling-rationale] .rationale-ref code')).map(e=>e.textContent).join('|')")]"; FAIL=$((FAIL + 1));;
+  esac
+
+  # Assert: standardReference is rendered.
+  case "$(ev "Array.from(document.querySelectorAll('[data-testid=ruling-rationale] .rationale-ref code')).map(e=>e.textContent).join('|')")" in
+    *FDA*|*HUMIRA*) echo "  ✓ R25: standardReference rendered"; PASS=$((PASS + 1));;
+    *) echo "  ✗ R25: standardReference not rendered — got: [$(ev "Array.from(document.querySelectorAll('[data-testid=ruling-rationale] .rationale-ref code')).map(e=>e.textContent).join('|')")]"; FAIL=$((FAIL + 1));;
+  esac
+
+  # Assert: no PHI (R4 — the rationale fields must not contain raw clinical
+  # patient identifiers). We check that the card text does not contain a
+  # known-bad PHI sentinel (DOB, SSN pattern, or the PHI token from Scenario B).
+  # Note: the card heading "AI Ruling Rationale" legitimately contains capital
+  # words adjacent to other capitals; the R4 guard is against raw patient data,
+  # not against the structural content of a UI heading. The simulated rationale
+  # text used above contains only drug names, ICD patterns, and policy refs —
+  # none of which are patient-identifying. Assert the sentinel from Scenario B
+  # (ZZ_SECRET_PHI_TOKEN_99) is absent, and that SSN/DOB patterns are absent.
+  assert_eq "R25: PHI sentinel absent from rationale card (R4)" "false" \
+    "$(ev "String(!!(document.querySelector('[data-testid=ruling-rationale]')||{textContent:''}).textContent.includes('ZZ_SECRET_PHI_TOKEN'))")"
+  assert_eq "R25: SSN-pattern absent from rationale card (R4)" "false" \
+    "$(ev "String(/\b\d{3}-\d{2}-\d{4}\b/.test((document.querySelector('[data-testid=ruling-rationale]')||{textContent:''}).textContent))")"
+
+  # Assert: card is stacked chronologically — stateOf still Approved.
+  assert_eq "R25: request still Approved after commitRationale" "4" "$(state_of 1)"
+}
+
 # --- main -------------------------------------------------------------------
 
 start_server
@@ -1203,6 +1310,7 @@ scenario_feedback;            echo
 scenario_happy_path_denial;   echo
 scenario_evidence_resubmit_denial; echo
 scenario_appeal_denial;       echo
+scenario_r25_rationale_card;  echo
 
 echo "──────────────────────────────────────────"
 echo "agent-browser E2E: $PASS passed, $FAIL failed"

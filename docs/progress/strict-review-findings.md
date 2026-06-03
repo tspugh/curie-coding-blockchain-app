@@ -1,3 +1,314 @@
+## SPEC-0006 R24/R25/R26 — `commitRationale` keeper path + rationale card (TOTAL-STICKLER, re-run 3, gate FAIL)
+
+**Date:** 2026-06-03 (re-run 3)
+**Branch:** `spec-6-implementation` (working tree, uncommitted) vs `origin/main`.
+**Unit under review:** Wire the `commitRationale` keeper path through the off-chain
+backend stack + render the R25 rationale card. Solidity already implemented + tested
+(`contracts/contracts/CoverageNegotiation.sol:756`). Off-chain/UI diff touches:
+`src/contract/{abi,real,simulated,types}.ts`, `src/contract/simulated.transitions.test.ts`,
+`web/src/views/Detail.tsx`, `web/tests/agent-browser/run.sh`.
+**Files reviewed:** the six above plus `src/types/coverage.types.ts`,
+`web/src/client.ts`, `web/src/views/Detail.tsx` (full),
+`contracts/contracts/CoverageNegotiation.sol` (parity target: `commitRationale` L756,
+`_truncateRationale` L1050-1067, `_handleDecideResponse` L893-919),
+`docs/specs/0006-somnia-agent-platform-integration.md` (R24/R25/R26, T24/T25/T26).
+**Gate evidence:** `npm run typecheck` PASS; `node --import tsx --test
+src/contract/simulated.transitions.test.ts` → **32/32 PASS**.
+
+**Verdict: FAIL — 1 live finding (parity gap + lying comment), 1 cosmetic note.**
+
+The bulk of the unit is correct and faithful — all prior re-run-1/re-run-2 findings are
+confirmed fixed in the current tree (the re-run-2 W1 `typeof === "function"` tautology
+test and W2 PHI-regex tautology no longer exist in `simulated.transitions.test.ts`;
+the six tests are now all behavioral). `abi.ts`/`types.ts`/`real.ts` wiring is exact:
+the non-payable owner-only `_send("commitRationale", 0n, …)` write is byte-for-byte
+parallel to the sibling `postFeedback`; the `CoverageNegotiationClient.commitRationale`
+signature matches the Solidity arg order; the R25 card (`data-testid="ruling-rationale"`)
+is scoped to the current `reqId`, renders decision label + full rationale + clause ref +
+standard ref + Somnia explorer deep-link, stacks chronologically with `Round {i+1}`,
+returns `null` when empty, and is DOM-below the ruling-meta panel. The sim's `hasRuling`
+guard (`decision !== NeedMoreEvidence`) is exact parity with the contract. But ONE real
+parity gap remains in the truncation mirror, so the gate is non-zero.
+
+### F1 (MEDIUM) — `truncateRationale` does NOT byte-match the contract for a multi-byte codepoint split at the 4096-byte boundary; the comment claims it does
+`src/contract/simulated.ts:599-606` (`SimulatedBackend.truncateRationale`), comment
+`:603-604`. The sim truncates via `new TextDecoder().decode(encoded.slice(0, 4096))`.
+`TextDecoder` (non-fatal default) replaces a partial trailing UTF-8 sequence with the
+replacement character U+FFFD (`EF BF BD`); the Solidity `_truncateRationale`
+(`CoverageNegotiation.sol:1053-1067`) copies the first 4096 **raw bytes** verbatim and
+appends `E2 80 A6`. For any rationale > 4096 bytes whose 4096th-byte boundary falls
+inside a multi-byte codepoint, the two backends therefore emit a **different**
+`RulingRationale.rationale` string AND store a **different** `rationaleHash`. Reproduced:
+a 4095-`a` + `"é"`(C3 A9) + tail input yields sim last-bytes `…61 EF BF BD E2` vs chain
+`…61 C3 E2 80 A6` — not byte-identical, so `keccak256` diverges. The comment at
+`:603-604` ("Decode only the first MAX_BYTES bytes … matches Solidity byte-level
+truncation") is therefore inaccurate: it does not match for the mid-codepoint case, which
+is exactly the case the comment singles out ("may slice mid-codepoint"). The R26
+truncation test (`simulated.transitions.test.ts:597-635`) only exercises ASCII
+(`"A".repeat(4500)`), so it never catches this. Fix: truncate at the byte level without
+lossy re-decode — e.g. build the result from the raw `encoded.slice(0, 4096)` bytes and
+append the 3 ellipsis bytes (`E2 80 A6`) at the byte level (mirroring the Solidity
+`bytes` copy), then `keccak256(bytes)` over that — and add a multi-byte-boundary test
+asserting the sim's emitted bytes + `rationaleHash` equal the raw-byte-truncation form.
+(Even though real and sim never run in the same process, the mirror's stated purpose is
+exact parity so a simulated demo is faithful to what the chain would emit/hash; this is a
+silent correctness gap, and the "matches Solidity" comment lies.)
+
+### Cosmetic (not gated, noted) — duplicate `case` alternative in the R25 e2e scenario
+`web/tests/agent-browser/run.sh:1251`: the rationale-text assertion pattern is
+`*approved*|*Approved*|*approved*` — the first and third alternatives are identical
+(shell `case` is case-sensitive), so the third `*approved*` is dead/redundant. Harmless
+but should be collapsed to `*approved*|*Approved*`.
+
+---
+
+## SPEC-0006 R24/R25/R26 — `commitRationale` keeper path + rationale card (TOTAL-STICKLER, re-run 2, gate FAIL)
+
+**Date:** 2026-06-03 (re-run 2)
+**Branch:** `spec-6-implementation` (working tree, uncommitted) vs `origin/main`.
+**Unit under review:** Wire `commitRationale` through the off-chain stack + render the
+R25 rationale card. Solidity already implemented + tested
+(`contracts/contracts/CoverageNegotiation.sol:756`); this unit touches only off-chain +
+UI: `src/contract/{abi,real,simulated,types}.ts`,
+`src/contract/simulated.transitions.test.ts`, `web/src/views/Detail.tsx`.
+**Files reviewed:** the six above plus `src/types/coverage.types.ts`,
+`web/src/shared.ts`, `contracts/contracts/CoverageNegotiation.sol` (parity target),
+`docs/specs/0006-somnia-agent-platform-integration.md` (R24/R25/R26, T24/T25/T26).
+**Gate evidence:** `npm run typecheck` PASS; `node --import tsx --test
+src/contract/simulated.transitions.test.ts` → 32/32 PASS. (`web/tsconfig.json`
+typecheck surfaces a pre-existing `web/src/client.ts:193` `deploymentBlock` error that
+is unrelated to this unit — `client.ts` has no diff vs `origin/main`; the project gate
+typechecks via the root tsconfig + builds web via vite/esbuild, so it is out of scope.)
+
+**Verdict: FAIL — 2 findings (both weak-test).** All four re-run-1 structural/correctness
+findings are CONFIRMED FIXED in the current tree (see "Re-run 1 findings now fixed"):
+CR1 round label now uses the 1-based chronological index (`Round {i+1}`), not the
+platform `requestId`; CR2 the sim now truncates to 4096 bytes + "…" and hashes the
+truncated form, with a >4096-byte test; CR3 the tests now call `b.commitRationale(...)`
+directly (reflective `Record<string,unknown>` scaffolding + red-phase TDD comments
+removed); CR5 the post-`NeedMoreEvidence` rejection is now tested; CR6 the unreachable
+sim ternary / UI guard are gone. The production code (abi/types/real/simulated) and the
+R25 card are correct and faithful to the contract + spec. Two weak-test residuals remain
+and the gate enumerates "weak tests (assert presence not correctness)" as flaggable.
+
+### W1 (LOW, weak test) — Test (1) asserts `typeof commitRationale === "function"`, a tautology the compiler already guarantees
+`src/contract/simulated.transitions.test.ts:437-443`. `SimulatedBackend implements
+CoverageNegotiationClient`, so the presence and signature of `commitRationale` are a
+compile-time guarantee — `npm run typecheck` (in the gate) fails first if the method is
+deleted or renamed. The runtime `assert.strictEqual(typeof b.commitRationale,
+"function")` therefore exercises nothing the type system doesn't already enforce; it
+asserts presence, not correctness. The real behavioral coverage is in tests (2)/(3)/the
+truncation test. Fix: delete test (1) (the "method exists" guarantee is the typecheck's
+job), or replace it with a behavioral assertion not already covered.
+
+### W2 (LOW, weak test) — No-PHI assertions test clean hardcoded literals through a verbatim-passthrough SUT; they cannot fail on SUT behavior
+`src/contract/simulated.transitions.test.ts` test (3) (`:~530-560`). The test commits
+three author-written clean strings and then asserts the *emitted* strings do not match
+`/[A-Z][a-z]+ [A-Z]/`. But `SimulatedBackend.commitRationale` passes
+`rationale`/`clauseReference`/`standardReference` through verbatim (only the rationale is
+truncated, and only above 4096 bytes), so emitted === input for these short literals.
+The regex was verified to be `false` on all three literals, so the assertion is constant
+`true` regardless of any SUT logic — it tests the fixtures, not the system. The comment
+("verify that the SUT-emitted strings (not the test's own literals)…") asserts a
+distinction that does not exist for a passthrough SUT. The field-PRESENCE half of test
+(3) (`"rationale" in ev`, `"clauseReference" in ev`, …) is legitimate and tests real
+output; only the regex-no-PHI half is tautological. Fix: either drop the regex
+assertions (PHI is the keeper/agent's responsibility, not enforced by the sim, so there
+is nothing to test here) or, if a no-PHI guard is intended behavior, add it to the SUT
+and feed a PHI-bearing input that the SUT must reject/scrub — then the assertion can
+actually fail.
+
+### Re-run 1 findings now fixed (verified this run)
+
+- **CR1 (R25 "Round N" used `requestId`): FIXED.** `RulingRationaleCard`
+  (`web/src/views/Detail.tsx:~1100`) now labels `Round {i + 1}` from the 1-based index
+  in the chronological filtered list — matching R25/T25 "labeled 'Round N'." No
+  `requestId`-as-round rendering remains.
+- **CR2 (sim omitted truncation; "Mirrors" comment lied): FIXED.**
+  `SimulatedBackend.commitRationale` (`src/contract/simulated.ts:~556`) calls
+  `SimulatedBackend.truncateRationale` (4096-byte cap + U+2026 sentinel, mirroring
+  `_truncateRationale` Sol L1053-1067) and stores `keccak256(truncated)`. A 4500-char
+  test asserts the emitted prefix is exactly 4096 UTF-8 bytes + "…" and that
+  `rationaleHash === keccak256(truncated)`. Parity restored; comment no longer lies.
+- **CR3 (reflective `Record<string,unknown>` access + red-phase TDD comments): FIXED.**
+  All commitRationale tests call `b.commitRationale(...)` directly; the
+  `callCommitRationale` helper and the "WRITTEN FIRST (TDD) … all tests FAIL" header are
+  gone.
+- **CR5 (post-`NeedMoreEvidence` divergence untested): FIXED.** `resolve` now sets
+  `hasRuling = decision !== Decision.NeedMoreEvidence` (`simulated.ts:~779`, parity with
+  `_handleDecideResponse` L894-903), and a dedicated test asserts `commitRationale`
+  rejects with `"rationale: no ruling yet"` after a `NeedMoreEvidence` verdict.
+- **CR6 (dead sim ternary + UI guard): FIXED.** The sim emits
+  `requestId: this.lastRulingRequestId(reqId)` (recovers from the last `Ruled` event; no
+  dead non-zero branch) and the UI gates the explorer link on `ev.txHash` (no unreachable
+  `requestId !== undefined` branch).
+
+### Verified correct this pass (not findings)
+
+- `abi.ts` adds the exact `commitRationale(uint256,string,string,string)` signature;
+  selector parity with the contract is exercised by the ABI-presence test.
+- `RealBackend.commitRationale` is a faithful `_send`-wrapped owner-only write,
+  byte-for-byte parallel to the sibling `postFeedback` write; `_send` value `0n` correct.
+- `CoverageNegotiationClient.commitRationale` signature matches the Solidity arg order;
+  doc-comment ("owner-only on-chain", "after handleResponse lands a ruling", R4 no-PHI)
+  is accurate.
+- The R25 card has `data-testid="ruling-rationale"`, is scoped to the current `reqId`
+  (via `timeline = events.filter(e => e.reqId === reqId)`), renders decision label +
+  full rationale + clause ref + standard ref + Somnia explorer deep-link (`txUrl(
+  SOMNIA_TESTNET, ev.txHash)`, matching existing usage), stacks chronologically, returns
+  `null` when empty, and shows "no tx (simulated)" when `txHash` is absent.
+- `decisionLabel` covers all four `Decision` members (`PolicyInvalid` name correct) with
+  a defensive default.
+
+---
+
+## SPEC-0006 R24/R25/R26 — `commitRationale` keeper path + rationale card (TOTAL-STICKLER, gate FAIL)
+
+**Date:** 2026-06-03
+**Branch:** `spec-6-implementation` (working tree, uncommitted) vs `origin/main`.
+**Unit under review:** Wire the `commitRationale` keeper path through the off-chain
+backend stack and render the R25 rationale card. The Solidity is already implemented
+(`contracts/contracts/CoverageNegotiation.sol:756`). Diff adds: `abi.ts` function
+entry, `ContractBackend`/`CoverageNegotiationClient` interface method, `RealBackend`
+`_send` wrapper, `SimulatedBackend.commitRationale` + `lastRulingRequestId` helper,
+`RulingRationaleCard` in `Detail.tsx`, and 6 lib tests in
+`simulated.transitions.test.ts`. Also edits `docs/progress/{coverage,design-conformance}.md`.
+**Files reviewed:** `src/contract/{abi,real,simulated,types}.ts`,
+`src/contract/simulated.transitions.test.ts`, `src/types/coverage.types.ts`,
+`web/src/views/Detail.tsx`, `web/src/shared.ts`,
+`contracts/contracts/CoverageNegotiation.sol`,
+`docs/specs/0006-somnia-agent-platform-integration.md`,
+`docs/progress/{coverage,design-conformance}.md`.
+
+**Verdict: FAIL — 7 findings.** Typecheck PASS; all 30 transitions tests PASS;
+selector `0xcb17707c` matches the canonical signature. But the UI mislabels rounds
+(direct R25 spec drift), the simulated mirror silently omits the contract's rationale
+truncation (parity gap + lying "Mirrors" comment), the lib tests use unnecessary
+reflective access with red-phase TDD comments that now lie about the committed state,
+the no-PHI test is tautological, the `commitRationale`-after-`NeedMoreEvidence`
+divergence is untested, there is dead code in the sim emit and the UI guard, and both
+progress docs overstate conformance / misstate what the diff changed.
+
+### CR1 (HIGH) — R25 "Round N" label renders the platform `requestId`, not a round number (spec drift)
+`web/src/views/Detail.tsx` `RulingRationaleCard`:
+```tsx
+{ev.requestId !== undefined && (
+  <span className="rationale-round"> · round {String(ev.requestId)}</span>
+)}
+```
+SPEC-0006 **R25** (`docs/specs/0006-…md:289`) and **T25** (`:1123`) require each round
+**"labeled 'Round N'."** `ev.requestId` is the Somnia *platform request id* — a large
+monotonic counter (the LLM-Inference agent's requestId, e.g. the 18-digit
+`12847293847561029384`-class value), not a 1-based round index. The card therefore
+renders `· round 12847293847561029384` instead of `Round 1` / `Round 2`. The
+`RulingRationaleEvent` type carries no `round` field (only `requestId`); the round
+number must be derived from the rationale-event index (`i + 1`) or from `n.round` /
+`appealRound`. As written this is a direct R25 conformance failure that is visible in
+the demo. Fix: label with the 1-based position in the chronological list (or the
+negotiation round), not `requestId`.
+
+### CR2 (HIGH) — `SimulatedBackend.commitRationale` omits the contract's rationale truncation; comment claims it "Mirrors" the contract (parity gap + lying comment)
+`src/contract/simulated.ts:548-583`. The doc-comment states it *"Mirrors
+`CoverageNegotiation.sol:commitRationale`"*, but the Solidity (`:765-773`) computes
+`truncated = _truncateRationale(rationale)` (cap `MAX_RATIONALE_BYTES = 4096` + `"…"`
+U+2026 sentinel — R26), then **stores `keccak256(truncated)`** and **emits the
+truncated string**. The sim stores `keccak256(toUtf8Bytes(rationale))` (raw) and emits
+the raw `rationale`. For any rationale > 4096 bytes the sim and chain diverge on *both*
+the emitted event text *and* `rationaleHash`. This is exactly the input the spec calls
+out (R26 / T26: "A mock response with a 4500-char rationale is truncated to 4096 chars
+with `"…"`"). The comment "Mirrors … updates the stored hashes" is therefore a comment
+that lies about behavior. No test exercises the large-input edge case. Fix: replicate
+the 4096-byte truncation in the sim (or drop the "Mirrors" claim and document the
+divergence explicitly), and add a >4096-byte test.
+
+### CR3 (MED) — Lib tests reach `commitRationale` via reflective `Record<string,unknown>` lookup with red-phase TDD comments that now lie (dead scaffolding + weak test)
+`src/contract/simulated.transitions.test.ts:441-462`. Every other backend method in the
+file is called directly (`await b.insurerEngage(...)`, `await b.requestAdjudication(...)`).
+`commitRationale` alone goes through `callCommitRationale`, which does
+`(b as unknown as Record<string, unknown>)["commitRationale"]` with an
+`eslint-disable @typescript-eslint/no-explicit-any, no-unsafe-member-access` and a
+comment justifying it as *"valid because the failing state IS 'the method doesn't exist
+yet.'"* The method now exists and typechecks, so the reflective indirection is dead
+scaffolding that defeats the type system. Worse, test (1)
+(`"SimulatedBackend exposes commitRationale method"`, `:463-470`) asserts
+`typeof b["commitRationale"] === "function"` via that reflective lookup — a tautology
+the compiler already guarantees once the interface method exists; it tests nothing. The
+block header comments (`:422-431`) — *"These tests are WRITTEN FIRST (TDD) … All tests
+FAIL until the production code is added"* — now lie about the committed state (production
+code is present; the tests pass). Fix: call `b.commitRationale(...)` directly, delete
+`callCommitRationale` and the tautological interface-completeness test, and remove the
+red-phase TDD prose.
+
+### CR4 (MED) — No-PHI test is tautological: it asserts the regex doesn't match test-authored clean literals, exercising nothing in the SUT
+`src/contract/simulated.transitions.test.ts:524-563` ("emitted RulingRationale event
+fields contain no PHI patterns"). Neither `SimulatedBackend.commitRationale` nor the
+Solidity `commitRationale` filters/rejects PHI — no-PHI is a producer-side contract
+(R24/R4). The test feeds in clean literals it wrote itself
+(`"Drug not listed under formulary…"`, `"PartD-non-formulary-clause-1"`, `"CMS-PartD-2024"`)
+and then asserts `!/[A-Z][a-z]+ [A-Z]/.test(...)` on those same literals — it can never
+fail regardless of SUT behavior, and there is no PHI-rejection code path to cover. This
+is "assert presence not correctness." Either delete it, or convert it to a real check of
+a guard (e.g. assert `commitRationale` *rejects* a name-pattern input — but that guard
+does not exist in sim or contract today, so this would first require deciding whether
+the producer-side rule is enforced anywhere). The genuine field-presence assertions
+(`"requestId" in ev`, etc.) are fine; the PHI assertions are not.
+
+### CR5 (MED) — `commitRationale` after a `NeedMoreEvidence` "ruling" diverges from the contract and is untested (missing edge case)
+In Solidity `_handleDecideResponse` (`:894-903`), a `NeedMoreEvidence` decision returns
+**before** setting `n.hasRuling = true`, so `commitRationale` reverts
+(`"rationale: no ruling yet"`). In `src/contract/simulated.ts:746-756`, `deliverRuling`
+sets `n.hasRuling = true` *unconditionally at the top* and only afterward branches into
+the `NeedMoreEvidence → EvidenceRequested` path. The new `commitRationale` keys its
+guard off this same `hasRuling` flag, so after a sim `NeedMoreEvidence` ruling the sim
+*allows* `commitRationale` while the chain *reverts*. This pre-existing sim quirk is now
+load-bearing for the reviewed unit, and no test covers the
+`NeedMoreEvidence → commitRationale` path. Fix: set `hasRuling` only on terminal/ruled
+decisions in `deliverRuling` (matching the contract), and add a test that
+`commitRationale` rejects after a `NeedMoreEvidence` outcome.
+
+### CR6 (LOW) — Dead code: sim `requestId` ternary non-zero branch and UI `requestId !== undefined` guard are unreachable
+(a) `src/contract/simulated.ts:572-578`:
+`requestId: n.pendingRequestId === 0n ? this.lastRulingRequestId(reqId) : n.pendingRequestId`.
+`deliverRuling` calls `clearRequest(n)` (`:748`) before any branch, which sets
+`pendingRequestId = 0n`; `commitRationale` is only callable once `hasRuling` is true,
+i.e. after a ruling landed and cleared the request. So `pendingRequestId` is always `0n`
+here and the `: n.pendingRequestId` arm is dead. The 6-line explanatory comment inside
+the ternary restates this. Simplify to `requestId: this.lastRulingRequestId(reqId)`.
+(b) `web/src/views/Detail.tsx`: `ev.requestId !== undefined` guards a required
+(non-optional) `bigint` field on `RulingRationaleEvent`, so it is always true — dead
+guard (and gating the mislabeled value from CR1).
+
+### CR7 (LOW) — Both progress docs overstate conformance and misstate what the diff changed
+- `docs/progress/design-conformance.md` headline now reads *"all five stack layers were
+  already fully implemented prior to this review"* and coverage.md says the `abi.ts`
+  entry is *"already present at L24; confirmed included"* / *"All 5 stack layers
+  confirmed implemented."* The git diff shows `abi.ts:24`, `types.ts:159-165`,
+  `real.ts:364-376`, `simulated.ts:548-596`, and the `Detail.tsx` card are **net-new
+  additions in this working tree** (not pre-existing). The "already implemented /
+  confirmed present" framing is contradicted by the diff under review.
+- design-conformance.md credits Detail **+1 pp** for the card "stacked chronologically by
+  emission order" and claims it "closes the rationale-rendering gap (R25 web+)." Per CR1
+  the card violates R25's "labeled Round N" requirement, so the gap is not closed; the
+  doc quietly substitutes "by emission order" for the spec's "Round N" and books a score
+  bump it has not earned.
+
+### Verified-correct (spot-checked this pass, not findings)
+- `abi.ts:24` `commitRationale(uint256,string,string,string)` → selector `0xcb17707c`
+  matches `ethers.id('commitRationale(uint256,string,string,string)')` and the canonical
+  on-chain signature; `RulingRationale` event ABI parses and matches the Solidity event.
+- `RealBackend.commitRationale` (`real.ts:364-376`) is a faithful thin passthrough via
+  `_send("commitRationale", 0n, …)`, mirroring the other lifecycle writes; the contract
+  performs truncation/owner-gating on-chain, so the raw-string forward is correct for the
+  real path.
+- `CoverageNegotiationClient.commitRationale` signature matches the task spec
+  (`reqId, rationale, clauseReference, standardReference): Promise<void>`).
+- Multi-round chronological *ordering* (array order) is correct; the two-round
+  approve-after-appeal test passes and `lastRulingRequestId` returns the latest `Ruled`
+  requestId for the tested call sequence.
+- `npm run typecheck` clean; `check-ruling-abi` PASS; 30/30 `simulated.transitions.test.ts` PASS.
+
+---
+
 ## Amendment 0008 — real escrow settlement (TOTAL-STICKLER, re-run 2, gate FAIL)
 
 **Date:** 2026-06-03

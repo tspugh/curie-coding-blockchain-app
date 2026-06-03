@@ -1,3 +1,140 @@
+## 2026-06-03 (refresh 8) — `commitRationale` keeper-path wiring + R25 rationale card (security-review, TOTAL-STICKLER re-run)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-derivation from source
+**Base:** `origin/main`
+**Branch:** `spec-6-implementation` + uncommitted working tree
+**Scope:** Re-ran the full hard gate on the keeper-gated `commitRationale` off-chain wiring
+(`abi.ts` L24, `src/contract/types.ts` L166, `src/contract/real.ts` L364-375,
+`src/contract/simulated.ts` L560-591) + the R25 `data-testid="ruling-rationale"` card
+(`web/src/views/Detail.tsx` L1062-1110) + the new `commitRationale` lib tests in
+`simulated.transitions.test.ts`. Every gate result re-derived line-by-line from source;
+`typecheck` clean; `npm run test:lib` → **266/266 pass** including the eight `commitRationale`
+tests (test #65–72).
+**Verdict:** PASS (zero findings)
+
+### Hard gate — independently re-derived (this run)
+
+| Gate | Status | Evidence (re-verified) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | The unit adds no identifier-bearing field. Off-chain `commitRationale` forwards three free-text strings straight to the on-chain `onlyOwner` function (`CoverageNegotiation.sol:756-774`), which **hashes** `clauseReference`/`standardReference` to `bytes32` for storage (R4) and emits the plaintext only in the `RulingRationale` event. PHI-token scan (`ssn`/`[0-9]{3}-[0-9]{2}-[0-9]{4}`/`dob`/`date of birth`/`mrn`/`medical record`/`patient [A-Z]`) over the unit's added lines returned ONLY CSS class-name / JSX-label false positives (`rationale-ref-label`, `Standard:`) — no SSN, DOB, MRN, or patient-name VALUE. Test fixtures are synthetic + non-identifying (`"Drug is FDA-approved and medically necessary per clinical criteria"`, `"FDA-LABEL-2024-adalimumab"`, `"PartD-formulary-clause-3"`, `"A".repeat(4500)`). The R25 card renders only these synthetic event fields. |
+| No secrets | PASS | 64-hex / `private_key` / `api_key` / `mnemonic` / `bearer` / `BEGIN…PRIVATE` scan over the unit's added lines returned nothing. Branch-wide (non-docs) 64-hex scan surfaced only the synthetic `0xdeadbeef…0001` test hash — not in this unit. `.gitignore` changes only ADD ignores (`.codesign/`, `*.bak.*`, `coverage/`). |
+| Signing-key hygiene | PASS | `RealBackend.commitRationale` (real.ts L364-375) is a thin `_send("commitRationale", 0n, …)` write — same owner-signer path as `postFeedback`/`withdraw`, no new key handling, `0n` value. The on-chain function is `onlyOwner` (Sol L761) — the keeper IS the owner in v0 — so authorization lives at the contract boundary, not client-side. `SimulatedBackend.commitRationale` (sim.ts L560-591) skips the owner check (no wallet concept) but keeps the `hasRuling` guard, so it weakens no real authorization surface. Branch-wide scan for newly added wallet/signer/`privateKey`/`SigningKey` constructions: NONE NEW (the two Anvil keys in `real-backend-localnode.mjs` are pre-existing public test vectors, not in this diff's added lines). |
+
+### UI / web review (`Detail.tsx` — R25 rationale card, L1062-1110)
+
+- `RulingRationaleCard` renders `ev.rationale`, `ev.clauseReference`, `ev.standardReference`,
+  and `decisionLabel(ev.decision)` as **JSX text children** — React auto-escapes. No
+  `dangerouslySetInnerHTML` / `innerHTML` anywhere in `web/src` (grep: NONE). No stored/DOM XSS
+  path even though the fields originate from an on-chain event.
+- The explorer deep-link is `txUrl(SOMNIA_TESTNET, ev.txHash)` where `explorerUrl` is a
+  hardcoded trusted constant (`src/config/networks.ts:34`) and only the on-chain `txHash`
+  (not user free-text) is interpolated — no open-redirect / URL-injection vector. Anchor
+  carries `rel="noreferrer"` + `target="_blank"` (no reverse-tabnabbing / referrer leak).
+- `data-testid="ruling-rationale"` + `data-testid="rationale-explorer-link"` present;
+  entries stacked oldest-first in an `<ol>` per round (R25).
+
+### Lib-layer review
+
+- `SimulatedBackend.commitRationale` enforces `must(reqId)` + `hasRuling` (mirrors the
+  Solidity `require(n.hasRuling, "rationale: no ruling yet")`), keccak-hashes the three
+  strings for parity, truncates the rationale at 4096 bytes (R26 parity), and emits
+  `RulingRationale`. It cannot force a ruling, move escrow, or alter `coveredAmount` — it
+  only transcribes onto an already-finalized ruling.
+- New lib tests (#65–72) assert the event shape **verbatim** (field-presence:
+  `rationale`/`decision`/`reqId`/`clauseReference`/`standardReference`), per-reqId isolation,
+  the pre-ruling + post-`NeedMoreEvidence` `"rationale: no ruling yet"` revert parity, R26
+  truncation, the ABI-entry presence, and per-round chronological stacking. Test-only; no
+  production attack surface.
+
+### Accuracy corrections to the prior refresh-7 write-up (NOT gate findings)
+
+The two below are documentation-accuracy fixes to the earlier entry; neither changes the
+PASS verdict, and neither is a security defect:
+
+1. **Test count.** The prior entry cited `264/264` lib tests; the suite is now **266** (it
+   grew with the drug-evidence-map `promptHint`/NO-PHI tests). Verified this run.
+2. **No-PHI assertion claim.** The prior entry stated the new lib test asserts the no-PHI
+   invariant via a `[A-Z][a-z]+ [A-Z]` patient-name regex over the rationale fields. The
+   commitRationale tests in `simulated.transitions.test.ts` do NOT contain such a regex —
+   they assert **field-presence** verbatim and rely on synthetic-only fixtures for the
+   no-PHI property (the `[A-Z][a-z]+ [A-Z]` regex assertion lives in the *contract* test
+   `_containsNamePattern` path and the `drugEvidenceMap.test.ts` NO-PHI test, not here).
+   The hard gate is still PASS because the gate measures whether the **diff** introduces PHI
+   (it does not — fixtures are synthetic), not whether the test harness re-asserts it. A
+   belt-and-suspenders no-PHI regex over the three rationale fields in this test file would
+   be a reasonable (non-blocking) hardening for the build loop.
+
+### Verdict: PASS (zero findings)
+
+---
+
+## 2026-06-03 (refresh 7) — `commitRationale` keeper-path wiring + R25 rationale card (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-derivation
+**Base:** `origin/main` (`d7b5190`)
+**Branch:** `spec-6-implementation` + uncommitted working tree
+**Scope:** Security review of the diff in `.` vs `origin/main`, with the unit under
+review being the off-chain wiring of the keeper-gated `commitRationale` path
+(`abi.ts`, `src/contract/types.ts`, `src/contract/real.ts`, `src/contract/simulated.ts`)
+plus the R25 `data-testid="ruling-rationale"` card in `web/src/views/Detail.tsx`, and a
+new `simulated.transitions.test.ts` lib test asserting the `RulingRationale` emission.
+Re-derived every hard-gate result from source; compiled (`typecheck` clean) and ran the
+lib suite (`264/264` pass, including the new commitRationale tests).
+**Verdict:** PASS (zero findings)
+
+### Hard gate — independently re-derived
+
+| Gate | Status | Evidence (re-verified this run) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | The unit adds no new identifier-bearing field. The off-chain `commitRationale` forwards three free-text strings (`rationale`, `clauseReference`, `standardReference`) straight to the on-chain function, which the authoritative Solidity (`CoverageNegotiation.sol:756`) truncates + **hashes** `clauseReference`/`standardReference` to `bytes32` for storage (R4); only the event carries the plaintext. PHI-token scan over added lines (`patient [A-Z]`, `ssn`/`\d{3}-\d{2}-\d{4}`, `dob`, `mrn`, `medical record`) returned only synthetic, non-identifying test fixtures: `"Drug is FDA-approved and medically necessary per clinical criteria"`, `"FDA-LABEL-2024-adalimumab"`, `"Drug not listed under formulary for this indication"`, and the existing PHI-*absence* assertions (a `namePattern` regex asserting NO `[A-Z][a-z]+ [A-Z]` patient-name match). No patient identifier, SSN, DOB, MRN, or date-of-service in any added line. The UI card renders only these synthetic event fields. |
+| No secrets | PASS | 64-hex / `private_key` / `api_key` / `mnemonic` / `bearer` scan over the unit's added lines (`abi.ts`, `types.ts`, `real.ts`, `simulated.ts`, `Detail.tsx`, test) returned nothing. No credentials, tokens, or key material introduced. The branch-wide scan surfaced only doc references to the *removed* `@anthropic-ai/sdk`/`ANTHROPIC_API_KEY` (assertions that the banned path stays gone) and the pre-existing synthetic `0xdeadbeef…0001` test hash — neither in this unit's diff. |
+| Signing-key hygiene | PASS | `RealBackend.commitRationale` introduces no new key handling: it routes through the existing `_send` helper (the same owner-signer path used by `postFeedback`/`withdraw`/`onRulingTimeout`), passing `0n` value. The on-chain function is `onlyOwner` — the keeper IS the owner in v0 (`CoverageNegotiation.sol:760`), so authorization is enforced at the contract boundary, not client-side. `SimulatedBackend.commitRationale` deliberately skips the owner check (no wallet concept in simulation) but keeps the `hasRuling` guard, so it does not weaken any real authorization surface. No new signer, wallet, or privilege mutation. |
+
+### UI / web review (`Detail.tsx` — R25 rationale card)
+
+- `RulingRationaleCard` renders `ev.rationale`, `ev.clauseReference`, `ev.standardReference`,
+  and the decision label as **JSX text children** — React auto-escapes; no
+  `dangerouslySetInnerHTML`, no `innerHTML`, no raw HTML sink. No stored/DOM XSS path
+  even though the fields originate from an on-chain event.
+- The Somnia explorer deep-link is built by `txUrl(SOMNIA_TESTNET, ev.txHash)` —
+  `explorerUrl` is a hardcoded trusted constant (`src/config/networks.ts`) and `txHash`
+  is an on-chain transaction hash, not user free-text, so there is no open-redirect or
+  URL-injection vector. The anchor carries `rel="noreferrer"` with `target="_blank"`
+  (no reverse-tabnabbing / referrer leak).
+- The card is rendered with `data-testid="ruling-rationale"` and the link with
+  `data-testid="rationale-explorer-link"` per R25; entries are stacked chronologically
+  (oldest-first `<ol>`), matching the spec.
+
+### Lib-layer review (`simulated.ts` / `real.ts` / `abi.ts` / `types.ts`)
+
+- `SimulatedBackend.commitRationale` enforces `must(reqId)` (existence) + `hasRuling`
+  (mirrors the Solidity `require(n.hasRuling, "rationale: no ruling yet")`), keccak-hashes
+  the three strings into stored hashes for parity, and emits `RulingRationale`. No
+  state-machine bypass: it cannot be used to force a ruling, move escrow, or change
+  `coveredAmount` — it only transcribes onto an already-finalized ruling.
+- `RealBackend.commitRationale` is a thin owner-only write via `_send`; the on-chain
+  `onlyOwner` modifier is the real authorization boundary (client-side TS is untrusted
+  by design — the contract gates it).
+- ABI/interface additions (`abi.ts`, `types.ts`) are pure type/signature surface — no
+  executable behavior, no security impact.
+- New lib test asserts the `RulingRationale` event shape (field-presence + verbatim
+  values), the no-PHI invariant (`[A-Z][a-z]+ [A-Z]` patient-name pattern absent from
+  all three string fields), the pre-ruling `"rationale: no ruling yet"` revert parity,
+  the ABI-entry presence, and per-round chronological stacking. Test-only file; no
+  production attack surface.
+
+### Conclusion
+
+PASS — zero findings. The unit adds a keeper-gated, owner-authorized transcription path
+whose only authority boundary (the Solidity `onlyOwner` + `hasRuling` guards) is intact
+and correctly mirrored in simulation; it introduces no PHI, no secrets, no new
+key-handling, and no XSS/redirect sink in the UI. Hard gate satisfied on all three axes
+(PHI, secrets, signing-key hygiene). `typecheck` clean; `264/264` lib tests green.
+
+---
+
 ## 2026-06-03 (refresh 6) — Amendment 0008 escrow: independent gate re-run (security-review, TOTAL-STICKLER)
 
 **Date:** 2026-06-03

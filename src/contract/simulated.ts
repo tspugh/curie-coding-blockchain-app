@@ -545,6 +545,101 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     this.emit({ name: "FeedbackPosted", reqId, msgHash, uri });
   }
 
+  /**
+   * Keeper commits the receipt-sourced rationale for a finalized ruling
+   * (SPEC-0006 R25/R26). Mirrors `CoverageNegotiation.sol:commitRationale`:
+   * - Requires `hasRuling` (reverts on NeedMoreEvidence outcomes, matching chain).
+   * - Truncates rationale to MAX_RATIONALE_BYTES (4096) bytes + "…" U+2026 sentinel
+   *   when longer (mirrors `_truncateRationale` in Solidity L1053-1067, R26).
+   * - Stores keccak256 of the TRUNCATED string (not the raw input) so the hash
+   *   matches the on-chain value for inputs > 4096 bytes.
+   * - Emits `RulingRationale` with the truncated rationale.
+   * In simulation mode the owner check is skipped (no wallet concept), but the
+   * `hasRuling` guard is enforced so simulated tests catch the pre-ruling misuse.
+   */
+  async commitRationale(
+    reqId: bigint,
+    rationale: string,
+    clauseReference: string,
+    standardReference: string,
+  ): Promise<void> {
+    const n = this.must(reqId);
+    if (!n.hasRuling) throw new Error("rationale: no ruling yet");
+
+    // Truncate rationale to MAX_RATIONALE_BYTES (4096) bytes + "…" sentinel (R26).
+    // Mirrors CoverageNegotiation.sol:_truncateRationale (L1053-1067). We work in
+    // RAW BYTES, not a re-encoded string: the contract hashes over the truncated
+    // byte array, and for an input whose 4096-byte boundary splits a multi-byte
+    // codepoint, decoding-then-re-encoding would corrupt the boundary byte to
+    // U+FFFD and diverge the hash. So hash over the bytes; decode only for display.
+    const truncatedBytes = SimulatedBackend.truncateRationaleBytes(rationale);
+    const truncated = new TextDecoder().decode(truncatedBytes);
+
+    // Store keccak256 of the TRUNCATED BYTES (byte-identical to on-chain
+    // keccak256(bytes(_truncateRationale(rationale))) for any input length).
+    n.rationaleHash = ethers.keccak256(truncatedBytes);
+    n.clauseRef = ethers.keccak256(ethers.toUtf8Bytes(clauseReference));
+    n.standardRef = ethers.keccak256(ethers.toUtf8Bytes(standardReference));
+
+    // pendingRequestId is always 0 here: clearRequest zeros it before any ruling
+    // delivery, and commitRationale is only callable after hasRuling is set (which
+    // requires a ruling, which requires clearRequest to have run). Recover the
+    // requestId from the most recent Ruled event instead.
+    this.emit({
+      name: "RulingRationale",
+      reqId,
+      requestId: this.lastRulingRequestId(reqId),
+      decision: n.lastDecision,
+      rationale: truncated,
+      clauseReference,
+      standardReference,
+    });
+  }
+
+  /**
+   * Byte-level mirror of `CoverageNegotiation.sol:_truncateRationale` (L1053-1067).
+   * Returns the RAW truncated bytes: the first MAX_RATIONALE_BYTES (4096) UTF-8
+   * bytes of `s`, plus the 3-byte ellipsis sentinel (U+2026 = E2 80 A6) when
+   * truncation occurs. This is the authoritative form — `keccak256` over these
+   * bytes equals the on-chain `rationaleHash` even when the 4096-byte boundary
+   * splits a multi-byte codepoint (where a decode→re-encode round-trip would
+   * corrupt the boundary to U+FFFD and diverge the hash).
+   */
+  static truncateRationaleBytes(s: string): Uint8Array {
+    const MAX_BYTES = 4096;
+    const encoded = new TextEncoder().encode(s);
+    if (encoded.length <= MAX_BYTES) return encoded;
+    const result = new Uint8Array(MAX_BYTES + 3);
+    result.set(encoded.subarray(0, MAX_BYTES));
+    result.set([0xe2, 0x80, 0xa6], MAX_BYTES); // U+2026 HORIZONTAL ELLIPSIS
+    return result;
+  }
+
+  /**
+   * Display form of {@link truncateRationaleBytes}: decodes the truncated bytes
+   * to a string (a split trailing codepoint renders as U+FFFD — identical to how
+   * any UTF-8 consumer renders the contract's raw-byte `RulingRationale.rationale`
+   * field). Use {@link truncateRationaleBytes} for hashing, this for display.
+   */
+  static truncateRationale(s: string): string {
+    return new TextDecoder().decode(SimulatedBackend.truncateRationaleBytes(s));
+  }
+
+  /**
+   * Recover the requestId from the most recent `Ruled` event for `reqId`.
+   * Used by `commitRationale` after `pendingRequestId` has been cleared
+   * (clearRequest zeros it at ruling delivery).
+   */
+  private lastRulingRequestId(reqId: bigint): bigint {
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      const e = this.history[i];
+      if (e && e.reqId === reqId && e.name === "Ruled") {
+        return (e as { name: "Ruled"; requestId: bigint }).requestId;
+      }
+    }
+    return 0n;
+  }
+
   // ---------------------------------------------------------------------
   // Reads (mirror Solidity views)
   // ---------------------------------------------------------------------
@@ -700,7 +795,11 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     const receiptId = this.agent.receiptId ?? requestId;
 
     n.lastDecision = decision;
-    n.hasRuling = true;
+    // hasRuling is set ONLY for terminal/ruled decisions (mirrors Solidity
+    // _handleDecideResponse L894-903: NeedMoreEvidence returns before setting hasRuling).
+    // commitRationale guards on hasRuling, so after a NeedMoreEvidence outcome the
+    // sim must REJECT commitRationale, matching the chain behaviour.
+    n.hasRuling = decision !== Decision.NeedMoreEvidence;
     n.rationaleHash = rationaleHash;
     n.clauseRef = clauseRef;
     n.standardRef = standardRef;

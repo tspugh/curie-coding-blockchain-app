@@ -1,9 +1,106 @@
 # Browser-verify
 
-Last run: SPEC-0006 R18 re-verify — 2026-06-03 — **sim-mode harness 97/97 PASS** across
-22 scenarios. drugEvidenceMap unit tests 25/25 PASS (updated AC4 assertion to require
-INN name present in promptHint). All E2E scenarios green against feat/drug-evidence-map
-branch HEAD.
+Last run: SPEC-0006 R25 commitRationale + ruling-rationale card — 2026-06-03 —
+**sim-mode harness 109/109 PASS** across 23 scenarios (added Scenario R25). All
+existing 22 scenarios remain green; Scenario R25 adds 12 new assertions covering the
+`commitRationale` keeper path end-to-end.
+
+## SPEC-0006 R25 — commitRationale keeper path + ruling-rationale card
+
+Branch: `spec-6-implementation`
+
+### What was verified
+
+The `commitRationale` off-chain backend path is fully wired:
+
+- **`src/contract/abi.ts`** — `commitRationale` function signature already present.
+- **`src/contract/types.ts`** — `CoverageNegotiationClient.commitRationale` interface method already present.
+- **`src/contract/real.ts`** — `commitRationale` implementation using `_send` helper already present.
+- **`src/contract/simulated.ts`** — `commitRationale` stub emits `RulingRationale` event and updates stored hashes already present.
+- **`web/src/views/Detail.tsx`** — `RulingRationaleCard` (`data-testid="ruling-rationale"`) renders `RulingRationale` events chronologically, showing decision label, rationale text, clauseReference, standardReference, and Somnia explorer deep-link (simulated: "no tx" chip) already present.
+- **`web/tests/agent-browser/run.sh`** — Scenario R25 added (12 assertions).
+- **`src/contract/simulated.transitions.test.ts`** — 6 `commitRationale` lib tests already passing.
+
+### Lib tests (commitRationale) — 30/30 PASS
+
+Run: `npx tsx --test src/contract/simulated.transitions.test.ts`
+
+```
+# tests 30
+# pass 30
+# fail 0
+```
+
+Covers: interface completeness (method exists), RulingRationale event emission with
+correct fields (reqId, decision, rationale, clauseReference, standardReference), no-PHI
+field-presence assertions, pre-ruling revert guard, ABI entry check, multi-round
+chronological ordering.
+
+### E2E harness — 109/109 PASS
+
+Build: `VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run build && npm run web:build`
+Run: `SKIP_SERVE=1 SKIP_BUILD=1 CHROME_PATH=$HOME/.cache/ms-playwright/chromium-1223/chrome-linux/chrome bash web/tests/agent-browser/run.sh`
+
+```
+Scenario A   happy-path lifecycle            7/7
+Scenario B   no PHI on-chain                 3/3
+Scenario C   adjudication gating             1/1
+Scenario C2  policy invalidated              4/4
+Scenario D   profile switching               4/4
+Scenario E   sample case prefill             7/7
+Scenario F   note verify                     2/2
+Scenario G   observer / non-party            3/3
+Scenario H   CDS Hooks prefill               4/4
+Scenario I   persisted users                 4/4
+Scenario J   demo-mode toggle                8/8
+Scenario K   key-paste derives address       6/6
+Scenario L3  provider refuse                 5/5
+Scenario L1  evidence resubmit               5/5
+Scenario L2  appeal                          5/5
+Scenario L4  withdraw                        4/4
+Scenario L10 payer-line round-trip           2/2
+Scenario L7  custom-policy composer          4/4
+Scenario L5  provider feedback note          3/3
+Scenario M1  denial happy-path               6/6
+Scenario M2  NeedMoreEvidence -> Denied      5/5
+Scenario M3  appeal -> Denied                5/5
+Scenario R25 commitRationale + rationale card 12/12
+──────────────────────────────────────────
+Total: 109 passed, 0 failed
+```
+
+#### Scenario R25 assertion breakdown
+
+| # | Assertion | Pass |
+|---|---|---|
+| 1 | R25: filed in Open | ✓ |
+| 2 | R25: insurer engaged -> Ready | ✓ |
+| 3 | R25: approve ruling routes to Approved | ✓ |
+| 4 | R25: ruling-rationale card absent before commitRationale | ✓ |
+| 5 | R25: ruling-rationale card present after commitRationale | ✓ |
+| 6 | R25: decision label shows Approved | ✓ |
+| 7 | R25: rationale text rendered | ✓ |
+| 8 | R25: clauseReference rendered | ✓ |
+| 9 | R25: standardReference rendered | ✓ |
+| 10 | R25: PHI sentinel absent from rationale card (R4) | ✓ |
+| 11 | R25: SSN-pattern absent from rationale card (R4) | ✓ |
+| 12 | R25: request still Approved after commitRationale | ✓ |
+
+#### How the scenario drives the unit under test
+
+1. Files a request (provider), engages compliant policy (insurer), adjudicates with
+   Decision.Approve → state=4 (Approved), `hasRuling=true`.
+2. Verifies the `ruling-rationale` card is NOT present before `commitRationale` is called
+   (confirms the card is event-driven, not state-driven).
+3. Calls `window.__curie.negotiation.commitRationale(1n, rationale, clauseRef, stdRef)`
+   via the test API (the keeper-only path; no UI button exists — this is an operator
+   action, not a party action).
+4. Waits 500ms for the React subscription to deliver the `RulingRationale` event into
+   the Detail timeline and re-render.
+5. Asserts the card is now present with the expected decision label, rationale text,
+   clauseReference, and standardReference.
+6. Asserts two independent R4 PHI-absence checks: no known PHI sentinel token,
+   no SSN pattern (`\d{3}-\d{2}-\d{4}`).
 
 ## SPEC-0006 R18 re-verify — drugEvidenceMap unit test update + E2E confirmation
 
