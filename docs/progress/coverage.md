@@ -2,6 +2,108 @@
 
 ---
 
+## 2026-06-03 (refresh 5) — drugEvidenceMap + Create.tsx wiring; 98-test hardhat suite + 234-test src+web/src suite
+
+**Date:** 2026-06-03 · **Branch:** `spec-6-implementation`
+**Tool (contracts/):** `npx hardhat coverage` (solidity-coverage v0.8.17)
+**Tool (src/ + web/src/):** `node --experimental-test-coverage --import tsx --test "src/**/*.test.ts" "web/src/**/*.test.ts"` (Node v22)
+**Tests (contracts/):** 98/98 PASS · **Tests (src/ + web/src/):** 234/234 PASS
+
+### Summary of unit changes verified in this run
+
+| Area | Change |
+|---|---|
+| `web/src/drugEvidenceMap.ts` | New: curated `{drugName → {evidenceUrl, promptHint}}` map for the six SPEC-0006 R18 drugs (Adalimumab, Semaglutide, Ustekinumab, Lecanemab, Tirzepatide, Dupilumab) plus brand-name aliases; `evidenceForDrug()` performs case-insensitive, parenthetical-strip lookup |
+| `web/src/drugEvidenceMap.test.ts` | 25 new unit tests (AC1–AC4 + PHI-free invariant): map structure, brand-alias resolution (Humira/Ozempic/Wegovy/Stelara/Leqembi/Mounjaro/Zepbound/Dupixent), case-insensitive matching, RxNorm/NDC suffix strip, unknown→null, empty/whitespace→null |
+| `web/src/views/Create.tsx` | Wired: `applyDrugLookup()` calls `evidenceForDrug()` on drug-name entry; auto-fills `agentEvidenceUrl` + `agentPromptHint` state; `create-submit` button disabled when either field is empty; `onSubmit` uses values from state (no hardcoded MedlinePlus fallback or generic hint) |
+
+### Coverage results
+
+#### contracts/
+
+```
+--------------------------|----------|----------|----------|----------|----------------|
+File                      |  % Stmts | % Branch |  % Funcs |  % Lines |Uncovered Lines |
+--------------------------|----------|----------|----------|----------|----------------|
+ contracts/               |    96.65 |    85.29 |      100 |    98.01 |                |
+  CoverageNegotiation.sol |    96.65 |    85.29 |      100 |    98.01 |... 918,920,921 |
+  ISomniaAgent.sol        |      100 |      100 |      100 |      100 |                |
+ contracts/mocks/         |      100 |      100 |      100 |      100 |                |
+  MockAgentPlatform.sol   |      100 |      100 |      100 |      100 |                |
+  RevertingReceiver.sol   |      100 |      100 |      100 |      100 |                |
+--------------------------|----------|----------|----------|----------|----------------|
+All files                 |    96.77 |    85.47 |      100 |    98.19 |                |
+--------------------------|----------|----------|----------|----------|----------------|
+```
+
+**Line: 98.19% PASS · Branch: 85.47% PASS** (threshold: ≥ 85% both)
+
+Remaining uncovered lines in `CoverageNegotiation.sol` (lines 918, 920, 921):
+- Inside `_benchmarkCap`'s overflow-detection path (`unchecked` block). `costPlusUnitPrice` and `nadacUnitPrice` are reserved at 0 in string-token mode (SPEC-0006); no public setter exists for them. Structurally unreachable. Retained for `priceBasisOf` API compatibility only.
+
+#### src/ + web/src/ (combined node coverage run)
+
+```
+# file                                               | line % | branch % | funcs % | uncovered lines
+# src
+#  config
+#   networks.ts                                      | 100.00 |   100.00 |  100.00 |
+#  content
+#   content.ts                                       | 100.00 |   100.00 |  100.00 |
+#  contract
+#   simulated.ts                                     |  96.04 |    75.44 |   70.59 | 88 90 101-102 148-149 154 156-164 166 168-171 175-176 197 199-202 226 290-293
+#  data
+#   policies.ts                                      | 100.00 |   100.00 |  100.00 |
+#  integrations/cds-hooks
+#   fixture.ts                                       | 100.00 |   100.00 |  100.00 |
+#   index.ts                                         | 100.00 |   100.00 |  100.00 |
+#   mapper.ts                                        | 100.00 |    95.65 |  100.00 |
+#  profiles
+#   profiles.ts                                      | 100.00 |   100.00 |  100.00 |
+#  protocol
+#   ladders.ts                                       | 100.00 |   100.00 |  100.00 |
+#   packet.ts                                        | 100.00 |   100.00 |  100.00 |
+#   revertReasonMap.ts                               | 100.00 |   100.00 |  100.00 |
+#   scenarioFixtures.test-helpers.ts                 | 100.00 |    87.50 |  100.00 |
+#   scenarios.commercial-policy-void.test.ts         | 100.00 |    84.21 |  100.00 |
+#   scenarios.medicaid-denied-then-appealed.test.ts  | 100.00 |    84.21 |  100.00 |
+#   scenarios.partd-approvable.test.ts               | 100.00 |   100.00 |  100.00 |
+#   somniaInterfaceDrift.test.ts                     | 100.00 |   100.00 |  100.00 |
+#  types
+#   coverage.types.ts                                | 100.00 |   100.00 |  100.00 |
+#  users
+#   userStore.ts                                     | 100.00 |    93.10 |   90.00 |
+#  wallet
+#   wallet.ts                                        |  89.04 |    84.00 |   77.78 | 12-19 30-36 52
+# web
+#  src
+#   drugEvidenceMap.ts                               | 100.00 |   100.00 |  100.00 |
+# all files                                          |  99.25 |    93.63 |   96.24 |
+```
+
+**Aggregate line: 99.25% PASS · Aggregate branch: 93.63% PASS** (threshold: ≥ 85% both)
+
+`web/src/drugEvidenceMap.ts` is now measured at 100% line and branch — the first `web/src/` source file with automated unit coverage.
+
+Per-file notes on files below 85% branch individually:
+- `src/contract/simulated.ts` branch **75.44%** — below 85% per-file. Uncovered branches are simulation-layer paths for lesser-exercised transitions (`postFeedback`, `onRulingTimeout`, `settle`, `withdraw`, `refuse`). Tree aggregate (93.63%) is above threshold.
+- `src/wallet/wallet.ts` branch **84.00%** — below 85% per-file. Uncovered lines 12–19, 30–36, 52 are `RealWallet` construction requiring a live provider (known-exempt path). Tree aggregate is above threshold.
+
+### Overall verdict
+
+| Scope | Line % | Branch % | Threshold | Pass? |
+|---|---|---|---|---|
+| `contracts/` | 98.19 | 85.47 | ≥ 85% both | **PASS** |
+| `src/ + web/src/` (aggregate) | 99.25 | 93.63 | ≥ 85% both | **PASS** |
+
+**OVERALL: PASS** across all measured trees.
+
+Per-file under-covered files (below 85% branch individually, though tree aggregates pass):
+- `src/contract/simulated.ts`: 75.44% branch (tree aggregate 93.63% — PASS)
+- `src/wallet/wallet.ts`: 84.00% branch (tree aggregate 93.63% — PASS)
+
+---
+
 ## 2026-06-03 (refresh 4) — SPEC-0006 R14/R15/R17 per-neg fields gate check; 98-test hardhat suite + 209-test src suite
 
 **Date:** 2026-06-03 · **Branch:** `spec-6-implementation`

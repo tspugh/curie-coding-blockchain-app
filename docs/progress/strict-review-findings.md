@@ -1,3 +1,102 @@
+## Tick 86 — SPEC-0006 R16/R18 drug-evidence map + Create.tsx wiring (strict-review)
+
+**Date:** 2026-06-03
+**Scope:** `web/src/drugEvidenceMap.ts` (new), `web/src/drugEvidenceMap.test.ts`
+(new), `web/src/views/Create.tsx` (modified). Reviewed against SPEC-0006
+R16, R17, R18, R20 and the §3.8 design sketch. Unit scope per the work order:
+curated `{drug → {evidenceUrl, promptHint}}` map covering the six R18 drugs,
+wired into `Create.tsx` so a case-insensitive drug-name lookup auto-fills the
+`agentEvidenceUrl` + `agentPromptHint` fields, manual override preserved, and
+`create-submit` disabled while either field is empty, replacing the hardcoded
+MedlinePlus-root URL + generic prompt in `onSubmit`.
+
+**Verdict:** FAIL (1 finding promoted)
+
+### CRITICAL
+- (none)
+
+### MEDIUM
+- (none)
+
+### LOW
+- **`web/src/drugEvidenceMap.test.ts:253-267` — comment lies about the
+  assertion (weak test: asserts presence, not correctness).** The test
+  `"every entry's promptHint references a drug-specific question (not generic
+  R/A boilerplate)"` carries a comment stating it verifies "each hint ... mentions
+  the drug (or its indication)" and that "a pure generic template would fail this
+  on brand-name-only entries where the hint doesn't reference the drug name
+  specifically." The only assertion in the body is `assert.ok(hint.length >= 20,
+  ...)`. A 20-character generic template (e.g. `"Is it necessary???xx"`) passes;
+  nothing checks that the hint references the drug or indication. The comment
+  describes a correctness check the code does not perform, and the test name
+  ("references a drug-specific question") over-claims relative to what it
+  enforces. This is the exact AC4 intent the test was written to defend (R15's
+  "the hardcoded 'rheumatoid arthritis' generic prompt is deleted") — so the
+  test gives false confidence on the one requirement it names. Fix: either assert
+  the hint contains the canonical drug key / a known indication substring (the
+  data supports this — every entry's `promptHint` names the INN), or rewrite the
+  comment to state the test only enforces a minimum length. As written it is a
+  lying comment over a presence-only assertion.
+
+### NITs (not promoted)
+- `drugEvidenceMap.ts:11-16` vs spec §3.8 — the spec's `EvidenceEntry` sketch
+  declares `drugName` and `defaultIndication` fields; the implementation keeps
+  only `evidenceUrl` + `promptHint`. Not promoted: the work order explicitly
+  scopes the entry to `{evidenceUrl, promptHint}`, the map key already IS the
+  normalised drug name (so `drugName` would be redundant), and §3.8 is a `{ … }`
+  sketch, not a binding shape. Omitting `defaultIndication` is correct scoping
+  for this unit (indication-bearing sample cases are R18/R19 follow-on work,
+  out of scope here). No consumer references the dropped fields.
+- `drugEvidenceMap.ts:26-56` vs R18 "Evidence URL family" column — R18's table
+  lists FDA-label/DailyMed for rows 1-4,6 and a Medicaid step-therapy fixture
+  for tirzepatide (row 5); the implementation uses MedlinePlus drug pages for
+  five entries and an FDA-label PDF for lecanemab. Not promoted: §3.8's own
+  comment lists "FDA label / DailyMed / MedlinePlus" as acceptable families, the
+  operative liveness constraint is R21 (URLs must resolve `200`/`30x`) and R21's
+  pre-submit check + R23 nightly link-check are out of this unit's scope. Flagged
+  only so the R18 Scenario authors (R19) align the per-example URL family with
+  the table when they land the e2e fixtures.
+- `drugEvidenceMap.ts:84-91` `normalise()` strips from the first `(` to end of
+  string (`/\s*\(.*$/`). `"Adalimumab (Humira) 40mg"` → `"adalimumab"` matches,
+  but a trailing-only token with no paren (e.g. `"Adalimumab 40mg/0.8mL"`) does
+  NOT normalise to a key and returns `null` → falls through to manual override.
+  Correct per R16 (only RxNorm/NDC *parenthetical* trailers are specified) and
+  R20 (unknown → manual path), so behaviour is right; noted only because the
+  doc-comment says "prefix-strip on RxNorm/NDC suffixes" which a reader might
+  over-read as also stripping non-parenthetical dose strings. Comment is
+  technically accurate (it says "parenthetical suffix") — not promoted.
+- `Create.tsx:55-62` `applyDrugLookup` only *sets* the two fields when a map
+  entry is found; it never *clears* them when the drug name is edited to an
+  unknown value. Intentional and correct (preserves manual override / a prior
+  auto-fill while the user keeps typing; clearing would fight the user), and
+  R17's submit-gate still enforces non-empty. Not a finding.
+
+### Whole-codebase / cross-cutting checks
+- Tests run green in isolation: `node --import tsx --test
+  web/src/drugEvidenceMap.test.ts` → 25/25 pass.
+- `tsc --noEmit -p web/tsconfig.json` reports errors only in `shared.ts`,
+  `Detail.tsx`, `client.ts` — files this unit does not touch (pre-existing
+  spec-6 branch baseline, unrelated to R16/R18). `Create.tsx` and
+  `drugEvidenceMap.ts` typecheck clean (no new errors introduced).
+- No dead code / unused exports: `DRUG_EVIDENCE_MAP`, `evidenceForDrug`,
+  `EvidenceEntry` are all consumed (Create.tsx imports `evidenceForDrug`; the
+  test imports all three). `BRAND_ALIASES` and `normalise` are module-private
+  and used by `evidenceForDrug`.
+- No over-abstraction: a flat record + alias table + one normalise helper is the
+  minimum shape for case-insensitive + brand-alias + paren-strip lookup. No
+  premature generality.
+- No copy-paste DRY violation: the eight brand-alias tests are repetitive but
+  each pins a distinct alias→INN mapping (legitimate per-case assertions, not
+  duplicated logic).
+- R20 (custom acceptance) honoured: unknown/empty/whitespace → `null`, no drug
+  whitelist; manual override fields remain editable and gate submission.
+- AC4 honoured at the call site: `onSubmit` now passes
+  `agentEvidenceUrl.trim()` / `agentPromptHint.trim()` from state; the old
+  `"https://medlineplus.gov/druginfo/"` root URL and
+  `` `Is coverage for ${drug} medically necessary...` `` generic hint are gone.
+
+---
+
 ## Tick 85 — SPEC-0005 R23 cost-estimator (strict-review)
 
 **Date:** 2026-05-30

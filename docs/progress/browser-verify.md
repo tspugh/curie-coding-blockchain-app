@@ -1,9 +1,84 @@
 # Browser-verify
 
-Last run: tick 138 — 2026-05-30 — **sim-mode harness 99/99 PASS** across
-21 scenarios. No regressions since tick 113. Commits since then (ticks
-114–138) touched contracts/ branch coverage, test tooling, and docs/
-only — no web/ or src/ changes that affected the compiled sim bundle.
+Last run: SPEC-0006 R18 unit — 2026-06-03 — **sim-mode harness 97/97 PASS** across
+22 scenarios. SPEC-0006 R14/R15/R17 (agentEvidenceUrl + agentPromptHint) and
+SPEC-0006 R18 (drugEvidenceMap, Create.tsx auto-fill + form validation) landed.
+Harness updated to match SPEC-0006 R24 semantics (coveredAmount = requestedAmount,
+no AI price cap; ruling-meta metadata rows removed per simplified 4-arg Ruled event).
+
+## SPEC-0006 R18 unit — drugEvidenceMap + Create.tsx
+
+HEAD commit: `feat/drug-evidence-map` branch — SPEC-0006 R18 unit (drugEvidenceMap.ts,
+Create.tsx auto-fill, form-validation gate).
+
+Changes relative to tick 138 (`e28ec81` / pre-SPEC-0006):
+
+### What shipped in this unit (SPEC-0006 R18)
+
+- `web/src/drugEvidenceMap.ts` — curated drug→evidence map for the six R18 examples
+  (Adalimumab, Semaglutide, Ustekinumab, Lecanemab, Tirzepatide, Dupilumab) with
+  brand-name aliases and RxNorm-suffix normalisation. `evidenceForDrug()` exported.
+- `Create.tsx` — drug-name `onChange` now calls `applyDrugLookup()` which auto-fills
+  `agentEvidenceUrl` + `agentPromptHint` from the map. Submit button disabled when
+  either field is empty (form-validation gate). Manual override of both fields allowed.
+
+### SPEC-0006 compatibility fixes also landed (regression debt from ac142c1)
+
+Three regressions introduced by the `ac142c1` inferString migration (SPEC-0006 R24
+simplified the 4-arg Ruled event, removing rationaleHash/clauseRef/receiptId/
+usedReferenceIndices/policyVoidedClauseIndices and the PolicyFlagged event type):
+
+1. **`web/src/shared.ts`** — `describeEvent` case "Ruled" called `shortHex(e.clauseRef)`
+   where `clauseRef` no longer exists → runtime TypeError crashing the Detail timeline.
+   Fixed: simplified Ruled description; added RulingRationale case; removed PolicyFlagged
+   cases from describeEvent, eventTone, eventAttribution.
+
+2. **`web/src/views/Detail.tsx`** — `VerifyOnChain` component accessed `event.rationaleHash`,
+   `event.clauseRef`, `event.receiptId` for Ruled events → runtime crash. Fixed: removed
+   stale accesses; VerifyOnChain now only shows hashes for PolicyInvalidated.
+   Also: `ruling-meta` block removed `lastRuled.usedReferenceIndices` and
+   `lastRuled.policyVoidedClauseIndices` access (fields no longer in RuledEvent);
+   `policyFlagged` find-in-timeline no longer includes "PolicyFlagged" (removed from schema).
+
+3. **`run.sh` Scenario A** — `covered = min(requested, costPlus×qty)` assertion updated
+   to `covered = requestedAmount` per SPEC-0006 R24 (no AI price cap).
+   **Scenario C2** — `ruling-meta surfaces R23 voided clauses` and `R11 cited references`
+   assertions removed (those testids no longer render, per simplified Ruled event).
+
+### Assertion count delta
+
+- Tick 138: 99 assertions across 21 scenarios
+- SPEC-0006 R18 unit: 97 assertions across 22 scenarios
+  - Removed: 2 assertions (C2 ruling-meta voided-clauses + cited-refs rows, per SPEC-0006)
+  - Added: 0 new assertions for the drugEvidenceMap unit (unit is tested via unit tests)
+  - Note: the 22nd scenario was already present in run.sh (L10/L7/L5/M1/M2/M3 added in ticks 101-113)
+
+```
+Scenario A  happy-path lifecycle           7/7   (coverage: R6a updated to SPEC-0006 R24)
+Scenario B  no PHI on-chain                3/3
+Scenario C  adjudication gating            1/1
+Scenario C2 policy invalidated             4/4   (was 6/6; -2 ruling-meta rows removed)
+Scenario D  profile switching              4/4
+Scenario E  sample case prefill            7/7
+Scenario F  note verify                    2/2
+Scenario G  observer / non-party           3/3
+Scenario H  CDS Hooks prefill              4/4
+Scenario I  persisted users                4/4
+Scenario J  demo-mode toggle               8/8
+Scenario K  key-paste derives address      6/6
+Scenario L3 provider refuse                5/5
+Scenario L1 evidence resubmit              5/5
+Scenario L2 appeal                         5/5
+Scenario L4 withdraw                       4/4
+Scenario L10 payer-line round-trip         2/2
+Scenario L7  custom-policy composer        4/4
+Scenario L5  provider feedback note        3/3
+Scenario M1  denial happy-path             6/6
+Scenario M2  NeedMoreEvidence -> Denied    5/5
+Scenario M3  appeal -> Denied              5/5
+──────────────────────────────────────────
+Total: 97 passed, 0 failed
+```
 
 ## Tick 138 — routine refresh re-run
 

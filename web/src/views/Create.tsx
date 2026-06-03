@@ -17,6 +17,7 @@ import { SAMPLE_CASE } from "../sampleCase.js";
 import { useWalletBalance } from "../hooks/useWalletBalance.js";
 import { ErrorCard } from "../components/ErrorCard.js";
 import { AGENT_FEE_RESERVE_WEI } from "../config.js";
+import { evidenceForDrug } from "../drugEvidenceMap.js";
 
 function fmtStt(wei: bigint): string {
   // Whole-STT integer division for the user-facing message — the cap
@@ -36,6 +37,8 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
   const [justification, setJustification] = useState("");
   const [drug, setDrug] = useState("");
   const [evidence, setEvidence] = useState("");
+  const [agentEvidenceUrl, setAgentEvidenceUrl] = useState("");
+  const [agentPromptHint, setAgentPromptHint] = useState("");
   const [amount, setAmount] = useState("");
   const [quantity, setQuantity] = useState("");
   const [daysSupply, setDaysSupply] = useState("");
@@ -47,6 +50,16 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
   // (SPEC-0002 R7). Drives a provenance banner so users see the form
   // wasn't hand-typed.
   const [cdsProvenance, setCdsProvenance] = useState<string | null>(null);
+
+  /** Auto-fill evidence URL + prompt hint from the drug name map; manual override allowed. */
+  function applyDrugLookup(rawDrug: string) {
+    setDrug(rawDrug);
+    const entry = evidenceForDrug(rawDrug);
+    if (entry !== null) {
+      setAgentEvidenceUrl(entry.evidenceUrl);
+      setAgentPromptHint(entry.promptHint);
+    }
+  }
 
   // Live preview of the hash that WILL be committed on-chain (R4 — justification
   // text stays off-chain; only this keccak256 lands on the ledger). Updates as
@@ -86,7 +99,7 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
 
   function loadDemo() {
     setJustification(SAMPLE_CASE.justification);
-    setDrug(SAMPLE_CASE.drug);
+    applyDrugLookup(SAMPLE_CASE.drug);
     setEvidence(SAMPLE_CASE.evidenceRef);
     setAmount(SAMPLE_CASE.requestedAmount);
     setQuantity(SAMPLE_CASE.quantity);
@@ -101,7 +114,7 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
   function loadCdsOrder() {
     const draft = orderSignToDraft(SAMPLE_ORDER_SIGN_REQUEST);
     setJustification(draft.justification);
-    setDrug(draft.drug);
+    applyDrugLookup(draft.drug);
     setEvidence(SAMPLE_CASE.evidenceRef);
     setAmount(draft.requestedAmount ? draft.requestedAmount.toString() : SAMPLE_CASE.requestedAmount);
     setQuantity(draft.quantity.toString());
@@ -152,9 +165,11 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
         // SPEC-0006 R14/R15: per-negotiation public evidence URL + prompt hint
         // embedded in the inferString prompt. Both MUST be non-empty (the
         // contract reverts with "evidence: url required" / "evidence: hint
-        // required"). No PHI — the hint references only the (public) drug name.
-        agentEvidenceUrl: "https://medlineplus.gov/druginfo/",
-        agentPromptHint: `Is coverage for ${drug.trim()} medically necessary and FDA-approved?`,
+        // required"). Values come from state — populated by the drug-evidence
+        // map lookup on drug-name entry or by manual override. No PHI — the
+        // hint references only the (public) drug name.
+        agentEvidenceUrl: agentEvidenceUrl.trim(),
+        agentPromptHint: agentPromptHint.trim(),
       });
       onCreated(reqId);
     } catch (err) {
@@ -234,8 +249,32 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
             data-testid="create-drug"
             type="text"
             value={drug}
-            onChange={(e) => setDrug(e.target.value)}
+            onChange={(e) => applyDrugLookup(e.target.value)}
             placeholder="e.g. Adalimumab (Humira)"
+          />
+        </label>
+
+        <label>
+          Evidence URL{" "}
+          <span className="label-hint">· auto-filled from drug map; override allowed</span>
+          <input
+            data-testid="create-agent-evidence-url"
+            type="text"
+            value={agentEvidenceUrl}
+            onChange={(e) => setAgentEvidenceUrl(e.target.value)}
+            placeholder="https://…"
+          />
+        </label>
+
+        <label>
+          Agent Prompt Hint{" "}
+          <span className="label-hint">· auto-filled from drug map; override allowed</span>
+          <input
+            data-testid="create-agent-prompt-hint"
+            type="text"
+            value={agentPromptHint}
+            onChange={(e) => setAgentPromptHint(e.target.value)}
+            placeholder="Describe what the coverage-decision agent should evaluate"
           />
         </label>
 
@@ -330,7 +369,12 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
           type="submit"
           className="primary"
           data-testid="create-submit"
-          disabled={busy || balanceBlock !== null}
+          disabled={
+            busy ||
+            balanceBlock !== null ||
+            agentEvidenceUrl.trim() === "" ||
+            agentPromptHint.trim() === ""
+          }
         >
           {busy ? "Submitting…" : "Submit Request →"}
         </button>

@@ -340,9 +340,10 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   const canFeedback = !view.terminal && isParty;
 
   const lastRuled = [...timeline].reverse().find((e) => e.name === "Ruled");
+  // SPEC-0006: "PolicyFlagged" removed; only "PolicyInvalidated" remains.
   const policyFlagged = [...timeline]
     .reverse()
-    .find((e) => e.name === "PolicyFlagged" || e.name === "PolicyInvalidated");
+    .find((e) => e.name === "PolicyInvalidated");
   const settled = [...timeline].reverse().find((e) => e.name === "Settled");
   const isVoided = state === State.PolicyInvalidated;
 
@@ -538,24 +539,6 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                 <dd data-testid="ruling-covered">{fmtAmount(lastRuled.coveredAmount)}</dd>
                 <dt>Round</dt>
                 <dd data-testid="ruling-decision">{n.round.toString()}</dd>
-                {/* SPEC-0004 §3.5 R11: replay-anchor (cited packet entries). */}
-                {lastRuled.usedReferenceIndices.length > 0 && (
-                  <>
-                    <dt>Cited references</dt>
-                    <dd data-testid="ruling-used-refs">
-                      [{lastRuled.usedReferenceIndices.join(", ")}]
-                    </dd>
-                  </>
-                )}
-                {/* SPEC-0004 §3.5 R23: voided clauses (Approve-via-policy-void). */}
-                {lastRuled.policyVoidedClauseIndices.length > 0 && (
-                  <>
-                    <dt>Voided clauses</dt>
-                    <dd data-testid="ruling-voided-clauses">
-                      [{lastRuled.policyVoidedClauseIndices.join(", ")}]
-                    </dd>
-                  </>
-                )}
               </dl>
               {(lastRuled || settled) && (
                 <VerifyOnChain event={settled ?? lastRuled!} />
@@ -1058,11 +1041,12 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
 
 function VerifyOnChain({ event }: { readonly event: CoverageEvent }) {
   const hashes: { readonly label: string; readonly value: string }[] = [];
-  let receiptId: bigint | null = null;
-  if (event.name === "Ruled") {
-    hashes.push({ label: "rationale", value: event.rationaleHash });
+  // SPEC-0006 R24: Ruled event no longer carries rationaleHash / clauseRef /
+  // receiptId — those are now in RulingRationale (separate event). Only show
+  // hashes for events that still carry them.
+  if (event.name === "PolicyInvalidated") {
     hashes.push({ label: "clause", value: event.clauseRef });
-    receiptId = event.receiptId;
+    hashes.push({ label: "standard", value: event.standardRef });
   }
   return (
     <div className="verify-onchain" data-testid="verify-onchain">
@@ -1071,7 +1055,6 @@ function VerifyOnChain({ event }: { readonly event: CoverageEvent }) {
           <a href={txUrl(SOMNIA_TESTNET, event.txHash)} target="_blank" rel="noreferrer" data-testid="verify-onchain-link">
             View on Somnia Explorer ↗
           </a>
-          {receiptId !== null && <span className="hint"> · receipt #{receiptId.toString()}</span>}
         </>
       ) : (
         <div className="sim-verify">
@@ -1080,7 +1063,6 @@ function VerifyOnChain({ event }: { readonly event: CoverageEvent }) {
               {h.label}: <code title={h.value}>{shortHex(h.value)}</code>
             </span>
           ))}
-          {receiptId !== null && <span className="hint">receipt #{receiptId.toString()}</span>}
           <span className="hint sim-note">(simulated — no live transaction)</span>
         </div>
       )}

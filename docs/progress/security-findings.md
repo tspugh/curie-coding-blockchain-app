@@ -1,3 +1,49 @@
+## 2026-06-03 (refresh 3) — drug-evidence map + Create.tsx auto-fill (security-review)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode)
+**Base:** `origin/main`
+**Branch:** `feat/drug-evidence-map` (working tree)
+**Scope of change:** Add `web/src/drugEvidenceMap.ts` — a curated `{drugName → {evidenceUrl,
+promptHint}}` map covering the six SPEC-0006 R18 examples (Adalimumab, Semaglutide,
+Ustekinumab, Lecanemab, Tirzepatide, Dupilumab) plus brand aliases — and its unit test
+`web/src/drugEvidenceMap.test.ts`. Wire `evidenceForDrug()` into `Create.tsx` via
+`applyDrugLookup(rawDrug)` so drug-name entry auto-fills `agentEvidenceUrl` +
+`agentPromptHint`; both fields stay manually overridable; `create-submit` is disabled when
+either is empty; `onSubmit` now sends the two fields **from state** (`.trim()`) instead of any
+hardcoded fallback. `package.json` `test:lib` glob extended to `web/src/**/*.test.ts`.
+**Verdict:** PASS (zero findings)
+
+### Hard gate
+
+| Gate | Status | Evidence |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | The curated map contains only **public** drug-evidence URLs (`medlineplus.gov/druginfo/meds/*`, one `accessdata.fda.gov` FDA label PDF) and generic clinical-question prompt hints that reference the public drug name + indication only — no patient names, MRNs, DOBs, SSNs, phones, or emails. Verified programmatically: every one of the six hints clears the contract's own `_containsNamePattern` `[A-Z][a-z]+ [A-Z]` PHI guard (zero hits), every `evidenceUrl` ≤ 512 bytes and every `promptHint` ≤ 1024 bytes — so the curated values are accepted on-chain *and* are name-pattern-clean. The module ships a PHI-free invariant test (SSN/DOB/phone/email regex over `JSON.stringify(DRUG_EVIDENCE_MAP)`, all negative). In `Create.tsx`, the patient justification body still stays off-chain (only its `keccak256` `justificationHash` is committed); the two new on-chain strings are caller/curated values, structurally separate from any patient data. Diff-wide PHI-token scan over added code/fixtures returned only guard-name comments and the **synthetic negative-test probe** `"John S"` (the T11e input the contract is asserted to *reject* — never stored). |
+| No secrets | PASS | No private keys, mnemonics, API keys, tokens, or credentials in the added files. `drugEvidenceMap.ts`/`.test.ts` are pure data + a normaliser + a lookup function — no I/O, network, fs, env-var reads, `eval`, or dynamic code. Full-diff 64-hex private-key scan (excluding the findings prose) returned zero. `.gitignore` changes only *add* ignores (`.codesign/`, `*.bak.*`, `coverage/`) — they never un-ignore a secret. |
+| Signing-key hygiene | PASS | This unit touches no key-handling, wallet-construction, or signer code. `Create.tsx`'s new fields flow only into a React-escaped controlled `<input value={…}>` and into the existing `createContract({…})` call as `.trim()`ed strings; they are never rendered as an `href`, never passed to `dangerouslySetInnerHTML` (zero occurrences in `web/src`), and never logged. The broader branch diff is a net attack-surface *reduction*: the banned Anthropic/self-hosted secret-consuming path (`@anthropic-ai/sdk`, `scripts/orchestrator-real.ts`, `orchestrator:real`) is removed. |
+
+### Integrity / correctness checks (non-gate, verified clean)
+
+- **Map tests pass.** `node --import tsx --test web/src/drugEvidenceMap.test.ts` → 25/25 pass
+  (six R18 keys present, non-empty url+hint, case-insensitive + brand-alias + parenthetical
+  RxNorm/NDC-suffix strip, unknown/empty/whitespace → `null`, PHI-free invariant).
+- **Typecheck clean.** `npm run typecheck` (tsc `--noEmit`) succeeds with the wiring.
+- **Spec behaviour confirmed in `Create.tsx`.** `applyDrugLookup` only overwrites the two
+  fields on a non-null match, so manual override survives (the per-field `onChange` setters are
+  retained); `create-submit` `disabled` now also gates on `agentEvidenceUrl.trim() === "" ||
+  agentPromptHint.trim() === ""`; the old hardcoded MedlinePlus fallback + generic hint are
+  gone from `onSubmit` (the only remaining `medlineplus`/generic-hint literals are the
+  `DEFAULT_AGENT_*` **Hardhat test fixtures** in `contracts/test/CoverageNegotiation.test.ts`,
+  synthetic and appropriate).
+
+### Non-security observations (recorded for the build loop, not gate findings)
+
+- An unknown drug returns `null`, leaving both fields empty → `create-submit` stays disabled
+  until the user supplies a manual override. Intended (no on-chain drug whitelist; R20). Not a
+  security issue.
+
+---
+
 ## 2026-06-03 (refresh 2) — SPEC-0006 R14/R15/R17 per-negotiation agent fields (security-review)
 
 **Date:** 2026-06-03
