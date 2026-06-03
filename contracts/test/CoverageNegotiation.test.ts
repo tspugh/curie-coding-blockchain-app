@@ -2487,4 +2487,539 @@ describe("CoverageNegotiation", () => {
       );
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Amendment 0007 phase 1: two-agent scrape-then-decide ruling pipeline
+  //
+  // Spec refs:
+  //   SPEC-0006 §3.6.1 (R11)  — two-agent flow (Parse-Website scrape → LLM-Inference decide)
+  //   SPEC-0006 R12            — ABI drift detector, ExtractString selector pin
+  //   SPEC-0006 R6             — handleResponse — iterate + filter Success
+  //   SPEC-0001 R9             — fee refund on failure, nonReentrant, CEI
+  //   Amendment 0007 phase 1   — AgentPhase tracker + fund-both-calls in requestAdjudication
+  //
+  // LLM Parse Website agentId: 12875401142070969085
+  // ExtractString selector: keccak256("ExtractString(string,string)")[0:4] = 0xc2dd1a7a
+  // ---------------------------------------------------------------------------
+  describe("Amendment 0007 phase 1: two-agent scrape-then-decide ruling pipeline", () => {
+
+    // Canonical constants that the production code must define.
+    const LLM_PARSE_WEBSITE_AGENT_ID = 12875401142070969085n;
+    const EXTRACT_STRING_SELECTOR = "0xc2dd1a7a";
+    const INFER_STRING_SELECTOR   = "0xfe7ca098";
+    // Synthetic evidence string returned by the scrape agent — no PHI.
+    const SCRAPED_EVIDENCE = "Drug is FDA-approved for type-2 diabetes per label Section 1.";
+
+    // ---------------------------------------------------------------------------
+    // A0007-S1: Solidity source contains the AgentPhase enum with the three
+    //           required members (None, Scraping, Deciding) — Amendment 0007 §2.
+    // ---------------------------------------------------------------------------
+    it("A0007-S1 (enum): CoverageNegotiation.sol declares AgentPhase enum with None, Scraping, Deciding", () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const solPath = resolve(__dirname, "..", "contracts", "CoverageNegotiation.sol");
+      const source = readFileSync(solPath, "utf8");
+
+      expect(source).to.include("enum AgentPhase",
+        "A0007-S1: CoverageNegotiation.sol must declare 'enum AgentPhase' (Amendment 0007 phase 1)");
+      expect(source).to.include("None",
+        "A0007-S1: AgentPhase enum must include member 'None'");
+      // The members Scraping and Deciding pin the two-agent pipeline phases.
+      expect(source).to.include("Scraping",
+        "A0007-S1: AgentPhase enum must include member 'Scraping' — first phase: LLM Parse Website");
+      expect(source).to.include("Deciding",
+        "A0007-S1: AgentPhase enum must include member 'Deciding' — second phase: LLM Inference");
+    });
+
+    // ---------------------------------------------------------------------------
+    // A0007-S2: Negotiation struct carries agentPhase and pendingDecideFee fields.
+    // ---------------------------------------------------------------------------
+    it("A0007-S2 (struct): Negotiation struct exposes agentPhase and pendingDecideFee via getNegotiation", async () => {
+      const { contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const reqId = await createAs(contract, provider, insurer.address);
+      const n = await contract.getNegotiation(reqId);
+
+      // agentPhase must exist on the returned struct object.
+      // In ethers v6 struct fields are accessible by name.
+      expect(Object.prototype.hasOwnProperty.call(n, "agentPhase") ||
+             typeof (n as Record<string, unknown>)["agentPhase"] !== "undefined",
+        "A0007-S2: getNegotiation() must return a struct with an 'agentPhase' field (Amendment 0007 phase 1)"
+      ).to.equal(true);
+
+      // pendingDecideFee must exist on the returned struct object.
+      expect(Object.prototype.hasOwnProperty.call(n, "pendingDecideFee") ||
+             typeof (n as Record<string, unknown>)["pendingDecideFee"] !== "undefined",
+        "A0007-S2: getNegotiation() must return a struct with a 'pendingDecideFee' field (Amendment 0007 phase 1)"
+      ).to.equal(true);
+    });
+
+    // ---------------------------------------------------------------------------
+    // A0007-S3: LLM_PARSE_WEBSITE_AGENT_ID constant declared in the contract.
+    // ---------------------------------------------------------------------------
+    it("A0007-S3 (constant): CoverageNegotiation declares LLM_PARSE_WEBSITE_AGENT_ID = 12875401142070969085", async () => {
+      const { contract } = await deploy();
+      // The constant must be readable as a public getter.
+      const id = await (contract as unknown as { LLM_PARSE_WEBSITE_AGENT_ID: () => Promise<bigint> })
+        .LLM_PARSE_WEBSITE_AGENT_ID();
+      expect(id).to.equal(LLM_PARSE_WEBSITE_AGENT_ID,
+        "A0007-S3: LLM_PARSE_WEBSITE_AGENT_ID must equal 12875401142070969085 (Amendment 0007 §3)");
+    });
+
+    // ---------------------------------------------------------------------------
+    // A0007-S4: Solidity source contains ILLMParseWebsiteAgent interface with
+    //           ExtractString (selector 0xc2dd1a7a).
+    // ---------------------------------------------------------------------------
+    it("A0007-S4 (interface): CoverageNegotiation.sol declares ILLMParseWebsiteAgent with ExtractString", () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const solPath = resolve(__dirname, "..", "contracts", "CoverageNegotiation.sol");
+      const source = readFileSync(solPath, "utf8");
+
+      expect(source).to.include("ILLMParseWebsiteAgent",
+        "A0007-S4: CoverageNegotiation.sol must declare interface 'ILLMParseWebsiteAgent' (Amendment 0007 phase 1)");
+      expect(source).to.include("ExtractString",
+        "A0007-S4: ILLMParseWebsiteAgent must declare function 'ExtractString' (selector 0xc2dd1a7a)");
+    });
+
+    // ---------------------------------------------------------------------------
+    // A0007-S5: _fireScrape and _fireDecide replace the single _fireAgent — both
+    //           must appear in the source; _fireAgent must be absent (or renamed).
+    // ---------------------------------------------------------------------------
+    it("A0007-S5 (split): CoverageNegotiation.sol uses _fireScrape and _fireDecide instead of _fireAgent", () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const solPath = resolve(__dirname, "..", "contracts", "CoverageNegotiation.sol");
+      const source = readFileSync(solPath, "utf8");
+
+      expect(source).to.include("function _fireScrape(",
+        "A0007-S5: CoverageNegotiation.sol must define 'function _fireScrape(' (phase 1 of the two-agent pipeline)");
+      expect(source).to.include("function _fireDecide(",
+        "A0007-S5: CoverageNegotiation.sol must define 'function _fireDecide(' (phase 2 of the two-agent pipeline)");
+      // The old single-agent helper must no longer exist as a top-level function.
+      expect(source).to.not.include("function _fireAgent(",
+        "A0007-S5: the single-agent 'function _fireAgent(' must be replaced by _fireScrape + _fireDecide (Amendment 0007 phase 1)");
+    });
+
+    // ---------------------------------------------------------------------------
+    // A0007-S6: requestAdjudication funds BOTH calls (scrape + decide) in one
+    //           msg.value. After calling, agentPhase == Scraping and
+    //           pendingDecideFee > 0.
+    // ---------------------------------------------------------------------------
+    it("A0007-S6 (fund-both): requestAdjudication sets agentPhase=Scraping and parks pendingDecideFee", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      // Fund two fees: deposit * 2.
+      const deposit = await platform.deposit();
+      const twoFees = deposit * 2n;
+
+      await contract.connect(provider).requestAdjudication(reqId, { value: twoFees });
+
+      const n = await contract.getNegotiation(reqId);
+      // agentPhase must be Scraping (1) — the scrape agent was fired.
+      const AgentPhase = { None: 0n, Scraping: 1n, Deciding: 2n };
+      expect(BigInt((n as Record<string, unknown>)["agentPhase"] as bigint)).to.equal(
+        AgentPhase.Scraping,
+        "A0007-S6: after requestAdjudication, agentPhase must be Scraping (1) — scrape agent was fired"
+      );
+      // pendingDecideFee must hold the parked LLM Inference fee (>0).
+      const pendingDecideFee = BigInt((n as Record<string, unknown>)["pendingDecideFee"] as bigint);
+      expect(pendingDecideFee).to.be.greaterThan(0n,
+        "A0007-S6: pendingDecideFee must be > 0 after requestAdjudication — the decide fee is parked for phase 2"
+      );
+      // The scrape agent must have been fired: createRequestCalls == 1.
+      expect(await platform.createRequestCalls()).to.equal(1n,
+        "A0007-S6: requestAdjudication must fire exactly ONE agent (scrape); decide fires in handleResponse phase 2"
+      );
+      // The scrape agent must be the LLM Parse Website agent.
+      expect(await platform.lastAgentId()).to.equal(LLM_PARSE_WEBSITE_AGENT_ID,
+        "A0007-S6: _fireScrape must use LLM_PARSE_WEBSITE_AGENT_ID for the scrape call"
+      );
+    });
+
+    // ---------------------------------------------------------------------------
+    // A0007-S7: _fireScrape encodes ExtractString (selector 0xc2dd1a7a) in its
+    //           payload against the negotiation's agentEvidenceUrl.
+    // ---------------------------------------------------------------------------
+    it("A0007-S7 (selector): _fireScrape payload uses ExtractString selector 0xc2dd1a7a and embeds agentEvidenceUrl", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      const deposit = await platform.deposit();
+      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+
+      const payload: string = await platform.lastPayload();
+      // First 4 bytes of payload (after "0x") must be the ExtractString selector.
+      const selectorHex = "0x" + payload.slice(2, 10);
+      expect(selectorHex.toLowerCase()).to.equal(EXTRACT_STRING_SELECTOR.toLowerCase(),
+        "A0007-S7: _fireScrape payload must start with ExtractString selector " + EXTRACT_STRING_SELECTOR +
+        " (keccak256('ExtractString(string,string)')[0:4])"
+      );
+
+      // The payload must embed the per-neg agentEvidenceUrl.
+      expect(payload).to.include(
+        Buffer.from(DEFAULT_AGENT_EVIDENCE_URL).toString("hex"),
+        "A0007-S7: _fireScrape payload must contain agentEvidenceUrl (" + DEFAULT_AGENT_EVIDENCE_URL + ")"
+      );
+    });
+
+    // ---------------------------------------------------------------------------
+    // A0007-S8 (Scraping callback → _fireDecide):
+    //   handleResponse for a Scraping-phase request decodes the scraped evidence
+    //   string and fires LLM Inference (_fireDecide) using pendingDecideFee.
+    //   After the Scraping callback: agentPhase == Deciding, createRequestCalls == 2,
+    //   lastAgentId == LLM_INFERENCE_AGENT_ID.
+    // ---------------------------------------------------------------------------
+    it("A0007-S8 (scrape callback → decide): handleResponse in Scraping phase fires _fireDecide with LLM_INFERENCE_AGENT_ID", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      const deposit = await platform.deposit();
+      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+
+      // The scrape agent returns an ABI-encoded string (the extracted evidence).
+      const scrapeRequestId = await platform.lastRequestId();
+      // triggerRuling is reused: it encodes the token as abi.encode(string).
+      // For the scrape phase, the "token" is the extracted evidence string.
+      await platform.triggerRuling(target, scrapeRequestId, SCRAPED_EVIDENCE);
+
+      // After the scrape callback: phase must advance to Deciding, and _fireDecide
+      // must have fired the LLM Inference agent (second createRequest call).
+      expect(await platform.createRequestCalls()).to.equal(2n,
+        "A0007-S8: handleResponse in Scraping phase must fire _fireDecide (second createRequest call)"
+      );
+      expect(await platform.lastAgentId()).to.equal(await contract.LLM_INFERENCE_AGENT_ID(),
+        "A0007-S8: _fireDecide must use LLM_INFERENCE_AGENT_ID (12847293847561029384)"
+      );
+
+      // Contract must still be UnderReview — the ruling hasn't landed yet.
+      expect(await contract.stateOf(reqId)).to.equal(State.UnderReview,
+        "A0007-S8: state must remain UnderReview after the Scraping callback fires _fireDecide"
+      );
+
+      // agentPhase must now be Deciding (2).
+      const n = await contract.getNegotiation(reqId);
+      const AgentPhase = { None: 0n, Scraping: 1n, Deciding: 2n };
+      expect(BigInt((n as Record<string, unknown>)["agentPhase"] as bigint)).to.equal(
+        AgentPhase.Deciding,
+        "A0007-S8: agentPhase must be Deciding (2) after the Scraping callback fires _fireDecide"
+      );
+    });
+
+    // ---------------------------------------------------------------------------
+    // A0007-S9 (full scrape→decide→Approve path):
+    //   requestAdjudication → scrape callback → decide callback ("approve") →
+    //   state == Approved, coveredAmount == requestedAmount.
+    // ---------------------------------------------------------------------------
+    it("A0007-S9 (full approve path): scrape→decide→approve produces Approved state with coveredAmount=requestedAmount", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      const deposit = await platform.deposit();
+      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+
+      // Phase 1: scrape callback.
+      const scrapeRequestId = await platform.lastRequestId();
+      await platform.triggerRuling(target, scrapeRequestId, SCRAPED_EVIDENCE);
+
+      // Phase 2: decide callback returns "approve".
+      const decideRequestId = await platform.lastRequestId();
+      await expect(platform.triggerRuling(target, decideRequestId, TOKEN_APPROVE))
+        .to.emit(contract, "Ruled")
+        .withArgs(reqId, decideRequestId, Decision.Approve, REQUESTED);
+
+      expect(await contract.stateOf(reqId)).to.equal(State.Approved,
+        "A0007-S9: full scrape→decide→approve path must produce Approved state"
+      );
+      expect(await contract.coveredAmountOf(reqId)).to.equal(REQUESTED,
+        "A0007-S9: coveredAmount must equal requestedAmount on approve"
+      );
+    });
+
+    // ---------------------------------------------------------------------------
+    // A0007-S10 (full scrape→decide→Deny path):
+    //   scrape callback → decide "deny" → Denied state, coveredAmount == 0.
+    // ---------------------------------------------------------------------------
+    it("A0007-S10 (full deny path): scrape→decide→deny produces Denied state with coveredAmount=0", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      const deposit = await platform.deposit();
+      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+
+      const scrapeRequestId = await platform.lastRequestId();
+      await platform.triggerRuling(target, scrapeRequestId, SCRAPED_EVIDENCE);
+
+      const decideRequestId = await platform.lastRequestId();
+      await expect(platform.triggerRuling(target, decideRequestId, TOKEN_DENY))
+        .to.emit(contract, "Ruled")
+        .withArgs(reqId, decideRequestId, Decision.Deny, 0n);
+
+      expect(await contract.stateOf(reqId)).to.equal(State.Denied,
+        "A0007-S10: full scrape→decide→deny path must produce Denied state"
+      );
+      expect(await contract.coveredAmountOf(reqId)).to.equal(0n,
+        "A0007-S10: coveredAmount must be 0 on deny"
+      );
+    });
+
+    // ---------------------------------------------------------------------------
+    // A0007-S11 (scrape non-Success → refund + EvidenceRequested):
+    //   A failed scrape callback must refund pendingDecideFee to the payer and
+    //   route to EvidenceRequested (R6 — retriable failure path).
+    // ---------------------------------------------------------------------------
+    it("A0007-S11 (scrape failure): non-Success scrape callback refunds pendingDecideFee and routes to EvidenceRequested", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      const deposit = await platform.deposit();
+      const twoFees = deposit * 2n;
+
+      // Record provider balance before funding adjudication.
+      const balBefore = await ethers.provider.getBalance(provider.address);
+      const tx = await contract.connect(provider).requestAdjudication(reqId, { value: twoFees });
+      const rc = await tx.wait();
+      const gasSpentOnAdj = rc!.gasUsed * rc!.gasPrice;
+
+      // Scrape agent reports failure.
+      const scrapeRequestId = await platform.lastRequestId();
+      await expect(platform.triggerFailure(target, scrapeRequestId, ResponseStatus.Failed))
+        .to.emit(contract, "EvidenceRequested");
+
+      expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested,
+        "A0007-S11: non-Success scrape callback must route to EvidenceRequested (retriable)"
+      );
+
+      // The pendingDecideFee must have been refunded: the contract balance must be 0
+      // (no ETH trapped — R9 / CEI invariant).
+      expect(await ethers.provider.getBalance(target)).to.equal(0n,
+        "A0007-S11: contract must hold no ETH after scrape failure — pendingDecideFee must be refunded (R9)"
+      );
+
+      // pendingDecideFee on the struct must be cleared.
+      const n = await contract.getNegotiation(reqId);
+      const pendingDecideFee = BigInt((n as Record<string, unknown>)["pendingDecideFee"] as bigint);
+      expect(pendingDecideFee).to.equal(0n,
+        "A0007-S11: pendingDecideFee must be cleared (0) after scrape failure"
+      );
+    });
+
+    // ---------------------------------------------------------------------------
+    // A0007-S12 (decide non-Success → EvidenceRequested):
+    //   A failed decide callback must route to EvidenceRequested (R6 failure path).
+    //   No ETH trapped.
+    // ---------------------------------------------------------------------------
+    it("A0007-S12 (decide failure): non-Success decide callback routes to EvidenceRequested, no ETH trapped", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      const deposit = await platform.deposit();
+      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+
+      // Scrape succeeds.
+      const scrapeRequestId = await platform.lastRequestId();
+      await platform.triggerRuling(target, scrapeRequestId, SCRAPED_EVIDENCE);
+
+      // Decide agent reports failure.
+      const decideRequestId = await platform.lastRequestId();
+      await expect(platform.triggerFailure(target, decideRequestId, ResponseStatus.Failed))
+        .to.emit(contract, "EvidenceRequested");
+
+      expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested,
+        "A0007-S12: non-Success decide callback must route to EvidenceRequested (retriable)"
+      );
+      expect(await ethers.provider.getBalance(target)).to.equal(0n,
+        "A0007-S12: no ETH must be trapped after decide failure (R9)"
+      );
+    });
+
+    // ---------------------------------------------------------------------------
+    // A0007-S13 (fee math — two calls):
+    //   requestAdjudication with exactly 2×deposit succeeds; with only 1×deposit
+    //   reverts (fee: underfunded). totalFees accumulates both the scrape fee and
+    //   the decide fee (2×deposit).
+    // ---------------------------------------------------------------------------
+    it("A0007-S13 (fee math): requestAdjudication requires 2×deposit; totalFees == 2×deposit after full approve path", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+
+      const deposit = await platform.deposit();
+
+      // 1×deposit is underfunded for two calls.
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+      await expect(
+        contract.connect(provider).requestAdjudication(reqId, { value: deposit })
+      ).to.be.revertedWith("fee: underfunded",
+        "A0007-S13: requestAdjudication must revert with 'fee: underfunded' when msg.value < 2×deposit"
+      );
+
+      // 2×deposit succeeds.
+      const reqId2 = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId2, POLICY_HASH, POLICY_URI);
+      await contract.connect(provider).requestAdjudication(reqId2, { value: deposit * 2n });
+
+      // Complete the full path to verify totalFees accumulation.
+      const scrapeRequestId = await platform.lastRequestId();
+      await platform.triggerRuling(target, scrapeRequestId, SCRAPED_EVIDENCE);
+      const decideRequestId = await platform.lastRequestId();
+      await platform.triggerRuling(target, decideRequestId, TOKEN_APPROVE);
+
+      const n = await contract.getNegotiation(reqId2);
+      // totalFees must reflect both the scrape fee and the decide fee.
+      expect(n.totalFees).to.equal(deposit * 2n,
+        "A0007-S13: totalFees must equal 2×deposit (scrape fee + decide fee) after the full two-agent approve path"
+      );
+    });
+
+    // ---------------------------------------------------------------------------
+    // A0007-S14 (check-ruling-abi.ts — ExtractString selector pin):
+    //   scripts/check-ruling-abi.ts must contain the ExtractString selector
+    //   0xc2dd1a7a alongside the existing inferString selector 0xfe7ca098.
+    //   This is the R12 ABI drift detector extension for the scrape agent.
+    // ---------------------------------------------------------------------------
+    it("A0007-S14 (check-ruling-abi ExtractString): scripts/check-ruling-abi.ts contains ExtractString selector 0xc2dd1a7a", () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const scriptPath = resolve(__dirname, "..", "..", "scripts", "check-ruling-abi.ts");
+      const source = readFileSync(scriptPath, "utf8");
+
+      expect(source).to.include(EXTRACT_STRING_SELECTOR,
+        "A0007-S14: scripts/check-ruling-abi.ts must pin the ExtractString selector " + EXTRACT_STRING_SELECTOR +
+        " (keccak256('ExtractString(string,string)')[0:4]) alongside inferString (R12 extension for Amendment 0007)"
+      );
+      // The existing inferString selector must still be present.
+      expect(source).to.include(INFER_STRING_SELECTOR,
+        "A0007-S14: scripts/check-ruling-abi.ts must still contain the inferString selector " + INFER_STRING_SELECTOR
+      );
+    });
+
+    // ---------------------------------------------------------------------------
+    // A0007-S15 (check-ruling-abi.ts exit-0 after two-agent update):
+    //   check-ruling-abi.ts must continue to exit 0 once both _fireScrape and
+    //   _fireDecide are in the production code.
+    // ---------------------------------------------------------------------------
+    it("A0007-S15 (check-ruling-abi runs clean): check-ruling-abi.ts exits 0 after two-agent migration", function () {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { execSync } = require("child_process") as typeof import("child_process");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const repoRoot = resolve(__dirname, "..", "..");
+      let threw = false;
+      try {
+        execSync("npx tsx scripts/check-ruling-abi.ts", {
+          cwd: repoRoot,
+          stdio: "pipe",
+          timeout: 30_000,
+        });
+      } catch {
+        threw = true;
+      }
+      expect(threw).to.equal(false,
+        "A0007-S15: check-ruling-abi.ts must exit 0 after the two-agent migration — " +
+        "both _fireScrape (ExtractString) and _fireDecide (inferString) must pass the drift detector (R12)"
+      );
+    });
+
+    // ---------------------------------------------------------------------------
+    // A0007-S16 (grep acceptance criterion):
+    //   The Solidity source must contain all the key identifiers required by
+    //   the task acceptance criterion.
+    // ---------------------------------------------------------------------------
+    it("A0007-S16 (grep criterion): CoverageNegotiation.sol contains all required Amendment 0007 identifiers", () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { readFileSync } = require("fs") as typeof import("fs");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require("path") as typeof import("path");
+      const solPath = resolve(__dirname, "..", "contracts", "CoverageNegotiation.sol");
+      const source = readFileSync(solPath, "utf8");
+
+      const required = [
+        "agentPhase",
+        "AgentPhase",
+        "Scraping",
+        "Deciding",
+        "pendingDecideFee",
+        "LLM_PARSE_WEBSITE_AGENT_ID",
+      ] as const;
+
+      for (const id of required) {
+        expect(source).to.include(id,
+          "A0007-S16: CoverageNegotiation.sol must contain '" + id + "' (Amendment 0007 phase 1 acceptance criterion)"
+        );
+      }
+    });
+
+    // ---------------------------------------------------------------------------
+    // A0007-S17 (MockAgentPlatform multi-agent routing):
+    //   The mock must support two sequential createRequest calls on the same
+    //   negotiation (keyed by agentId or call order) so the test harness can
+    //   trigger scrape and decide callbacks independently.
+    //   This test verifies the mock records lastAgentId correctly for each call.
+    // ---------------------------------------------------------------------------
+    it("A0007-S17 (mock multi-agent): MockAgentPlatform records agentId for each sequential createRequest", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      const deposit = await platform.deposit();
+      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+
+      // After requestAdjudication: scrape agent was fired — agentId must be LLM_PARSE_WEBSITE_AGENT_ID.
+      const agentIdAfterScrape = await platform.lastAgentId();
+      expect(agentIdAfterScrape).to.equal(LLM_PARSE_WEBSITE_AGENT_ID,
+        "A0007-S17: after requestAdjudication, lastAgentId must be LLM_PARSE_WEBSITE_AGENT_ID (scrape phase)"
+      );
+
+      // Trigger the scrape callback to fire the decide agent.
+      const scrapeRequestId = await platform.lastRequestId();
+      await platform.triggerRuling(target, scrapeRequestId, SCRAPED_EVIDENCE);
+
+      // After the scrape callback fires _fireDecide: agentId must switch to LLM_INFERENCE_AGENT_ID.
+      const agentIdAfterDecide = await platform.lastAgentId();
+      expect(agentIdAfterDecide).to.equal(await contract.LLM_INFERENCE_AGENT_ID(),
+        "A0007-S17: after scrape callback fires _fireDecide, lastAgentId must be LLM_INFERENCE_AGENT_ID (decide phase)"
+      );
+    });
+
+  }); // end describe "Amendment 0007 phase 1"
 });
