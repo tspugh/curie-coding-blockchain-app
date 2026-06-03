@@ -61,7 +61,7 @@ block, not the stale verdict table below (kept for audit trail only).
 ---
 
 **Last updated:** 2026-06-03 (tick 151 — `feat(web)`: SPEC-0006 R16/R18/R20 drug-evidence map + Create.tsx auto-fill + form validation. `web/src/drugEvidenceMap.ts` ships all six R18 fixtures (Adalimumab, Semaglutide, Ustekinumab, Lecanemab, Tirzepatide, Dupilumab) with brand-alias resolution. `Create.tsx` wires `applyDrugLookup` to the drug-name field — auto-fills `agentEvidenceUrl` + `agentPromptHint` on match; manual override preserved; submit button disabled while either field is empty. Hardcoded MedlinePlus fallback and generic prompt hint replaced by state values. 234/234 tests pass. Tick counter advanced 150 → 151.)
-**Current mode:** `impl` — steady state still gated on real-mode browser-verify against `0x2c561f33…488ac93` (wallet 5.50 STT < ~7.35 needed for full sweep; or `ANTHROPIC_API_KEY` for smaller Tick A smoke).
+**Current mode:** `impl` — SPEC-0006 cascade on `spec-6-implementation`. Landed: inferString migration + self-host teardown (`ac142c1`), per-neg agentEvidenceUrl/agentPromptHint (`b4e92d4`), drug-evidence map + Create.tsx auto-fill (`1a0c57f`). NO `ANTHROPIC_API_KEY` / orchestrator / `0x2c561f33…` — those are BANNED (see pivot block).
 **Current tick:** 151
 **Last focus:** SPEC-0006 R16/R18/R20 — drug-evidence map (`drugEvidenceMap.ts`) + Create.tsx auto-fill + form validation. All six R18 drug fixtures present; brand aliases resolve; submit gated on non-empty evidence URL and prompt hint.
 **Last commit:** `399b99f` (tick 150 tighten AC4 + verify 97/97 E2E) → tick 151 commits drug-evidence map integration.
@@ -104,23 +104,28 @@ contract**, blocked on either wallet refund (need ~8 STT total; current 5.50)
 OR `ANTHROPIC_API_KEY` for a smaller-scope Tick A live smoke (current STT
 sufficient for that).
 
-**Top-of-queue going into tick 151:**
-1. **Tick A live smoke test** — single requestAdjudication via orchestrator
-   + Claude SDK on `0x2c561f33…`. Affordable (~0.5 STT). Requires
-   `ANTHROPIC_API_KEY`.
-2. **Re-run browser-verify real mode** — needs wallet refunded to ~8 STT,
-   OR run a curated subset that fits the 5.50 STT budget.
-3. **Cron restart** — canonical loop-prompt has many substantive updates
-   (check-ruling-abi gate, npm test umbrella, deployed contract address,
-   reviewer cadence) since cron `18c86caf` was created. Operational; needs
-   user to restart the cron with the updated body.
-4. **`simulated.ts` further branch coverage** — diminishing returns; gate
-   is already passing for the src/ subset. Tick 144 closed 68.63% → 75.45%;
-   further closes would need helper-function tests.
-5. **State-machine branch coverage continuation in `CoverageNegotiation.sol`** —
-   diminishing returns; gate is already passing.
-6. **OQ-sweep continuation** — SPEC-0003 Q2 (UX funding-flow shortcut) is a
-   user-pref decision, not closable autonomously. SPEC-0004 TASK-1/2/3 remain
-   open as separate workstreams. SPEC-0005 OQ5 (real-chain cost decision) was
-   updated tick 147 but the gating-cadence decision (per-PR vs nightly) is a
-   user call. The closable-without-external-action queue is now empty.
+**Top-of-queue (SPEC-0006 cascade — supersedes the stale Amendment-0006 queue below the pivot block):**
+1. **Two-agent scrape phase** (Amendment 0007 phase 1): `requestAdjudication`
+   fires **LLM Parse Website** (`12875401142070969085`, `ExtractString`
+   `0xc2dd1a7a`) to scrape `agentEvidenceUrl`; its callback fires **LLM
+   Inference** (`inferString`) to decide. Add the `agentPhase`
+   (None→Scraping→Deciding) tracker + fund both calls from `requestAdjudication`.
+   (SPEC-0006 §3.6.1; this is why Medicaid evidence works — reason over scraped
+   policy text, not an ICD-10 lookup.)
+2. **`commitRationale` + receipts** (Amendment 0007 §5, R24): keeper fetches the
+   LLM Inference receipt by `requestId` (`receipts.testnet.agents.somnia.host`),
+   commits real reasoning text + keccak256 on-chain. (Already partly landed in
+   `ac142c1` — verify the keeper path + UI surfacing.)
+3. **Real escrow** (Amendment 0008, SPEC-0001 R8): `insurerEngage` payable,
+   insurer deposits `requestedAmount`; `settle` releases `coveredAmount` →
+   provider, refunds remainder → insurer; terminal-non-settle refunds full
+   escrow. CEI + nonReentrant, pull-over-push (R-OPEN-9, security gate decides).
+4. **URL-liveness check (R21)** + `__probe` Vite proxy; **6 per-example E2E
+   scenarios (R19)** + **R55 three named flow scenarios**.
+5. **Redeploy** the SPEC-0006 contract + R44 headline real-wallet gate against
+   ≥2 of the 6 examples; R48–R51/R56–R58 history hydration.
+6. **SPEC-0004.1 ledger absorption** (R1–R12 into owning durable specs); delete
+   the fractional ledger when empty.
+7. **Pre-existing follow-up (not a loop gate):** `test:real-local` insurerEngage
+   `auth: not insurer` — localnode smoke calls insurerEngage via the
+   provider-signer backend; needs a distinct insurer-signer backend.
