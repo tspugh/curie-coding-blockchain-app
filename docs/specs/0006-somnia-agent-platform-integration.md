@@ -243,9 +243,21 @@ all on testnet, with no off-chain shortcuts.
 
 ### 2.8 AI reasoning visible in the case
 
+> **Reasoning source (Amendment 0007).** The constrained `inferString` decision
+> call (§3.6.1) returns only the decision token, but `chainOfThought = true`
+> means the model's **actual reasoning is captured in the Somnia receipt**
+> (`reasoning` step), retrievable by the decision `requestId` at
+> `https://receipts.testnet.agents.somnia.host?requestId=<id>`. A keeper fetches
+> it and calls `commitRationale(reqId, rationale, …)` (§3.6.3), which emits the
+> **real reasoning text** in `RulingRationale` and stores its `keccak256` on
+> chain. Somnia's receipt is canonical; the on-chain hash is tamper-evidence.
+> The UI reads `RulingRationale` (or fetches the receipt directly). This is the
+> model's real chain-of-thought — **not** a templated summary.
+
 - **R24 (MUST) On-chain reasoning event.** The contract MUST emit a
-  new event whenever it processes a successful agent response,
-  carrying the LLM's free-text rationale (capped):
+  `RulingRationale` event carrying the agent's real reasoning (sourced
+  from the LLM Inference receipt per §3.6.3, committed via
+  `commitRationale`), capped:
 
   ```solidity
   event RulingRationale(
@@ -711,6 +723,109 @@ struct Request {
 
 **Preferred:** LLM Inference (rationale-first). **Fallback:** LLM Parse
 Website with corrected 9-param signature.
+
+### 3.6.1 Two-agent ruling flow + response contract (Amendment 0007)
+
+Adjudication runs as **two sequential agent calls** coordinated by an
+`agentPhase` field on the negotiation (`None → Scraping → Deciding → None`).
+`requestAdjudication` is `payable` and funds **both** calls up front (scrape fee
++ decide fee); the decide fee is held by the contract and spent when phase 2
+fires.
+
+**Phase 1 — scrape (`agentPhase = Scraping`).** `requestAdjudication` fires
+**LLM Parse Website** (`agentId 12875401142070969085`, `ExtractString` selector
+`0xc2dd1a7a`) against the per-negotiation `agentEvidenceUrl` (R14), extracting
+the coverage-relevant indication/policy text. State → `UnderReview`; the scrape
+`requestId` is mapped with `phase = Scraping`.
+
+**Phase 2 — decide (`agentPhase = Deciding`).** The scrape `handleResponse`
+decodes the extracted evidence string, then fires **LLM Inference**
+(`agentId 12847293847561029384`,
+`inferString(string,string,bool,string[])` selector `0xfe7ca098`) with:
+
+```
+chainOfThought = true                  // enriches the receipt's `reasoning` step (R24)
+allowedValues  = ["approve", "deny", "needs_more_info", "policy_invalid"]
+prompt         = built from { scraped evidence, agentPromptHint, policy clauses }
+system         = necessity-arbiter rubric (evidence-grounded; NOT an ICD-10 lookup)
+```
+
+A non-empty `allowedValues` constrains the subcommittee to **exactly one of the
+four tokens** (verified against
+`https://docs.somnia.network/agents/base-agents/llm-inference`).
+`chainOfThought = true` does not change the on-chain `response` (still one
+constrained token) — it enriches the **receipt** the UI later reads (R24).
+**No PHI** in any string (SPEC-0001 R3/R4).
+
+**Decision decode.** On the decision `Success` response, `handleResponse` decodes
+a single string and maps it:
+
+| Returned token | `Decision` | Terminal/route |
+|---|---|---|
+| `"approve"` | `Approve` | `Approved`, `coveredAmount = min(requested, benchmarkUnitPrice × quantity)` |
+| `"deny"` | `Deny` | `Denied`, `coveredAmount = 0` |
+| `"needs_more_info"` | `NeedMoreEvidence` | `EvidenceRequested` (retriable) |
+| `"policy_invalid"` | `PolicyInvalid` | `PolicyInvalidated` (R6b, narrowed by Amendment 0005) |
+| anything else / empty | — | `EvidenceRequested` (defensive — contract does not trust the platform blindly) |
+
+```solidity
+string memory tok = abi.decode(responses[0].result, (string));
+Decision decision = _tokenToDecision(tok); // unknown → route to EvidenceRequested
+```
+
+Either phase returning a non-`Success` status (or `responses.length == 0`)
+routes to `EvidenceRequested` and refunds any held decide-phase fee (R9: never
+trap caller ETH).
+
+**Why two calls (not the old single-agent 10-tuple):** Medicaid and similar
+coverage is evidence-driven, not an ICD-10-code lookup — the model must reason
+over the *actual* policy/evidence text, so LLM Parse Website scrapes it first and
+LLM Inference decides over it. Neither agent returns prices or rationale in its
+result string: the **price cap is a curated benchmark** (§3.6.2) and the **real
+reasoning is read from the receipt** (§3.6.3).
+
+### 3.6.3 Receipt-sourced reasoning + on-chain hash commit (Amendment 0007 — R24)
+
+The LLM Inference receipt carries the model's actual chain-of-thought (the
+`reasoning` step), retrievable by the decision `requestId` at
+`https://receipts.testnet.agents.somnia.host?requestId=<id>`. After the decision
+`handleResponse` finalizes the ruling on-chain, an off-chain **keeper** (or the
+UI) fetches that receipt and calls:
+
+```solidity
+function commitRationale(
+    uint256 reqId,
+    string  calldata rationale,        // capped at 4096 chars (R26)
+    string  calldata clauseReference,
+    string  calldata standardReference
+) external onlyKeeper;
+```
+
+It stores `rationaleHash = keccak256(rationale)` and emits `RulingRationale`.
+**It MUST NOT mutate any ruling/escrow/state field** — the decision +
+`coveredAmount` + state transition were finalized by the agent callback before
+any keeper runs, so the keeper only transcribes already-produced reasoning
+(SPEC-0006 **R0-compliant**: it neither computes nor shapes the ruling). Somnia's
+receipt (keyed by `requestId`) is the **canonical** record; the on-chain hash is
+tamper-evidence for the committed text.
+
+### 3.6.2 Deterministic cap from a curated benchmark (Amendment 0007 — amends SPEC-0001 R6a)
+
+The covered amount stays deterministic and **not AI-chosen**, but the benchmark
+unit price is no longer an agent output. `createContract` accepts a
+`uint256 benchmarkUnitPrice` (wei), sourced client-side from the curated
+`web/src/drugEvidenceMap.ts` / `src/data` price table (same curated map as
+R16/R18). Stored on the `Negotiation`. On `Approve`:
+
+```
+coveredAmount = benchmarkUnitPrice == 0
+    ? requestedAmount                                   // custom drug, no curated price → uncapped
+    : _min(requestedAmount, benchmarkUnitPrice * quantity);
+```
+
+The agent's former `costPlusUnitPrice` / `nadacUnitPrice` outputs are removed
+from the ruling path. NADAC, if shown, is a curated floor reference, not an
+agent output.
 
 ### 3.7 Per-negotiation evidence URL + prompt hint (R14/R15)
 
@@ -1224,6 +1339,18 @@ the test implementation. Synthetic data only. Test IDs trace to R-ids.
   retain ONLY in `scripts/dev-*.ts` / `scripts/eval-*.ts` files;
   remove from any code reachable from the contract or
   integration-test path; CI lints the import edge.**
+- **R-OPEN-8 — RESOLVED (2026-06-03, Amendment 0007):** The LLM's
+  *actual* reasoning is sourced from the **Somnia receipt** (`reasoning`
+  step, `chainOfThought = true`), retrieved by `requestId` and committed
+  on-chain via `commitRationale` (§3.6.3) — no second inference call and
+  no templated summary. Canonical record = Somnia receipt; on-chain hash
+  = tamper-evidence.
+- **R-OPEN-9 (opened by Amendment 0008 — escrow safety):** Final
+  pull-vs-push decision for escrow release/refund in `settle` and the
+  terminal-non-settle transitions. Pull (per-address `owed` +
+  `withdraw()`) is preferred for reentrancy safety; push (`call` +
+  `nonReentrant`) is the single-tx-settlement fallback. The
+  security-auditor gate decides before any funded run.
 
 ---
 
