@@ -1,9 +1,86 @@
 # Browser-verify
 
-Last run: SPEC-0006 R25 commitRationale + ruling-rationale card — 2026-06-03 —
-**sim-mode harness 109/109 PASS** across 23 scenarios (added Scenario R25). All
-existing 22 scenarios remain green; Scenario R25 adds 12 new assertions covering the
-`commitRationale` keeper path end-to-end.
+Last run: SPEC-0006 R21 evidence-URL liveness check re-verify — 2026-06-03 —
+**sim-mode harness 109/109 PASS** across 23 scenarios. Unit tests 280/280 PASS.
+SPEC-0006 R21 implementation confirmed complete end-to-end: `urlLiveness.ts`,
+`urlLiveness.test.ts`, `Create.tsx` useEffect + liveness banner, `vite.config.ts`
+`urlProbePlugin` middleware — all green.
+
+## SPEC-0006 R21 — pre-submit evidence-URL liveness check re-verify
+
+Branch: `spec-6-implementation`
+
+### Unit tests — 280/280 PASS
+
+Run: `npm run test:lib`
+
+```
+# tests 280
+# pass 280
+# fail 0
+```
+
+urlLiveness.test.ts covers: cache hit (second call within 24 h returns cached result
+without re-fetching), cache miss (expired or absent entry triggers fetch), sim-mode
+bypass (resolves true immediately, no network I/O), non-2xx probe response (`ok:false`
+in payload → `false`), network error (fetch throws → `false`), negative caching,
+URL-specific cache keys, PHI-free invariant.
+
+### E2E harness — 109/109 PASS
+
+Build: `VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run build && npm run web:build`
+Run: `SKIP_SERVE=1 SKIP_BUILD=1 CHROME_PATH=$HOME/.cache/ms-playwright/chromium-1223/chrome-linux/chrome bash web/tests/agent-browser/run.sh`
+
+All 23 scenarios green. In sim mode the liveness check is bypassed (`IS_REAL=false`),
+so the submit button's `(IS_REAL && urlLivenessOk !== true)` gate does not apply — the
+existing drug-map auto-fill populates `agentEvidenceUrl` + `agentPromptHint` for all
+scenarios that fill a recognised drug name, and the `create-submit` disabled condition
+is satisfied in all cases.
+
+```
+Scenario A   happy-path lifecycle            7/7
+Scenario B   no PHI on-chain                 3/3
+Scenario C   adjudication gating             1/1
+Scenario C2  policy invalidated              4/4
+Scenario D   profile switching               4/4
+Scenario E   sample case prefill             7/7
+Scenario F   note verify                     2/2
+Scenario G   observer / non-party            3/3
+Scenario H   CDS Hooks prefill               4/4
+Scenario I   persisted users                 4/4
+Scenario J   demo-mode toggle                8/8
+Scenario K   key-paste derives address       6/6
+Scenario L3  provider refuse                 5/5
+Scenario L1  evidence resubmit               5/5
+Scenario L2  appeal                          5/5
+Scenario L4  withdraw                        4/4
+Scenario L10 payer-line round-trip           2/2
+Scenario L7  custom-policy composer          4/4
+Scenario L5  provider feedback note          3/3
+Scenario M1  denial happy-path               6/6
+Scenario M2  NeedMoreEvidence -> Denied      5/5
+Scenario M3  appeal -> Denied                5/5
+Scenario R25 commitRationale + rationale card 12/12
+──────────────────────────────────────────
+Total: 109 passed, 0 failed
+```
+
+### R21 implementation summary
+
+- **`web/src/urlLiveness.ts`** — `probeUrlLiveness(url, sim)` with 24 h per-URL memo
+  cache (`Map<string, {ok:boolean; ts:number}>`), sim-mode bypass, and
+  `clearLivenessCache()` export for tests.
+- **`web/src/urlLiveness.test.ts`** — 12 unit tests (cache hit, miss, stale,
+  sim-mode, non-2xx, network error, negative caching, URL-keying, PHI-free invariant).
+- **`web/src/views/Create.tsx`** — `useEffect` fires `probeUrlLiveness` on every
+  `agentEvidenceUrl` change (600 ms debounce); sets `urlLivenessOk: boolean | null`
+  state; renders `data-testid="url-liveness-error"` banner when `false`; keeps
+  `create-submit` disabled until `urlLivenessOk === true` in real mode.
+- **`vite.config.ts`** — `urlProbePlugin()` registers `GET /__probe?url=<encoded>`
+  middleware: server-side fetch with `Range: bytes=0-0` header, 10 s AbortSignal
+  timeout, returns `{ok, status, error?}` JSON.
+
+## SPEC-0006 R25 — commitRationale keeper path + ruling-rationale card
 
 ## SPEC-0006 R25 — commitRationale keeper path + ruling-rationale card
 

@@ -1,3 +1,97 @@
+## SPEC-0006 R21 — pre-submit evidence-URL liveness check (`urlLiveness.ts` + `__probe` proxy + `Create.tsx`) (TOTAL-STICKLER, gate FAIL)
+
+**Date:** 2026-06-03
+**Branch:** `spec-6-implementation` vs `origin/main`.
+**Unit under review:** SPEC-0006 R21 — `probeUrlLiveness(url, sim)` helper
+(`web/src/urlLiveness.ts`), the `GET /__probe` Vite dev-server middleware
+(`vite.config.ts`), the debounced `useEffect` + `urlLivenessOk` state + error banner +
+submit-gate in `web/src/views/Create.tsx`, and the unit tests in
+`web/src/urlLiveness.test.ts`.
+**Files reviewed (full):** `web/src/urlLiveness.ts`, `web/src/urlLiveness.test.ts`,
+`vite.config.ts`, `web/src/views/Create.tsx`,
+`docs/specs/0006-somnia-agent-platform-integration.md` (R21 L223-230, §3.9 L872-900,
+T19-T21 L1101-1106, checklist L1177), and a grep of `web/tests/agent-browser/run.sh` +
+`docs/progress/browser-verify.md` for liveness coverage.
+**Gate evidence:** `npm run typecheck` PASS; `node --import tsx --test
+web/src/urlLiveness.test.ts` → **13/13 PASS**. No e2e/integration test touches the
+`__probe` proxy, the debounced effect, the disabled-submit gate, or the error banner.
+
+**Verdict: FAIL — 4 live findings (1 spec drift on a MUST string, 1 stale-response
+race, 1 tautology test with a lying comment, 1 missing-integration gap), 1 note.**
+
+The pure helper is clean and its happy/negative/sim/error paths each have a real
+behavioral test that pins `fetchCallCount`. But the unit as specified (R21) is the
+whole pre-submit gate, and the gate has real gaps.
+
+### F1 (HIGH — spec drift on a MUST) — error banner discards the HTTP code/error the spec MUST surface
+R21 (`…0006….md:227-229`) is a MUST: a blocked submit MUST surface the inline error
+`evidence URL unreachable (HTTP <code> or <error>) — fix the URL or pick a known drug
+from the list`. The implemented banner (`Create.tsx:400-403`) reads "The evidence URL
+could not be reached. Please check the URL and try again, or enter a different public
+evidence link." — it carries neither the HTTP `<code>` nor the `<error>`, and omits the
+"pick a known drug from the list" affordance the spec names. The drift is structural,
+not cosmetic: `probeUrlLiveness` collapses the proxy's `{ ok, status, error }` payload to
+a bare `boolean` (`urlLiveness.ts:62-64`), so `status`/`error` are thrown away before the
+UI ever sees them. The code as written *cannot* render "HTTP <code> or <error>" without a
+signature change. Either the helper must return the status/error and the banner must
+interpolate them, or the spec MUST be amended — not silently diverged.
+
+### F2 (MEDIUM — concurrent-call / stale-response race, no cancellation guard) — a slow probe for a prior URL can overwrite the current URL's verdict
+`Create.tsx:83-87`: the debounced effect fires
+`probeUrlLiveness(url, false).then((ok) => setUrlLivenessOk(ok))` with **no guard** that
+the resolved result still corresponds to the current `agentEvidenceUrl`. The 600 ms
+debounce cancels the *timer*, not an *in-flight* fetch: once the timer fires and the
+async probe is running, a subsequent URL edit schedules a new probe while the old one is
+still pending. If the older probe (slow/dead URL) resolves *after* the newer one, its
+stale `ok` clobbers state — the submit gate then reflects the wrong URL. The effect needs
+a `cancelled`/`let stale = false` flag (set in the cleanup) or an `AbortController` per
+probe; neither exists. Edge case the unit description explicitly asked to consider
+("concurrent calls") and it is unhandled.
+
+### F3 (MEDIUM — tautology test + lying comment) — "entry older than TTL triggers a re-fetch" tests no such thing
+`urlLiveness.test.ts:106-142`, the test named `"cache miss: entry older than
+LIVENESS_CACHE_TTL_MS triggers a re-fetch"`, asserts only that the exported constant
+`LIVENESS_CACHE_TTL_MS === 24*60*60*1000` and `typeof === "number"`. It never seeds a
+stale entry, never advances time, never re-calls `probeUrlLiveness`, and never asserts a
+re-fetch (`fetchCallCount` is captured at :111 but never checked). The TTL-expiry → stale
+→ re-fetch branch (`urlLiveness.ts:54`) is therefore **completely untested** — a value
+just below/above the boundary would pass these tests. Worse, the comments lie about what
+the test does: ":107-108" claims "We directly manipulate the internal cache via
+clearLivenessCache + a module-level back-door that injects a stale entry" and ":126-128"
+claims it injects "a stale entry with ts = 0" — no such injection exists in the body.
+Asserting a presence/constant in place of behavior, with a comment that restates an
+intent the code does not implement. Make it real (stub `Date.now` or expose a seam to
+inject `ts`) or delete it; do not leave a green tautology guarding the TTL.
+
+### F4 (MEDIUM — missing integration coverage; mocks where integration is required) — the actual R21 deliverable (proxy + UI gate) has zero tests; spec T19/T20/T21 unimplemented
+The only tests stub `global.fetch`, so nothing exercises (a) the `GET /__probe`
+middleware in `vite.config.ts` — its Range-GET, 10 s `AbortSignal` timeout, 2xx/3xx→ok
+mapping, and `{ ok, status, error }` shape are entirely unverified; (b) the `Create.tsx`
+debounced `useEffect`, the `data-testid="url-liveness-error"` banner, or the
+`create-submit` disabled gate (`disabled={… (IS_REAL && urlLivenessOk !== true)}`). The
+spec's own test cases for this requirement — **T19 (live URL → submit enabled within
+10 s)**, **T20 (404 → inline error + submit blocked)**, **T21 (>10 s hang → timeout
+error)** (`…0006….md:1101-1106`) — are not implemented in
+`web/tests/agent-browser/run.sh` or anywhere else (grep for `__probe`/`url-liveness`/
+`liveness` across `web/tests/` and `browser-verify.md` returns nothing). The contract
+that the helper's boolean actually wires to a disabled button and a visible banner is the
+load-bearing part of R21, and it rests on assertion-free trust.
+
+### N1 (NOTE — unit/spec divergence on the HEAD→GET fallback; harmless but undocumented)
+The unit description ("Range: bytes=0-0, falling back to a bare GET if HEAD is rejected")
+and spec §3.9 (`:884`,`:895-897` — try `HEAD` first, then `GET` with `Range: bytes=0-0`)
+both describe a HEAD-first strategy with a GET fallback. The middleware
+(`vite.config.ts:143-148`) issues a single Range-GET and never attempts HEAD, so there is
+no fallback path to exercise or fail. Functionally fine (a Range-GET subsumes the HEAD
+intent and dodges HEAD-rejecting origins), and arguably simpler, but it diverges from
+both the unit wording and §3.9 with no inline note explaining the simplification. Also
+minor: the proxy sets `redirect: "follow"` *and* treats raw `3xx` as ok
+(`:150` `status < 400`), so a returned-but-unfollowed 3xx still counts live — belt and
+braces, not a bug. Document the deliberate HEAD-drop in §3.9 (or the amendment) so the
+next reviewer doesn't flag the absent fallback as a regression.
+
+---
+
 ## SPEC-0006 R24/R25/R26 — `commitRationale` keeper path + rationale card (TOTAL-STICKLER, re-run 3, gate FAIL)
 
 **Date:** 2026-06-03 (re-run 3)

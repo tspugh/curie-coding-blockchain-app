@@ -18,7 +18,7 @@ import { useWalletBalance } from "../hooks/useWalletBalance.js";
 import { ErrorCard } from "../components/ErrorCard.js";
 import { AGENT_FEE_RESERVE_WEI } from "../config.js";
 import { evidenceForDrug } from "../drugEvidenceMap.js";
-import { probeUrlLiveness } from "../urlLiveness.js";
+import { probeUrlLiveness, type LivenessResult } from "../urlLiveness.js";
 
 /** True when the wallet mode is "real" (on-chain). False in simulated mode. */
 const IS_REAL = import.meta.env.VITE_WALLET_MODE === "real";
@@ -53,42 +53,57 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
   const [committedHash, setCommittedHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // SPEC-0006 R21: null = not yet checked / URL empty, true = live, false = dead.
-  const [urlLivenessOk, setUrlLivenessOk] = useState<boolean | null>(null);
+  // SPEC-0006 R21: null = not yet checked / URL empty / probe in flight.
+  // Stores the full LivenessResult so the inline error can interpolate the
+  // HTTP status code / error message per the spec string:
+  //   "evidence URL unreachable (HTTP <code> or <error>) — fix the URL or
+  //    pick a known drug from the list"
+  const [urlLivenessResult, setUrlLivenessResult] = useState<LivenessResult | null>(null);
   // Set when the form is hydrated from a CDS-Hooks `order-sign` payload
   // (SPEC-0002 R7). Drives a provenance banner so users see the form
   // wasn't hand-typed.
   const [cdsProvenance, setCdsProvenance] = useState<string | null>(null);
 
   // SPEC-0006 R21 — debounced liveness probe. Fires 600 ms after
-  // `agentEvidenceUrl` settles; resets to null immediately on change
-  // to keep the submit button disabled while the probe is in flight.
-  // Bypassed entirely in sim mode.
-  const probeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // `agentEvidenceUrl` settles; resets to null immediately on change to keep
+  // the submit button disabled while the probe is in flight. Bypassed entirely
+  // in sim mode.
+  //
+  // Stale-response guard: each effect invocation sets a `cancelled` flag in
+  // its cleanup closure. If a slower probe for an older URL resolves after a
+  // newer effect has already fired, the `.then()` checks `cancelled` and
+  // discards the stale result, preventing it from clobbering the current
+  // verdict. The 600 ms debounce only cancels the timer; the AbortController
+  // in probeUrlLiveness cancels the in-flight `/__probe` fetch.
   useEffect(() => {
-    if (probeTimerRef.current !== null) {
-      clearTimeout(probeTimerRef.current);
-      probeTimerRef.current = null;
-    }
     if (!IS_REAL) {
-      // Sim mode: never probe; leave state as null so the submit gate
+      // Sim mode: never probe; leave result as null so the submit gate
       // falls back to the existing non-empty-field check only.
       return;
     }
     if (agentEvidenceUrl.trim() === "") {
-      setUrlLivenessOk(null);
+      setUrlLivenessResult(null);
       return;
     }
-    setUrlLivenessOk(null);
-    probeTimerRef.current = setTimeout(() => {
-      void probeUrlLiveness(agentEvidenceUrl.trim(), false).then((ok) => {
-        setUrlLivenessOk(ok);
+    // Reset while the debounce timer runs and then while probe is in flight.
+    setUrlLivenessResult(null);
+
+    let cancelled = false;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+
+    timerId = setTimeout(() => {
+      void probeUrlLiveness(agentEvidenceUrl.trim(), false).then((result) => {
+        if (!cancelled) {
+          setUrlLivenessResult(result);
+        }
       });
     }, PROBE_DEBOUNCE_MS);
+
     return () => {
-      if (probeTimerRef.current !== null) {
-        clearTimeout(probeTimerRef.current);
-        probeTimerRef.current = null;
+      cancelled = true;
+      if (timerId !== null) {
+        clearTimeout(timerId);
+        timerId = null;
       }
     };
   }, [agentEvidenceUrl]);
@@ -396,10 +411,13 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
           </span>
         </div>
 
-        {IS_REAL && urlLivenessOk === false && (
+        {IS_REAL && urlLivenessResult !== null && !urlLivenessResult.ok && (
           <p className="error" data-testid="url-liveness-error">
-            The evidence URL could not be reached. Please check the URL and try
-            again, or enter a different public evidence link.
+            evidence URL unreachable (
+            {urlLivenessResult.status > 0
+              ? `HTTP ${urlLivenessResult.status}`
+              : (urlLivenessResult as { ok: false; status: number; error?: string }).error ?? "network error"}
+            ) — fix the URL or pick a known drug from the list
           </p>
         )}
 
@@ -423,7 +441,7 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
             balanceBlock !== null ||
             agentEvidenceUrl.trim() === "" ||
             agentPromptHint.trim() === "" ||
-            (IS_REAL && urlLivenessOk !== true)
+            (IS_REAL && (urlLivenessResult === null || !urlLivenessResult.ok))
           }
         >
           {busy ? "Submitting…" : "Submit Request →"}

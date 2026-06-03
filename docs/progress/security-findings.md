@@ -1,3 +1,65 @@
+## 2026-06-03 (refresh 9) — SPEC-0006 R21 pre-submit evidence-URL liveness check (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-derivation from source
+**Base:** `origin/main`
+**Branch:** `spec-6-implementation`
+**Unit under review:** SPEC-0006 R21 — pre-submit evidence-URL liveness check:
+`probeUrlLiveness()` helper (`web/src/urlLiveness.ts`), the `GET /__probe` Vite
+dev-server middleware (`vite.config.ts` L107-165, `urlProbePlugin`), the debounced
+`useEffect` + `url-liveness-error` banner + `create-submit` gate in
+`web/src/views/Create.tsx` (L56-94, L399-404, L417-430), and the unit tests
+(`web/src/urlLiveness.test.ts`).
+**Verdict:** PASS (zero findings)
+
+### Hard gate results
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | R21 adds **no on-chain field** — it is a pre-submit client-side gate that runs *before* `createContract` and stores nothing. `probeUrlLiveness` handles only the public `agentEvidenceUrl` (curated MedlinePlus / FDA-label URLs from `drugEvidenceMap.ts`, or a manual public override). No patient justification text touches the probe path — the justification still stays off-chain and only its `keccak256` `justificationHash` is committed (`Create.tsx:187-204`). Test fixtures are synthetic public URLs (`https://medlineplus.gov/druginfo/meds/a603010.html`, `...DEAD_SYNTHETIC_ENTRY.html`); `urlLiveness.test.ts:343-355` ships an explicit NO-PHI regression test (SSN/DOB/phone/email regex over the fixtures, all negative). Diff-wide PHI-token scan (SSN `\d{3}-\d{2}-\d{4}`, phone, DOB, MRN, `patient name`, email) over added lines returned only the PHI-*absence* guard regexes in tests — no identifier value anywhere. The contract's `_containsNamePattern` defense-in-depth PHI guard on `agentPromptHint` (`CoverageNegotiation.sol:405-408,1009`) is retained. |
+| No secrets | PASS | 64-hex / `private_key` / `api_key` / `mnemonic` / `bearer` / `password` scan over the R21 added lines returned nothing. The probe middleware sends no credentials — `fetch(rawUrl, { method: "GET", headers: { Range: "bytes=0-0" }, signal })` carries only a `Range` header. Branch-wide, the only 64-hex is the synthetic `0xdeadbeef…0001` test hash; the diff *removes* the secret-consuming self-host path (`@anthropic-ai/sdk` + `ANTHROPIC_API_KEY` + `scripts/orchestrator-real.ts` deleted). `.env`/`.env.*`/`.tmp/` are gitignored; no env file in the diff. |
+| Signing-key hygiene | PASS | R21 performs no signing and touches no key material — it is a read-only liveness probe. Branch-wide: `scripts/verify-deploy.ts` reads `VITE_PRIVATE_KEY` only to derive `wallet.address` and logs only the public operator address (never the key); `scripts/real-backend-localnode.mjs` added lines use a mock signer with synthetic decision tokens. No key is logged, embedded, or persisted. |
+
+### SSRF surface assessment (documented, not a finding)
+
+The `GET /__probe?url=<encoded>` middleware performs a **server-side fetch of a
+caller-supplied URL** — a textbook SSRF shape. It is **not a finding** under this
+gate for these reasons, all verified in source:
+
+- **Dev-server-only, never shipped.** `urlProbePlugin` registers exclusively inside
+  `configureServer(server)` (`vite.config.ts:122`), the Vite dev-server hook. It is
+  absent from the production `vite build` bundle and from `vite preview`. There is no
+  production HTTP surface that exposes it. This mirrors the pre-existing `/__log/tx`
+  dev sink already accepted in-tree.
+- **Single-developer local trust boundary.** The dev server binds locally; the only
+  external exposure is the opt-in quick-tunnel (`allowedHosts: [".trycloudflare.com",
+  ".ts.net"]`), which is an explicit, ephemeral developer action, not a deployed
+  service.
+- **Bounded blast radius.** The fetch is `Range: bytes=0-0` (downloads ≤ 1 byte),
+  under a 10 s `AbortController` timeout, and returns only `{ ok, status }` — the
+  response *body is never returned to the browser*, so it cannot be used to exfiltrate
+  internal-service contents; it leaks at most a boolean + numeric status of the
+  attacker-known URL.
+
+This is recorded so the surface is tracked. If `/__probe` is ever promoted to a
+production/edge function, it MUST gain an allowlist (or deny-list of RFC-1918 /
+link-local / metadata-endpoint targets) before shipping. No action required for the
+dev-only R21 unit.
+
+### Verification
+
+- `node --import tsx --test "web/src/urlLiveness.test.ts"` → **13/13 pass**
+  (cache hit, cache miss, sim bypass, non-2xx → false, network error → false,
+  negative caching, URL-specific keys, NO-PHI invariant).
+- `node --import tsx --test "web/src/**/*.test.ts"` → **38/38 pass** (no regression
+  in the drug-evidence-map suite).
+- No XSS sink introduced: `dangerouslySetInnerHTML` / `innerHTML` / `eval` /
+  `new Function` scan over added `web/**` lines returned nothing; the
+  `url-liveness-error` banner renders a static string and `RulingRationaleCard`
+  uses auto-escaping JSX text interpolation only.
+
+---
+
 ## 2026-06-03 (refresh 8) — `commitRationale` keeper-path wiring + R25 rationale card (security-review, TOTAL-STICKLER re-run)
 
 **Date:** 2026-06-03

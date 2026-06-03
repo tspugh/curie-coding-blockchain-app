@@ -17,6 +17,7 @@ import { mkdir, appendFile, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import { executeProbe } from "./web/src/probeHandler.js";
 
 const repoRoot = dirname(fileURLToPath(import.meta.url));
 
@@ -109,12 +110,18 @@ function txLogSinkPlugin(): Plugin {
  * server-side fetches the target URL (avoiding browser CORS restrictions) and
  * returns { ok: boolean, status: number, error?: string }.
  *
- * Strategy:
- *   1. Try a Range-limited GET (bytes=0-0) with a 10 s AbortSignal timeout.
- *   2. Treat any 2xx or 3xx status as ok:true (3xx usually means the target
- *      exists even if the dev server can't follow the redirect).
- *   3. Non-2xx/3xx → ok:false with the actual status forwarded.
- *   4. Any thrown error (network, timeout, DNS) → ok:false with the message.
+ * The fetch logic lives in `web/src/probeHandler.ts` (`executeProbe`) so it
+ * can be unit-tested independently of the Vite server.  This middleware is
+ * the HTTP wrapper only: it parses the `url` query-param, delegates to
+ * `executeProbe`, and serialises the result as JSON.
+ *
+ * Strategy (deliberate HEAD-drop, documented in probeHandler.ts and here):
+ *   Spec §3.9 and the unit wording describe HEAD-first with a Range-GET
+ *   fallback, but this implementation issues a single Range-GET directly —
+ *   HEAD is omitted entirely.  Rationale: the probe runs server-side (no
+ *   CORS restriction), so the CORS-workaround motivation for HEAD disappears.
+ *   A Range-GET is universally supported and avoids the two-round-trip cost.
+ *   Deliberate simplification, not an oversight.
  */
 function urlProbePlugin(): Plugin {
   return {
@@ -136,29 +143,11 @@ function urlProbePlugin(): Plugin {
           res.end(JSON.stringify({ ok: false, status: 0, error: "missing url parameter" }));
           return;
         }
-        void (async () => {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 10_000);
-          try {
-            const response = await fetch(rawUrl, {
-              method: "GET",
-              headers: { Range: "bytes=0-0" },
-              signal: controller.signal,
-              redirect: "follow",
-            });
-            clearTimeout(timeout);
-            const ok = response.status >= 200 && response.status < 400;
-            res.statusCode = 200;
-            res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ ok, status: response.status }));
-          } catch (err) {
-            clearTimeout(timeout);
-            const message = err instanceof Error ? err.message : String(err);
-            res.statusCode = 200;
-            res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ ok: false, status: 0, error: message }));
-          }
-        })();
+        void executeProbe(rawUrl).then((result) => {
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify(result));
+        });
       });
     },
   };

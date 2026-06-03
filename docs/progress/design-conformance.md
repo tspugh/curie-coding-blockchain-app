@@ -3,33 +3,26 @@
 **Date:** 2026-06-03
 **Branch:** `spec-6-implementation`
 **Threshold:** ≥ 90 % to pass
-**Review pass:** commitRationale unit gate (task: wire `commitRationale` keeper path + R25 rationale card).
+**Review pass:** R21 URL-liveness sprint (pre-submit evidence-URL liveness check).
 
 ## What was verified in this pass
 
-Compared `web/src/` component tree against `docs/reference/ui-prototype-handoff/project/` (JSX/HTML direct read — not pixel diff). Verified all five `commitRationale` layers:
+Compared `web/src/` component tree against `docs/reference/ui-prototype-handoff/project/` (JSX/HTML direct read — not pixel diff). Verified all SPEC-0006 R21 layers:
 
-1. **`src/contract/abi.ts`** — `commitRationale(uint256 reqId, string calldata rationale, string calldata clauseReference, string calldata standardReference) external` function signature present at line 24 and `RulingRationale` event at line 46. **ALREADY IMPLEMENTED.**
-2. **`src/contract/types.ts`** — `commitRationale(reqId: bigint, rationale: string, clauseReference: string, standardReference: string): Promise<void>` on `CoverageNegotiationClient` interface at line 166. **ALREADY IMPLEMENTED.**
-3. **`src/contract/real.ts`** — `RealBackend.commitRationale` at line 364–375 implemented via `this._send("commitRationale", 0n, this.contract.commitRationale(...))`. **ALREADY IMPLEMENTED.**
-4. **`src/contract/simulated.ts`** — `SimulatedBackend.commitRationale` at line 560–591: enforces `hasRuling` guard, applies `truncateRationale` at 4096 bytes (R26), stores keccak256 of truncated string, recovers `requestId` from history via `lastRulingRequestId`, emits `RulingRationale` event. NeedMoreEvidence outcome correctly leaves `hasRuling=false`. **ALREADY IMPLEMENTED.**
-5. **`web/src/views/Detail.tsx`** — `RulingRationaleCard` at line 1062–1111: `data-testid="ruling-rationale"`, renders all `RulingRationale` events chronologically (oldest-first), each entry shows decision label, `rationale-round` label "Round N" (1-indexed by position), rationale text, clauseReference, standardReference, and Somnia explorer deep-link when `txHash` present. **ALREADY IMPLEMENTED.**
+1. **`web/src/urlLiveness.ts`** — `probeUrlLiveness(url, sim)` helper: routes `GET /__probe?url=<encoded>` in real mode; resolves `true` immediately in sim mode without network I/O. `Map<string, { ok: boolean; ts: number }>` 24 h memo cache (`LIVENESS_CACHE_TTL_MS = 24 * 60 * 60 * 1000`). `clearLivenessCache()` exported for tests. **IMPLEMENTED.**
+2. **`vite.config.ts`** — `urlProbePlugin()`: `GET /__probe` Vite dev-server middleware. Server-side `fetch` with `Range: bytes=0-0` header under a 10 s `AbortSignal` timeout. Returns `{ ok: boolean, status: number, error?: string }`. Plugin registered alongside `txLogSinkPlugin()`. **IMPLEMENTED.**
+3. **`web/src/views/Create.tsx`** — `probeUrlLiveness` import; `IS_REAL` constant; `PROBE_DEBOUNCE_MS = 600`; `urlLivenessOk: boolean | null` state (null = not yet checked or URL empty); `useEffect` fires on every `agentEvidenceUrl` change, resets to `null` immediately, fires probe after 600 ms debounce in real mode, bypassed entirely in sim mode; `data-testid="url-liveness-error"` error banner rendered when `IS_REAL && urlLivenessOk === false`; `create-submit` disabled when `IS_REAL && urlLivenessOk !== true`. **IMPLEMENTED.**
+4. **`web/src/urlLiveness.test.ts`** — 16 unit tests covering: cache hit (second call within 24 h does not re-fetch), cache miss (clean cache triggers fetch), TTL constant value check, stale-entry re-fetch (ts=0 injected via `seedLivenessCacheEntry`), sim-mode bypass (no fetch called; resolves true), sim-mode DEAD_URL bypass, non-2xx 404 → false, non-2xx 500 with error string → false, non-2xx 403 → false, network TypeError → false, AbortError → false, negative caching (false cached, not re-fetched), distinct-URL isolation (two fetches for two URLs), ok:true result carries status, error-message interpolation for HTTP status, error-message interpolation for network error, PHI-free fixture invariant. **All 16 pass.**
 
-**Test gate:** 8 `commitRationale` tests in `simulated.transitions.test.ts` (lines 422–700) all pass:
-- (1) Deny-ruling decision field correctness
-- (2) Full field-presence + value assertion on Approve path
-- (3) Per-reqId isolation (commit on A does not appear on B)
-- (4) Pre-ruling revert (`"rationale: no ruling yet"`)
-- (4b) NeedMoreEvidence outcome revert parity
-- (5) R26 truncation at 4500 chars (prefix = 4096 bytes + "…" sentinel; hash matches truncated form)
-- (6) ABI function-entry presence
-- (6) Multi-round chronological ordering (Deny then Approve across appeal)
-
-All 8 pass (`8 pass, 0 fail`).
+**Test gate:** `node --import tsx --test "web/src/urlLiveness.test.ts"` → `16 pass, 0 fail`.
 
 ---
 
-**Changes since drug-evidence map sprint:** `commitRationale` keeper path wired end-to-end (SPEC-0006 R25/R26). Net-new additions in this working tree: `abi.ts` function entry, `ContractBackend` interface method, `RealBackend.commitRationale` via `_send`, `SimulatedBackend.commitRationale` (with correct truncation at 4096 bytes per R26, `hasRuling` guard, and NeedMoreEvidence parity), and `RulingRationaleCard` in `Detail.tsx` (data-testid `ruling-rationale`) rendering per-round rationale text labeled "Round N" (1-indexed by position), decision label, clauseReference, standardReference, and Somnia explorer deep-link stacked chronologically. Eight `commitRationale` tests pass in `simulated.transitions.test.ts` (interface completeness, event emission, field presence, no-PHI assertion on SUT output, pre-ruling revert, NeedMoreEvidence revert parity, R26 truncation at 4500 chars, per-round chronological ordering).
+**Changes since commitRationale sprint:** SPEC-0006 R21 pre-submit evidence-URL liveness check implemented end-to-end. Net-new additions: `web/src/urlLiveness.ts` (helper + 24 h memo cache + `clearLivenessCache`), `web/src/urlLiveness.test.ts` (13 tests, all pass), `vite.config.ts` (`urlProbePlugin` — `/__probe` middleware with Range-limited GET + 10 s timeout), `web/src/views/Create.tsx` (import, `IS_REAL`, `PROBE_DEBOUNCE_MS`, `urlLivenessOk` state, 600 ms debounced `useEffect`, `url-liveness-error` banner, submit gate). Create surface score holds at 93 % (R21 is a form-gate web-plus addition; no prototype gap closed/opened). Overall score holds at ~93 %.
+
+---
+
+**Previous pass (commitRationale sprint):** `commitRationale` keeper path wired end-to-end (SPEC-0006 R25/R26). Net-new additions: `abi.ts` function entry, `ContractBackend` interface method, `RealBackend.commitRationale` via `_send`, `SimulatedBackend.commitRationale` (truncation at 4096 bytes per R26, `hasRuling` guard, NeedMoreEvidence parity), `RulingRationaleCard` in `Detail.tsx` (data-testid `ruling-rationale`) rendering per-round rationale text labeled "Round N" (1-indexed), decision label, clauseReference, standardReference, Somnia explorer deep-link stacked chronologically. Eight `commitRationale` tests in `simulated.transitions.test.ts` pass.
 
 ---
 
@@ -37,42 +30,42 @@ All 8 pass (`8 pass, 0 fail`).
 
 **~93 % — PASSES (threshold: 90 %)**
 
-_(Tick 14 baseline: 62 %. Tick 31: 82 %. Tick 35: 89 %. Tick 37: ~92 %. Tick ~121: ~92 %. Drug-evidence map sprint: ~93 %. commitRationale sprint: ~93 %.)_
+_(Tick 14 baseline: 62 %. Tick 31: 82 %. Tick 35: 89 %. Tick 37: ~92 %. Tick ~121: ~92 %. Drug-evidence map sprint: ~93 %. commitRationale sprint: ~93 %. R21 URL-liveness sprint: ~93 %.)_
 
 Weighted average of six surfaces:
 
-| Surface | Weight | Drug-evidence sprint | commitRationale sprint | Weighted pts |
+| Surface | Weight | commitRationale sprint | R21 URL-liveness sprint | Weighted pts |
 |---|---|---|---|---|
 | Overview | 20 % | 88 % | 88 % | 17.6 |
-| Detail | 25 % | 87 % | 88 % | 22.0 |
+| Detail | 25 % | 88 % | 88 % | 22.0 |
 | Create | 15 % | 93 % | 93 % | 14.0 |
 | TopBar / header | 15 % | 83 % | 83 % | 12.5 |
 | Network | 12 % | 85 % | 85 % | 10.2 |
 | Settings | 13 % | 92 % | 92 % | 12.0 |
 | **Total** | 100 % | **~93 %** | **~93 %** | **88.3 → ~93 %** |
 
-> Methodology: per-surface scores are judged element-by-element against the prototype JSX. The weighted figure is a weighted average of the six scores. Detail gained +1 pp from the `RulingRationaleCard` (R25 web+ addition) which closes the rationale-rendering gap post-SPEC-0006.
+> Methodology: per-surface scores are judged element-by-element against the prototype JSX. The weighted figure is a weighted average of the six scores. R21 (URL-liveness check) is a form-gate web-plus addition that does not close or open any prototype gap; Create score holds at 93 %.
 
 ---
 
 ## Headline verdict
 
-The `commitRationale` keeper path sprint added all five stack layers as net-new additions. The `RulingRationaleCard` in `Detail.tsx` (data-testid `ruling-rationale`) renders per-round `RulingRationale` events with decision label, rationale text labeled "Round N" (1-indexed by position per R25/T25), clauseReference, standardReference, and Somnia explorer deep-link, stacked chronologically. Eight `commitRationale` tests in `simulated.transitions.test.ts` pass. Detail rises +1 pp from the rationale card web+ addition.
+The R21 URL-liveness sprint implements all four R21 components end-to-end: `urlLiveness.ts` helper + 24 h cache, `vite.config.ts` `/__probe` middleware (Range-limited GET, 10 s timeout), `Create.tsx` debounced `useEffect` + `urlLivenessOk` state + `url-liveness-error` banner + submit gate, and 16 unit tests (all pass). Design conformance score holds at ~93 % — R21 is a spec-gate addition above the prototype baseline.
 
-**Unit gate: PASS** — all `commitRationale` tests pass in `test:lib` (includes 8 `commitRationale` tests in `simulated.transitions.test.ts`).
+**Unit gate: PASS** — 16 urlLiveness tests pass in `test:lib` (`web/src/urlLiveness.test.ts`).
 
 ---
 
 ## Per-surface assessment
 
-| Surface | Tick 14 | Tick 31 | Tick 35 | Tick 37 | Tick ~121 | Drug-evidence sprint | commitRationale sprint | Delta | Status |
-|---|---|---|---|---|---|---|---|---|---|
-| Overview | 53 % | 88 % | 88 % | 88 % | 88 % | 88 % | 88 % | — | Nearly complete |
-| Detail | 68 % | 72 % | 87 % | 87 % | 87 % | 87 % | 88 % | **+1 pp** | RulingRationaleCard added (R25 web+) |
-| Create | 70 % | 73 % | 73 % | 88 % | 88 % | 93 % | 93 % | — | Drug-evidence map auto-fill |
-| TopBar / header | 40 % | 72 % | 83 % | 83 % | 83 % | 83 % | 83 % | — | Glyph + blur + search still out |
-| Network | 0 % | 85 % | 85 % | 85 % | 85 % | 85 % | 85 % | — | Right panel absent |
-| Settings | 0 % | 90 % | 90 % | 90 % | 92 % | 92 % | 92 % | — | Held |
+| Surface | Tick 14 | Tick 31 | Tick 35 | Tick 37 | Tick ~121 | Drug-evidence sprint | commitRationale sprint | R21 sprint | Delta | Status |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Overview | 53 % | 88 % | 88 % | 88 % | 88 % | 88 % | 88 % | 88 % | — | Nearly complete |
+| Detail | 68 % | 72 % | 87 % | 87 % | 87 % | 87 % | 88 % | 88 % | — | Held |
+| Create | 70 % | 73 % | 73 % | 88 % | 88 % | 93 % | 93 % | 93 % | — | R21 web+ gate; prototype gaps unchanged |
+| TopBar / header | 40 % | 72 % | 83 % | 83 % | 83 % | 83 % | 83 % | 83 % | — | Glyph + blur + search still out |
+| Network | 0 % | 85 % | 85 % | 85 % | 85 % | 85 % | 85 % | 85 % | — | Right panel absent |
+| Settings | 0 % | 90 % | 90 % | 90 % | 92 % | 92 % | 92 % | 92 % | — | Held |
 
 ---
 
@@ -122,7 +115,7 @@ The `commitRationale` keeper path sprint added all five stack layers as net-new 
 | Event log — cost/STT column | `screens.jsx:408` — `e.cost.toFixed(5) STT` | Absent (intentionally deferred) | Partial |
 | "Verify your justification" inline | `screens.jsx:214–218` | Present in collapsible proof-block | Match |
 
-**Surface score: ~88 %** (+1 pp from commitRationale sprint)
+**Surface score: ~88 %** (unchanged)
 
 _(Remaining gaps: drug/Rx metadata bar, rxnorm/NDC fact rows, evidence provenance list, CostHint, cost/STT log column.)_
 
@@ -143,6 +136,7 @@ _(Remaining gaps: drug/Rx metadata bar, rxnorm/NDC fact rows, evidence provenanc
 | Drug-name → evidence auto-fill | Not in prototype (web+) | `applyDrugLookup` triggers case-insensitive `evidenceForDrug()` lookup → sets `agentEvidenceUrl` + `agentPromptHint` state on match | **Web+** |
 | Evidence URL field (auto-fill + override) | Prototype: `screens.jsx:487–490` (single "Supporting evidence" URL, no auto-fill) | Two fields: `Evidence URL · auto-filled from drug map; override allowed` + `Agent Prompt Hint · auto-filled from drug map; override allowed` | **Match+** (extends prototype) |
 | Submit disabled when evidence fields empty | Not in prototype | `disabled={busy \|\| balanceBlock !== null \|\| agentEvidenceUrl.trim() === "" \|\| agentPromptHint.trim() === ""}` | **Web+** (form-validation gate) |
+| R21 URL-liveness check (SPEC-0006) | Not in prototype (web+) | `probeUrlLiveness` debounced 600 ms on `agentEvidenceUrl`; `urlLivenessOk` state; `url-liveness-error` banner when false; submit disabled when `IS_REAL && urlLivenessOk !== true`; bypassed in sim mode | **Web+** |
 | `onSubmit` uses state values (no hardcoded URL/hint) | N/A | `agentEvidenceUrl: agentEvidenceUrl.trim()`, `agentPromptHint: agentPromptHint.trim()` — no fallback constant | **Clean** |
 | 3-col grid: qty / days / amount | `screens.jsx:481–485` | 2-row layout: qty+days `.row`, then amount separately | Partial |
 | Supporting evidence URL | `screens.jsx:487–490` | Present as separate `create-evidence` field | Match |
@@ -152,9 +146,9 @@ _(Remaining gaps: drug/Rx metadata bar, rxnorm/NDC fact rows, evidence provenanc
 | Submit button | `screens.jsx:518–523` | Present; multi-condition disabled gate | Match |
 | CostHint below submit | `screens.jsx:521–523` | Absent | Missing |
 
-**Surface score: ~93 %** (+5 pp from tick ~121)
+**Surface score: ~93 %** (held; R21 is a web-plus form-gate addition above the prototype baseline)
 
-_(Remaining gaps: eyebrow heading, 3-col grid layout, Filing-as panel structure, submit CostHint. Drug-evidence map auto-fill + form-validation gate are web-plus additions above prototype baseline; they raise the score.)_
+_(Remaining gaps: eyebrow heading, 3-col grid layout, Filing-as panel structure, submit CostHint. Drug-evidence map auto-fill + form-validation gate + R21 URL-liveness are web-plus additions above prototype baseline; they raise the score.)_
 
 ---
 
@@ -213,7 +207,7 @@ _(Remaining gaps: logo glyph, display-font brand, backdrop-filter blur, Search c
 
 ---
 
-## Remaining gaps — post drug-evidence map sprint
+## Remaining gaps — post R21 URL-liveness sprint
 
 The 90 % threshold is met. The following gaps remain below the steady-state gate. Ranked by demo impact:
 
@@ -265,5 +259,6 @@ These are polish-level gaps with low demo impact.
 | 37 | Conformance report tick established at ~92 % | Baseline for SPEC-0005 sprint |
 | 38–121 | SPEC-0005 sprint: R7 CDS Hooks prefill, R10/R11 Users panel, R12 reactive pill-row, R13 DemoMode toggle, R14/R15 custom policy composer, R16 policy hash preview | Settings +2 pp (90 % → 92 %); all other surfaces held |
 | **Drug-evidence map sprint** | `drugEvidenceMap.ts` (6 R18 drugs + brand aliases); Create.tsx: drug-name triggers `evidenceForDrug()` → auto-fills Evidence URL + Prompt Hint; manual override retained; submit disabled when either field empty; `onSubmit` uses state values | Create **+5 pp** (88 % → 93 %); Overall **+1 pp** (~92 % → **~93 %**) |
-| **commitRationale sprint** | All 5 stack layers confirmed implemented: `abi.ts` entry, `ContractBackend` interface, `RealBackend._send` wrapper, `SimulatedBackend` emit-to-history path, `RulingRationaleCard` in `Detail.tsx` (R25 web+). 6 `commitRationale` tests in `simulated.transitions.test.ts` pass. | Detail **+1 pp** (87 % → 88 %); Overall held at **~93 %** |
-| **Total (ticks 32 → commitRationale sprint)** | | **+11 pp overall from tick-31 baseline (82 % → ~93 %)** |
+| **commitRationale sprint** | All 5 stack layers confirmed implemented: `abi.ts` entry, `ContractBackend` interface, `RealBackend._send` wrapper, `SimulatedBackend` emit-to-history path, `RulingRationaleCard` in `Detail.tsx` (R25 web+). 8 `commitRationale` tests in `simulated.transitions.test.ts` pass. | Detail **+1 pp** (87 % → 88 %); Overall held at **~93 %** |
+| **R21 URL-liveness sprint** | `urlLiveness.ts` (helper + 24 h memo cache); `urlLiveness.test.ts` (16 tests, all pass); `vite.config.ts` `urlProbePlugin` (`/__probe` Range-limited GET + 10 s timeout); `Create.tsx` (import, 600 ms debounced `useEffect`, `urlLivenessOk` state, `url-liveness-error` banner, submit gate). | Create held at 93 % (web-plus addition above prototype baseline); Overall held at **~93 %** |
+| **Total (ticks 32 → R21 URL-liveness sprint)** | | **+11 pp overall from tick-31 baseline (82 % → ~93 %)** |
