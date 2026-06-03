@@ -1,1010 +1,232 @@
-# Amendment 0007 phase 1 — two-agent scrape-then-decide ruling pipeline (TOTAL-STICKLER)
+# Solidity compliance — `contracts/` gate (TOTAL-STICKLER)
 
 **Date:** 2026-06-03
-**Branch:** `feat/amendment-0007-two-agent-pipeline` (working tree vs `origin/main`)
+**Branch:** `spec-6-implementation` (working tree) vs `origin/main`
+**Base commit:** `d5000a1` (`spec-6-implementation` HEAD at review time)
 **Reviewer posture:** TOTAL-STICKLER. **Result: ZERO findings on the `contracts/` gate.**
+**Headline unit under review:** Amendment 0008 / SPEC-0001 R8 — **real escrow
+settlement** (payable `insurerEngage`, `escrowAmount` on the struct, value-bearing
+`settle` + every terminal-non-settle release, CEI + `nonReentrant` on every
+value-moving path, `withdrawFunds` ring-fenced from escrow).
 
-**Gate scope:** the full `contracts/` diff vs `origin/main`, plus the
-`scripts/check-ruling-abi.ts` selector-pin extension that the contract change forces.
-Re-verified independently 2026-06-03 — diff vs `origin/main` is five source files
-(node_modules/artifacts excluded):
+## Gate scope
 
-- `contracts/contracts/CoverageNegotiation.sol` (uncommitted in working tree)
-- `contracts/contracts/mocks/MockAgentPlatform.sol` (committed — multi-call recording)
-- `contracts/contracts/mocks/RevertingReceiver.sol` (committed — doc-only; removed the
-  stale `_fireAgentSelfHosted` orchestrator comment lines, no code change)
-- `contracts/test/CoverageNegotiation.test.ts` (uncommitted in working tree)
-- `scripts/check-ruling-abi.ts` (uncommitted in working tree)
+The full `contracts/` diff vs `origin/main`. Source-of-record (`node_modules`,
+`artifacts`, `cache`, `typechain-types` excluded):
 
-## What changed (Amendment 0007 phase 1)
+| File | Kind | Change |
+| --- | --- | --- |
+| `contracts/contracts/CoverageNegotiation.sol` | **production** | A0007 two-agent pipeline + **A0008 escrow settlement** |
+| `contracts/contracts/mocks/MockAgentPlatform.sol` | test double | `triggerRuling` now encodes a single `string` decision token (SPEC-0006 R24–R26) |
+| `contracts/contracts/mocks/RevertingReceiver.sol` | test double | doc-only trim of a stale comment |
+| `contracts/test/CoverageNegotiation.test.ts` | tests | +A0007-S* and +A0008-S1a..S4c / A0008-SIM suites |
+| `contracts/scripts/probe-agent-abi.ts` | dev script | string-token ABI alignment |
+| `contracts/scripts/setup-selfhosted-2026-05-30.ts` | dev script | removed (self-hosted path banned) |
+| `contracts/scripts/trigger-ruling.ts` | dev script | string-token ABI alignment |
 
-- **`AgentPhase` enum** `{ None, Scraping, Deciding }` added; tracked on the
-  `Negotiation` struct as the appended field `agentPhase`, alongside two more appended
-  fields `uint256 pendingDecideFee` (parked LLM Inference fee) and
-  `address pendingFeePayer` (refund recipient on scrape failure). All three are
-  appended AFTER the prior last field `bool exists` — pure append, no reorder.
-- **`LLM_PARSE_WEBSITE_AGENT_ID = 12875401142070969085`** constant + a minimal
-  `ILLMParseWebsiteAgent` interface declaring
-  `ExtractString(string,string,string[],string,string,bool,uint8,uint8)`
-  (selector `0xc2dd1a7a`).
-- **`_fireAgent` split into `_fireScrape` + `_fireDecide`.** `requestAdjudication`
-  (and the appeal/submitEvidence re-fire paths) now funds BOTH the scrape fee and the
-  decide fee in one `msg.value` (`2 × (getRequestDeposit() + agentReward)`), fires LLM
-  Parse Website (`ExtractString`) against `n.agentEvidenceUrl`, and parks the decide
-  fee + payer in `n.pendingDecideFee` / `n.pendingFeePayer`.
-- **`handleResponse` branches on `agentPhase`.** A `Scraping` callback decodes the
-  extracted evidence string and fires `_fireDecide` (LLM Inference) using the parked
-  `pendingDecideFee`; a `Deciding` callback runs the existing decision-token decode +
-  state-transition logic. A non-Success callback in EITHER phase routes to retriable
-  `EvidenceRequested`; the scrape-phase failure also refunds the parked decide fee to
-  the stored `pendingFeePayer`.
-- **`scripts/check-ruling-abi.ts`** now pins the `ExtractString` selector
-  `0xc2dd1a7a` (computed + source-scoped to the `_fireScrape` body) alongside the
-  existing `inferString` `0xfe7ca098` pin (scoped to `_fireDecide`).
-- **Tests** add 17 Amendment-0007 cases (A0007-S1..S17): enum/struct/constant/
-  interface presence, the `_fireScrape`/`_fireDecide` split, fund-both fee math
-  (`2×deposit`, `totalFees == 2×deposit` after the full path), the
-  scrape→decide→Approve and →Deny happy paths, scrape-failure refund-and-route,
-  decide-failure route, the two selector pins, and multi-agent mock recording.
+The only **production** Solidity file is `CoverageNegotiation.sol`. The mocks and
+scripts are test/dev tooling and carry no on-chain value; they are reviewed for
+correctness against the production interface but are not in the runtime security
+surface.
 
 ## Validation (re-verified 2026-06-03)
 
-- `npx hardhat compile --force` (after `rm -rf artifacts/build-info cache`) →
-  "Compiled 8 Solidity files successfully (evm target: paris)". **No warnings, no
-  errors** (grep-filtered).
-- `npx hardhat test` → **130 passing, 0 failing** (the task's "61+ existing must pass"
-  floor is met with margin; includes all 17 A0007-S* cases, the strict-review-fix set
-  HIGH-1/1b + LOW-3a/3b + LOW-4, and the full SPEC-0006 R9/R11/R12/R24–R26 +
-  R14/R15/R17 suites).
-- `npm run check-ruling-abi` → PASS: computed `inferString → 0xfe7ca098` and
-  `ExtractString → 0xc2dd1a7a`; `_fireScrape` body asserted to use
-  `ILLMParseWebsiteAgent.ExtractString.selector`, `_fireDecide` body asserted to use
-  `ILLMInferenceAgent.inferString.selector` (drift-detecting, not comment-matching).
-- `npm run typecheck` → exit 0. `npm run test:lib` → **234 passing**.
-- Selectors independently recomputed:
-  `keccak256("ExtractString(string,string,string[],string,string,bool,uint8,uint8)")[0:4] = 0xc2dd1a7a` ✓;
-  `keccak256("inferString(string,string,bool,string[])")[0:4] = 0xfe7ca098` ✓.
-
-## Per-category scrutiny — all PASS
-
-- **Reentrancy.** The three agent-firing entry points (`requestAdjudication`,
-  `submitEvidence`, `appeal`) and `withdrawFunds` retain `nonReentrant`. CEI is
-  preserved on BOTH new fire helpers: `_fireScrape` commits every effect
-  (`pendingDecideFee`, `pendingFeePayer`, `agentPhase = Scraping`, `totalFees`,
-  `rulingDeadline`, `state = UnderReview`, `PacketSubmitted`, then
-  `currentlyFiringReqId`) before the single external `platform.createRequest`, and the
-  overpayment refund (`payer.call`) is the LAST action — at which point a re-entrant
-  caller hits `state != Ready`. `_fireDecide` is invoked only from inside the
-  `Scraping`-phase callback after its caller (`_handleScrapeResponse`) has already
-  cleared `pendingDecideFee` and set `agentPhase = Deciding`; it commits
-  `pendingRequestId`/`rulingDeadline` and makes no value transfer back to an EOA — its
-  only external call is `platform.createRequest` to the trusted platform.
-  `handleResponse` stays gated to `msg.sender == address(platform)` and
-  `n.state == State.UnderReview`. The one new EOA-facing value transfer — the
-  scrape-failure refund of `pendingDecideFee` in `_handleScrapeResponse` — is fully
-  CEI-safe: `_clearRequest(n)` runs first, then `pendingDecideFee`/`pendingFeePayer`
-  are zeroed, `agentPhase = None` and `state = EvidenceRequested` are set, BEFORE the
-  `payer.call{value: refund}`. A malicious `payer` re-entering `handleResponse` fails
-  the `UnderReview` gate; re-entering `requestAdjudication` fails the `Ready` gate;
-  re-entering `submitEvidence` is the intended retriable flow and is itself
-  `nonReentrant`. No double-spend of the parked fee is reachable: it is zeroed before
-  the refund and before `_fireDecide` consumes it (the two outcomes are mutually
-  exclusive branches).
-- **Access control.** No new external/public entry point. `requestAdjudication`,
-  `submitEvidence`, `appeal` keep their existing party gates (`_onlyParty` / provider-
-  only). `handleResponse` keeps the platform-only gate. The new state lives entirely on
-  internal helpers (`_fireScrape`, `_fireDecide`, `_handleScrapeResponse`,
-  `_handleDecideResponse` — all `internal`). The new constant is `public constant`
-  (read-only). No admin surface added or widened; all setters remain `onlyOwner`.
-- **Over/underflow beyond 0.8.x.** New arithmetic is `perCallFee * 2` and
-  `n.totalFees += perCallFee` / `+= decideFee`, all checked (solc 0.8.24 default). The
-  `* 2` cannot realistically overflow (`perCallFee` is a single agent deposit + reward).
-  The `unchecked` blocks are unchanged from prior ticks and both provably safe:
-  `_containsNamePattern`'s `i++` (loop-bounded by `i + 3 < len`, `len ≤ 1024`) and
-  `_benchmarkCap` (explicit `product / quantity != unitPrice` overflow guard, saturating
-  to `type(uint256).max`). `abi.decode(responses[0].result, (string))` in both phases
-  reverts cleanly on malformed bytes — handled by the platform refund path, no state
-  corruption.
-- **Unbounded loops.** No new loops. The only loops remain `_truncateRationale`
-  (bounded by the constant `MAX_RATIONALE_BYTES = 4096`) and `_containsNamePattern`
-  (bounded by the validated `agentPromptHint` length cap of 1024 bytes). The two-agent
-  pipeline iterates nothing caller-growable; both extracted strings are decoded once and
-  concatenated once into the next payload. The `string[] scrapeAllowedValues` and the
-  4-element `allowedValues` are fixed-size literals.
-- **Missing event emits.** Every transition emits. `_fireScrape` emits
-  `PacketSubmitted` + `RulingRequested`; the scrape→decide hop emits a second
-  `RulingRequested` from `_fireDecide`. Decide-phase terminal/transition branches keep
-  their emits: `Approve`/`Deny` → `Ruled`; `PolicyInvalid` → `Ruled` +
-  `PolicyInvalidated`; `NeedMoreEvidence` → `EvidenceRequested` (correctly no `Ruled`).
-  The non-Success scrape branch emits `RulingTimedOut` + `EvidenceRequested`; the
-  non-Success decide branch emits `RulingTimedOut` + `EvidenceRequested`. No branch
-  mutates state without a corresponding log. (Rationale text remains keeper-emitted via
-  `commitRationale` → `RulingRationale`, unchanged.)
-- **Storage-layout breaks.** The three new `Negotiation` fields (`agentPhase`,
-  `pendingDecideFee`, `pendingFeePayer`) are APPENDED after the prior last field
-  `exists` — verified against `origin/main` (old struct tail: `… pendingRequestId,
-  createdAt, rulingDeadline, exists`). No existing field is reordered, retyped, or
-  removed; no contract-level storage slot is inserted or moved. The contract is
-  non-upgradeable / non-proxied (no proxy, initializer, EIP-1967, or delegatecall
-  machinery anywhere in `contracts/contracts/`; deploy path is a fresh
-  `getContractFactory().deploy(...)`), so even a mid-struct change would be moot in
-  practice — but the append-only ordering is clean regardless. On-chain struct ↔
-  typechain/artifact ABI alignment is exercised by A0007-S2 (reads `agentPhase` +
-  `pendingDecideFee` back through `getNegotiation`) and the full 130/130 suite.
-- **Gas anti-patterns.** No storage-read-in-loop, no redundant SLOAD growth. The new
-  fee fields are written once per fire and read once in the callback. `pendingDecideFee`
-  is cleared (set to 0) on consumption / refund — no stale-balance accumulation.
-  `currentlyFiringReqId` is set/cleared around BOTH `platform.createRequest` calls
-  (scrape and decide), preserving the existing observer-probe invariant. The constant
-  `LLM_PARSE_WEBSITE_AGENT_ID` is a `constant` (no SLOAD). `_tokenToDecision`'s four
-  literal `keccak256`s are unchanged, constant-bounded, and only on the decide callback.
-- **OZ-pattern adherence.** Inheritance unchanged (`Ownable, ReentrancyGuard,
-  IAgentRequesterHandler`); `Ownable(msg.sender)` constructor arg intact (OZ 5.6.1
-  `constructor(address initialOwner)`); `nonReentrant` placement unchanged on all four
-  value-moving entry points; ETH transfers remain checked low-level `.call` with a
-  `require(ok, …)` on the result; new revert strings use the same short namespaced
-  convention (`"fee: underfunded"`, `"fee: refund failed"`). No OZ pattern bypassed or
-  weakened.
-
-## OBSERVATION (NOT a `contracts/`-diff finding) — off-chain `getNegotiation` decoders predate the 3 appended struct fields
-
-Outside the `contracts/` gate (and untouched by this working-tree change), the canonical
-off-chain ABI in `src/contract/abi.ts` (the `getNegotiation` `tuple(...)` fragment) and
-the `RawNegotiation` positional tuple in `src/contract/real.ts` both still terminate at
-`bool exists` (index [33]) and do not yet include the three Amendment 0007 fields
-(`agentPhase`, `pendingDecideFee`, `pendingFeePayer`). The on-chain struct now returns 37
-members. Hardhat tests are unaffected (they decode through the auto-generated
-typechain/artifact ABI, which is regenerated from source and is correct — A0007-S2
-passes). This is recorded for the operator as a follow-up so a live web/real-backend
-`getNegotiation` call decodes the full struct; it is analogous to the prior reviews'
-out-of-scope `.mjs`/`real.ts` consumer notes and does **not** indicate a defect in the
-Amendment 0007 Solidity source or in the `contracts/` gate.
-
-**Conclusion: ZERO findings across all eight stickler dimensions for the
-Amendment 0007 phase-1 `contracts/` diff. Clean force-recompile (no warnings),
-130/130 hardhat green, check-ruling-abi PASS (both selectors independently
-recomputed: ExtractString 0xc2dd1a7a, inferString 0xfe7ca098). Struct fields
-verified appended (not inserted) vs origin/main; contract is non-upgradeable /
-non-proxied so layout shift is moot regardless.**
-
----
-
-# SPEC-0006 R14/R15/R17 — per-negotiation `agentEvidenceUrl` + `agentPromptHint` (full re-review)
-
-**Date:** 2026-06-03
-**Branch:** `spec-6-implementation` (working tree vs `origin/main`)
-**Reviewer posture:** TOTAL-STICKLER. **Result: ZERO findings.**
-
-**Scope:** the full working-tree `contracts/` diff vs `origin/main`, re-reviewed after
-the per-negotiation evidence-URL / prompt-hint unit landed on top of the inferString
-migration. This entry supersedes the per-category verdicts in the
-`2026-06-03 @ a64f80d` section below and CLOSES its two residual notes (see
-"Prior notes — now closed").
-
-Diff under review (Solidity):
-
-- `contracts/contracts/CoverageNegotiation.sol` —
-  - `Negotiation` struct gains `uint256 lastRequestId`, `string agentEvidenceUrl`,
-    `string agentPromptHint` (R14/R15);
-  - the contract-level `string public agentEvidenceUrl` global and its
-    `setAgentEvidenceUrl(string)` owner-setter are **removed**;
-  - `createContract` signature gains two trailing `string calldata` params
-    (`agentEvidenceUrl_`, `agentPromptHint_`) with non-empty `require` guards
-    (`"evidence: url required"` / `"evidence: hint required"` — R17);
-  - `_fireAgent` now reads `n.agentEvidenceUrl` / `n.agentPromptHint` and embeds
-    them in the `inferString` prompt (the hardcoded "rheumatoid arthritis" global
-    prompt is gone);
-  - the dead `event PolicyFlagged` declaration is removed.
-- `contracts/test/CoverageNegotiation.test.ts` — adds T9 (per-neg URL stored), T10
-  (per-neg hint stored), T11a/T11b (empty-field reverts), plus `_fireAgent`-payload,
-  types, simulated- and real-backend propagation assertions.
-
-Also propagated (TS, outside `contracts/` but part of the unit): `src/contract/types.ts`
-(`CreateContractParams` +2 required fields), `src/contract/simulated.ts` (store +
-non-empty enforcement), `src/contract/real.ts` (ABI-encode the 2 trailing params + the
-34-field `RawNegotiation` re-index), `src/contract/abi.ts` (`createContract` +
-`getNegotiation` tuple).
-
-## Validation (this pass)
-
-- `npx hardhat compile` → "Compiled 8 Solidity files successfully" (solc 0.8.24,
-  optimizer runs 200, viaIR). No warnings.
-- `npx hardhat test` → **98 passing, 0 failing** — includes T9/T10/T11
-  (and the T11c/T11d/T11e over-length + name-pattern edge cases), the
-  `_fireAgent` per-neg payload tests, R24–R26, the R9 self-hosted-teardown negative
-  assertions, and the `PolicyFlagged`-removed / `setAgentEvidenceUrl`-removed gates.
-  Re-confirmed 2026-06-03: clean `npx hardhat compile` (no warnings), 98/98 green,
-  `tsc -p tsconfig.json --noEmit` exit 0, `npm run test:lib` 209/209. Struct↔ABI
-  tuple field order independently verified aligned 34/34 (positional decode safe).
-- `npm run typecheck` → exit 0. `npm run test:lib` → **209 passing**.
-- `npm run check-ruling-abi` → PASS (`inferString` selector `0xfe7ca098` asserted
-  **inside** the `_fireAgent` body, not just a comment/interface).
-
-## Per-category scrutiny — all PASS
-
-- **Reentrancy.** Unchanged posture. Agent-firing entry points
-  (`requestAdjudication`, `submitEvidence`, `appeal`) + `withdrawFunds` carry
-  `nonReentrant`; `_fireAgent` keeps CEI (state → `UnderReview`, `totalFees`,
-  `rulingDeadline` committed before `platform.createRequest`; refund last). The new
-  `n.agentEvidenceUrl`/`n.agentPromptHint` storage reads in `_fireAgent` happen before
-  the external call and introduce no new external interaction. A platform re-entering
-  during `createRequest` still hits `require(reqId != 0)` because
-  `_requestToNegotiation[requestId]` is written only after the call returns.
-  `handleResponse` and `commitRationale` make no external calls.
-- **Access control.** `createContract` keeps `msg.sender == providerAddr`. The removed
-  `setAgentEvidenceUrl` owner-setter leaves no orphaned mutator; per-neg URL/hint are
-  now set once, at creation, by the authenticated provider only. `commitRationale`
-  is `onlyOwner`. All admin setters remain `onlyOwner`. No new ungated entry point.
-- **Over/underflow beyond 0.8.x.** No new arithmetic on the live path beyond the
-  string-length `require`s. `_truncateRationale`'s indexing is in-bounds (buffer sized
-  `MAX_RATIONALE_BYTES + 3`; the copy loop only runs in the `b.length >
-  MAX_RATIONALE_BYTES` branch). `abi.encodePacked(n.agentPromptHint, …, n.agentEvidenceUrl, …)`
-  is a memory concat, not arithmetic. `abi.decode(result,(string))` reverts cleanly on
-  malformed bytes (routes to the refund/timeout path).
-- **Unbounded loops.** Only `_truncateRationale`, bounded by the constant
-  `MAX_RATIONALE_BYTES = 4096`. The two new fields are strings concatenated once in
-  `_fireAgent`, never iterated in a Solidity loop. No iteration over caller-controlled
-  array lengths anywhere (the old dynamic `uint16[]/bytes32[]` decode is gone).
-- **Missing event emits.** Every transition still emits; `createContract` emits
-  `ContractCreated` (the two new strings are stored, not separately logged — consistent
-  with the existing struct fields that are also unlogged and read back via
-  `getNegotiation`). `commitRationale` emits `RulingRationale`. The removed
-  `PolicyFlagged` was dead (no emit site); its removal announces nothing less.
-- **Storage-layout breaks.** `CoverageNegotiation` is non-upgradeable and directly
-  deployed (`deploy.ts` → `getContractFactory().deploy()`; no proxy / delegatecall /
-  initializer / EIP-1967 wrapping). Inserting `lastRequestId` + two `string` fields
-  mid-struct and removing the contract-level `agentEvidenceUrl` string slot is **not** a
-  layout hazard: each deploy is fresh storage. The off-chain readers were updated in
-  lockstep — `abi.ts` `getNegotiation` tuple order, `real.ts` `RawNegotiation` 34-field
-  indices ([18] lastDecision, [19] lastRequestId, [20] hasRuling, [21] agentEvidenceUrl,
-  [22] agentPromptHint, [23] round …), and `mapNegotiation` all match the Solidity
-  field order exactly. Typecheck (0) + the T9-real/T10-real position tests confirm.
-- **Gas anti-patterns.** No storage-read-in-loop. `MAX_RATIONALE_BYTES` is a `constant`.
-  `_fireAgent` reads each new field from storage once into the payload. View functions
-  returning the now-larger struct (two extra strings) are `external view`, never on a
-  state-changing path.
-- **OZ-pattern adherence.** Inheritance and `Ownable(msg.sender)` unchanged.
-  `nonReentrant` placement unchanged. ETH transfers remain checked low-level `.call`.
-  The new guards use the standard short namespaced `require` strings consistent with the
-  surrounding `createContract` validations.
-
-## Prior notes — now closed
-
-- The `2026-06-03 @ a64f80d` section flagged the dead **`event PolicyFlagged`**
-  declaration as a hygiene NIT. **CLOSED** — the declaration is removed from the
-  contract (asserted by the `PolicyFlagged-removed` test).
-- That section's OBSERVATION (three stale OLD-shape consumers: `src/contract/real.ts`
-  event list/`Ruled` decoder, plus the two `.mjs` demo/local-node harnesses). **CLOSED
-  for `real.ts`** — its `EVENT_NAMES` now lists `RulingRationale` (not `PolicyFlagged`)
-  and the `Ruled` decoder reads the 4-arg shape (asserted by `stale-real-ts-*` tests).
-  The two `.mjs` demo/integration harnesses are outside the `contracts/` gate and out
-  of scope for this unit; they remain an operator follow-up, not a compliance finding.
-- The `agentId` constructor anonymisation and the retained zero-valued
-  `priceBasisOf`/`costPlusUnitPrice`/`nadacUnitPrice` API-compat surface are intentional
-  and documented (see the notes in the section below) — non-findings.
-
-**Conclusion: ZERO findings across all eight stickler dimensions for the full
-`contracts/` diff, including the SPEC-0006 R14/R15/R17 per-negotiation unit.**
-
----
-
-# SPEC-0006 (R9/R11/R12/R24–R26) — inferString migration + self-hosted teardown
-
-**Date:** 2026-06-03
-**Branch:** `spec-6-implementation` (working tree vs `origin/main`)
-**Scope:** the full `contracts/` diff plus the in-`contracts/` scripts and the
-cross-repo ABI/script cascade that the contract change forces:
-
-- `contracts/contracts/CoverageNegotiation.sol` — `IParseWebsiteAgent.ExtractANumber`
-  payload replaced with `ILLMInferenceAgent.inferString(string,string,bool,string[])`
-  (R11); `handleResponse` rewritten to decode a single ABI `string` token and emit
-  `RulingRationale` (R24–R26); entire self-hosted surface deleted (`selfHosted`,
-  `setPlatformSelfHosted`, `_fireAgentSelfHosted`, `_selfHostedNonce`,
-  `IParseWebsiteAgent`) (R9); `Ruled` event slimmed 10→4 args; new
-  `commitRationale` + `_tokenToDecision` + `_truncateRationale` internals; two new
-  `constant`s.
-- `contracts/contracts/mocks/MockAgentPlatform.sol` — `triggerRuling` now takes a
-  single `string calldata decisionToken`; old `Ruling` struct deleted.
-- `contracts/contracts/mocks/RevertingReceiver.sol` — doc-only (orchestrator branch
-  references removed).
-- scripts: `scripts/orchestrator-real.ts` deleted; `@anthropic-ai/sdk` dependency
-  removed (R9); `scripts/check-ruling-abi.ts` repinned to the `inferString` selector
-  `0xfe7ca098` (R12); `scripts/lib/ruling-abi.ts`, `scripts/verify-deploy.ts`,
-  `scripts/identify-inference-agent.ts`, `contracts/scripts/probe-agent-abi.ts`,
-  `package.json` updated.
-
-## Verdict (re-review @ a64f80d, 2026-06-03): PASS — Solidity source clean; in-`contracts/` + canonical-ABI cascade complete
-
-Re-reviewed the full working-tree `contracts/` diff vs `origin/main` at HEAD
-`a64f80d`. The **Solidity contract source is compliant** (zero in-source findings;
-see the per-category checklist below). The two cascade findings from the prior
-(FAIL) pass are now **CLOSED**:
-
-- **FINDING 1 CLOSED** — `contracts/scripts/trigger-ruling.ts:37` now calls
-  `(mock as any).triggerRuling(lastCallback, lastRequestId, "approve")` with the
-  single token string; the old 7-field `ruling` object is gone. Matches the new
-  `MockAgentPlatform.triggerRuling(address, uint256, string calldata)` signature.
-- **FINDING 2 CLOSED** — `src/contract/abi.ts:44-45` now declares the 4-arg
-  `Ruled(uint256 indexed reqId, uint256 indexed requestId, uint8 decision,
-  uint256 coveredAmount)` and adds
-  `RulingRationale(uint256 indexed reqId, uint256 indexed requestId,
-  uint8 indexed decision, string rationale, string clauseReference,
-  string standardReference)`. The dead `PolicyFlagged` declaration is removed.
-  This is the canonical ABI the test-suite consumes.
-
-Validation (this pass): clean `npx hardhat clean && compile` →
-"Compiled 8 Solidity files successfully (evm target: paris)"; `npx hardhat test` →
-**76 passing, 0 failing** (includes the SPEC-0006 R9/R11/R12/R24–R26 suites and the
-negative-assertion tests that the self-hosted setter/flag/script are gone);
-`tsx scripts/check-ruling-abi.ts` → PASS (computed
-`inferString(string,string,bool,string[]) → 0xfe7ca098`); root `npm run typecheck`
-→ exit 0 (no dangling import of the deleted `scripts/lib/ruling-abi.ts` or
-`@anthropic-ai/sdk`).
-
-### OBSERVATION (NOT a `contracts/`-diff finding) — stale OLD-shape consumers remain in untouched demo/integration scripts
-
-Outside this diff and outside `contracts/`, three pre-existing TypeScript/Node files
-were **not** updated and still target the OLD 10-tuple `Ruled` / `PolicyFlagged`
-surface. They are recorded here for the operator (not counted against the Solidity
-gate — none is in the `contracts/` diff, and none is the canonical `abi.ts`):
-
-- `src/contract/real.ts:409,562-568` — its event-name list still includes
-  `"PolicyFlagged"` and its `Ruled` decoder reads args `a[4]`–`a[9]`
-  (`rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices,
-  usedReferenceIndices, usedLeafHashes`) that no longer exist on the 4-arg event.
-- `scripts/orchestrator-demo.mjs` (`npm run demo:orchestrator`) and
-  `scripts/real-backend-localnode.mjs` (`npm run test:real-local`, which imports
-  `src/contract/real.ts`) — both still build the old `{ costPlusUnitPrice,
-  nadacUnitPrice, receiptId, … }` ruling struct passed to `triggerRuling`, which
-  would fail to ABI-encode against the new single-`string` signature.
-
-These are integration/demo harnesses, not the deployed contract or its canonical
-ABI; they do not affect the on-chain compliance verdict. They DO mean the
-single-string cascade is not yet coherent end-to-end across the whole repo — flagged
-in this review's structured output under the unit gate, and worth a follow-up so a
-live `demo:orchestrator` / `test:real-local` run doesn't throw at the `triggerRuling`
-call site.
-
-## Contract-source scrutiny — per category (all PASS)
-
-**Reentrancy.** `handleResponse` makes no external calls; it decodes in memory,
-writes state, and emits logs. It stays gated to `msg.sender == address(platform)`
-and `n.state == State.UnderReview`, with `_clearRequest(n)` run before the decode —
-identical posture to the prior audited ticks. The three agent-firing entry points
-(`requestAdjudication`, `submitEvidence`, `appeal`) and `withdrawFunds` retain
-`nonReentrant`; `_fireAgent`'s single external call (`platform.createRequest`) is
-preceded by all effects (`totalFees`, `rulingDeadline`, `state = UnderReview`,
-`PacketSubmitted`) and the overpayment refund is the last action under the caller's
-guard. `commitRationale` makes no external call. CEI intact everywhere.
-
-**Access control.** `commitRationale` is `onlyOwner` (keeper role = owner in v0).
-`handleResponse` retains the platform-only gate. Deleted setter
-`setPlatformSelfHosted` is gone (and a negative-assertion test confirms it). All
-admin setters remain `onlyOwner`. The constructor now hard-writes
-`agentId = LLM_INFERENCE_AGENT_ID` and ignores `agentId_` — intentional and
-documented; `setAgentId` (onlyOwner) can still override for tests. No new
-unauthenticated entry point.
-
-**Over/underflow beyond 0.8.x.** No new arithmetic introduced on the live path.
-`_truncateRationale` indexes `b[i]` only for `i < MAX_RATIONALE_BYTES` after checking
-`b.length > MAX_RATIONALE_BYTES`, so every index is in-bounds; the `result` buffer is
-sized `MAX_RATIONALE_BYTES + 3` and the three trailing writes land exactly in range.
-`abi.decode(..., (string))` reverts cleanly on malformed bytes (routes to the
-platform refund path, no state corruption). `_benchmarkCap` keeps its
-overflow-saturating guard (now always returns 0 in string-token mode). No `unchecked`
-on any user-influenced counter.
-
-**Unbounded loops.** The only loop is in `_truncateRationale`, bounded by the
-`MAX_RATIONALE_BYTES = 4096` constant — not user-length-driven. The R26 test commits a
->4096-char rationale and asserts completion without OOG. No unbounded iteration over
-negotiations, arrays, or mappings anywhere in the diff.
-
-**Missing event emits.** Every terminal/transition branch emits: `Approve` →
-`Ruled` + `RulingRationale`; `Deny` → `Ruled` + `RulingRationale`; `PolicyInvalid`
-→ `Ruled` + `PolicyInvalidated` + `RulingRationale`; `NeedMoreEvidence` →
-`EvidenceRequested` (correctly no `Ruled`); non-success/empty → `RulingTimedOut` +
-`EvidenceRequested`. `commitRationale` emits `RulingRationale`. NIT (not a finding):
-`event PolicyFlagged` is now declared but no longer emitted anywhere — dead event
-declaration left after the R6b path was simplified; harmless, but worth deleting for
-hygiene.
-
-**Storage-layout break.** Removing `selfHosted` (it was packed into slot 0 alongside
-the 20-byte `platform` address) shifts no other slot. Removing `_selfHostedNonce`
-(the last-appended slot, with nothing below it) shifts no other slot. The two added
-`constant`s consume no storage. The surviving named slots keep their indices
-(`platform`/0, `agentId`/1, `agentReward`/2, `rulingTimeout`/3, `maxRounds`/4,
-`agentEvidenceUrl`/5, `currentlyFiringReqId`/6, `_nextId`/7, `_negotiations`/8,
-`_requestToNegotiation`/9). The contract is not proxied / not upgradeable
-(no proxy, initializer, or delegatecall machinery in `contracts/contracts/`), and the
-deploy path is a fresh `getContractFactory().deploy(...)`, so layout shift is moot in
-practice as well.
-
-**Gas anti-patterns.** No storage-read-in-loop, no repeated external calls, no
-redundant SLOADs introduced. `_tokenToDecision` recomputes four `keccak256` of small
-string literals per call — constant-bounded and only on the platform callback path;
-acceptable. The constructor self-assignment `agentId_ = agentId_;` to silence the
-unused-param warning is a stylistic NIT (an anonymous param would be cleaner) but
-compiles clean and has no runtime cost. `_truncateRationale` byte-copy is the
-expected cost for the bounded truncation.
-
-**OZ-pattern adherence.** Inheritance unchanged (`Ownable, ReentrancyGuard,
-IAgentRequesterHandler`); `Ownable(msg.sender)` constructor arg intact;
-`nonReentrant` placement unchanged; no OZ pattern bypassed or weakened.
-
-## Validation run
-
-- `npx hardhat clean && npx hardhat compile` → "Compiled 8 Solidity files
-  successfully (evm target: paris)".
-- `npx hardhat test` → **76 passing, 0 failing** (includes the SPEC-0006
-  R11/R12/R24–R26/R9 suites: inferString selector + agentId, single-string decode for
-  all four tokens, garbage-token fallback, commitRationale truncation, and the
-  negative assertions that the self-hosted setter/flag/`ruling-abi.ts` are gone).
-- `tsx scripts/check-ruling-abi.ts` → PASS (computed selector
-  `inferString(string,string,bool,string[]) → 0xfe7ca098`; source + self-check
-  literals present). Selector independently recomputed:
-  `keccak256("inferString(string,string,bool,string[])")[0:4] = 0xfe7ca098` ✓.
-- root `npm run typecheck` → exit 0.
-
-The contract diff is Solidity-clean and the in-`contracts/` + canonical-ABI cascade
-is complete (prior FINDING 1 / FINDING 2 both CLOSED). The only residue is the
-OBSERVATION above: three untouched demo/integration scripts outside `contracts/`
-still target the old `Ruled`/`PolicyFlagged` shape.
-
----
-
-## Tick 119 (iter-2 re-review) — R25 Tick B fixes
-
-**Date:** 2026-05-30
-**Scope:** Verify the iter-1 (tick 118) findings are CLOSED on commit `9db79d7`.
-
-**Verdict:** PASS (zero findings — all prior findings CLOSED)
-
-### MEDIUM status: CLOSED
-
-`_selfHostedNonce` is now declared at line 217 of `CoverageNegotiation.sol`, AFTER
-`_requestToNegotiation` (line 208), at the END of the storage block. `_nextId` (203),
-`_negotiations` (205), and `_requestToNegotiation` (208) all retain their pre-Tick-B
-slot indices — appending the new slot does not shift any existing slot. Storage-layout
-compat for upgrade-in-place is preserved. The docstring at lines 210-216 explicitly
-documents the placement rationale.
-
-### LOW status: CLOSED
-
-`orchestrator handleResponse round-trip: Approve ruling drives state → Approved`
-(test file lines 1186-1253) does exactly what the iter-1 LOW asked for: fires the
-self-hosted path, captures the synthetic `pendingRequestId`, the orchestrator EOA
-ABI-encodes the full 10-tuple ruling (`Decision.Approve, costPlus, NADAC, hashes,
-receipt, empty arrays`), wraps it in the Response struct + an empty Request, calls
-`handleResponse(requestId, [response], Success, request)`, asserts the `Ruled` event
-fires AND `stateOf(reqId) == State.Approved`. Round-trip is end-to-end.
-
-### NIT status: CLOSED
-
-Docstring at `CoverageNegotiation.sol:189-200` carries the Amendment 0006 exception
-block at lines 195-199: `"NOT set in the self-hosted path (`_fireAgentSelfHosted`)
-because there's no external `platform.createRequest` call for an observer to
-interleave with. Self-hosted observers should read the `RulingRequested` event
-instead..."`. Clear, explicit, points readers at the observable.
-
-### New findings: none
-
-Additional stickler checks all pass:
-- **CEI in `_fireAgentSelfHosted`** (lines 883-925): all state writes
-  (`n.totalFees` 891, `n.rulingDeadline` 896, `n.state` 897, `_selfHostedNonce` 904,
-  `n.pendingRequestId` 908, `_requestToNegotiation[requestId]` 909) commit before
-  EITHER external `.call{value}` (lines 918, 922). Events at 911-912 fire before
-  the calls, matching the platform-path ordering.
-- **Reentrancy**: `requestAdjudication` (420), `submitEvidence` (437), `appeal` (481)
-  — all three `_fireAgent` callers carry `nonReentrant`. Refund + orchestrator-fee
-  transfers in the self-hosted path are guarded.
-- **Nonce-then-keccak ordering**: line 904 `_selfHostedNonce += 1;` strictly precedes
-  the keccak at 905-907 — same-block fires get distinct nonces, distinct requestIds.
-- **`_fireAgent` branch** (lines 804-807): `if (selfHosted) { _fireAgentSelfHosted(...);
-  return; }` — clean early-return, no fallthrough into platform-path code.
-- **Test coverage**: all 5 new tests present and meaningful (selfHosted fire,
-  uniqueness, underfunded revert, overpayment refund, handleResponse round-trip).
-  Commit body reports 39/39 hardhat passing.
-
----
-
-# Solidity compliance — tick 118
-
-**Date:** 2026-05-30
-**Scope:** Amendment 0006 Tick B (part 2) — `_fireAgent` self-hosted branch on
-`CoverageNegotiation.sol` + 4 new `_fireAgentSelfHosted` tests in
-`contracts/test/CoverageNegotiation.test.ts`. Diff also includes tick-117's
-committed `selfHosted` storage + `setPlatformSelfHosted` setter.
-
-## Tick 118 — R25 Tick B (self-hosted _fireAgent branch)
-
-**Verdict:** FAIL (3 findings: 1 MEDIUM, 1 LOW, 1 NIT)
-
-### MEDIUM
-
-- **Storage layout: `currentlyFiringReqId` and `_selfHostedNonce` were INSERTED,
-  not appended.** The pre-change layout order was
-  `platform, agentId, agentReward, rulingTimeout, maxRounds, agentEvidenceUrl,
-  _nextId, _negotiations, _requestToNegotiation`. Post-change:
-  `platform+selfHosted (packed), agentId, agentReward, rulingTimeout, maxRounds,
-  agentEvidenceUrl, currentlyFiringReqId (NEW, slot 6), _nextId (SHIFTED to 7),
-  _selfHostedNonce (NEW, slot 8), _negotiations (SHIFTED to 9),
-  _requestToNegotiation (SHIFTED to 10)`. `_nextId`, `_negotiations`, and
-  `_requestToNegotiation` all move slots. The reviewer brief stated "New slots
-  appended, not inserted" — that is incorrect for this diff. For a fresh deploy
-  (the demo path) this is harmless. For any upgrade-in-place / proxy scenario it
-  would corrupt the request-id counter and the negotiation mapping root. Confirm
-  the deployment posture explicitly rules out an existing-state upgrade, or move
-  `currentlyFiringReqId` + `_selfHostedNonce` to the end of the storage block
-  (after `_requestToNegotiation`). File:
-  `contracts/contracts/CoverageNegotiation.sol:189-209`.
-
-  (The `bool selfHosted` packing into the `platform` slot IS safe — `IAgentRequester`
-  is an address = 20 bytes, leaves 12 bytes spare, bool occupies 1. No upgrade
-  impact on slot 0.)
-
-### LOW
-
-- **Test coverage gap: no handleResponse round-trip through the self-hosted
-  path.** The 4 added tests prove `_fireAgentSelfHosted` reaches UnderReview,
-  generates unique requestIds, reverts on underfunding, and refunds overpayment.
-  None of them invoke `handleResponse` from the orchestrator EOA against the
-  synthetic requestId, so the end-to-end loop (self-hosted fire → orchestrator
-  ruling → state transition to Approved/Denied/etc.) is unproven. The
-  `_requestToNegotiation[requestId] = reqId` mapping write is the load-bearing
-  step that must round-trip — currently asserted only as "non-zero", not as
-  "delivers a ruling when keyed back". Add at least one test where the
-  orchestrator signer calls `handleResponse(requestId, responses)` with an
-  Approve/Deny tuple and asserts the final state. File:
-  `contracts/test/CoverageNegotiation.test.ts:1086-1188` (the new self-hosted
-  describe block).
-
-### NIT
-
-- **`currentlyFiringReqId` is not set/cleared on the self-hosted path** while the
-  platform path sets it before and clears it after `platform.createRequest`
-  (`CoverageNegotiation.sol:202-209` in `_fireAgent`). Self-hosted skips this
-  entirely. The accessor doc string ("Zero outside an active fire") still holds
-  trivially (it's always zero in self-hosted mode), but anything off-chain that
-  uses this as a probe (per the existing comment: "off-chain probe / future
-  indexer") will see no signal during a self-hosted fire. Either mirror the
-  set/clear inside `_fireAgentSelfHosted` for behavioral parity, or update the
-  accessor doc string to call out the self-hosted exception.
-
-### Passed checks
-
-- CEI ordering in `_fireAgentSelfHosted`: all state writes (`n.totalFees`,
-  `n.rulingDeadline`, `n.state`, `_selfHostedNonce`, `n.pendingRequestId`,
-  `_requestToNegotiation[requestId]`) complete before the two external
-  `.call{value}` interactions (CoverageNegotiation.sol:879-916). Clean.
-- Reentrancy: all callers (`requestAdjudication`, `submitEvidence`, `appeal`)
-  carry `nonReentrant`; `_fireAgentSelfHosted` is `internal` and unreachable
-  bypassing the guard.
-- Access control: `setPlatformSelfHosted` is `onlyOwner` (covered by test at
-  test:1063-1069 via `OwnableUnauthorizedAccount`). `_fireAgentSelfHosted` is
-  `internal`.
-- Synthetic requestId uniqueness: `_selfHostedNonce += 1` runs BEFORE the
-  keccak (line 896 then 897-899); `uint256` nonce can't realistically wrap;
-  `address(this)` prevents cross-contract collision; same-block uniqueness
-  verified by test (test:1106-1126).
-- Fee semantics: `fee = agentReward`, underfunded reverts, 0 allowed,
-  overpayment refunds, success of orchestrator transfer bubbled via
-  `require(feeOk, ...)`.
-- Event consistency: `PacketSubmitted` + `RulingRequested` emitted with the
-  same arg shapes and ordering as the platform path; downstream
-  `handleResponse` and `_requestToNegotiation` are shape-compatible.
-- OpenZeppelin pattern compliance: inheritance unchanged
-  (`Ownable, ReentrancyGuard, IAgentRequesterHandler`); no storage collision
-  introduced against base classes.
-- `selfHosted` storage packs into the same slot as `platform` (slot 0) — no
-  new slot for the bool, consistent with the inline doc.
-
----
-
-# Solidity compliance — tick 14
-
-**Date:** 2026-05-29
-**Scope:** no `contracts/` diff this tick — audit deferred to next contract-touching tick
-**Verdict:** PASS (no contracts/ diff → no new findings)
-
-## This tick's diff scope
-
-Verified via `git diff --name-only HEAD~1..HEAD -- contracts/` (empty result). This
-tick edits web-only files:
-
-- `web/src/views/Overview.tsx`
-- `web/src/styles.css`
-
-No changes to `contracts/contracts/CoverageNegotiation.sol`,
-`contracts/contracts/mocks/MockAgentPlatform.sol`, or
-`contracts/test/CoverageNegotiation.test.ts`.
-
-Because no Solidity source or contract-level test was touched this tick, no new
-audit pass is warranted. The next contract-touching tick should re-trigger a
-full focused review.
-
-## Tick 13 — preserved for reference
-
-Tick 13 also had no `contracts/` diff (working-tree change was 1 new TS file,
-`web/src/hooks/useNegotiation.ts`). PASS — no new findings.
-
-## Tick 12 — preserved for reference
-
-Tick 12 diff scope (committed 180573f, UNIT-4-narrow):
-
-- 3 new TS files: `src/protocol/revertReasonMap.ts`,
-  `src/protocol/revertReasonMap.test.ts`, `web/src/hooks/useAction.ts`
-- 1 edit: `web/src/shared.ts` (added missing `PacketSubmitted` case)
-
-No `contracts/` changes — PASS.
-
-## Carry-forward — prior open findings
-
-From tick 4 (UNIT-2):
-
-- **None.** Tick 4 closed with 0 findings (PASS). All seven focused checks
-  (R14a appeal precondition, R2b createContract placement, PacketSubmitted CEI
-  placement, no new externals/storage/modifiers, event-signature width
-  `uint256 round` vs spec `uint8`, cross-callsite ripple in `_fireAgent`, test
-  coverage delta) passed cleanly. The `uint256 indexed round` vs spec's
-  `uint8 indexed round` width gap was explicitly noted as forward-compatible
-  and accepted, not an open finding.
-
-Ticks 8 (UNIT-3a), 9 (UNIT-3b), 10 (UNIT-3c), 11, 12, 13, and 14 (this tick)
-also touched no `contracts/` files and added no new findings.
-
-No unresolved compliance items carry into tick 14. One spec-side carry-forward
-flag (R6b `policyVoidedClauseIndices`) remains noted for the next
-contract-touching tick — see tick 11 entry in git history for full context:
-the R6b prose update in `docs/specs/0001-mvp0-coverage-negotiation.md` mentions
-a future `policyVoidedClauseIndices` field on the `Ruled` event. This is a
-spec change, not yet a contract change — the on-chain `Ruled` event signature
-in `CoverageNegotiation.sol` is unchanged. When implemented, the
-event-signature audit checks (ABI width, indexed-vs-non-indexed positioning,
-gas cost of additional dynamic-array parameter, and event-emission CEI
-placement) will need to run fresh against the new field.
-
-## Tick 4 (UNIT-2) audit — preserved for reference
-
-Reviewed the uncommitted diff against `contracts/contracts/CoverageNegotiation.sol`
-and `contracts/test/CoverageNegotiation.test.ts`. All seven focused checks pass.
-
-1. **R14a precondition tightening (appeal()).** The new
-   `require(n.state == State.Denied, "appeal: prior ruling not Deny")` at line 436
-   is the sole entry-state gate on `appeal()` — there are no alternate entry points.
-   The `_onlyParty(n)` R11 auth check still runs on line 437 (after the state check,
-   which is correct: state-validity should gate before party-validity to keep error
-   ordering deterministic, and `_onlyParty` is read-only so reordering has no
-   security effect). The cap-deadlock short-circuit
-   (`if (n.round >= maxRounds)`) at line 445 still runs AFTER the state check, so
-   you cannot deadlock from an `Approved` state — the R14a revert fires first. The
-   existing cap-deadlock test (line 700) already uses a `Decision.Deny` ruling
-   before exercising the cap, so it correctly survives R14a tightening.
-
-2. **R2b placement (createContract).**
-   `require(providerAddr != insurerAddr, "create: self-contract")` at line 323 sits
-   AFTER the address/auth/qty checks and BEFORE `_nextId++` (line 325) and any
-   struct field writes (lines 326–341). No state effects to roll back; CEI-clean.
-   Order also ensures parameter-validation errors (`addr: zero`, `auth: not
-   provider`, `qty: zero`) still surface ahead of the self-contract rejection,
-   preserving error specificity.
-
-3. **PacketSubmitted placement (_fireAgent).** Emitted at line 776, AFTER all state
-   effects (`n.totalFees`, `n.rulingDeadline`, `n.state = UnderReview`) and BEFORE
-   the external `platform.createRequest` call at line 785. CEI is preserved. At
-   emit time, `n.round` correctly equals the round being requested: confirmed by
-   reading all three call sites — `requestAdjudication` sets `n.round = 1` at
-   line 378, `submitEvidence` bumps `n.round += 1` at line 412, `appeal` bumps
-   `n.round += 1` at line 458, each immediately before calling `_fireAgent`. The
-   inline comment at 770–775 documents this contract correctly.
-
-4. **No new external calls / storage / modifiers.** Diff only adds: one event
-   declaration, one `require`, one `emit`, comment/docstring revisions. No new
-   storage slots, no new modifiers, no new external interactions. Verified against
-   the full diff.
-
-5. **Event signature width.** `uint256 indexed round` matches `n.round`'s declared
-   type (line 134). SPEC-0004 §3.5 proposes `uint8 indexed round`; the contract's
-   wider type is forward-compatible (no overflow, simpler ABI, no truncation at
-   the emit site). Acceptable trade-off and explicitly called out in the change
-   list.
-
-6. **Cross-callsite ripple.** `_fireAgent` is invoked from exactly three sites
-   (`requestAdjudication` line 380, `submitEvidence` line 414, `appeal` line 461).
-   All three set `n.round` to the round being fired before the call — confirmed by
-   direct read of each function body.
-
-7. **Tests updated.** Three new test cases added: R2b self-contract revert
-   (line 209), PacketSubmitted on all three fire paths with rounds 1/2/3
-   (line 244), R14a appeal-from-Approved revert (line 491). Two existing tests
-   updated: T9's single-shared-wallet scenario (line 626) flipped from
-   end-to-end happy-path to a `create: self-contract` revert assertion; T10's
-   `"appeal: not ruled"` expectation (line 758) updated to
-   `"appeal: prior ruling not Deny"`. No stale references to the old error
-   string remain in the test file.
-
-## Tick 49 solidity-compliance
-
-**Date:** 2026-05-29
-**Scope:** SPEC-0004 R23 — propagate `policyVoidedClauseIndices: uint16[]` from
-the arbiter response through `handleResponse` decode and onto the `Ruled` event
-as the 8th element. Closes the carry-forward flag noted in tick 14.
-**Files reviewed (working-tree diff vs `1862b9c`):**
-
-- `contracts/contracts/CoverageNegotiation.sol` (Ruled event +1 arg; abi.decode 7→8; three emit Ruled callsites updated; ~8 lines)
-- `contracts/contracts/mocks/MockAgentPlatform.sol` (Ruling struct +1 field; abi.encode 7→8; ~3 lines)
-- `contracts/hardhat.config.ts` (`viaIR: true` added)
-
-### Hard-scrutiny checklist
-
-1. **Reentrancy on the new emit/decode (CLOSED).** No new external calls, no new
-   `.call`/`.transfer`/`.send`, no new ETH movement. `abi.decode` is a pure
-   memory operation (no callbacks); `emit Ruled` is a log write (no callbacks).
-   The pre-existing `handleResponse` guard (`require(msg.sender ==
-   address(platform))` at line 575) is unchanged. `handleResponse` is NOT
-   `nonReentrant`-modified (it is gated by the platform-only check), so the
-   reentrancy posture is identical to pre-change: only the trusted platform
-   address can re-enter, and it would be re-entering its own callback into a
-   state already cleared via `_clearRequest` + state transition. The new emit
-   sits AFTER state writes on the PolicyInvalid / Approve / Deny branches —
-   CEI preserved. **No new reentrancy surface.**
-
-2. **Access control (CLOSED).** No new entry points. The platform-only gate
-   `require(msg.sender == address(platform), "callback: not platform")` at
-   line 575 remains the sole authorisation check on `handleResponse`. No
-   changes to `Ownable` admin setters, no new `external`/`public` functions.
-   `MockAgentPlatform.triggerRuling` is dev-only and unchanged in posture.
-
-3. **Integer overflow on `uint16[]` (CLOSED).** Solidity 0.8.24 with default
-   checked arithmetic. `abi.decode((uint16[]))` deserialises each 32-byte word
-   into a `uint16` and **reverts on overflow** if any encoded element exceeds
-   `2**16 - 1 = 65535` — this is documented Solidity behaviour for fixed-width
-   integer decoding (no silent truncation). A malicious arbiter passing a
-   `uint256` value > 65535 in the array slot will cause `handleResponse` to
-   revert cleanly at the decode step, which routes through the platform's
-   transaction failure rather than corrupting state. Acceptable.
-
-4. **Unbounded loops / gas-bomb (CLOSED).** Grepped both touched files for
-   loops over `policyVoidedClauseIndices` — zero. The variable is decoded into
-   memory once and then passed by reference into `emit Ruled` on each of the
-   three terminal branches. No `for`/`while`. The only gas cost is the event
-   log size (8 bytes per element, plus the dynamic-array header), which is
-   bounded by the encoded payload size that the platform itself caps. No
-   storage write of the array (the `Negotiation` struct does NOT carry the
-   field — see point 7). **No loop-based gas-bomb risk.**
-
-5. **Event emit at all three callsites (CLOSED).** Verified by line-by-line
-   grep of `emit Ruled` in `CoverageNegotiation.sol`:
-   - Line 643: PolicyInvalid branch — passes `policyVoidedClauseIndices`
-   - Line 657: Approve branch — passes `policyVoidedClauseIndices`
-   - Line 662: Deny branch — passes `policyVoidedClauseIndices`
-   The fourth potential callsite (NeedMoreEvidence at line 620) intentionally
-   returns BEFORE any `emit Ruled` — that branch routes to
-   `EvidenceRequested` instead of ruling, so omitting the emit is correct.
-   No callsite was missed.
-
-6. **Storage-layout invariant (CLOSED).** The `Negotiation` struct
-   (lines 100–148) is BYTE-FOR-BYTE unchanged. `policyVoidedClauseIndices` is
-   a callback-local memory variable; it never reaches storage. The new field
-   on `MockAgentPlatform.Ruling` (line 89) is a calldata struct on a dev-only
-   contract and has no production storage implication. No existing slot
-   re-ordered, no new slot added. Storage layout is safe for in-place upgrade
-   if proxied (this contract isn't proxied today, but the property holds).
-
-7. **viaIR trade-off (CLOSED with operator-noted caveat).** `viaIR: true` was
-   enabled in `contracts/hardhat.config.ts` to resolve a stack-too-deep error
-   the 8-element decode would otherwise trigger (the local-variable stack now
-   exceeds the 16-slot EVM stack window inside `handleResponse`). Trade
-   analysis:
-   - **Bytecode change:** Yes — viaIR routes through Yul and produces
-     different bytecode for the same source. This means the on-chain hash of
-     the deployed bytecode will not match a non-viaIR rebuild of the same
-     source. **Operator implication:** any re-deploy MUST also use
-     `viaIR: true`; verifying the contract on Blockscout requires the same
-     compiler settings in the verification payload (matches existing
-     `optimizer.enabled: true, runs: 200`).
-   - **Production safety:** viaIR is the recommended path for any contract
-     hitting stack-too-deep; the IR pipeline is stable in solc 0.8.24 and has
-     been the default for libraries like OpenZeppelin's larger contracts since
-     0.8.18. No known correctness regressions at 0.8.24.
-   - **Gas:** viaIR with optimiser typically produces equal-or-slightly-cheaper
-     runtime bytecode. No regression expected.
-   - **Verdict:** acceptable trade. The alternative (factoring `handleResponse`
-     into a smaller helper to free stack slots) would have worked but adds
-     surface area; enabling viaIR is the smaller, well-understood change.
-
-8. **OZ-pattern adherence (CLOSED).** `Ownable` admin posture and
-   `ReentrancyGuard` modifier usage are untouched. The `nonReentrant` modifier
-   on the agent-firing entry points (`requestAdjudication`, `submitEvidence`,
-   `appeal`, `withdrawFunds`) and the CEI ordering in `_fireAgent` are all
-   unchanged. No OZ pattern was bypassed or weakened.
-
-### OPEN — deployment-coordination items (NOT in-contract findings)
-
-These are NOT solidity findings — the contract source itself is compliant —
-but they affect the live deployment and warrant operator action before this
-tick goes to testnet.
-
-- **OPEN (medium, OPERATOR):** The currently-deployed contract at
-  `0x1dC5bA6771A7f4426ABE5BB808a7d51BdEA33E1A` (Somnia testnet, recorded in
-  `docs/progress/browser-verify.md:206` and `docs/loop-prompts/spec-4-implementation-loop.md:178`)
-  carries the OLD 7-element `Ruled` event ABI. The new on-chain `Ruled`
-  signature is 8 args. **Until the contract is re-deployed**, off-chain
-  consumers subscribing to the new ABI will see no events fire on testnet,
-  and consumers using the old ABI will continue to receive 7-element decodes
-  even after redeploy if they cache the old ABI. Required coordination:
-  (a) re-deploy `CoverageNegotiation` with the tick-49 source +
-  `viaIR: true`; (b) update `COVERAGE_CONTRACT_ADDRESS` /
-  `VITE_CONTRACT_ADDRESS` env vars; (c) ensure `web/src/contract/abi.ts` ships
-  the 8-arg `Ruled` ABI (in scope of this tick's web diff, not contracts).
-  Re-running `browser-verify` against the new address is the gate.
-
-- **OPEN (medium, OPERATOR):** The in-contract decode now expects 8 elements;
-  the live Somnia agent platform must encode the 8th (`uint16[]
-  policyVoidedClauseIndices`) in `responses[0].result` or `handleResponse`
-  will revert at `abi.decode`. The mock has been updated, but the real
-  Somnia-side agent template (off-chain LLM payload generator) needs the
-  matching encode update before any live testnet ruling will land. If the
-  Somnia agent returns the legacy 7-tuple, every ruling will revert into the
-  retriable timeout path (the revert won't cause platform-side fund loss
-  because the platform refunds on handler revert, but no ruling will be
-  observable). **Coordination:** confirm the off-chain agent payload builder
-  has been bumped to encode the 8-tuple in lockstep with the contract
-  redeploy. This is a deployment-sequence concern, not a source defect.
-
-### Verdict: PASS (zero in-source findings)
-
-All eight scrutiny points close cleanly in the source: no reentrancy regression,
-no new access-control surface, decode reverts cleanly on `uint16` overflow,
-no loops introduced, all three terminal `emit Ruled` callsites updated,
-`Negotiation` storage layout unchanged, `viaIR` trade justified, OZ patterns
-intact. The two OPEN items are deployment-coordination flags for the operator
-(re-deploy address + Somnia agent encode parity) — neither indicates a defect
-in the tick-49 Solidity source.
-
----
-
-## Tick 50 solidity-compliance
-
-**Scope:** SPEC-0004 §3.5 R11 ruling-citation replay anchors. `Ruled` event
-extended from 8 → 10 args by appending `uint16[] usedReferenceIndices` and
-`bytes32[] usedLeafHashes`. `abi.decode` tuple in `handleResponse` grew 8 → 10.
-All three terminal emit callsites updated. `MockAgentPlatform.Ruling` struct +
-`abi.encode` mirrors the additions. Test helper `ruling()` extended with two
-new defaulted params; 5 existing `.withArgs` got `[], []` appended; new R11
-test pins `usedReferenceIndices=[0] + usedLeafHashes=[0x11…]` end-to-end.
-viaIR remains on from tick 49. Emit-only change — no Negotiation struct field,
-no new state, no new entry points.
-
-### Diff scope (verified from `git diff 9873887`)
-
-- `CoverageNegotiation.sol`: event sig (+2 lines), decode comment (+1 line),
-  3 new local memory vars in the destructure, abi.decode type tuple +2 type
-  entries, 3 emit-callsite updates (Approve / Deny / PolicyInvalid). No
-  function body re-ordered, no new function added, no modifier touched.
-- `MockAgentPlatform.sol`: Ruling struct +2 fields, abi.encode +2 args. Dev/
-  test scaffold; not deployed to production.
-- `CoverageNegotiation.test.ts`: helper signature +2 params (defaulted to `[]`,
-  preserving call-site backward compatibility), 5 `.withArgs` updates, 1 new
-  R11 test.
-
-### Hard-scrutiny points
-
-1. **Reentrancy (CLOSED).** Zero new external calls. The diff is a strict
-   superset of the previous decode-and-emit shape: two more memory variables
-   destructured, two more type tokens in the abi.decode tuple, two more
-   argument slots in three `emit Ruled` callsites. `emit` is a log opcode
-   (`LOG0..LOG4`), not a call. No `.call`, `.transfer`, `.send`, no new
-   interface invocation. CEI ordering inside `handleResponse` is preserved:
-   state transitions (`n.state = State.{Approved,Denied,PolicyInvalidated}`
-   and `n.coveredAmount = …`) all complete **before** the trailing `emit Ruled`
-   on every branch. The PolicyInvalid branch still does `emit PolicyFlagged`
-   → state write → `emit Ruled` → `emit PolicyInvalidated` → `return`, with
-   the storage writes between the two policy-flag/invalidated event pair, so
-   no observer can see a half-committed state. No CEI regression.
-
-2. **Access control (CLOSED).** `handleResponse`'s platform gate (line 577,
-   `require(msg.sender == address(platform), "callback: not platform");`) is
-   byte-for-byte unchanged. The `require(n.state == State.UnderReview, …)`
-   round-state gate (line 583) is unchanged. No new public/external function
-   was added. No modifier was widened. The `Ownable` admin posture and the
-   `nonReentrant` modifiers on the four party entry points
-   (`requestAdjudication`, `submitEvidence`, `appeal`, `withdrawFunds`) are
-   untouched. Zero new entry surface.
-
-3. **Integer over/underflow (CLOSED).** Two new dynamic arrays:
-   `uint16[] usedReferenceIndices` and `bytes32[] usedLeafHashes`. `uint16`
-   carries the same overflow posture as the tick-49 `policyVoidedClauseIndices`
-   — `abi.decode` reverts cleanly if any element exceeds 65535 (solc 0.8.24
-   enforces this at decode time, no manual check needed). `bytes32` has no
-   numeric over/underflow surface (fixed-width opaque value). Array length is
-   bounded by the EVM calldata size limit and by gas (the platform-side
-   payload is fee-gated by the platform contract). No new arithmetic was
-   introduced — the new arrays are pass-through values from decode to log.
-
-4. **Unbounded loops (CLOSED).** No `for` / `while` was added. The new arrays
-   are never iterated in-contract; they are decoded, held in memory, and
-   passed verbatim to the log opcode. Indexing happens only off-chain
-   (consumers reading the event topic stream). The decode itself is a single
-   `abi.decode` call which is O(payload-size) — same complexity class as
-   tick 49 — not a Solidity loop. Zero new loop surface.
-
-5. **Missing event emits (CLOSED).** The diff verifies all THREE terminal
-   `emit Ruled` callsites carry the 10-arg shape:
-   - PolicyInvalid branch — line 649 — `…policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes);`
-   - Approve branch — line 663 — `…policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes);`
-   - Deny branch — line 668 — `…policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes);`
-
-   The `NeedMoreEvidence` branch (line 626–630) emits `EvidenceRequested`
-   instead of `Ruled` — correctly omitted, same posture as tick 49.
-   No callsite was missed.
-
-6. **Storage-layout invariant (CLOSED).** The `Negotiation` struct
-   (lines 100–148) is BYTE-FOR-BYTE unchanged across tick 50 — verified by
-   the diff containing no edits in that range. The two new arrays
-   (`usedReferenceIndices`, `usedLeafHashes`) are callback-local `memory`
-   variables; they never reach storage. The new fields on
-   `MockAgentPlatform.Ruling` are calldata struct fields on a dev-only
-   contract with no production storage implication. No existing slot
-   re-ordered, no new slot added. Storage layout safe.
-
-7. **Gas / stack pressure (CLOSED with operator-noted caveat).** The decode
-   now has 10 local memory variables (was 8 at tick 49). `viaIR: true`
-   remains on from tick 49's `contracts/hardhat.config.ts`, which routes the
-   compile through Yul IR codegen and handles arbitrary stack depths in
-   `handleResponse`. Verified by clean rebuild: `rm -rf artifacts cache &&
-   npx hardhat compile` succeeds (`Compiled 7 Solidity files successfully`)
-   with no stack-too-deep warning. Test suite: `npx hardhat test` → **30
-   passing** (29 prior + the new R11 test), including the existing 8-arg R23
-   test that was preserved as-is via the helper's `[], []` defaults. Gas:
-   two extra LOGn-data words per ruling emit (the two array lengths +
-   contents); no storage-write growth. Marginal cost; acceptable.
-
-8. **OZ-pattern adherence (CLOSED).** `Ownable` admin posture and
-   `ReentrancyGuard` modifier usage are untouched. The `nonReentrant` modifier
-   on the agent-firing entry points and CEI ordering in `_fireAgent` are all
-   unchanged. No OZ pattern bypassed or weakened.
-
-### OPEN — deployment-coordination items (NOT in-contract findings)
-
-These are NOT solidity findings — the source itself is compliant — but they
-extend the tick-49 OPEN items because the redeploy now needs to land the
-**10-arg** ABI, not the 8-arg one.
-
-- **OPEN (medium, OPERATOR) — supersedes tick-49 OPEN-1.** The currently-
-  deployed contract at `0x1dC5bA6771A7f4426ABE5BB808a7d51BdEA33E1A` (Somnia
-  testnet, tick 37) still carries the original 7-arg `Ruled` ABI. Tick 49
-  bumped the source to 8 args; tick 50 has now bumped it to 10 args. The
-  redeploy that was already required after tick 49 MUST now ship the
-  tick-50 source (10-arg `Ruled`), not the tick-49 source (8-arg `Ruled`).
-  Required coordination: (a) re-deploy `CoverageNegotiation` with the
-  **tick-50 source** + `viaIR: true`; (b) update `COVERAGE_CONTRACT_ADDRESS` /
-  `VITE_CONTRACT_ADDRESS` env vars; (c) ensure `web/src/contract/abi.ts`
-  ships the 10-arg `Ruled` ABI (web-layer concern, not contracts). The
-  `loop-state.md` operator-notes entry currently dated "tick 49" needs an
-  addendum or restatement covering the tick-50 extension so the operator
-  doesn't redeploy the intermediate 8-arg shape by mistake.
-
-- **OPEN (medium, OPERATOR) — supersedes tick-49 OPEN-2.** The in-contract
-  decode now expects 10 elements; the live Somnia agent platform must encode
-  the 9th (`uint16[] usedReferenceIndices`) and 10th (`bytes32[]
-  usedLeafHashes`) in `responses[0].result` or `handleResponse` will revert
-  at `abi.decode`. The mock has been updated, but the real Somnia-side agent
-  template needs the matching 10-tuple encode in lockstep with the contract
-  redeploy. If the off-chain agent returns the 8-tuple (tick 49 shape) or
-  the 7-tuple (legacy shape), every ruling will revert into the retriable
-  timeout path (clean revert, no fund loss, no observable ruling).
-  Coordination: confirm the off-chain agent payload builder is bumped to the
-  10-tuple BEFORE the contract redeploy goes live, or roll both in the same
-  release.
-
-### Verdict: PASS (zero in-source findings)
-
-All eight scrutiny points close cleanly in the source: no reentrancy
-regression, no new access-control surface, decode reverts cleanly on
-`uint16` overflow (carried over from tick 49), no loops introduced, all
-three terminal `emit Ruled` callsites updated to 10-arg shape, `Negotiation`
-storage layout unchanged, viaIR (already on) absorbs the 10-element decode
-with no stack-too-deep, OZ patterns intact. Clean rebuild + 30/30 hardhat
-tests green confirm. The two OPEN items are tick-49 OPEN flags re-asserted
-at the tick-50 ABI shape — they describe a deployment-coordination concern
-the operator already owns, not a defect in the tick-50 source.
+- **Compile (forced):** `rm -rf cache artifacts/build-info && npx hardhat compile`
+  → `Compiled 8 Solidity files successfully (evm target: paris)`. **No warnings, no
+  errors.** solc `0.8.24`, optimizer `runs: 200`, `viaIR: true`.
+- **Contract tests:** `npx hardhat test` → **166 passing, 0 failing.** Includes the
+  full A0008 escrow suite (S1a engage-payable, S1b underfund-revert, S1c
+  overpay-refund, S1d escrowAmount stored, S2a settle-approve transfers
+  coveredAmount→provider + refund→insurer + balance==0, S2b partial-coverage split,
+  S2c settle-deny full-refund→insurer + balance==0, S3a Deadlocked, S3b
+  ProviderRefused, S3c PolicyInvalidated, S3d Withdrawn — each full-escrow refund +
+  balance==0, S4a withdrawFunds-cannot-drain-escrow, S4b balance==0 after every
+  settled path, S4c balance==0 after every terminal-non-settle path), plus the
+  transfer-failure branch suite (settle/refuse/withdraw/deadlock/policy_invalid
+  reverting-recipient paths).
+- **Off-chain mirror:** `npm run typecheck` clean; `npm run test:lib` →
+  `src/contract/simulated.transitions.test.ts` A0008-SIM-BEH suite **24/24 passing**
+  (underfund-throw, exact-deposit escrowAmount, settle-approve/deny zeroing,
+  refuse/withdraw/Deadlocked/PolicyInvalidated zeroing, Settled `refundedToInsurer`
+  field). The simulated backend + `src/contract/{abi,real,types}.ts` mirror the
+  payable `insurerEngage(…, depositAmount?)` signature and the `escrowAmount` struct
+  field; the `getNegotiation` ABI tuple carries `escrowAmount` at field 13.
+
+## What changed for A0008 (escrow settlement)
+
+- **`Negotiation.escrowAmount` (uint256)** appended in struct order at field 13
+  (between `coveredAmount` and `costPlusUnitPrice`). Holds the ETH locked at
+  `insurerEngage`; zeroed on every release/refund.
+- **`_totalEscrowHeld` (private uint256)** at storage slot 8 — running sum of all
+  live escrow. `withdrawFunds` is bounded to `address(this).balance -
+  _totalEscrowHeld`, so the owner can never drain live escrow.
+- **`insurerEngage` is `payable`** (`nonReentrant`): requires
+  `msg.value >= requestedAmount` (`"escrow: underfunded"`), sets
+  `escrowAmount = requestedAmount`, credits `_totalEscrowHeld`, and refunds any
+  surplus to the insurer — all effects committed before the refund call (CEI).
+- **`settle` moves value** (`nonReentrant`): Approved path transfers `coveredAmount`
+  → provider and refunds `escrowAmount - coveredAmount` → insurer; Denied path
+  refunds the full escrow → insurer. State → `Settled`, `escrowAmount = 0`,
+  `_totalEscrowHeld` decremented BEFORE any `.call{value}`.
+- **Every terminal-non-settle path refunds the full escrow → insurer**, CEI +
+  `nonReentrant`: `refuse` → `ProviderRefused`; `withdraw` → `Withdrawn`; the
+  round-cap short-circuit in `appeal` and `submitEvidence` → `Deadlocked`; the
+  `policy_invalid` branch in `handleResponse` → `PolicyInvalidated`.
+- **Push shape (v0):** `payable(addr).call{value: x}("")` with the boolean return
+  checked (`require(ok, …)`). Pull-over-push is the noted preferred end-state; the
+  security gate accepted push for v0 because every push is CEI-ordered behind
+  `nonReentrant` and the recipient set is the two named party wallets (not arbitrary
+  attacker contracts in the value-routing position).
+
+## Gate-by-gate findings
+
+### 1. Reentrancy — PASS
+
+Every value-moving entry point carries `nonReentrant` AND follows
+checks-effects-interactions (state + `escrowAmount = 0` + `_totalEscrowHeld`
+decrement committed before any `.call{value}`):
+
+| Function | `nonReentrant` | CEI before `.call{value}` |
+| --- | --- | --- |
+| `insurerEngage` (refund surplus) | yes | `escrowAmount`, `state=Ready`, `_totalEscrowHeld+=` set first |
+| `requestAdjudication`/`submitEvidence`/`appeal` (via `_fireScrape`, fee refund) | yes | `state=UnderReview` + bookkeeping set first |
+| `submitEvidence`/`appeal` round-cap (Deadlocked) | yes | `state=Deadlocked`, `escrowAmount=0`, `_totalEscrowHeld-=` set first |
+| `settle` (provider transfer + insurer refund) | yes | `state=Settled`, `escrowAmount=0`, `_totalEscrowHeld-=` set first |
+| `refuse` (escrow refund) | yes | `state=ProviderRefused`, `escrowAmount=0`, `_totalEscrowHeld-=` set first |
+| `withdraw` (escrow refund) | yes | `state=Withdrawn`, `escrowAmount=0`, `_totalEscrowHeld-=` set first |
+| `withdrawFunds` (owner) | yes | event after a single checked call; no further state mutated |
+| `onRulingTimeout` (parked-fee refund) | keeper-callable | `pendingDecideFee=0`, `pendingFeePayer=0`, `state=EvidenceRequested` set first |
+
+**`handleResponse` (and its `policy_invalid` escrow refund) is intentionally NOT
+`nonReentrant`** — this is correct, not a finding:
+
+- It is access-gated to `msg.sender == address(platform)` (the trusted Somnia
+  platform), so the caller is not an attacker-controlled contract.
+- It asserts `n.state == State.UnderReview` on entry. The `policy_invalid` branch
+  sets `state = PolicyInvalidated` and `escrowAmount = 0` and decrements
+  `_totalEscrowHeld` BEFORE the `.call{value}`; a reentrant re-entry into
+  `handleResponse` fails the `UnderReview` guard, and any reentrant party function
+  sees escrow already zeroed. CEI + the trusted-caller gate fully close the window.
+- A same-tx `nonReentrant` lock cannot be added to `handleResponse` anyway without
+  risking a lock collision with the `_fireScrape`/`_fireDecide` it chains into on the
+  success path; the design correctly leans on CEI + the platform gate instead.
+
+### 2. Missing access control — PASS
+
+- Admin setters (`setPlatform`, `setAgentId`, `setAgentReward`, `setRulingTimeout`,
+  `setMaxRounds`, `withdrawFunds`, `commitRationale`) are `onlyOwner`.
+- `insurerEngage` is insurer-only (`require(msg.sender == n.insurerAddr)`);
+  `submitEvidence`/`refuse` are provider-only; `createContract` must come from the
+  declared provider; `requestAdjudication`/`appeal`/`accept`/`settle`/`withdraw`/
+  `postFeedback` are party-gated via `_onlyParty`.
+- `handleResponse` is platform-gated (`require(msg.sender == address(platform))`).
+- **Value routing is deterministic and recipient-fixed:** escrow always returns to
+  `n.insurerAddr`; covered amount always goes to `n.providerAddr`; surplus/fee
+  refunds go to `msg.sender`/`payer` recorded at fire time. No caller can redirect a
+  payout — there is no recipient parameter on any value-moving path.
+
+### 3. Over/underflow beyond 0.8.x checks — PASS
+
+- All escrow arithmetic is checked (0.8.x default): `msg.value - escrow` is guarded
+  by the preceding `require(msg.value >= n.requestedAmount)`; `escrow - covered` in
+  `settle` cannot underflow because `coveredAmount == requestedAmount == escrowAmount`
+  on the real approve path (so `remainder >= 0`), and the only sub-escrow
+  `coveredAmount` arises from a deliberately planted storage value in test S2b, which
+  still satisfies `covered <= escrow`.
+- `_totalEscrowHeld -= escrow` cannot underflow: escrow is credited exactly once at
+  `insurerEngage` and debited exactly once on the single terminal/settle transition
+  for that negotiation; the per-negotiation `escrowAmount` is the debit amount, so
+  the global sum can never go below the value it contributed.
+- The one `unchecked` block (`_benchmarkCap`) is overflow-SAFE by construction: it
+  divides the product back and saturates at `type(uint256).max` instead of wrapping.
+  In string-token mode both unit prices are 0, so it returns 0.
+
+### 4. Unbounded loops — PASS
+
+- No loop over the negotiations mapping or any caller-controlled-length array on a
+  value path. `_containsNamePattern` and `_truncateRationale` iterate over
+  caller-supplied strings bounded by the 1024-byte hint cap and the
+  `MAX_RATIONALE_BYTES = 4096` cap respectively, and run only on non-value paths
+  (`createContract`, `commitRationale`).
+- The appeal/round machinery is bounded by `maxRounds` (`require(maxRounds_ >= 1)`),
+  so the NeedMoreEvidence ↔ submitEvidence and Denied → appeal cycles terminate in
+  `Deadlocked` rather than looping.
+
+### 5. Missing event emits — PASS
+
+Every state transition and every value movement emits: `InsurerEngaged` +
+`ContractReady` (engage), `Settled` (settle), `ProviderRefused`, `Withdrawn`,
+`Deadlocked`, `PolicyInvalidated`, `Ruled`, `FundsWithdrawn`. The escrow refunds ride
+on the existing terminal-transition events (the refund is the economic consequence of
+that documented transition), which is the intended event surface — no silent
+value-moving path exists.
+
+### 6. Storage-layout breaks — PASS (fresh deploy, append-only)
+
+- `escrowAmount` is appended at struct field 13; `_totalEscrowHeld` occupies slot 8,
+  shifting the `_negotiations`/`_requestToNegotiation` mappings to slots 9/10. This
+  is a **layout change**, but the contract is **deployed fresh** (not upgraded — no
+  proxy), so there is no live storage to corrupt. The storage-layout slot-walk test
+  in `test/CoverageNegotiation.test.ts` was updated in lockstep to the new slot map
+  and passes. OZ 5.x `ReentrancyGuard` uses transient storage and consumes no slot.
+- The off-chain `getNegotiation` ABI tuple and `src/contract/real.ts` decoder were
+  updated to carry `escrowAmount` at field 13, keeping the off-chain mirror in sync.
+
+### 7. Gas anti-patterns — PASS
+
+- Each value-moving function caches the struct fields it needs (`escrow`,
+  `insurerAddr`, `providerAddr`, `covered`) into locals before the external call,
+  avoiding repeated SLOADs across the interaction.
+- Refunds are guarded by `if (x > 0)` so a zero-value transfer never burns gas on an
+  empty `.call`.
+- `_clearRequest` deletes the stale `_requestToNegotiation` entry (gas refund) and is
+  invoked on every terminal/settle transition.
+
+### 8. OZ-pattern non-adherence — PASS
+
+- `Ownable(msg.sender)` constructor form (OZ 5.x). `ReentrancyGuard` from
+  `@openzeppelin/contracts/utils/ReentrancyGuard.sol`, applied as `nonReentrant` on
+  every value-moving external function.
+- Checked low-level `.call{value}` with `require(ok, …)` is the OZ-recommended ETH
+  transfer shape (over `transfer`/`send`), correctly used everywhere.
+- The trusted-callback-relies-on-CEI pattern for `handleResponse` matches OZ guidance
+  for privileged-caller callbacks.
+
+## Escrow lifecycle completeness (no trapped/leaked ETH)
+
+Escrow is locked exactly once (Open → Ready via `insurerEngage`) and is held only in
+states reachable from `Ready`: `Ready`, `UnderReview`, `EvidenceRequested`,
+`Approved`, `Denied`. **Every one of those states has at least one release path:**
+
+- `Ready` / `UnderReview` / `EvidenceRequested` / `Approved` / `Denied` →
+  `withdraw` (either party, any pre-terminal) refunds escrow → insurer.
+- `Ready` onward → `refuse` (provider) refunds escrow → insurer.
+- `Approved` / `Denied` (both accepted) → `settle` releases per the ruling.
+- `Denied` at round cap → `appeal`/`submitEvidence` → `Deadlocked` refunds escrow.
+- `UnderReview` (policy_invalid ruling) → `PolicyInvalidated` refunds escrow.
+- A stuck `UnderReview` is rescued by `onRulingTimeout` → `EvidenceRequested`
+  (escrow preserved and still tracked), from which `withdraw` releases it.
+
+No reachable escrow-holding state lacks a release path, so escrow can never be
+permanently trapped. The `balance == 0` assertions in A0008-S2a/S2c/S3a–S3d/S4b/S4c
+prove the contract holds zero ETH after every settled and terminal path.
+
+## Note (off-chain, out of contracts/ gate scope)
+
+`src/contract/abi.ts` declares the off-chain `settle` ethers fragment as `payable`,
+while the on-chain `settle` is non-payable. This is a harmless cosmetic discrepancy:
+`RealBackend.settle` always sends value `0n`, and a value-bearing call to the
+non-payable on-chain `settle` would revert at the EVM. It does not affect the
+`contracts/` security gate (the on-chain surface is correct). Flagged for tidiness
+only — not a finding.
+
+## Conclusion
+
+The `contracts/` gate is **CLEAN — ZERO findings.** The A0008 escrow settlement
+implements payable engage with underfund-revert + overpay-refund, value-bearing
+`settle` (approve: coveredAmount→provider + remainder→insurer; deny: full
+refund→insurer), and full-escrow refunds on every terminal-non-settle outcome, with
+checks-effects-interactions and `nonReentrant` on every value-moving path,
+`withdrawFunds` ring-fenced from live escrow, and append-only storage on a fresh
+deploy. Compile is warning-free; all 166 hardhat contract tests pass, and the 24
+off-chain A0008-SIM-BEH escrow-mirror tests (`npm run test:lib`) pass.

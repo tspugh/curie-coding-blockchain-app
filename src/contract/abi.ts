@@ -11,7 +11,7 @@
 export const COVERAGE_NEGOTIATION_ABI = [
   // --- Lifecycle (writes) ---
   "function createContract(uint256 providerId, uint256 insurerId, address providerAddr, address insurerAddr, bytes32 drugRef, uint256 requestedAmount, uint256 quantity, uint256 daysSupply, bytes32 justificationHash, bytes32 evidenceUri, uint8 payerLine, string agentEvidenceUrl, string agentPromptHint) external returns (uint256 reqId)",
-  "function insurerEngage(uint256 reqId, bytes32 policyHash, bytes32 policyUri) external",
+  "function insurerEngage(uint256 reqId, bytes32 policyHash, bytes32 policyUri) external payable",
   "function requestAdjudication(uint256 reqId) external payable",
   "function submitEvidence(uint256 reqId, bytes32 evidenceUri) external payable",
   "function appeal(uint256 reqId, uint256 partyId, bytes32 evidenceUri, bytes32 reasonHash) external payable",
@@ -24,7 +24,7 @@ export const COVERAGE_NEGOTIATION_ABI = [
 
   // --- Views (reads) ---
   // Negotiation tuple: order matches struct Negotiation field order exactly.
-  "function getNegotiation(uint256 reqId) external view returns (tuple(uint256 providerId, uint256 insurerId, address providerAddr, address insurerAddr, bytes32 drugRef, uint256 requestedAmount, uint256 quantity, uint256 daysSupply, bytes32 justificationHash, bytes32 evidenceUri, bytes32 policyHash, bytes32 policyUri, uint256 coveredAmount, uint256 costPlusUnitPrice, uint256 nadacUnitPrice, bytes32 rationaleHash, bytes32 clauseRef, bytes32 standardRef, uint8 lastDecision, uint256 lastRequestId, bool hasRuling, string agentEvidenceUrl, string agentPromptHint, uint256 round, uint8 payerLine, uint8 appealRound, bool providerAccepted, bool insurerAccepted, uint256 totalFees, uint8 state, uint256 pendingRequestId, uint256 createdAt, uint256 rulingDeadline, bool exists, uint8 agentPhase, uint256 pendingDecideFee, address pendingFeePayer))",
+  "function getNegotiation(uint256 reqId) external view returns (tuple(uint256 providerId, uint256 insurerId, address providerAddr, address insurerAddr, bytes32 drugRef, uint256 requestedAmount, uint256 quantity, uint256 daysSupply, bytes32 justificationHash, bytes32 evidenceUri, bytes32 policyHash, bytes32 policyUri, uint256 coveredAmount, uint256 escrowAmount, uint256 costPlusUnitPrice, uint256 nadacUnitPrice, bytes32 rationaleHash, bytes32 clauseRef, bytes32 standardRef, uint8 lastDecision, uint256 lastRequestId, bool hasRuling, string agentEvidenceUrl, string agentPromptHint, uint256 round, uint8 payerLine, uint8 appealRound, bool providerAccepted, bool insurerAccepted, uint256 totalFees, uint8 state, uint256 pendingRequestId, uint256 createdAt, uint256 rulingDeadline, bool exists, uint8 agentPhase, uint256 pendingDecideFee, address pendingFeePayer))",
   "function stateOf(uint256 reqId) external view returns (uint8)",
   "function coveredAmountOf(uint256 reqId) external view returns (uint256)",
   "function priceBasisOf(uint256 reqId) external view returns (uint256 requestedAmount, uint256 quantity, uint256 costPlusTotal, uint256 nadacFloorTotal, uint256 coveredAmount)",
@@ -48,7 +48,7 @@ export const COVERAGE_NEGOTIATION_ABI = [
   "event EvidenceSubmitted(uint256 indexed reqId, bytes32 evidenceUri)",
   "event Appealed(uint256 indexed reqId, uint256 indexed partyId, bytes32 evidenceUri, uint256 round)",
   "event Accepted(uint256 indexed reqId, uint256 indexed partyId)",
-  "event Settled(uint256 indexed reqId, uint256 coveredAmount, uint256 feePerParty)",
+  "event Settled(uint256 indexed reqId, uint256 coveredAmount, uint256 refundedToInsurer)",
   "event Deadlocked(uint256 indexed reqId, uint256 rounds)",
   "event ProviderRefused(uint256 indexed reqId, bytes32 reasonHash)",
   "event Withdrawn(uint256 indexed reqId)",

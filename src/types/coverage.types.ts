@@ -112,6 +112,8 @@ export interface Negotiation {
   readonly policyUri: string;
   /** Deterministic covered amount = min(requested, cap) on approve; else 0 (R6a). */
   readonly coveredAmount: bigint;
+  /** ETH locked at insurerEngage; released/refunded at settle or terminal (A0008). */
+  readonly escrowAmount: bigint;
   /** Mark Cuban Cost Plus per-unit price the agent looked up (cap basis — R6a/R10). */
   readonly costPlusUnitPrice: bigint;
   /** NADAC per-unit acquisition-cost FLOOR reference (R6a/R10). */
@@ -325,7 +327,8 @@ export interface AcceptedEvent extends BaseEvent {
 export interface SettledEvent extends BaseEvent {
   readonly name: "Settled";
   readonly coveredAmount: bigint;
-  readonly feePerParty: bigint;
+  /** ETH refunded to the insurer: escrowAmount − coveredAmount on Approved; full escrow on Denied (A0008 §2). */
+  readonly refundedToInsurer: bigint;
 }
 
 export interface DeadlockedEvent extends BaseEvent {

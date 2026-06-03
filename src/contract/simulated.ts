@@ -152,6 +152,8 @@ interface SimNegotiation {
   policyHash: string;
   policyUri: string;
   coveredAmount: bigint;
+  /** ETH locked at insurerEngage; released/refunded at settle or terminal (A0008). */
+  escrowAmount: bigint;
   costPlusUnitPrice: bigint;
   nadacUnitPrice: bigint;
   rationaleHash: string;
@@ -325,6 +327,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       policyHash: ZERO_HASH,
       policyUri: ZERO_HASH,
       coveredAmount: 0n,
+      escrowAmount: 0n,
       costPlusUnitPrice: 0n,
       nadacUnitPrice: 0n,
       rationaleHash: ZERO_HASH,
@@ -370,14 +373,27 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     return reqId;
   }
 
-  async insurerEngage(reqId: bigint, policyHash: string, policyUri: string): Promise<void> {
+  /**
+   * A0008 §1: `depositAmount` mirrors the on-chain `msg.value` — must be >= `requestedAmount`
+   * ("escrow: underfunded" if not). Any surplus above `requestedAmount` is silently discarded
+   * in the simulation (the contract refunds it; in-memory mode there is no ETH to refund).
+   * `escrowAmount` is set to `requestedAmount`.
+   *
+   * Default: `requestedAmount` (exact required amount). Pass a lower value explicitly to
+   * test the "escrow: underfunded" rejection path. Old callers that omit this parameter
+   * are backward-compatible — they implicitly deposit exactly the required amount.
+   */
+  async insurerEngage(reqId: bigint, policyHash: string, policyUri: string, depositAmount?: bigint): Promise<void> {
     const n = this.must(reqId);
     if (n.state !== State.Open) throw new Error("engage: not Open");
     this.onlyInsurer(n); // R11: insurer-only
     if (policyHash === ZERO_HASH) throw new Error("policy: empty");
+    const effectiveDeposit = depositAmount ?? n.requestedAmount;
+    if (effectiveDeposit < n.requestedAmount) throw new Error("escrow: underfunded");
 
     n.policyHash = policyHash;
     n.policyUri = policyUri;
+    n.escrowAmount = n.requestedAmount;
     n.state = State.Ready;
 
     this.emit({ name: "InsurerEngaged", reqId, policyHash, policyUri });
@@ -398,6 +414,18 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     if (n.state !== State.EvidenceRequested) throw new Error("evidence: wrong state");
     this.onlyProvider(n); // R11: provider-only
     if (evidenceUri === ZERO_HASH) throw new Error("evidence: empty");
+
+    // A0008 §3 / contract parity: at the round cap the submission deadlocks instead of
+    // re-firing (mirrors CoverageNegotiation.sol L502-521). CEI order: state + escrow
+    // zeroed before emitting, matching the Solidity commit-before-transfer pattern.
+    if (n.round >= this.maxRounds) {
+      this.clearRequest(n);
+      n.state = State.Deadlocked;
+      n.escrowAmount = 0n;
+      this.emit({ name: "Deadlocked", reqId, rounds: n.round });
+      return;
+    }
+
     n.evidenceUri = evidenceUri;
     n.round += 1n;
     this.emit({ name: "EvidenceSubmitted", reqId, evidenceUri });
@@ -425,6 +453,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     if (n.round >= this.maxRounds) {
       this.clearRequest(n);
       n.state = State.Deadlocked;
+      n.escrowAmount = 0n; // A0008 §3: full escrow refunded to insurer (in-memory: just zero it)
       this.emit({ name: "Deadlocked", reqId, rounds: n.round });
       return;
     }
@@ -461,10 +490,17 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     this.onlyParty(n); // R11: either party may settle
     if (!n.providerAccepted || !n.insurerAccepted) throw new Error("settle: not both accepted");
 
-    const feePerParty = n.totalFees / 2n;
+    // A0008 §2: compute the refund to insurer = escrow − coveredAmount.
+    const escrow = n.escrowAmount;
+    const covered = n.coveredAmount;
+    const refundedToInsurer = escrow - covered;
+
+    // CEI parity: zero escrowAmount before emitting (mirrors on-chain commit-before-transfer).
     this.clearRequest(n);
     n.state = State.Settled;
-    this.emit({ name: "Settled", reqId, coveredAmount: n.coveredAmount, feePerParty });
+    n.escrowAmount = 0n;
+
+    this.emit({ name: "Settled", reqId, coveredAmount: covered, refundedToInsurer });
   }
 
   async refuse(reqId: bigint, reasonHash: string): Promise<void> {
@@ -473,6 +509,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     if (!this.refusable(n.state)) throw new Error("refuse: not refusable");
     this.clearRequest(n);
     n.state = State.ProviderRefused;
+    n.escrowAmount = 0n; // A0008 §3: full escrow refunded to insurer (in-memory: just zero it)
     this.emit({ name: "ProviderRefused", reqId, reasonHash });
   }
 
@@ -482,6 +519,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     if (TERMINAL_STATES.has(n.state)) throw new Error("withdraw: terminal");
     this.clearRequest(n);
     n.state = State.Withdrawn;
+    n.escrowAmount = 0n; // A0008 §3: full escrow refunded to insurer (in-memory: just zero it)
     this.emit({ name: "Withdrawn", reqId });
   }
 
@@ -709,6 +747,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       // SPEC-0006 R24: emit 4-arg Ruled (no PolicyFlagged — removed from contract).
       n.coveredAmount = 0n;
       n.state = State.PolicyInvalidated;
+      n.escrowAmount = 0n; // A0008 §3: full escrow refunded to insurer (in-memory: just zero it)
       this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n });
       this.emit({ name: "PolicyInvalidated", reqId, clauseRef, standardRef });
       return;
@@ -788,6 +827,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       policyHash: n.policyHash,
       policyUri: n.policyUri,
       coveredAmount: n.coveredAmount,
+      escrowAmount: n.escrowAmount,
       costPlusUnitPrice: n.costPlusUnitPrice,
       nadacUnitPrice: n.nadacUnitPrice,
       rationaleHash: n.rationaleHash,

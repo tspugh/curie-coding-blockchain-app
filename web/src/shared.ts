@@ -46,7 +46,8 @@ export function describeEvent(e: CoverageEvent): string {
     case "Accepted":
       return `Ruling accepted by party ${e.partyId}`;
     case "Settled":
-      return `Settled — covered ${e.coveredAmount}, fee per party ${e.feePerParty} (50/50 marker)`;
+      // A0008 §2: refundedToInsurer is the real released amount, not a fee marker.
+      return `Settled — covered ${e.coveredAmount}, refunded to insurer ${e.refundedToInsurer}`;
     case "Deadlocked":
       return `Deadlocked after ${e.rounds} round(s) — no mutual acceptance`;
     case "ProviderRefused":

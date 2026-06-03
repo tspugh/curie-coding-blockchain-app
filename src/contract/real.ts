@@ -86,30 +86,31 @@ type RawNegotiation = readonly [
   string, // [10] policyHash
   string, // [11] policyUri
   bigint, // [12] coveredAmount
-  bigint, // [13] costPlusUnitPrice
-  bigint, // [14] nadacUnitPrice
-  string, // [15] rationaleHash
-  string, // [16] clauseRef
-  string, // [17] standardRef
-  bigint | number, // [18] lastDecision (uint8)
-  bigint, // [19] lastRequestId
-  boolean, // [20] hasRuling
-  string, // [21] agentEvidenceUrl
-  string, // [22] agentPromptHint
-  bigint, // [23] round
-  bigint | number, // [24] payerLine (uint8)
-  bigint | number, // [25] appealRound (uint8)
-  boolean, // [26] providerAccepted
-  boolean, // [27] insurerAccepted
-  bigint, // [28] totalFees
-  bigint | number, // [29] state (uint8)
-  bigint, // [30] pendingRequestId
-  bigint, // [31] createdAt
-  bigint, // [32] rulingDeadline
-  boolean, // [33] exists
-  bigint | number, // [34] agentPhase (uint8, AgentPhase enum — Amendment 0007 phase 1)
-  bigint, // [35] pendingDecideFee (parked LLM Inference fee for phase 2 — Amendment 0007)
-  string, // [36] pendingFeePayer (address of the fee payer for the parked decide fee)
+  bigint, // [13] escrowAmount (ETH locked at insurerEngage — A0008)
+  bigint, // [14] costPlusUnitPrice
+  bigint, // [15] nadacUnitPrice
+  string, // [16] rationaleHash
+  string, // [17] clauseRef
+  string, // [18] standardRef
+  bigint | number, // [19] lastDecision (uint8)
+  bigint, // [20] lastRequestId
+  boolean, // [21] hasRuling
+  string, // [22] agentEvidenceUrl
+  string, // [23] agentPromptHint
+  bigint, // [24] round
+  bigint | number, // [25] payerLine (uint8)
+  bigint | number, // [26] appealRound (uint8)
+  boolean, // [27] providerAccepted
+  boolean, // [28] insurerAccepted
+  bigint, // [29] totalFees
+  bigint | number, // [30] state (uint8)
+  bigint, // [31] pendingRequestId
+  bigint, // [32] createdAt
+  bigint, // [33] rulingDeadline
+  boolean, // [34] exists
+  bigint | number, // [35] agentPhase (uint8, AgentPhase enum — Amendment 0007 phase 1)
+  bigint, // [36] pendingDecideFee (parked LLM Inference fee for phase 2 — Amendment 0007)
+  string, // [37] pendingFeePayer (address of the fee payer for the parked decide fee)
 ];
 
 /** Raw `priceBasisOf` tuple returned by ethers — matches the view's return order. */
@@ -147,7 +148,7 @@ interface CoverageContract extends ethers.BaseContract {
     agentEvidenceUrl: string,
     agentPromptHint: string,
   ): Promise<ethers.ContractTransactionResponse>;
-  insurerEngage(reqId: bigint, policyHash: string, policyUri: string): Promise<ethers.ContractTransactionResponse>;
+  insurerEngage(reqId: bigint, policyHash: string, policyUri: string, overrides?: Overrides): Promise<ethers.ContractTransactionResponse>;
   requestAdjudication(reqId: bigint, overrides?: Overrides): Promise<ethers.ContractTransactionResponse>;
   submitEvidence(reqId: bigint, evidenceUri: string, overrides?: Overrides): Promise<ethers.ContractTransactionResponse>;
   appeal(
@@ -292,8 +293,16 @@ export class RealBackend implements CoverageNegotiationClient {
     return reqId;
   }
 
-  async insurerEngage(reqId: bigint, policyHash: string, policyUri: string): Promise<void> {
-    await this._send("insurerEngage", 0n, this.contract.insurerEngage(reqId, policyHash, policyUri));
+  async insurerEngage(reqId: bigint, policyHash: string, policyUri: string, depositAmount?: bigint): Promise<void> {
+    // A0008: default to requestedAmount (exact required escrow) when caller omits depositAmount,
+    // matching the SimulatedBackend default (depositAmount ?? n.requestedAmount). This ensures
+    // both backends behave identically when depositAmount is omitted.
+    const value = depositAmount ?? (await this.getNegotiation(reqId)).requestedAmount;
+    await this._send(
+      "insurerEngage",
+      value,
+      this.contract.insurerEngage(reqId, policyHash, policyUri, { value }),
+    );
   }
 
   async requestAdjudication(reqId: bigint): Promise<void> {
@@ -605,7 +614,8 @@ export class RealBackend implements CoverageNegotiationClient {
       case "Accepted":
         return { name, reqId, partyId: a[1] as bigint, ...meta };
       case "Settled":
-        return { name, reqId, coveredAmount: a[1] as bigint, feePerParty: a[2] as bigint, ...meta };
+        // A0008 §2: third arg is refundedToInsurer (renamed from feePerParty).
+        return { name, reqId, coveredAmount: a[1] as bigint, refundedToInsurer: a[2] as bigint, ...meta };
       case "Deadlocked":
         return { name, reqId, rounds: a[1] as bigint, ...meta };
       case "ProviderRefused":
@@ -651,26 +661,27 @@ export class RealBackend implements CoverageNegotiationClient {
       policyHash: raw[10],
       policyUri: raw[11],
       coveredAmount: raw[12],
-      costPlusUnitPrice: raw[13],
-      nadacUnitPrice: raw[14],
-      rationaleHash: raw[15],
-      clauseRef: raw[16],
-      standardRef: raw[17],
-      lastDecision: Number(raw[18]) as Decision,
-      hasRuling: raw[20] as boolean,
-      round: raw[23] as bigint,
-      payerLine: Number(raw[24]) as PayerLine,
-      appealRound: Number(raw[25]),
-      providerAccepted: raw[26] as boolean,
-      insurerAccepted: raw[27] as boolean,
-      totalFees: raw[28] as bigint,
-      state: Number(raw[29]) as State,
-      pendingRequestId: raw[30] as bigint,
-      createdAt: raw[31] as bigint,
-      rulingDeadline: raw[32] as bigint,
-      exists: raw[33] as boolean,
-      agentEvidenceUrl: raw[21] as string,
-      agentPromptHint: raw[22] as string,
+      escrowAmount: raw[13],
+      costPlusUnitPrice: raw[14],
+      nadacUnitPrice: raw[15],
+      rationaleHash: raw[16],
+      clauseRef: raw[17],
+      standardRef: raw[18],
+      lastDecision: Number(raw[19]) as Decision,
+      hasRuling: raw[21] as boolean,
+      round: raw[24] as bigint,
+      payerLine: Number(raw[25]) as PayerLine,
+      appealRound: Number(raw[26]),
+      providerAccepted: raw[27] as boolean,
+      insurerAccepted: raw[28] as boolean,
+      totalFees: raw[29] as bigint,
+      state: Number(raw[30]) as State,
+      pendingRequestId: raw[31] as bigint,
+      createdAt: raw[32] as bigint,
+      rulingDeadline: raw[33] as bigint,
+      exists: raw[34] as boolean,
+      agentEvidenceUrl: raw[22] as string,
+      agentPromptHint: raw[23] as string,
     };
   }
 

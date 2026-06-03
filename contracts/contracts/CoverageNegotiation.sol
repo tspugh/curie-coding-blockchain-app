@@ -129,6 +129,7 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         bytes32 policyHash; // keccak256 of the insurer's attached policy body
         bytes32 policyUri; // opaque ref to the public policy body (R5)
         uint256 coveredAmount; // requestedAmount on approve, 0 on deny
+        uint256 escrowAmount; // ETH locked at insurerEngage; released/refunded at settle or terminal (A0008)
         uint256 costPlusUnitPrice; // reserved; 0 in string-token mode (SPEC-0006)
         uint256 nadacUnitPrice; // reserved; 0 in string-token mode (SPEC-0006)
         bytes32 rationaleHash; // hash of the agent's latest rationale (set by commitRationale)
@@ -225,6 +226,10 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     /// @dev Auto-incrementing request id.
     uint256 private _nextId = 1;
 
+    /// @dev Sum of all live escrow balances (set at insurerEngage, cleared at settle/terminal).
+    ///      Used by withdrawFunds to prevent draining escrow (A0008 §4).
+    uint256 private _totalEscrowHeld;
+
     mapping(uint256 => Negotiation) private _negotiations;
 
     /// @dev Maps an in-flight agent requestId back to its negotiation id.
@@ -293,7 +298,9 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     event EvidenceSubmitted(uint256 indexed reqId, bytes32 evidenceUri);
     event Appealed(uint256 indexed reqId, uint256 indexed partyId, bytes32 evidenceUri, uint256 round);
     event Accepted(uint256 indexed reqId, uint256 indexed partyId);
-    event Settled(uint256 indexed reqId, uint256 coveredAmount, uint256 feePerParty);
+    /// @dev A0008 §2: third field is `refundedToInsurer` (escrowAmount − coveredAmount on Approved;
+    ///      full escrowAmount on Denied). Renamed from `feePerParty` to surface real token-flow.
+    event Settled(uint256 indexed reqId, uint256 coveredAmount, uint256 refundedToInsurer);
     event Deadlocked(uint256 indexed reqId, uint256 rounds);
     event ProviderRefused(uint256 indexed reqId, bytes32 reasonHash);
     event Withdrawn(uint256 indexed reqId);
@@ -341,13 +348,15 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     /// @notice Reclaim contract ETH — e.g. per-request fees refunded by the platform
     ///         on a timed-out ruling (R9), or surplus deliberately sent (via `receive`)
     ///         to pre-fund agent fees.
-    /// @dev Owner only. Settlement is an event marker (R8), so any balance is purely the
-    ///      agent-fee float. NOTE (Finding-1): the agent-firing entry points forward
+    /// @dev Owner only. A0008 §4: `withdrawFunds` is bounded to
+    ///      `address(this).balance - _totalEscrowHeld` so the owner can never drain
+    ///      live escrow. NOTE (Finding-1): the agent-firing entry points forward
     ///      EXACTLY the per-request fee and refund overpayment to the caller, so misrouted
     ///      caller ETH is NOT trapped here — `withdrawFunds` is not a sink for it.
     function withdrawFunds(address payable to, uint256 amount) external onlyOwner nonReentrant {
         require(to != address(0), "funds: zero addr");
-        require(amount <= address(this).balance, "funds: insufficient");
+        uint256 drainable = address(this).balance - _totalEscrowHeld;
+        require(amount <= drainable, "funds: insufficient");
         (bool ok, ) = to.call{value: amount}("");
         require(ok, "funds: transfer failed");
         emit FundsWithdrawn(to, amount);
@@ -426,20 +435,36 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     }
 
     /// @notice Insurer engages a filed request by attaching its governing policy
-    ///         (hash on-chain, body off-chain/public) → `Ready` (R5).
+    ///         (hash on-chain, body off-chain/public) and depositing escrow → `Ready` (R5).
     /// @dev Insurer-only (R11). Adjudication cannot run until this is called.
-    function insurerEngage(uint256 reqId, bytes32 policyHash, bytes32 policyUri) external {
+    ///      A0008 §1: `msg.value` must be >= `requestedAmount` (escrow must fully cover
+    ///      the claim). Any surplus above `requestedAmount` is refunded immediately to
+    ///      the insurer (CEI + nonReentrant). `escrowAmount` is set to `requestedAmount`.
+    function insurerEngage(uint256 reqId, bytes32 policyHash, bytes32 policyUri) external payable nonReentrant {
         Negotiation storage n = _get(reqId);
         require(n.state == State.Open, "engage: not Open");
         require(msg.sender == n.insurerAddr, "auth: not insurer");
         require(policyHash != bytes32(0), "policy: empty");
+        require(msg.value >= n.requestedAmount, "escrow: underfunded");
 
+        uint256 escrow = n.requestedAmount;
+        uint256 refund = msg.value - escrow;
+
+        // Effects before interactions (CEI).
         n.policyHash = policyHash;
         n.policyUri = policyUri;
+        n.escrowAmount = escrow;
         n.state = State.Ready;
+        _totalEscrowHeld += escrow;
 
         emit InsurerEngaged(reqId, policyHash, policyUri);
         emit ContractReady(reqId);
+
+        // Refund any overpayment above requestedAmount to the insurer (CEI-safe — state committed above).
+        if (refund > 0) {
+            (bool ok, ) = payable(msg.sender).call{value: refund}("");
+            require(ok, "escrow: refund failed");
+        }
     }
 
     /// @notice Fire the native agent to adjudicate (only from `Ready`) → `UnderReview`
@@ -472,15 +497,26 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
         // Bounded to N rounds: at the cap, the submission deadlocks instead of re-firing.
         // No agent fires → refund the caller's full `msg.value` (R9: never silently retain
-        // caller ETH). Mirrors `appeal`'s cap logic; the function's `nonReentrant` modifier
-        // guards the refund (CEI: terminal state set first).
+        // caller ETH). A0008: also refund the full escrow to the insurer on Deadlocked.
+        // The function's `nonReentrant` modifier guards all refunds (CEI: terminal state set first).
         if (n.round >= maxRounds) {
+            uint256 escrow = n.escrowAmount;
+            address insurerAddr = n.insurerAddr;
+
             _clearRequest(n);
             n.state = State.Deadlocked;
+            n.escrowAmount = 0;
+            _totalEscrowHeld -= escrow;
+
             emit Deadlocked(reqId, n.round);
+
             if (msg.value > 0) {
                 (bool ok, ) = payable(msg.sender).call{value: msg.value}("");
                 require(ok, "fee: refund failed");
+            }
+            if (escrow > 0) {
+                (bool ok2, ) = payable(insurerAddr).call{value: escrow}("");
+                require(ok2, "deadlock: escrow refund failed");
             }
             return;
         }
@@ -517,15 +553,27 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
         // Bounded to N rounds: at the cap, an appeal deadlocks instead of re-firing.
         // No agent fires, so no fee is charged — refund the caller's full `msg.value`
-        // rather than trapping it (R9: never silently retain caller ETH). Guarded by
-        // the function's `nonReentrant` modifier; the terminal state is set first (CEI).
+        // rather than trapping it (R9: never silently retain caller ETH). A0008: also
+        // refund the full escrow to the insurer on Deadlocked. Guarded by the function's
+        // `nonReentrant` modifier; the terminal state is set first (CEI).
         if (n.round >= maxRounds) {
+            uint256 escrow = n.escrowAmount;
+            address insurerAddr = n.insurerAddr;
+
             _clearRequest(n);
             n.state = State.Deadlocked;
+            n.escrowAmount = 0;
+            _totalEscrowHeld -= escrow;
+
             emit Deadlocked(reqId, n.round);
+
             if (msg.value > 0) {
                 (bool ok, ) = payable(msg.sender).call{value: msg.value}("");
                 require(ok, "fee: refund failed");
+            }
+            if (escrow > 0) {
+                (bool ok2, ) = payable(insurerAddr).call{value: escrow}("");
+                require(ok2, "deadlock: escrow refund failed");
             }
             return;
         }
@@ -556,43 +604,98 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         emit Accepted(reqId, partyId);
     }
 
-    /// @notice Settle a mutually-accepted ruling → `Settled` (R8). EVENT MARKER ONLY
-    ///         (no token transfer): records the covered amount + the 50/50 per-party
-    ///         fee split derived from the accumulated agent fees.
-    function settle(uint256 reqId) external {
+    /// @notice Settle a mutually-accepted ruling → `Settled` (R8 / A0008).
+    ///         Approved path: transfers `coveredAmount` ETH → provider; refunds any
+    ///         remainder (`escrowAmount - coveredAmount`) → insurer.
+    ///         Denied path: refunds full `escrowAmount` → insurer; provider gets nothing.
+    /// @dev CEI: state → `Settled` and `escrowAmount = 0` committed BEFORE every
+    ///      `.call{value}`. `nonReentrant` guards the entry point.
+    function settle(uint256 reqId) external nonReentrant {
         Negotiation storage n = _get(reqId);
         require(n.state == State.Approved || n.state == State.Denied, "settle: not ruled");
         _onlyParty(n);
         require(n.providerAccepted && n.insurerAccepted, "settle: not both accepted");
 
-        uint256 feePerParty = n.totalFees / 2;
+        uint256 escrow = n.escrowAmount;
+        uint256 covered = n.coveredAmount;
+        address providerAddr = n.providerAddr;
+        address insurerAddr = n.insurerAddr;
+
+        // CEI: commit state before any external calls.
         _clearRequest(n);
         n.state = State.Settled;
-        emit Settled(reqId, n.coveredAmount, feePerParty);
+        n.escrowAmount = 0;
+        _totalEscrowHeld -= escrow;
+
+        // A0008 §2: refundedToInsurer = escrow − covered (0 when denied and covered == 0).
+        uint256 refundedToInsurer = escrow - covered;
+        emit Settled(reqId, covered, refundedToInsurer);
+
+        if (covered > 0) {
+            // Transfer coveredAmount to provider.
+            (bool okP, ) = payable(providerAddr).call{value: covered}("");
+            require(okP, "settle: provider transfer failed");
+        }
+        uint256 remainder = escrow - covered;
+        if (remainder > 0) {
+            // Refund remainder to insurer.
+            (bool okI, ) = payable(insurerAddr).call{value: remainder}("");
+            require(okI, "settle: insurer refund failed");
+        }
     }
 
     /// @notice Provider refuses the insurer's stated terms → `ProviderRefused` (R7).
     ///         Valid from `Ready` onward while pre-terminal (terms have been attached).
+    ///         A0008: refunds the full `escrowAmount` to the insurer.
     /// @dev Provider-only (R11). Records an optional reason hash.
-    function refuse(uint256 reqId, bytes32 reasonHash) external {
+    ///      CEI: state → `ProviderRefused` and `escrowAmount = 0` committed before `.call{value}`.
+    function refuse(uint256 reqId, bytes32 reasonHash) external nonReentrant {
         Negotiation storage n = _get(reqId);
         require(msg.sender == n.providerAddr, "auth: not provider");
         require(_refusable(n.state), "refuse: not refusable");
+
+        uint256 escrow = n.escrowAmount;
+        address insurerAddr = n.insurerAddr;
+
+        // CEI: commit state before external call.
         _clearRequest(n);
         n.state = State.ProviderRefused;
+        n.escrowAmount = 0;
+        _totalEscrowHeld -= escrow;
+
         emit ProviderRefused(reqId, reasonHash);
+
+        if (escrow > 0) {
+            (bool ok, ) = payable(insurerAddr).call{value: escrow}("");
+            require(ok, "refuse: escrow refund failed");
+        }
     }
 
     /// @notice Withdraw a request from any pre-terminal state → `Withdrawn`.
+    ///         A0008: refunds the full `escrowAmount` to the insurer.
     /// @dev Either party may withdraw (R11). Clears any in-flight agent request so a
     ///      late platform callback can never mutate a withdrawn negotiation.
-    function withdraw(uint256 reqId) external {
+    ///      CEI: state → `Withdrawn` and `escrowAmount = 0` committed before `.call{value}`.
+    function withdraw(uint256 reqId) external nonReentrant {
         Negotiation storage n = _get(reqId);
         _onlyParty(n);
         require(!_terminal(n.state), "withdraw: terminal");
+
+        uint256 escrow = n.escrowAmount;
+        address insurerAddr = n.insurerAddr;
+
+        // CEI: commit state before external call.
         _clearRequest(n);
         n.state = State.Withdrawn;
+        n.escrowAmount = 0;
+        _totalEscrowHeld -= escrow;
+
         emit Withdrawn(reqId);
+
+        if (escrow > 0) {
+            (bool ok, ) = payable(insurerAddr).call{value: escrow}("");
+            require(ok, "withdraw: escrow refund failed");
+        }
     }
 
     /// @notice Keeper-callable timeout: after the ruling deadline, route a stuck
@@ -799,11 +902,23 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
         if (decision == Decision.PolicyInvalid) {
             // R6b: policy void — terminal state, covered = 0.
+            // A0008: refund full escrow to insurer (CEI: state + escrowAmount = 0 set first).
+            uint256 escrow = n.escrowAmount;
+            address insurerAddr = n.insurerAddr;
+
             n.coveredAmount = 0;
             n.state = State.PolicyInvalidated;
+            n.escrowAmount = 0;
+            _totalEscrowHeld -= escrow;
+
             emit Ruled(reqId, requestId, decision, 0);
             emit PolicyInvalidated(reqId, bytes32(0), bytes32(0));
             // RulingRationale is emitted by the keeper via commitRationale (SPEC-0006 R26).
+
+            if (escrow > 0) {
+                (bool ok, ) = payable(insurerAddr).call{value: escrow}("");
+                require(ok, "policy_invalid: escrow refund failed");
+            }
             return;
         }
 

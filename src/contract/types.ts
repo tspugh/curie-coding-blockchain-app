@@ -117,8 +117,14 @@ export interface CoverageNegotiationClient {
   /** Provider files a coverage-exception request → `Open`; returns the new `reqId` (R2). */
   createContract(params: CreateContractParams): Promise<bigint>;
 
-  /** Insurer attaches its governing policy (hash + ref) → `Ready` (R5). */
-  insurerEngage(reqId: bigint, policyHash: string, policyUri: string): Promise<void>;
+  /**
+   * Insurer attaches its governing policy (hash + ref) and deposits escrow → `Ready` (R5).
+   * A0008: `depositAmount` is the ETH value forwarded as escrow (msg.value). Must be >=
+   * `requestedAmount`; any surplus is refunded. Defaults to `requestedAmount` (the exact
+   * required escrow) on both the real and simulated backends when omitted, so old callers
+   * that omit this argument continue to work and will escrow exactly the requested amount.
+   */
+  insurerEngage(reqId: bigint, policyHash: string, policyUri: string, depositAmount?: bigint): Promise<void>;
 
   /** Fire the necessity arbiter from `Ready` → `UnderReview` (payable, R6/R9). */
   requestAdjudication(reqId: bigint): Promise<void>;

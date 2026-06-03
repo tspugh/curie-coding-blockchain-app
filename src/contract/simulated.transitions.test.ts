@@ -233,3 +233,212 @@ test("postFeedback: non-party caller (ATTACKER) reverts 'auth: not a party'", as
   b.setCaller(ATTACKER);
   await rejects(() => b.postFeedback(reqId, FEEDBACK_HASH, FEEDBACK_URI), "auth: not a party");
 });
+
+// ---------------------------------------------------------------------
+// Amendment 0008 §1-§3: SimulatedBackend escrow accounting parity
+// (F4 fix: behavioral tests replace the A0008-SIM source-text assertions)
+// ---------------------------------------------------------------------
+
+const REQUESTED = 5000n;
+
+function paramsWithAmount(requestedAmount: bigint): CreateContractParams {
+  return params({ requestedAmount });
+}
+
+/** Drive to Ready state with a specific requestedAmount. */
+async function toReady(b: SimulatedBackend, requestedAmount: bigint): Promise<bigint> {
+  b.setCaller(PROVIDER);
+  const reqId = await b.createContract(paramsWithAmount(requestedAmount));
+  b.setCaller(INSURER);
+  // Exact deposit (no depositAmount arg → defaults to requestedAmount).
+  await b.insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+  return reqId;
+}
+
+test("A0008-SIM-BEH: insurerEngage underfund throws 'escrow: underfunded'", async () => {
+  const b = backend();
+  b.setCaller(PROVIDER);
+  const reqId = await b.createContract(paramsWithAmount(REQUESTED));
+  b.setCaller(INSURER);
+  // Pass depositAmount strictly less than requestedAmount.
+  await rejects(
+    () => b.insurerEngage(reqId, POLICY_HASH, POLICY_URI, REQUESTED - 1n),
+    "escrow: underfunded",
+  );
+});
+
+test("A0008-SIM-BEH: exact deposit sets escrowAmount == requestedAmount", async () => {
+  const b = backend();
+  const reqId = await toReady(b, REQUESTED);
+  const n = await b.getNegotiation(reqId);
+  assert.equal(n.escrowAmount, REQUESTED, "escrowAmount must equal requestedAmount after exact engage");
+});
+
+test("A0008-SIM-BEH: settle-approve zeroes escrowAmount (Settled state)", async () => {
+  const b = backend();
+  const reqId = await toReady(b, REQUESTED);
+  b.setCaller(PROVIDER);
+  await b.requestAdjudication(reqId);
+  b.resolve(reqId, Decision.Approve);
+  assert.equal(await b.stateOf(reqId), State.Approved);
+  b.setCaller(PROVIDER);
+  await b.accept(reqId, PROVIDER_ID);
+  b.setCaller(INSURER);
+  await b.accept(reqId, INSURER_ID);
+  b.setCaller(PROVIDER);
+  await b.settle(reqId);
+  assert.equal(await b.stateOf(reqId), State.Settled);
+  const n = await b.getNegotiation(reqId);
+  assert.equal(n.escrowAmount, 0n, "escrowAmount must be 0 after settle");
+});
+
+test("A0008-SIM-BEH: settle-deny zeroes escrowAmount (Settled state)", async () => {
+  const b = backend();
+  const reqId = await toReady(b, REQUESTED);
+  b.setCaller(PROVIDER);
+  await b.requestAdjudication(reqId);
+  b.resolve(reqId, Decision.Deny);
+  assert.equal(await b.stateOf(reqId), State.Denied);
+  b.setCaller(PROVIDER);
+  await b.accept(reqId, PROVIDER_ID);
+  b.setCaller(INSURER);
+  await b.accept(reqId, INSURER_ID);
+  b.setCaller(PROVIDER);
+  await b.settle(reqId);
+  assert.equal(await b.stateOf(reqId), State.Settled);
+  const n = await b.getNegotiation(reqId);
+  assert.equal(n.escrowAmount, 0n, "escrowAmount must be 0 after deny+settle");
+});
+
+test("A0008-SIM-BEH: refuse zeroes escrowAmount (ProviderRefused terminal)", async () => {
+  const b = backend();
+  const reqId = await toReady(b, REQUESTED);
+  b.setCaller(PROVIDER);
+  await b.refuse(reqId, REASON_HASH);
+  assert.equal(await b.stateOf(reqId), State.ProviderRefused);
+  const n = await b.getNegotiation(reqId);
+  assert.equal(n.escrowAmount, 0n, "escrowAmount must be 0 after refuse");
+});
+
+test("A0008-SIM-BEH: withdraw zeroes escrowAmount (Withdrawn terminal)", async () => {
+  const b = backend();
+  const reqId = await toReady(b, REQUESTED);
+  b.setCaller(INSURER);
+  await b.withdraw(reqId);
+  assert.equal(await b.stateOf(reqId), State.Withdrawn);
+  const n = await b.getNegotiation(reqId);
+  assert.equal(n.escrowAmount, 0n, "escrowAmount must be 0 after withdraw");
+});
+
+test("A0008-SIM-BEH: Deadlocked path zeroes escrowAmount", async () => {
+  // maxRounds=1 → first appeal deadlocks immediately.
+  const b = new SimulatedBackend({ autoResolve: false, maxRounds: 1n });
+  b.setCaller(PROVIDER);
+  const reqId = await b.createContract(paramsWithAmount(REQUESTED));
+  b.setCaller(INSURER);
+  await b.insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+  b.setCaller(PROVIDER);
+  await b.requestAdjudication(reqId);
+  b.resolve(reqId, Decision.Deny);
+  assert.equal(await b.stateOf(reqId), State.Denied);
+  // Appeal at the cap → Deadlocked.
+  b.setCaller(PROVIDER);
+  await b.appeal(reqId, PROVIDER_ID, EVIDENCE_URI, REASON_HASH);
+  assert.equal(await b.stateOf(reqId), State.Deadlocked);
+  const n = await b.getNegotiation(reqId);
+  assert.equal(n.escrowAmount, 0n, "escrowAmount must be 0 after Deadlocked");
+});
+
+test("A0008-SIM-BEH: PolicyInvalidated path zeroes escrowAmount", async () => {
+  const b = new SimulatedBackend({ autoResolve: false, decision: Decision.PolicyInvalid });
+  b.setCaller(PROVIDER);
+  const reqId = await b.createContract(paramsWithAmount(REQUESTED));
+  b.setCaller(INSURER);
+  await b.insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+  b.setCaller(PROVIDER);
+  await b.requestAdjudication(reqId);
+  b.resolve(reqId, Decision.PolicyInvalid);
+  assert.equal(await b.stateOf(reqId), State.PolicyInvalidated);
+  const n = await b.getNegotiation(reqId);
+  assert.equal(n.escrowAmount, 0n, "escrowAmount must be 0 after PolicyInvalidated");
+});
+
+test("A0008-SIM-BEH: Settled event carries refundedToInsurer field (not feePerParty)", async () => {
+  const b = backend();
+  const reqId = await toReady(b, REQUESTED);
+  b.setCaller(PROVIDER);
+  await b.requestAdjudication(reqId);
+  b.resolve(reqId, Decision.Approve);
+  b.setCaller(PROVIDER);
+  await b.accept(reqId, PROVIDER_ID);
+  b.setCaller(INSURER);
+  await b.accept(reqId, INSURER_ID);
+  b.setCaller(PROVIDER);
+  await b.settle(reqId);
+
+  const events = await b.getEvents({ reqId });
+  const settledEv = events.find((e) => e.name === "Settled");
+  assert.ok(settledEv, "Settled event must be emitted");
+  assert.equal(settledEv.name, "Settled");
+  // After Approve with default cap-non-binding: coveredAmount == requestedAmount → refundedToInsurer == 0.
+  assert.ok("refundedToInsurer" in settledEv, "Settled event must have refundedToInsurer field");
+  assert.ok(!("feePerParty" in settledEv), "Settled event must NOT have legacy feePerParty field");
+});
+
+test("A0008-SIM-BEH: Settled event on Denied path emits refundedToInsurer == escrow (full refund)", async () => {
+  // F6 fix: assert the value of refundedToInsurer on a Denied settle, not just field presence.
+  // On Deny: coveredAmount==0, so refundedToInsurer == escrowAmount == REQUESTED.
+  const b = backend();
+  const reqId = await toReady(b, REQUESTED);
+  b.setCaller(PROVIDER);
+  await b.requestAdjudication(reqId);
+  b.resolve(reqId, Decision.Deny);
+  assert.equal(await b.stateOf(reqId), State.Denied);
+  b.setCaller(PROVIDER);
+  await b.accept(reqId, PROVIDER_ID);
+  b.setCaller(INSURER);
+  await b.accept(reqId, INSURER_ID);
+  b.setCaller(PROVIDER);
+  await b.settle(reqId);
+
+  const events = await b.getEvents({ reqId });
+  const settledEv = events.find((e) => e.name === "Settled");
+  assert.ok(settledEv, "Settled event must be emitted on Denied settle");
+  assert.equal(settledEv.name, "Settled");
+  // On Deny: coveredAmount==0 → refundedToInsurer == full escrow == REQUESTED.
+  assert.ok("refundedToInsurer" in settledEv, "Settled event must have refundedToInsurer field");
+  assert.equal(
+    (settledEv as { name: "Settled"; reqId: bigint; coveredAmount: bigint; refundedToInsurer: bigint }).refundedToInsurer,
+    REQUESTED,
+    "refundedToInsurer must equal full escrow (REQUESTED) on Denied settle",
+  );
+  assert.equal(
+    (settledEv as { name: "Settled"; reqId: bigint; coveredAmount: bigint; refundedToInsurer: bigint }).coveredAmount,
+    0n,
+    "coveredAmount must be 0 on Denied settle",
+  );
+});
+
+test("A0008-SIM-BEH: submitEvidence round-cap -> Deadlocked + escrowAmount=0n (parity with contract L502-521)", async () => {
+  // F3 fix: SimulatedBackend.submitEvidence must mirror the Solidity round-cap branch
+  // (CoverageNegotiation.sol L502-521): at round >= maxRounds, routes to Deadlocked
+  // and zeroes escrowAmount instead of re-firing the agent.
+  const b = new SimulatedBackend({ autoResolve: false, maxRounds: 1n });
+  b.setCaller(PROVIDER);
+  const reqId = await b.createContract(paramsWithAmount(REQUESTED));
+  b.setCaller(INSURER);
+  await b.insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+  // Drive to EvidenceRequested (round=1 after requestAdjudication + NeedMoreEvidence verdict).
+  b.setCaller(PROVIDER);
+  await b.requestAdjudication(reqId);
+  // maxRounds=1; round becomes 1 during fireAgent. Resolve with NeedMoreEvidence so
+  // the state lands in EvidenceRequested (mirrors contract's submitEvidence round-cap path).
+  b.resolve(reqId, Decision.NeedMoreEvidence);
+  assert.equal(await b.stateOf(reqId), State.EvidenceRequested);
+  // round is now 1 == maxRounds. submitEvidence should deadlock instead of re-firing.
+  b.setCaller(PROVIDER);
+  await b.submitEvidence(reqId, EVIDENCE_URI);
+  assert.equal(await b.stateOf(reqId), State.Deadlocked, "submitEvidence at round cap must → Deadlocked");
+  const n = await b.getNegotiation(reqId);
+  assert.equal(n.escrowAmount, 0n, "escrowAmount must be 0 after submitEvidence → Deadlocked");
+});

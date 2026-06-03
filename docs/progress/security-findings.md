@@ -1,3 +1,103 @@
+## 2026-06-03 (refresh 5) — Amendment 0008: real escrow settlement (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode)
+**Base:** `origin/main`
+**Branch:** `spec-6-implementation` + uncommitted working tree
+**Scope of change (Amendment 0008 / SPEC-0001 R8 unit):** Make settlement move
+real ETH. `insurerEngage` becomes `payable` and requires `msg.value >=
+requestedAmount`, sets `n.escrowAmount = requestedAmount`, refunds any surplus to
+the insurer. New `escrowAmount` field on the `Negotiation` struct + a contract-wide
+`_totalEscrowHeld` accumulator. `settle` now transfers `coveredAmount → provider`
+and refunds `escrowAmount − coveredAmount → insurer` on the Approved path, and
+refunds the full `escrowAmount → insurer` on the Denied path. Every terminal-non-
+settle outcome (`Deadlocked` via the `submitEvidence`/`appeal` round-cap short-
+circuits, `ProviderRefused`, `PolicyInvalidated` via the decide callback,
+`Withdrawn`) refunds the full `escrowAmount → insurer`. `withdrawFunds` is bounded
+to `address(this).balance − _totalEscrowHeld` so the owner can never drain escrow.
+Off-chain mirrors (`abi.ts`, `real.ts` decoder + payable `insurerEngage`,
+`types.ts`, `coverage.types.ts`, `simulated.ts`) updated to the new struct/signature.
+Hardhat tests A0008-S1a..S4c added (engage underfund/overpay, settle-approve/deny,
+each terminal-non-settle path, balance==0 invariants, reverting-recipient `require`
+branches).
+**Verdict:** PASS (zero findings)
+
+### Hard gate
+
+| Gate | Status | Evidence |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | A0008 adds only value-flow plumbing: the new `escrowAmount` / `_totalEscrowHeld` are `uint256` amounts; no new free-text or content field is stored. R4 invariant intact. Diff-wide PHI scan (SSN/DOB/MRN/`patient name`/`\d{3}-\d{2}-\d{4}`/date shapes) over added `.sol`/`.ts` lines returned only PHI-*absence* assertions and the existing `_containsNamePattern` `[A-Z][a-z]+ [A-Z]` guard on `agentPromptHint`. Test fixtures use synthetic amounts (`REQUESTED`, `1500n`) and synthetic decision tokens (`"synthetic-scrape-evidence"`, `TOKEN_APPROVE`/`TOKEN_DENY`); evidence URLs are public (`medlineplus.gov`, `accessdata.fda.gov`). `drugEvidenceMap.{ts,test.ts}` carry only public drug-class criteria + a NO-PHI regression test. |
+| No secrets | PASS | No private keys, mnemonics, API keys, tokens, or credentials added. Full-diff 64-hex key scan returned only the two well-known deterministic Hardhat/Anvil accounts (#0 `0xac0974be…`, #1 `0x59c6995e…`) in `scripts/real-backend-localnode.mjs` — public test vectors, env-overridable (`LOCAL_KEY`/`LOCAL_INSURER_KEY`), pre-existing (not in this diff's added lines). `.gitignore` changes only ADD ignores (`.codesign/`, `*.bak.*`, `coverage/`); they never un-ignore a secret. |
+| Signing-key hygiene | PASS | No new wallet construction, signer, or key-handling code. `real.ts insurerEngage` forwards `depositAmount` as `{ value }` via the existing `_send` helper; no key material is touched. No new owner-mutable privilege surface — `withdrawFunds` stays `onlyOwner` and is now MORE restricted (bounded by `balance − _totalEscrowHeld`). The platform-callback gate `require(msg.sender == address(platform))` is intact; the new escrow refund inside the `PolicyInvalidated` callback branch is CEI-protected (state + `escrowAmount = 0` committed before the external `.call`). |
+
+### Value-safety review (CEI + reentrancy on every value-moving path)
+
+Every ETH-moving function follows checks-effects-interactions and carries
+`nonReentrant`, verified line-by-line in `CoverageNegotiation.sol`:
+
+| Path | `nonReentrant` | State + `escrowAmount=0` + `_totalEscrowHeld-=` before `.call` | Checked return |
+| --- | --- | --- | --- |
+| `insurerEngage` (surplus refund) | yes (L441) | escrow/state committed L452–456 before refund L463 | `require(ok,"escrow: refund failed")` |
+| `settle` Approved/Denied | yes (L611) | L625–627 before transfers L633/L639 | `require(okP/okI,…)` both |
+| `refuse` | yes (L649) | L659–661 before L666 | `require(ok,…)` |
+| `withdraw` | yes (L676) | L686–688 before L693 | `require(ok,…)` |
+| `submitEvidence` deadlock | yes (L490) | L505–507 before L516 | `require(ok2,…)` |
+| `appeal` deadlock | yes (L545) | L562–564 before L573 | `require(ok2,…)` |
+| `PolicyInvalidated` (decide callback) | callback gated to `platform`; CEI | L907–909 before L916 | `require(ok,…)` |
+| `withdrawFunds` (owner) | yes (L354) | drainable = `balance − _totalEscrowHeld` (L356) | `require(ok,…)` |
+
+- **No fund-stranding path.** The five terminal states (`Settled`, `Deadlocked`,
+  `PolicyInvalidated`, `ProviderRefused`, `Withdrawn`) each zero `escrowAmount` and
+  release/refund it. `withdraw` is reachable from every pre-terminal state by either
+  party, so escrow is always recoverable; nothing can wedge funds in a live
+  negotiation. Verified by tests asserting `contract balance == 0` after every
+  settled and every terminal-non-settle path (A0008-S2a/S2c/S3a–d/S4b/S4c).
+- **Escrow vs agent-fee float never commingle.** Agent fees are forwarded in full
+  to the platform (or refunded to the caller) in `_fireScrape`/`_fireDecide`/
+  timeout paths; escrow is tracked separately by `_totalEscrowHeld` and is
+  ring-fenced from `withdrawFunds` (A0008-S4a).
+- **`_totalEscrowHeld` cannot underflow.** Incremented by exactly `requestedAmount`
+  once at engage; decremented by exactly the stored `n.escrowAmount` on the first
+  (state-guarded) terminal transition; Solidity 0.8 checked arithmetic backstops it.
+
+### Accepted design tradeoff (NOT a finding)
+
+Amendment 0008 §4 sanctions a **push** model for v0 (`payable(addr).call{value}`
+with checked return + `nonReentrant`), noting pull-over-push is *preferred* and that
+"the security-auditor gate decides." A contract recipient whose `receive()` reverts
+can cause the whole settling/terminal tx to revert — an availability concern (a party
+could temporarily block its own refund/release), **not** a fund-loss concern: CEI
+means a reverted tx commits no state, so escrow stays held and is retriable (and
+`withdraw` remains available). For the demo, both parties are EOAs, so this cannot
+trigger. The `require(ok,…)`-fail branches are explicitly tested via
+`RevertingReceiver` (settle/refuse/withdraw/deadlock/policy_invalid/engage-refund).
+This is the documented, in-scope v0 shape; if a hostile contract counterparty ever
+becomes in-scope, migrate refunds/releases to a pull `owed[addr] += amount` +
+`withdraw()` ledger (already flagged in the amendment).
+
+### Off-chain mirror correctness (no security impact; verified for completeness)
+
+The `real.ts` `RawNegotiation` tuple + `_decodeNegotiation` index map was checked
+field-by-field against the Solidity struct and the `abi.ts getNegotiation` tuple:
+`escrowAmount` at index 13, `agentEvidenceUrl`/`agentPromptHint` at 22/23, trailing
+`agentPhase`/`pendingDecideFee`/`pendingFeePayer` at 35–37 — all aligned. The
+simulated backend mirrors the payable `insurerEngage(…, depositAmount?)` signature
+and the `escrow: underfunded` rejection, and stores `escrowAmount` on engage. (Note,
+non-security: the simulated backend does not zero `escrowAmount` on its terminal
+paths, since it holds no real ETH; this is a fidelity gap, not a vulnerability.)
+
+### Verification run
+
+`npx hardhat compile` clean; `npx hardhat test` → **169 passing**, including all
+A0008-S1a..S4c escrow tests and every `RevertingReceiver` `require`-fail branch.
+Off-chain `npm run test:lib` → **256 passing** (simulated/real escrow-mirror parity
++ drug-evidence-map NO-PHI invariant). Re-verified independently by the gate on
+2026-06-03.
+
+### Verdict: PASS (zero findings)
+
+---
+
 ## 2026-06-03 (refresh 4) — Amendment 0007 phase 1: two-agent scrape→decide pipeline (security-review)
 
 **Date:** 2026-06-03

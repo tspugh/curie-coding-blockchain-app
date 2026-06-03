@@ -1,3 +1,171 @@
+## Amendment 0008 — real escrow settlement (TOTAL-STICKLER, re-run, gate FAIL)
+
+**Date:** 2026-06-03
+**Branch:** `spec-6-implementation` (working tree, uncommitted) vs `origin/main`.
+**Unit under review:** Real escrow settlement per Amendment 0008 / SPEC-0001 R8 —
+payable `insurerEngage`, `escrowAmount` on the `Negotiation` struct, escrow
+release/refund wired into `settle` and every terminal-non-settle outcome
+(`Deadlocked`, `ProviderRefused`, `PolicyInvalidated`, `Withdrawn`), CEI +
+`nonReentrant` on every value-moving path, escrow-bounded `withdrawFunds`, a
+simulated-backend mirror of the payable engage + escrow accounting, and Hardhat
+coverage of the engage/settle/terminal paths.
+**Files reviewed:** `contracts/contracts/CoverageNegotiation.sol`,
+`contracts/test/CoverageNegotiation.test.ts`,
+`src/contract/{simulated,real,abi,types}.ts`,
+`src/contract/simulated.transitions.test.ts`, `src/types/coverage.types.ts`,
+`src/protocol/revertReasonMap.ts`, `src/agents/party-agent.ts`,
+`scripts/real-backend-localnode.mjs`, `web/src/shared.ts`.
+
+**Verdict: FAIL — 6 findings.** (Supersedes the earlier A0008 run below: its F1
+`feePerParty`, F2 `settle payable`, F3 simulated-escrow-zeroing, F4 behavioral test,
+and most of F5 are now fixed in the working tree.)
+
+Build state is green: `cd contracts && npx hardhat test` → **169 passing** (incl. the
+full `A0008-*` escrow suite + every reverting-receiver transfer-failure branch);
+`npm run typecheck` → exit 0; `npm run test:lib` → 256 passing. The **on-chain escrow
+mechanism itself is correct and genuinely well-tested** — the findings are off-chain
+parity / dead-mapping / test-quality issues around it, plus one broken non-test caller
+that the simulated backend masks.
+
+### What is correct (PASS — not findings)
+
+- **Contract escrow core.** `insurerEngage` is `payable`, requires
+  `msg.value >= requestedAmount` (`escrow: underfunded`), stores
+  `escrowAmount = requestedAmount`, refunds surplus CEI-safe (state committed, refund
+  last, return checked). `settle` (Approved) transfers `coveredAmount → provider` then
+  `escrowAmount − coveredAmount → insurer`; (Denied) refunds the full escrow.
+  `Deadlocked` (both the `submitEvidence` and `appeal` round-cap branches),
+  `ProviderRefused`, `PolicyInvalidated` (decide callback), and `Withdrawn` each refund
+  the full escrow. Every value-moving entry point is `nonReentrant`; the platform-gated
+  `handleResponse` path is CEI with the request mapping deleted before the external
+  call. State + `escrowAmount = 0` + `_totalEscrowHeld -=` are committed before every
+  `.call{value}`, all returns checked. `withdrawFunds` is bounded to
+  `balance − _totalEscrowHeld`, so the owner can never drain escrow.
+  `coveredAmount ≤ requestedAmount == escrow` always, so `escrow − covered` cannot
+  underflow. The amended `Settled(reqId, coveredAmount, refundedToInsurer)` event
+  matches A0008 §2 in the contract, the ABI, and the off-chain `SettledEvent` type.
+- **Contract test quality (Hardhat).** The `A0008-*` and `branch-coverage polish
+  (tick 140)` suites assert real balance deltas (provider nets exactly `coveredAmount`;
+  insurer net = gas ± refund), `contract balance == 0` after every settled/terminal
+  path, drive the real two-agent pipeline through `MockAgentPlatform` (integration, not
+  stubbed internals), and cover reverting-receiver failure on every refund/transfer
+  branch, the zero-escrow false branches, underfund/overpay, and the `_benchmarkCap`
+  overflow. This is the bar the off-chain side fails to meet.
+
+### Findings (must fix to clear the gate)
+
+**F1 (parity bug + lying comment — `insurerEngage` default deposit diverges between
+backends). HIGH.**
+The shared interface `CoverageNegotiationClient.insurerEngage(reqId, policyHash,
+policyUri, depositAmount?: bigint)` (`src/contract/types.ts`) documents *"Default 0n
+for backward compatibility."* The two implementations disagree on the default:
+- `RealBackend.insurerEngage` (`src/contract/real.ts` L296): `depositAmount: bigint =
+  0n` → forwards `{ value: 0n }` when omitted.
+- `SimulatedBackend.insurerEngage` (`src/contract/simulated.ts` L386):
+  `const effectiveDeposit = depositAmount ?? n.requestedAmount` → deposits exactly
+  `requestedAmount` when omitted.
+
+So the *same* interface call with `depositAmount` omitted **succeeds and escrows
+`requestedAmount` on the simulated backend but reverts `escrow: underfunded` on the
+real backend** for any non-zero `requestedAmount`. The two backends are meant to be
+behaviorally interchangeable behind one client interface, and A0008 explicitly asks the
+simulated backend to *mirror* the payable engage. The JSDoc "Default 0n" describes only
+the real path and is false for the simulated path. Fix: pick one default in the
+interface contract and make both implementations honor it (safest: make `depositAmount`
+required, or default both to `requestedAmount`), and correct the JSDoc.
+
+**F2 (broken non-test callers — `engage` paths never funded for the payable signature).
+HIGH.**
+Two real callers were not updated for the now-payable `insurerEngage` and omit the
+deposit, so they revert against the A0008 contract:
+- `src/agents/party-agent.ts` L113 — `PartyAgent.engage` calls
+  `this.deps.negotiation.insurerEngage(reqId, policyHash, uri)` with no deposit. Wired
+  to a `RealBackend` this sends `value: 0` → `escrow: underfunded`. It only "works"
+  against the simulated backend, and only because of the F1 divergence.
+- `scripts/real-backend-localnode.mjs` L140 —
+  `await real.insurerEngage(reqId, POLICY, POLICY_URI)` against the real on-chain
+  contract with `REQUESTED > 0` (L125) → reverts `escrow: underfunded`. The localnode
+  smoke script is broken on the A0008 contract. (TODO #14 references an insurerEngage
+  "auth" issue on this script; the actual blocker now is the unfunded-escrow revert — a
+  *new* A0008 regression, not the pre-existing auth one.)
+
+The Unit updated the simulated mirror and the Hardhat tests but left the agent-facing
+and smoke-test engage paths unfunded. Fix: thread the escrow deposit (`requestedAmount`
+or an explicit override) through `PartyAgent.engage` and the localnode script.
+
+**F3 (simulated/contract parity gap — `submitEvidence` round-cap deadlock is missing in
+the simulated backend, so it never refunds escrow there). MEDIUM.**
+`CoverageNegotiation.sol` `submitEvidence` (L502–L522) has a round-cap branch that
+routes to `Deadlocked`, zeroes `escrowAmount`, and refunds the insurer. The simulated
+`SimulatedBackend.submitEvidence` (`src/contract/simulated.ts` L412–L421) has **no
+round-cap branch at all** — it unconditionally `round += 1n` and re-fires the agent.
+Consequences: (a) the simulated backend can fire past `maxRounds` via repeated
+`submitEvidence`, diverging from on-chain; (b) the A0008 escrow-zeroing the contract
+performs on that path has no mirror. This is technically pre-existing on `origin/main`
+(the simulated backend never had this branch), but A0008 widened the divergence into an
+escrow-accounting one and the Unit claims to mirror the contract's terminal-escrow
+handling, so it is in-scope here. Note the source-grep parity test `A0008-SIM:
+simulated backend zeroes escrowAmount on every terminal path` only inspects each
+`State.<X>` assignment that *exists* in the file — because the simulated
+`submitEvidence` deadlock branch does not exist, the test cannot catch its absence.
+Fix: add the round-cap → `Deadlocked` + `escrowAmount = 0n` branch to
+`SimulatedBackend.submitEvidence`, mirroring `appeal`, with a behavioral test.
+
+**F4 (incomplete revert mapping — `"deadlock: escrow refund failed"` missing). MEDIUM.**
+`src/protocol/revertReasonMap.ts` declares `RevertReason` as the exhaustive set of
+"revert string literals emitted by CoverageNegotiation.sol" and `REVERT_REASON_MAP` is
+a `Record<RevertReason, ...>`. The diff added every *new* A0008 escrow-refund-failed
+sibling — `escrow: refund failed` (L17), `settle: provider/insurer …` (L32–33),
+`refuse: escrow refund failed` (L36), `withdraw: escrow refund failed` (L38),
+`policy_invalid: escrow refund failed` (L41) — but **omitted `"deadlock: escrow refund
+failed"`**, emitted by the contract at L519 (`submitEvidence` deadlock) and L575
+(`appeal` deadlock). When a deadlock-path escrow refund reverts, the UI has no mapped
+user copy (SPEC-0003 R16). Fix: add `"deadlock: escrow refund failed"` to the
+`RevertReason` union and a copy entry to `REVERT_REASON_MAP`.
+
+**F5 (weak/redundant tests — `A0008-SIM` source-grep assertions). LOW.**
+Three Hardhat tests in `contracts/test/CoverageNegotiation.test.ts` assert against
+*source text* of TypeScript files instead of behavior:
+- `A0008-SIM: behavioral escrow tests exist in simulated.transitions.test.ts` (L4312)
+  greps for test-name string literals.
+- `A0008-SIM: simulated backend zeroes escrowAmount on every terminal path (logic
+  check)` (L4336) greps for `n.escrowAmount = 0n` within 200 chars of each
+  `n.state = State.<X>` assignment.
+- `A0008-SIM: Settled event emitted with refundedToInsurer field …` (L4371) greps for
+  `refundedToInsurer` / absence of `feePerParty` near the emit.
+
+These are assert-presence-not-correctness, brittle to any benign refactor (rename,
+reflow, comment placement, the 200-char window), live in the wrong file (a Hardhat
+Solidity suite reading sibling `.ts` source), and are wholly **redundant** with the
+genuine behavioral coverage the same Unit added in
+`src/contract/simulated.transitions.test.ts` (the `A0008-SIM-BEH-*` suite, run by
+`npm run test:lib`, which actually engages/settles/deadlocks the backend and asserts
+`escrowAmount`/event fields). The test bodies themselves admit it ("F4 fix: behavioral
+tests replace the A0008-SIM source-text assertions"). Fix: delete the three source-grep
+tests; the behavioral suite is the real coverage.
+
+**F6 (test gap — Denied-settle `Settled` event `refundedToInsurer` value unasserted).
+LOW.**
+The `Settled(reqId, coveredAmount, refundedToInsurer)` event is asserted with its third
+arg only on the Approved path (`T6/T8` L519, `refundedToInsurer == 0`). On the Denied
+settle path (`A0008-S2c` L4011 and `A0008-S4b` L4221) the tests assert balances and
+`balance == 0` but never assert the emitted `refundedToInsurer == escrow` (the
+full-escrow refund value that A0008 §2 says the event must surface for SPEC-0003
+token-flow visibility). Likewise the simulated `A0008-SIM-BEH: Settled event carries
+refundedToInsurer` test only checks the field *exists*, not that it equals the full
+escrow on a deny. Add a `.withArgs(reqId, 0n, escrow)` assertion on a Denied settle so
+the event's released/refunded number is pinned, not just its presence.
+
+### Recommended disposition
+
+F1 and F2 are the gate-blockers: an interface whose two implementations disagree on a
+value-bearing default, plus two shipped callers that revert against the real contract,
+is exactly the spec-drift / "works only in simulation" failure mode this gate exists to
+catch. F3/F4 are correctness-of-parity and dead-mapping bugs. F5/F6 are test quality.
+None touch the on-chain escrow core, which passes review.
+
+---
+
 ## Amendment 0007 phase 1 — two-agent scrape→decide pipeline (TOTAL-STICKLER, re-run 3, gate PASS)
 
 **Date:** 2026-06-03 (third strict-review pass — supersedes re-run 2's FAIL)
