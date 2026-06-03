@@ -60,11 +60,11 @@ block, not the stale verdict table below (kept for audit trail only).
 
 ---
 
-**Last updated:** 2026-05-30 (tick 150 — **SKIP-TICK** per the loop's Phase-8 "gate could not run → skip for THIS tick only and note in loop-state.md" provision. Tick 149 noted the closable-without-external-action queue was empty; tick 150 confirmed via a tight ≤5-tool-use Sonnet planning-subagent sweep. External state unchanged: wallet 5.50 STT, ANTHROPIC_API_KEY unset, both real-mode paths blocked. Remaining open OQs are either user-preference decisions (SPEC-0003 Q2, SPEC-0005 OQ1, OQ5 gating-cadence) or separate workstreams (SPEC-0004 TASK-1 real de-id'd corpus / TASK-2 case-research outputs / TASK-3 arbiter prompt design) or already-deferred (SPEC-0005 OQ2 → v1.5). All gates passing where applicable. The honest move per the loop's "On token budget — IGNORE" clause ("if a tick can't complete a step ... let next tick pick up") and Phase-8 ("Gate could not run → skip for this tick only") is to record the skip rather than manufacture diminishing-returns polish. Working tree clean; no new commit beyond this loop-state note. Counter advanced 149 → 150.)
+**Last updated:** 2026-06-03 (tick 151 — `feat(web)`: SPEC-0006 R16/R18/R20 drug-evidence map + Create.tsx auto-fill + form validation. `web/src/drugEvidenceMap.ts` ships all six R18 fixtures (Adalimumab, Semaglutide, Ustekinumab, Lecanemab, Tirzepatide, Dupilumab) with brand-alias resolution. `Create.tsx` wires `applyDrugLookup` to the drug-name field — auto-fills `agentEvidenceUrl` + `agentPromptHint` on match; manual override preserved; submit button disabled while either field is empty. Hardcoded MedlinePlus fallback and generic prompt hint replaced by state values. 234/234 tests pass. Tick counter advanced 150 → 151.)
 **Current mode:** `impl` — steady state still gated on real-mode browser-verify against `0x2c561f33…488ac93` (wallet 5.50 STT < ~7.35 needed for full sweep; or `ANTHROPIC_API_KEY` for smaller Tick A smoke).
-**Current tick:** 150
-**Last focus:** Skip-tick. Planning subagent confirmed no closable item remains without external action (wallet refund or `ANTHROPIC_API_KEY`). Recording per Phase-8 to maintain audit trail.
-**Last commit:** `510ecd8` (tick 149 SPEC-0003 Q1/Q3 closures) → tick 150 commits this skip-note only.
+**Current tick:** 151
+**Last focus:** SPEC-0006 R16/R18/R20 — drug-evidence map (`drugEvidenceMap.ts`) + Create.tsx auto-fill + form validation. All six R18 drug fixtures present; brand aliases resolve; submit gated on non-empty evidence URL and prompt hint.
+**Last commit:** `399b99f` (tick 150 tighten AC4 + verify 97/97 E2E) → tick 151 commits drug-evidence map integration.
 
 > **History rotation note (tick 145):** earlier reviewer-history blocks (ticks
 > 122-128), tick-summary blocks (115-120, 107-113, 98-106, and the older 90-96
@@ -79,7 +79,7 @@ block, not the stale verdict table below (kept for audit trail only).
 | `npm test` (umbrella) | ✓ PASS — chain runs in ~19s end-to-end |
 | `npm run check-ruling-abi` | ✓ static + 5/5 round-trips |
 | TypeScript typecheck | ✓ project tsc clean |
-| Lib tests | ✓ **209/209** (was 196 pre-tick-144 transition tests) |
+| Lib tests | ✓ **234/234** (tick 151: +25 drugEvidenceMap tests) |
 | Hardhat tests | ✓ **61/61** (Amendment 0006 + R26 + admin-setter + state-guard) |
 | Coverage (src/, measured subset) | ✓ 98.85% line / 92.25% branch — PASS |
 | Coverage (src/contract/simulated.ts single file) | ⚠ 75.45% branch (was 68.63%; +6.82pp tick 144) — subset overall still PASS |
