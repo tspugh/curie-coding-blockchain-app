@@ -23,6 +23,23 @@ interface ILLMInferenceAgent {
     ) external returns (string memory);
 }
 
+/// @notice Somnia LLM Parse Website agent — canonical on-chain interface (Amendment 0007 phase 1).
+/// @dev   Selector: keccak256("ExtractString(string,string,string[],string,string,bool,uint8,uint8)")[0:4] = 0xc2dd1a7a.
+///        agentId 12875401142070969085 on Somnia testnet.
+///        Params: key, description, allowedValues, prompt, url, resolveUrl, numPages, confidenceThreshold.
+interface ILLMParseWebsiteAgent {
+    function ExtractString(
+        string memory key,
+        string memory description,
+        string[] memory allowedValues,
+        string memory prompt,
+        string memory url,
+        bool resolveUrl,
+        uint8 numPages,
+        uint8 confidenceThreshold
+    ) external returns (string memory);
+}
+
 /// @title CoverageNegotiation
 /// @notice System of record for the Curie MVP0 drug coverage-exception flow
 ///         (SPEC-0001, revised 2026-05-27 → AI necessity-arbiter model).
@@ -80,6 +97,12 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         ProviderRefused, // 9  terminal: provider rejected the insurer's terms
         Withdrawn // 10 terminal: either party withdrew
     }
+
+    /// @notice Two-agent pipeline phase tracker (Amendment 0007 phase 1).
+    ///         Tracks which agent phase an in-flight adjudication is in.
+    ///         None: no agent in flight. Scraping: LLM Parse Website is running.
+    ///         Deciding: LLM Inference is running (after scrape callback).
+    enum AgentPhase { None, Scraping, Deciding }
 
     /// @dev The agent's necessity ruling. Maps the inferString allowed-values token
     ///      vocabulary (SPEC-0006 R11/R24) to on-chain decision codes.
@@ -143,6 +166,9 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         uint256 createdAt;
         uint256 rulingDeadline; // after this, onRulingTimeout may route to retriable
         bool exists;
+        AgentPhase agentPhase; // current two-agent pipeline phase (Amendment 0007 phase 1)
+        uint256 pendingDecideFee; // parked LLM Inference fee for phase 2 (Amendment 0007)
+        address pendingFeePayer; // payer address to refund parked decide fee on failure
     }
 
     // ---------------------------------------------------------------------
@@ -154,6 +180,11 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     ///         of the `agentId` storage slot value. `setAgentId` overrides for
     ///         demo/testing purposes only.
     uint256 public constant LLM_INFERENCE_AGENT_ID = 12847293847561029384;
+
+    /// @notice Canonical LLM Parse Website agent id (Somnia testnet, Amendment 0007 phase 1).
+    ///         Phase-1 scrape agent: fires ExtractString against n.agentEvidenceUrl.
+    ///         agentId 12875401142070969085 on Somnia testnet.
+    uint256 public constant LLM_PARSE_WEBSITE_AGENT_ID = 12875401142070969085;
 
     /// @notice Maximum on-chain rationale length in bytes (SPEC-0006 R26).
     ///         Rationale longer than this is truncated to MAX_RATIONALE_BYTES chars
@@ -412,7 +443,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     }
 
     /// @notice Fire the native agent to adjudicate (only from `Ready`) → `UnderReview`
-    ///         (R6/R9). Payable so callers fund the per-request fee.
+    ///         (R6/R9). Payable so callers fund BOTH the scrape fee and the decide fee
+    ///         (Amendment 0007 phase 1). msg.value must cover 2×getRequestDeposit().
     /// @dev Either party may trigger adjudication (R11). Requires an attached policy
     ///      (guaranteed by the `Ready` precondition — R5).
     function requestAdjudication(uint256 reqId) external payable nonReentrant {
@@ -422,7 +454,7 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
         n.round = 1; // first adjudication round
         emit AdjudicationRequested(reqId);
-        _fireAgent(reqId, n, msg.sender);
+        _fireScrape(reqId, n, msg.sender);
     }
 
     /// @notice Provider submits more public evidence of necessity from
@@ -456,7 +488,7 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         n.evidenceUri = evidenceUri;
         n.round += 1;
         emit EvidenceSubmitted(reqId, evidenceUri);
-        _fireAgent(reqId, n, msg.sender);
+        _fireScrape(reqId, n, msg.sender);
     }
 
     /// @notice Appeal a ruling with NEW public evidence of necessity (R6c). From
@@ -503,7 +535,7 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         n.round += 1;
         n.appealRound += 1;
         emit Appealed(reqId, partyId, evidenceUri, n.round);
-        _fireAgent(reqId, n, msg.sender);
+        _fireScrape(reqId, n, msg.sender);
     }
 
     /// @notice Accept the current ruling (R6c). From `Approved`/`Denied`. When BOTH
@@ -565,15 +597,36 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
     /// @notice Keeper-callable timeout: after the ruling deadline, route a stuck
     ///         `UnderReview` request to the retriable `EvidenceRequested` state.
+    ///
+    ///         Amendment 0007 phase 1 / R9: mirrors the _handleScrapeResponse
+    ///         non-Success branch — must refund any parked `pendingDecideFee` to
+    ///         `pendingFeePayer` and reset `agentPhase` to None, regardless of
+    ///         which pipeline phase was in flight. Without this, a scrape (or decide)
+    ///         that never calls back and is timed out by the keeper strands the
+    ///         decide-fee ETH permanently in the contract (R9 violation).
     function onRulingTimeout(uint256 reqId) external {
         Negotiation storage n = _get(reqId);
         require(n.state == State.UnderReview, "timeout: not UnderReview");
         require(n.rulingDeadline != 0 && block.timestamp >= n.rulingDeadline, "timeout: too early");
         uint256 requestId = n.pendingRequestId;
+
+        // Capture and clear parked decide-fee bookkeeping before the refund (CEI).
+        uint256 refund = n.pendingDecideFee;
+        address payer  = n.pendingFeePayer;
+        n.pendingDecideFee = 0;
+        n.pendingFeePayer  = address(0);
+        n.agentPhase       = AgentPhase.None;
+
         _clearRequest(n);
         n.state = State.EvidenceRequested;
         emit RulingTimedOut(reqId, requestId);
         emit EvidenceRequested(reqId);
+
+        // R9: refund the parked decide fee to the original payer (if any).
+        if (refund > 0) {
+            (bool ok, ) = payable(payer).call{value: refund}("");
+            require(ok, "fee: refund failed");
+        }
     }
 
     /// @notice Post off-chain feedback/conversation. Allowed in any active state; no
@@ -617,17 +670,25 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     // Platform callback
     // ---------------------------------------------------------------------
 
-    /// @notice Somnia platform callback delivering the agent's necessity ruling
-    ///         (SPEC-0006 R24/R25/R26).
-    /// @dev The LLM Inference agent (`inferString`) returns a single ABI-encoded
-    ///      `string` token from the `allowedValues` list:
-    ///        "approve"        → Decision.Approve  → Approved state
-    ///        "deny"           → Decision.Deny     → Denied state
-    ///        "needs_more_info"→ Decision.NeedMoreEvidence → EvidenceRequested
-    ///        "policy_invalid" → Decision.PolicyInvalid   → PolicyInvalidated
-    ///      Any unknown/malformed token is treated defensively as
-    ///      `needs_more_info` (routes to `EvidenceRequested`) — the contract does
-    ///      not trust a garbage token to advance to a terminal state.
+    /// @notice Somnia platform callback delivering the agent's result
+    ///         (SPEC-0006 R24/R25/R26, Amendment 0007 phase 1).
+    ///
+    ///         Branches on `agentPhase`:
+    ///
+    ///         SCRAPING phase — LLM Parse Website (ExtractString) callback:
+    ///           Success: decode the extracted evidence string, fire LLM Inference
+    ///           (_fireDecide) using n.pendingDecideFee. Advance phase to Deciding.
+    ///           Non-success: refund pendingDecideFee to the stored payer; route to
+    ///           EvidenceRequested (retriable).
+    ///
+    ///         DECIDING phase — LLM Inference (inferString) callback:
+    ///           Decodes a single string token from allowedValues:
+    ///             "approve"        → Approved state (coveredAmount = requestedAmount)
+    ///             "deny"           → Denied state   (coveredAmount = 0)
+    ///             "needs_more_info"→ EvidenceRequested
+    ///             "policy_invalid" → PolicyInvalidated (terminal)
+    ///           Any unknown/malformed token is treated as `needs_more_info`.
+    ///           Non-success: route to EvidenceRequested (retriable).
     ///
     ///      Gated to `msg.sender == platform`. The `handleResponse` selector is
     ///      what the contract passes to `platform.createRequest` as `callbackSelector`.
@@ -645,7 +706,70 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         Negotiation storage n = _negotiations[reqId];
         require(n.state == State.UnderReview, "callback: not UnderReview");
 
+        if (n.agentPhase == AgentPhase.Scraping) {
+            _handleScrapeResponse(reqId, requestId, responses, status, n);
+        } else {
+            _handleDecideResponse(reqId, requestId, responses, status, n);
+        }
+    }
+
+    /// @dev Handle a callback from the LLM Parse Website (scrape) agent.
+    ///      On Success: decode the evidence string and fire the LLM Inference agent
+    ///      (phase 2) using the parked pendingDecideFee. On non-success: refund the
+    ///      parked fee and route to EvidenceRequested.
+    function _handleScrapeResponse(
+        uint256 reqId,
+        uint256 requestId,
+        Response[] memory responses,
+        ResponseStatus status,
+        Negotiation storage n
+    ) internal {
         _clearRequest(n);
+
+        // Non-success / empty scrape: refund parked decide fee and route to retriable state.
+        if (status != ResponseStatus.Success || responses.length == 0) {
+            uint256 refund = n.pendingDecideFee;
+            address payer = n.pendingFeePayer;
+            n.pendingDecideFee = 0;
+            n.pendingFeePayer = address(0);
+            n.agentPhase = AgentPhase.None;
+            n.state = State.EvidenceRequested;
+            emit RulingTimedOut(reqId, requestId);
+            emit EvidenceRequested(reqId);
+            if (refund > 0) {
+                (bool ok, ) = payable(payer).call{value: refund}("");
+                require(ok, "fee: refund failed");
+            }
+            return;
+        }
+
+        // Decode the extracted evidence string returned by ExtractString.
+        string memory evidence = abi.decode(responses[0].result, (string));
+
+        // Fire LLM Inference (phase 2) using the parked decide fee.
+        // Clear both pendingDecideFee AND pendingFeePayer — once consumed, neither
+        // field is live and leaving pendingFeePayer set would be dead residual state
+        // contradicting the 'clear parked-fee bookkeeping once consumed' invariant
+        // (LOW-4 finding).
+        uint256 decideFee = n.pendingDecideFee;
+        n.pendingDecideFee = 0;
+        n.pendingFeePayer  = address(0);
+        n.agentPhase = AgentPhase.Deciding;
+
+        _fireDecide(reqId, n, decideFee, evidence);
+    }
+
+    /// @dev Handle a callback from the LLM Inference (decide) agent.
+    ///      Decodes the single string decision token and transitions state.
+    function _handleDecideResponse(
+        uint256 reqId,
+        uint256 requestId,
+        Response[] memory responses,
+        ResponseStatus status,
+        Negotiation storage n
+    ) internal {
+        _clearRequest(n);
+        n.agentPhase = AgentPhase.None;
 
         // Non-success / empty response: route to retriable EvidenceRequested.
         if (status != ResponseStatus.Success || responses.length == 0) {
@@ -824,25 +948,93 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         return string(result);
     }
 
-    /// @dev Fire a native agent request, forwarding EXACTLY the per-request fee (R9),
-    ///      record the pending requestId, set the ruling deadline, and move to
-    ///      UnderReview. CEI: state is set to UnderReview BEFORE the external call.
+    /// @dev Phase 1 of the two-agent pipeline (Amendment 0007 phase 1):
+    ///      fire the LLM Parse Website agent (ExtractString, 0xc2dd1a7a) against
+    ///      n.agentEvidenceUrl to scrape public evidence. Parks the LLM Inference fee
+    ///      (decide fee) in n.pendingDecideFee for use in the phase-2 callback.
     ///
-    ///      Payload: `inferString(prompt, system, chainOfThought, allowedValues)` —
-    ///      the canonical Somnia LLM Inference agent selector `0xfe7ca098` (SPEC-0006
-    ///      R11). The prompt embeds the per-negotiation `n.agentEvidenceUrl` and
-    ///      `n.agentPromptHint` (caller-supplied; PHI-freeness is the caller's
-    ///      responsibility — the contract's R15 guard rejects common patient-name
-    ///      patterns as defense-in-depth, but cannot guarantee all forms of PHI).
-    ///
-    ///      FEE MODEL (R9): caller funds the per-request fee on the agent-firing entry
-    ///      point. Fee = getRequestDeposit() + agentReward. Caller must cover it;
-    ///      exactly `fee` is forwarded; any excess is refunded. Never retains caller ETH.
+    ///      FEE MODEL (R9): caller funds BOTH the scrape fee and the decide fee in one
+    ///      msg.value. Fee = 2 × (getRequestDeposit() + agentReward). Caller must cover
+    ///      it; exactly `scrapeFee` is forwarded now; `decideFee` is parked on the
+    ///      struct; any excess is refunded. Never retains caller ETH.
     /// @param payer The caller funding this fire (refund recipient for any overpayment).
-    function _fireAgent(uint256 reqId, Negotiation storage n, address payer) internal {
-        // Build the inferString payload (SPEC-0006 R11).
-        // inferString(string prompt, string system, bool chainOfThought, string[] allowedValues)
-        // Selector: 0xfe7ca098 = keccak256("inferString(string,string,bool,string[])")[0:4]
+    function _fireScrape(uint256 reqId, Negotiation storage n, address payer) internal {
+        uint256 perCallFee = platform.getRequestDeposit() + agentReward;
+        uint256 totalRequired = perCallFee * 2;
+        require(msg.value >= totalRequired, "fee: underfunded");
+        uint256 refund = msg.value - totalRequired;
+
+        // Park the decide fee for use in the Scraping callback.
+        n.pendingDecideFee = perCallFee;
+        n.pendingFeePayer = payer;
+        n.agentPhase = AgentPhase.Scraping;
+        n.totalFees += perCallFee; // scrape fee portion of accumulated fees (R8)
+
+        // Build the ExtractString payload (Amendment 0007 phase 1).
+        // ExtractString(string key, string description, string[] allowedValues,
+        //               string prompt, string url, bool resolveUrl, uint8 numPages, uint8 confidenceThreshold)
+        // Selector: 0xc2dd1a7a = keccak256("ExtractString(string,string,string[],string,string,bool,uint8,uint8)")[0:4]
+        string[] memory scrapeAllowedValues = new string[](0); // free-text extraction
+        bytes memory payload = abi.encodeWithSelector(
+            ILLMParseWebsiteAgent.ExtractString.selector,
+            "evidence",
+            "Drug coverage evidence from the provided URL",
+            scrapeAllowedValues,
+            "Extract the drug's FDA approval status, indication, and medical necessity evidence.",
+            n.agentEvidenceUrl,
+            false, // resolveUrl: do not follow redirects
+            1,     // numPages: single page
+            0      // confidenceThreshold: no minimum threshold
+        );
+
+        // Effects before interaction (CEI).
+        n.rulingDeadline = block.timestamp + rulingTimeout;
+        n.state = State.UnderReview;
+
+        // SPEC-0004 §3.5: emit PacketSubmitted before the external call.
+        emit PacketSubmitted(reqId, n.round, n.evidenceUri, n.evidenceUri);
+
+        currentlyFiringReqId = reqId;
+
+        // Interaction: fire LLM Parse Website, forwarding exactly the scrape fee.
+        uint256 requestId = platform.createRequest{value: perCallFee}(
+            LLM_PARSE_WEBSITE_AGENT_ID,
+            address(this),
+            this.handleResponse.selector,
+            payload
+        );
+
+        currentlyFiringReqId = 0;
+
+        n.pendingRequestId = requestId;
+        _requestToNegotiation[requestId] = reqId;
+
+        emit RulingRequested(reqId, requestId, perCallFee);
+
+        // Refund any overpayment to the caller (CEI-safe — state fully committed above).
+        if (refund > 0) {
+            (bool ok, ) = payable(payer).call{value: refund}("");
+            require(ok, "fee: refund failed");
+        }
+    }
+
+    /// @dev Phase 2 of the two-agent pipeline (Amendment 0007 phase 1):
+    ///      fire the LLM Inference agent (inferString, 0xfe7ca098) using the
+    ///      pre-funded decide fee parked by _fireScrape. Called from the
+    ///      Scraping-phase handleResponse callback after a successful scrape.
+    ///      CEI: state effects (agentPhase, pendingDecideFee cleared) are committed
+    ///      by the caller (_handleScrapeResponse) before this interaction.
+    ///
+    ///      Note: the decide fee accounting (totalFees accumulation) happens here so
+    ///      the full 2×fee is reflected in totalFees after the complete path.
+    function _fireDecide(
+        uint256 reqId,
+        Negotiation storage n,
+        uint256 decideFee,
+        string memory evidence
+    ) internal {
+        n.totalFees += decideFee; // decide fee portion of accumulated fees (R8)
+
         string[] memory allowedValues = new string[](4);
         allowedValues[0] = "approve";
         allowedValues[1] = "deny";
@@ -854,58 +1046,28 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
             string(abi.encodePacked(
                 n.agentPromptHint,
                 " Evidence URL: ", n.agentEvidenceUrl,
+                " Extracted evidence: ", evidence,
                 " Reply with exactly one of the allowed values."
             )),
             "You are a medical necessity arbiter. Evaluate the drug coverage request and return exactly one decision token.",
-            true, // chainOfThought: enabled per SPEC-0006 §3.6.1 — enriches receipt reasoning for commitRationale (R24–R26)
+            true, // chainOfThought: enabled per SPEC-0006 §3.6.1
             allowedValues
         );
 
-        uint256 fee = platform.getRequestDeposit() + agentReward;
-        // R9: the caller must fund at least the per-request fee. We forward EXACTLY the
-        // fee and refund the rest; we never retain caller ETH as a hidden owner sink.
-        require(msg.value >= fee, "fee: underfunded");
-        uint256 refund = msg.value - fee;
-
-        n.totalFees += fee; // accumulate for the 50/50 settlement marker (R8)
-
-        // Effects before interaction (CEI).
-        n.rulingDeadline = block.timestamp + rulingTimeout;
-        n.state = State.UnderReview;
-
-        // SPEC-0004 §3.5: emit PacketSubmitted before the external call (CEI-safe — all
-        // state effects above are already committed). `n.round` already holds the round
-        // being requested: requestAdjudication sets it to 1 before calling _fireAgent;
-        // submitEvidence and appeal each do `n.round += 1` before calling _fireAgent.
-        emit PacketSubmitted(reqId, n.round, n.evidenceUri, n.evidenceUri);
-
-        // Expose the reqId for transparent probing during the external call (mock
-        // platforms in tests, reentrancy guards, off-chain indexers). The slot is set
-        // AFTER all state effects are committed (UnderReview is already written) so the
-        // CEI invariant is preserved. Cleared immediately after the call returns.
         currentlyFiringReqId = reqId;
-
-        // Interaction: fire the native Somnia LLM Inference agent, forwarding EXACTLY the fee.
-        uint256 requestId = platform.createRequest{value: fee}(
+        uint256 decideRequestId = platform.createRequest{value: decideFee}(
             agentId,
             address(this),
             this.handleResponse.selector,
             payload
         );
-
         currentlyFiringReqId = 0;
 
-        n.pendingRequestId = requestId;
-        _requestToNegotiation[requestId] = reqId;
+        n.pendingRequestId = decideRequestId;
+        _requestToNegotiation[decideRequestId] = reqId;
+        n.rulingDeadline = block.timestamp + rulingTimeout;
 
-        emit RulingRequested(reqId, requestId, fee);
-
-        // Refund any overpayment to the caller. Guarded by the caller's `nonReentrant`
-        // entry point; all state effects above are already committed (CEI-safe).
-        if (refund > 0) {
-            (bool ok, ) = payable(payer).call{value: refund}("");
-            require(ok, "fee: refund failed");
-        }
+        emit RulingRequested(reqId, decideRequestId, decideFee);
     }
 
     /// @dev Overflow-SAFE benchmark cap = `unitPrice * quantity`, SATURATING at

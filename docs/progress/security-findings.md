@@ -1,3 +1,123 @@
+## 2026-06-03 (refresh 4) — Amendment 0007 phase 1: two-agent scrape→decide pipeline (security-review)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode)
+**Base:** `origin/main`
+**Branch:** `feat/amendment-0007-two-agent-pipeline` + uncommitted working tree
+**Scope of change:** Split the single `_fireAgent` adjudication into a two-agent
+sequential pipeline (Amendment 0007 phase 1). Add `AgentPhase` enum
+(`None`/`Scraping`/`Deciding`) + `pendingDecideFee`/`pendingFeePayer` fields on the
+`Negotiation` struct; `LLM_PARSE_WEBSITE_AGENT_ID` constant (`12875401142070969085`)
++ minimal `ILLMParseWebsiteAgent.ExtractString` interface (selector `0xc2dd1a7a`).
+`requestAdjudication`/`submitEvidence`/`appeal` now fund BOTH calls in one `msg.value`
+(`2×(getRequestDeposit()+agentReward)`), fire LLM Parse Website against
+`n.agentEvidenceUrl`, and park the decide fee. `handleResponse` branches on
+`agentPhase`: Scraping-success decodes the extracted string and fires LLM Inference
+(`_fireDecide`) from the parked fee; Deciding-success runs the existing token decode +
+state transition; a non-Success callback in either phase refunds the parked decide fee
+to the stored payer and routes to `EvidenceRequested`. `scripts/check-ruling-abi.ts`
+extended to pin the `ExtractString` selector alongside `inferString`. Hardhat tests:
+two-call mock keyed by agentId, updated fee math, full scrape→decide→Approve/Deny +
+failure paths.
+**Verdict:** PASS (zero findings)
+
+### Hard gate
+
+| Gate | Status | Evidence |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | R4 invariant preserved — only hashes/refs/amounts/codes/state/ids/addresses/timestamps + the two caller/curated public strings (`agentEvidenceUrl`, `agentPromptHint`) are stored. The new `_fireScrape` payload is built from `n.agentEvidenceUrl` + static framing; `_fireDecide`'s `inferString` prompt is `n.agentPromptHint` + `n.agentEvidenceUrl` + the scraped `evidence` string + static framing — no patient data is concatenated. The `_containsNamePattern` `[A-Z][a-z]+ [A-Z]` PHI guard on `agentPromptHint` at `createContract` is retained. Diff-wide PHI scan (SSN/DOB/MRN/`patient name`/`[0-9]{3}-[0-9]{2}-[0-9]{4}`/date shapes) over added `.sol`/`.ts` lines returned only (a) guard-name comments, (b) PHI-*absence* assertions in tests, and (c) the synthetic negative-test probe `"John S"` (`CoverageNegotiation.test.ts:2321`, an input the contract is asserted to **reject** — never stored). Evidence-URL fixtures are public (`medlineplus.gov/druginfo/meds/*`, `accessdata.fda.gov` FDA label PDF). |
+| No secrets | PASS | No private keys, mnemonics, API keys, tokens, or credentials in the diff. The two 64-hex keys in `scripts/real-backend-localnode.mjs` are the well-known deterministic Anvil/Hardhat accounts #0/#1 (public test vectors, env-overridable via `LOCAL_KEY`/`LOCAL_INSURER_KEY`) and are pre-existing — not part of this diff's added lines. `verify-deploy.ts` reads `VITE_PRIVATE_KEY` from `.env` only to derive an address (`ethers.Wallet(...).address`); no transaction is signed/sent and the key is not logged. Tests assert the banned `@anthropic-ai/sdk` / `ANTHROPIC_API_KEY` path stays removed (G3). |
+| Signing-key hygiene | PASS | No new key-handling, wallet-construction, or signer code. The two new constants + interface add **no** setters (no new owner-mutable / privilege surface). All admin mutators (`setPlatform`/`setAgentId`/`setAgentReward`/`setRulingTimeout`/`setMaxRounds`/`withdrawFunds`) and the keeper `commitRationale` remain `onlyOwner`. The platform-callback gate `require(msg.sender == address(platform), "callback: not platform")` is intact and now governs both pipeline phases. |
+
+### Threat walk-through (Amendment 0007 two-agent pipeline)
+
+**T1 — Fee theft / ETH double-spend across the two calls.** PASS. `_fireScrape`
+(`CoverageNegotiation.sol:935`) requires `msg.value >= 2×perCallFee`, forwards exactly
+`perCallFee` to the scrape `createRequest`, parks the second `perCallFee` in the
+contract balance (recorded in `n.pendingDecideFee`), and refunds any excess to the
+caller. On scrape-success `_handleScrapeResponse` zeroes `pendingDecideFee` and forwards
+that exact parked amount to `_fireDecide`'s `createRequest{value: decideFee}`. On
+scrape-failure the parked amount is refunded to `n.pendingFeePayer`. Every branch
+conserves value: forwarded + parked + refunded == `msg.value`. No path mints ETH or
+forwards an amount the contract did not receive. `totalFees` (scrape += in `_fireScrape`,
+decide += in `_fireDecide`) is a settlement **event marker only** (no token transfer per
+R8), so even an accounting skew on a failure path moves no funds.
+
+**T2 — Reentrancy via the callback's untrusted-payer refund.** PASS.
+`handleResponse` is gated to `msg.sender == address(platform)` (owner-set, trusted) and
+requires `_requestToNegotiation[requestId] != 0` **and** `n.state == UnderReview`. The
+only external call to an *untrusted* address inside the callback is the scrape-failure
+refund `payable(payer).call{value: refund}` in `_handleScrapeResponse:719`. By that
+point CEI is complete: `_clearRequest` has deleted the request→negotiation mapping,
+`pendingDecideFee`/`pendingFeePayer` are zeroed, `agentPhase=None`, and `state` is set to
+`EvidenceRequested`. A reentrant `handleResponse` therefore fails the `reqId != 0`
+(mapping deleted) and/or `state == UnderReview` checks and cannot re-trigger a refund or
+mutate the negotiation. The scrape-success external call (`_fireDecide` →
+`platform.createRequest`) targets the trusted platform only. (The three payable entry
+points `requestAdjudication`/`submitEvidence`/`appeal` retain `nonReentrant`.)
+
+**T3 — Stale `pendingFeePayer` enabling a double-refund / drain.** PASS. A payer-funded
+refund occurs **only** in the scrape-failure branch, which sets `refund =
+n.pendingDecideFee` and zeroes both `pendingDecideFee` and `pendingFeePayer` *before* the
+`.call`, guarded by `if (refund > 0)`. On scrape-**success**, `pendingDecideFee` is
+zeroed (forwarded to the decide call) while `pendingFeePayer` is intentionally left set —
+but no later code path refunds based on `pendingFeePayer` without first reading a non-zero
+`pendingDecideFee`, and the decide-failure branch performs no payer refund at all
+(`pendingDecideFee` is already 0 there). A subsequent `_fireScrape` (retry via
+`submitEvidence`/`appeal`) overwrites both fields fresh. No stale-payer drain vector.
+
+**T4 — Malformed/garbage agent payload (deserialization).** PASS. Both
+`abi.decode(responses[0].result, (string))` calls consume data delivered by the trusted,
+gated platform. A malformed payload reverts the decode (Solidity ABI decode is
+memory-safe — no buffer/overflow class exists), which merely stalls the in-flight ruling;
+recovery is the existing keeper `onRulingTimeout` → `EvidenceRequested`. An out-of-vocab
+decision **token** falls through `_tokenToDecision` defensively to non-terminal
+`NeedMoreEvidence` (never advances to a terminal state on garbage input). No injection,
+no unsafe transition.
+
+**T5 — Selector / agent-id drift.** PASS (hardening preserved). `check-ruling-abi.ts`
+now computes and pins **both** selectors — `inferString` (`0xfe7ca098`) and the new
+`ExtractString` (`0xc2dd1a7a`) — from their canonical signatures, asserts
+`_fireScrape` body uses `ILLMParseWebsiteAgent.ExtractString.selector` and
+`_fireDecide`/legacy `_fireAgent` uses `ILLMInferenceAgent.inferString.selector`, and
+self-checks that both selector literals appear in the script. The two agent ids are
+`public constant`s. A silent selector/id swap is caught by the gate.
+
+### Standard categories examined
+
+- **Injection** (SQL / command / path / template / XXE / NoSQL): none. No new
+  untrusted-input → shell/fs/DB/template path. `check-ruling-abi.ts` reads only a fixed
+  `.sol` path and its own source (`import.meta.url`); no user-controlled paths.
+- **Auth / authz**: callback gate + all `onlyOwner` mutators + party gates on the payable
+  entry points unchanged. The two new constants + interface add no callable surface.
+- **Crypto / randomness**: none added. `_tokenToDecision` is constant-set keccak
+  membership (standard).
+- **Data exposure**: nothing sensitive logged/emitted; events carry ids/amounts/decision
+  codes only. The scraped `evidence` string is passed into the inference prompt but never
+  stored on-chain.
+- **XSS / web**: no `web/src` changes in this unit; the contract changes have no DOM sink.
+
+### Files reviewed
+
+`contracts/contracts/CoverageNegotiation.sol`,
+`contracts/contracts/mocks/MockAgentPlatform.sol`,
+`contracts/contracts/mocks/RevertingReceiver.sol`,
+`contracts/test/CoverageNegotiation.test.ts`, `scripts/check-ruling-abi.ts`,
+`scripts/verify-deploy.ts`, `scripts/real-backend-localnode.mjs`,
+`web/src/drugEvidenceMap.ts`, `docs/progress/*`.
+
+### Verdict
+
+**PASS — zero findings.** The two-agent split conserves caller ETH on every branch
+(forward + park + refund == `msg.value`), preserves CEI on the un-guarded `handleResponse`
+callback (the untrusted-payer refund runs only after the request mapping is deleted and
+state has left `UnderReview`), introduces no new owner/privilege surface, and keeps the
+PHI guard + synthetic-only fixtures intact. Selector-drift hardening was extended to the
+new `ExtractString` selector. Net: new attack surface is bounded to the trusted
+platform-callback path, which retains its `msg.sender == platform` gate.
+
+---
+
 ## 2026-06-03 (refresh 3) — drug-evidence map + Create.tsx auto-fill (security-review)
 
 **Date:** 2026-06-03

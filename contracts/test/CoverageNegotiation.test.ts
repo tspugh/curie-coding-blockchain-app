@@ -100,7 +100,17 @@ async function createAs(
   return contract.count();
 }
 
-/** Create → engage (insurer) → adjudicate (provider). Returns { reqId, requestId }. */
+/**
+ * Create → engage (insurer) → adjudicate (provider) → complete scrape phase.
+ * Returns { reqId, requestId } where requestId is the DECIDE agent's request id
+ * (the id to deliver the ruling token to via platform.triggerRuling).
+ *
+ * Amendment 0007 phase 1: adjudication is now two-phase (scrape → decide).
+ * This helper drives through the scrape callback automatically (using a
+ * synthetic evidence string) so callers receive the decide-phase requestId.
+ * All pre-Amendment tests that call triggerRuling on the returned requestId
+ * are therefore still exercising the decide callback as before.
+ */
 async function createEngageAdjudicate(
   contract: CoverageNegotiation,
   platform: MockAgentPlatform,
@@ -110,9 +120,16 @@ async function createEngageAdjudicate(
   quantity = QUANTITY,
   daysSupply = DAYS_SUPPLY
 ) {
+  const target = await contract.getAddress();
   const reqId = await createAs(contract, provider, insurer.address, requestedAmount, quantity, daysSupply);
   await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
-  await contract.connect(provider).requestAdjudication(reqId, { value: FEE });
+  // Fund both calls: 2x deposit (the minimum for the two-agent pipeline).
+  const deposit = await platform.deposit();
+  await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+  // Complete the scrape phase automatically with a synthetic evidence string.
+  const scrapeRequestId = await platform.lastRequestId();
+  await platform.triggerRuling(target, scrapeRequestId, "synthetic-scrape-evidence");
+  // The decide agent has now been fired; return its requestId.
   const requestId = await platform.lastRequestId();
   return { reqId, requestId };
 }
@@ -258,15 +275,20 @@ describe("CoverageNegotiation", () => {
     const reqId = await createAs(contract, provider, insurer.address);
     await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
 
-    await expect(contract.connect(provider).requestAdjudication(reqId, { value: FEE }))
+    // Amendment 0007: requestAdjudication fires the LLM Parse Website (scrape) agent
+    // first, then the Scraping callback fires LLM Inference (decide). Fund both calls.
+    const deposit = await platform.deposit();
+    await expect(contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n }))
       .to.emit(contract, "AdjudicationRequested")
       .withArgs(reqId)
       .and.to.emit(contract, "RulingRequested");
 
     expect(await contract.stateOf(reqId)).to.equal(State.UnderReview);
     expect(await contract.roundOf(reqId)).to.equal(1n);
+    // Phase 1 (scrape) fires exactly ONE createRequest (to LLM Parse Website).
     expect(await platform.createRequestCalls()).to.equal(1n);
-    expect(await platform.lastAgentId()).to.equal(await contract.agentId());
+    // The first agent fired is LLM Parse Website (scrape phase).
+    expect(await platform.lastAgentId()).to.equal(await contract.LLM_PARSE_WEBSITE_AGENT_ID());
     expect(await platform.lastCallbackAddress()).to.equal(await contract.getAddress());
     // The forwarded selector is handleResponse's (the real Somnia callback).
     const sel = contract.interface.getFunction("handleResponse").selector;
@@ -279,20 +301,29 @@ describe("CoverageNegotiation", () => {
     const target = await contract.getAddress();
     const reqId = await createAs(contract, provider, insurer.address);
     await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
-    // initial requestAdjudication — round 1
-    await expect(contract.connect(provider).requestAdjudication(reqId, { value: FEE }))
+    // Amendment 0007: each agent-firing entry point fires the scrape agent first.
+    // PacketSubmitted is emitted on the scrape fire (round 1 for requestAdjudication).
+    const deposit = await platform.deposit();
+    await expect(contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n }))
       .to.emit(contract, "PacketSubmitted")
       .withArgs(reqId, 1n, EVIDENCE_URI, EVIDENCE_URI);
-    const rid1 = await platform.lastRequestId();
-    // NeedMoreEvidence → submitEvidence re-fire emits PacketSubmitted with round 2
-    await platform.triggerRuling(target, rid1, TOKEN_NEEDS_MORE_INFO);
-    await expect(contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI_2, { value: FEE }))
+    // Complete the scrape phase → fires decide agent (no PacketSubmitted for decide).
+    const rid1Scrape = await platform.lastRequestId();
+    await platform.triggerRuling(target, rid1Scrape, "evidence-round-1");
+    // Decide returns needs_more_info → EvidenceRequested.
+    const rid1Decide = await platform.lastRequestId();
+    await platform.triggerRuling(target, rid1Decide, TOKEN_NEEDS_MORE_INFO);
+    // submitEvidence re-fires the scrape agent (round 2) — PacketSubmitted emitted.
+    await expect(contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI_2, { value: deposit * 2n }))
       .to.emit(contract, "PacketSubmitted")
       .withArgs(reqId, 2n, EVIDENCE_URI_2, EVIDENCE_URI_2);
-    const rid2 = await platform.lastRequestId();
-    // Deny → appeal re-fire emits PacketSubmitted with round 3
-    await platform.triggerRuling(target, rid2, TOKEN_DENY);
-    await expect(contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE }))
+    // Complete round-2 scrape → decide → deny.
+    const rid2Scrape = await platform.lastRequestId();
+    await platform.triggerRuling(target, rid2Scrape, "evidence-round-2");
+    const rid2Decide = await platform.lastRequestId();
+    await platform.triggerRuling(target, rid2Decide, TOKEN_DENY);
+    // Appeal re-fires the scrape agent (round 3) — PacketSubmitted emitted.
+    await expect(contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: deposit * 2n }))
       .to.emit(contract, "PacketSubmitted")
       .withArgs(reqId, 3n, EVIDENCE_URI, EVIDENCE_URI);
   });
@@ -448,8 +479,10 @@ describe("CoverageNegotiation", () => {
     ).to.be.revertedWith("appeal: needs evidence");
 
     // appeal with new evidence (round 1 < maxRounds 2) → re-fires, round becomes 2.
+    // Amendment 0007: appeal fires the scrape agent (phase 1); fund both calls.
+    const deposit = await platform.deposit();
     expect((await contract.getNegotiation(reqId)).appealRound).to.equal(0); // before bump
-    await expect(contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URI_2, REASON_HASH, { value: FEE }))
+    await expect(contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URI_2, REASON_HASH, { value: deposit * 2n }))
       .to.emit(contract, "Appealed")
       .withArgs(reqId, PROVIDER_ID, EVIDENCE_URI_2, 2n);
     expect(await contract.stateOf(reqId)).to.equal(State.UnderReview);
@@ -457,9 +490,11 @@ describe("CoverageNegotiation", () => {
     // SPEC-0004 R13: appealRound advances the LADDER position on each successful appeal.
     expect((await contract.getNegotiation(reqId)).appealRound).to.equal(1);
 
-    // Resolve the re-fired round (deny again), then a further appeal at round>=maxRounds → Deadlocked.
-    const rid2 = await platform.lastRequestId();
-    await platform.triggerRuling(target, rid2, TOKEN_DENY);
+    // Resolve the re-fired round (deny again): complete both scrape and decide phases.
+    const rid2Scrape = await platform.lastRequestId();
+    await platform.triggerRuling(target, rid2Scrape, "appeal-round-2-evidence");
+    const rid2Decide = await platform.lastRequestId();
+    await platform.triggerRuling(target, rid2Decide, TOKEN_DENY);
     expect(await contract.stateOf(reqId)).to.equal(State.Denied);
 
     await expect(contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE }))
@@ -583,17 +618,25 @@ describe("CoverageNegotiation", () => {
       "FeedbackPosted"
     );
 
-    await contract.connect(provider).requestAdjudication(reqId, { value: FEE });
-    const requestId = await platform.lastRequestId();
+    // Amendment 0007: requestAdjudication fires the scrape agent first; fund both calls.
+    const deposit = await platform.deposit();
+    await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+    const scrapeRid1 = await platform.lastRequestId();
+    // Complete the scrape phase → fires decide agent.
+    await platform.triggerRuling(target, scrapeRid1, "evidence-string");
+    const decideRid1 = await platform.lastRequestId();
 
     // attacker cannot submitEvidence even when applicable — first drive to EvidenceRequested.
-    await platform.triggerRuling(target, requestId, TOKEN_NEEDS_MORE_INFO);
+    await platform.triggerRuling(target, decideRid1, TOKEN_NEEDS_MORE_INFO);
     await expect(
-      contract.connect(attacker).submitEvidence(reqId, EVIDENCE_URI_2, { value: FEE })
+      contract.connect(attacker).submitEvidence(reqId, EVIDENCE_URI_2, { value: deposit * 2n })
     ).to.be.revertedWith("auth: not provider");
-    await contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI_2, { value: FEE });
-    const rid2 = await platform.lastRequestId();
-    await platform.triggerRuling(target, rid2, TOKEN_DENY);
+    await contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI_2, { value: deposit * 2n });
+    // Complete the scrape+decide phases for the submitEvidence round → deny.
+    const scrapeRid2 = await platform.lastRequestId();
+    await platform.triggerRuling(target, scrapeRid2, "evidence-string-2");
+    const decideRid2 = await platform.lastRequestId();
+    await platform.triggerRuling(target, decideRid2, TOKEN_DENY);
 
     // attacker cannot appeal / accept / settle on a ruled request.
     await expect(
@@ -622,25 +665,35 @@ describe("CoverageNegotiation", () => {
     const { platform, contract } = await deploy();
     const [provider, insurer] = await ethers.getSigners();
     const target = await contract.getAddress();
-    const deposit = await platform.deposit(); // 0.001 ether; fee == deposit (agentReward 0)
+    // Amendment 0007: each agent-firing entry point requires 2×deposit (scrape + decide).
+    const deposit = await platform.deposit(); // 0.001 ether; agentReward = 0
+    const twoFees = deposit * 2n;
 
     const reqId = await createAs(contract, provider, insurer.address);
     await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
 
-    // --- Underfunded: msg.value < fee reverts; no agent fires. ---
+    // --- Underfunded: msg.value < 2×fee reverts; no agent fires. ---
     await expect(
-      contract.connect(provider).requestAdjudication(reqId, { value: deposit - 1n })
+      contract.connect(provider).requestAdjudication(reqId, { value: twoFees - 1n })
     ).to.be.revertedWith("fee: underfunded");
     expect(await platform.createRequestCalls()).to.equal(0n);
     expect(await contract.stateOf(reqId)).to.equal(State.Ready); // unchanged
 
-    // --- Exact fee: forwards exactly `fee`, traps nothing, contract balance stays 0. ---
-    await expect(contract.connect(provider).requestAdjudication(reqId, { value: deposit }))
+    // --- Exact two-fee: scrape fee forwarded now; decide fee parked in contract;
+    //     after scrape callback fires decide, balance returns to 0. ---
+    await expect(contract.connect(provider).requestAdjudication(reqId, { value: twoFees }))
       .to.emit(contract, "RulingRequested");
-    expect(await platform.lastValue()).to.equal(deposit); // mock received exactly the fee
-    expect(await ethers.provider.getBalance(target)).to.equal(0n); // nothing trapped
+    // The scrape call received exactly deposit (one fee).
+    expect(await platform.lastValue()).to.equal(deposit);
+    // The contract holds pendingDecideFee = deposit while awaiting the scrape callback.
+    expect(await ethers.provider.getBalance(target)).to.equal(deposit);
+    // Complete the scrape phase: contract spends pendingDecideFee on the decide call.
+    const scrapeRid = await platform.lastRequestId();
+    await platform.triggerRuling(target, scrapeRid, "evidence");
+    // After decide fires, balance drops back to 0 (decide fee forwarded to platform).
+    expect(await ethers.provider.getBalance(target)).to.equal(0n);
 
-    // --- Overpayment: excess (msg.value - fee) refunded to the caller; contract keeps 0. ---
+    // --- Overpayment: excess (msg.value - 2×fee) refunded to the caller; contract keeps 0. ---
     const reqId2 = await createAs(contract, provider, insurer.address);
     await contract.connect(insurer).insurerEngage(reqId2, POLICY_HASH, POLICY_URI);
     const overpay = ethers.parseEther("0.05");
@@ -649,26 +702,42 @@ describe("CoverageNegotiation", () => {
     const rc = await tx.wait();
     const gas = rc!.gasUsed * rc!.gasPrice;
     const balAfter = await ethers.provider.getBalance(provider.address);
-    // Net cost to caller is exactly the fee + gas (excess fully refunded).
-    expect(balBefore - balAfter).to.equal(deposit + gas);
-    expect(await platform.lastValue()).to.equal(deposit); // still exactly the fee forwarded
-    expect(await ethers.provider.getBalance(target)).to.equal(0n); // no trapped caller ETH
+    // Net cost to caller is exactly 2×fee + gas (excess fully refunded).
+    expect(balBefore - balAfter).to.equal(twoFees + gas);
+    // The scrape call received exactly deposit (one fee).
+    expect(await platform.lastValue()).to.equal(deposit);
+    // Contract holds pendingDecideFee until scrape callback completes.
+    expect(await ethers.provider.getBalance(target)).to.equal(deposit);
+    // Complete the scrape phase so the contract returns to 0 balance.
+    const scrapeRid2 = await platform.lastRequestId();
+    await platform.triggerRuling(target, scrapeRid2, "evidence2");
+    expect(await ethers.provider.getBalance(target)).to.equal(0n);
 
-    // --- submitEvidence / appeal honour the same fee model (overpayment refunded). ---
+    // --- submitEvidence / appeal honour the same fee model (2×fee required). ---
     const { reqId: r3, requestId: rq3 } = await createEngageAdjudicate(contract, platform, provider, insurer);
     await platform.triggerRuling(target, rq3, TOKEN_NEEDS_MORE_INFO);
     await expect(
-      contract.connect(provider).submitEvidence(r3, EVIDENCE_URI_2, { value: deposit - 1n })
+      contract.connect(provider).submitEvidence(r3, EVIDENCE_URI_2, { value: twoFees - 1n })
     ).to.be.revertedWith("fee: underfunded");
-    await contract.connect(provider).submitEvidence(r3, EVIDENCE_URI_2, { value: FEE });
+    await contract.connect(provider).submitEvidence(r3, EVIDENCE_URI_2, { value: twoFees });
+    // Complete the submit-evidence two-phase flow.
+    const subScrape = await platform.lastRequestId();
+    await platform.triggerRuling(target, subScrape, "sub-evidence");
+    const subDecide = await platform.lastRequestId();
+    await platform.triggerRuling(target, subDecide, TOKEN_DENY);
     expect(await ethers.provider.getBalance(target)).to.equal(0n);
 
     const { reqId: r4, requestId: rq4 } = await createEngageAdjudicate(contract, platform, provider, insurer);
     await platform.triggerRuling(target, rq4, TOKEN_DENY);
     await expect(
-      contract.connect(provider).appeal(r4, PROVIDER_ID, EVIDENCE_URI_2, REASON_HASH, { value: deposit - 1n })
+      contract.connect(provider).appeal(r4, PROVIDER_ID, EVIDENCE_URI_2, REASON_HASH, { value: twoFees - 1n })
     ).to.be.revertedWith("fee: underfunded");
-    await contract.connect(provider).appeal(r4, PROVIDER_ID, EVIDENCE_URI_2, REASON_HASH, { value: FEE });
+    await contract.connect(provider).appeal(r4, PROVIDER_ID, EVIDENCE_URI_2, REASON_HASH, { value: twoFees });
+    // Complete the appeal two-phase flow.
+    const appScrape = await platform.lastRequestId();
+    await platform.triggerRuling(target, appScrape, "appeal-evidence");
+    const appDecide = await platform.lastRequestId();
+    await platform.triggerRuling(target, appDecide, TOKEN_DENY);
     expect(await ethers.provider.getBalance(target)).to.equal(0n);
   });
 
@@ -1128,21 +1197,30 @@ describe("CoverageNegotiation", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // SPEC-0006 R11: _fireAgent uses inferString (0xfe7ca098)
+  // SPEC-0006 R11: _fireDecide uses inferString (0xfe7ca098)
+  //   (Amendment 0007: _fireAgent was split into _fireScrape + _fireDecide;
+  //    the inferString selector is used by _fireDecide — phase 2 of the pipeline)
   // ---------------------------------------------------------------------------
-  describe("SPEC-0006 R11: _fireAgent uses inferString (0xfe7ca098)", () => {
+  describe("SPEC-0006 R11: _fireDecide uses inferString (0xfe7ca098)", () => {
     const INFER_STRING_SELECTOR = "0xfe7ca098";
     const LLM_INFERENCE_AGENT_ID = 12847293847561029384n;
 
     it("R11a: the payload forwarded to createRequest starts with the inferString selector 0xfe7ca098", async () => {
       const { platform, contract } = await deploy();
       const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
 
       await contract.setAgentId(LLM_INFERENCE_AGENT_ID);
 
       const reqId = await createAs(contract, provider, insurer.address);
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
-      await contract.connect(provider).requestAdjudication(reqId, { value: FEE });
+      // Amendment 0007: fund both scrape and decide. The decide payload is the
+      // inferString call; complete the scrape phase to capture it in lastPayload.
+      const deposit = await platform.deposit();
+      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      const scrapeRid = await platform.lastRequestId();
+      // Trigger the scrape callback — this fires _fireDecide (inferString).
+      await platform.triggerRuling(target, scrapeRid, "scrape-evidence");
 
       const payload: string = await platform.lastPayload();
       const selectorInPayload = payload.slice(0, 10); // "0x" + 8 hex chars
@@ -1172,12 +1250,17 @@ describe("CoverageNegotiation", () => {
     it("R11c: the inferString payload encodes (string,string,bool,string[]) — 4 ABI words in the static head", async () => {
       const { platform, contract } = await deploy();
       const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
 
       await contract.setAgentId(LLM_INFERENCE_AGENT_ID);
 
       const reqId = await createAs(contract, provider, insurer.address);
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
-      await contract.connect(provider).requestAdjudication(reqId, { value: FEE });
+      // Amendment 0007: complete the scrape phase to get the decide payload in lastPayload.
+      const deposit = await platform.deposit();
+      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      const scrapeRid = await platform.lastRequestId();
+      await platform.triggerRuling(target, scrapeRid, "scrape-evidence");
 
       const payload: string = await platform.lastPayload();
       const body = payload.slice(10);
@@ -1377,10 +1460,15 @@ describe("CoverageNegotiation", () => {
 
       const { platform, contract } = await deploy();
       const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
 
       const reqId = await createAs(contract, provider, insurer.address);
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
-      await contract.connect(provider).requestAdjudication(reqId, { value: FEE });
+      // Amendment 0007: complete both phases to get the decide payload (inferString) in lastPayload.
+      const deposit = await platform.deposit();
+      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      const scrapeRid = await platform.lastRequestId();
+      await platform.triggerRuling(target, scrapeRid, "scrape-evidence");
 
       const payload: string = await platform.lastPayload();
       const selectorInPayload = payload.slice(0, 10);
@@ -1781,9 +1869,9 @@ describe("CoverageNegotiation", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // G1: chainOfThought must be TRUE in _fireAgent payload (SPEC-0006 §3.6.1 / Amendment 0007)
+  // G1: chainOfThought must be TRUE in _fireDecide payload (SPEC-0006 §3.6.1 / Amendment 0007)
   // ---------------------------------------------------------------------------
-  describe("G1 (SPEC-0006 §3.6.1): _fireAgent encodes chainOfThought = true in the inferString payload", () => {
+  describe("G1 (SPEC-0006 §3.6.1): _fireDecide encodes chainOfThought = true in the inferString payload", () => {
     it("G1a: the 3rd static ABI word of the inferString payload must be 1n (chainOfThought=true), not 0n", async () => {
       // SPEC-0006 §3.6.1 and Amendment 0007 §3.6.1 both mandate chainOfThought = true.
       // The flag does NOT change the returned token — it only enriches the receipt's
@@ -1794,10 +1882,15 @@ describe("CoverageNegotiation", () => {
       // setting it to false — the allowed-values constraint enforces determinism, not this flag.
       const { platform, contract } = await deploy();
       const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
 
       const reqId = await createAs(contract, provider, insurer.address);
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
-      await contract.connect(provider).requestAdjudication(reqId, { value: FEE });
+      // Amendment 0007: complete the scrape phase to get the decide (inferString) payload.
+      const deposit = await platform.deposit();
+      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      const scrapeRid = await platform.lastRequestId();
+      await platform.triggerRuling(target, scrapeRid, "scrape-evidence");
 
       const payload: string = await platform.lastPayload();
       // Payload layout after the 4-byte selector:
@@ -2251,9 +2344,11 @@ describe("CoverageNegotiation", () => {
     });
 
     // -----------------------------------------------------------------------
-    // T9-fireAgent (R14): _fireAgent reads n.agentEvidenceUrl (not a global)
+    // T9-fireScrape (R14): _fireScrape reads n.agentEvidenceUrl (not a global)
+    //   and embeds it in the ExtractString (scrape) payload captured in lastPayload
+    //   immediately after requestAdjudication (phase 1 fires _fireScrape).
     // -----------------------------------------------------------------------
-    it("T9-fireAgent (R14): _fireAgent embeds n.agentEvidenceUrl (not a global) in the inferString prompt", async () => {
+    it("T9-fireScrape (R14): _fireScrape embeds n.agentEvidenceUrl (not a global) in the ExtractString scrape payload", async () => {
       const { platform, contract } = await deploy();
       const [provider, insurer] = await ethers.getSigners();
 
@@ -2264,7 +2359,7 @@ describe("CoverageNegotiation", () => {
       );
       expect(removedGlobalGetter).to.equal(
         undefined,
-        "T9-fireAgent (R14): the contract-level `agentEvidenceUrl` public storage slot " +
+        "T9-fireScrape (R14): the contract-level `agentEvidenceUrl` public storage slot " +
         "and its getter must be removed — evidence URL is now per-negotiation (R14). " +
         "Found it still present in the ABI.",
       );
@@ -2275,7 +2370,7 @@ describe("CoverageNegotiation", () => {
       );
       expect(removedSetter).to.equal(
         undefined,
-        "T9-fireAgent (R14): `setAgentEvidenceUrl` owner-setter must be removed (R14). " +
+        "T9-fireScrape (R14): `setAgentEvidenceUrl` owner-setter must be removed (R14). " +
         "Found it still present in the ABI.",
       );
 
@@ -2290,21 +2385,24 @@ describe("CoverageNegotiation", () => {
         AGENT_PROMPT_HINT,
       );
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+      // FEE (0.01 ether) > 2×deposit (0.002 ether) — satisfies the two-agent fund requirement.
       await contract.connect(provider).requestAdjudication(reqId, { value: FEE });
 
+      // lastPayload after requestAdjudication is the ExtractString scrape payload
+      // (phase 1 — _fireScrape). The URL must appear verbatim inside it.
       const payload: string = await platform.lastPayload();
-      // The per-neg URL must appear verbatim inside the ABI-encoded prompt string.
       expect(payload).to.include(
         Buffer.from(AGENT_EVIDENCE_URL).toString("hex"),
-        "T9-fireAgent (R14): the inferString prompt payload must contain the per-neg " +
+        "T9-fireScrape (R14): the ExtractString scrape payload must contain the per-neg " +
         "agentEvidenceUrl (" + AGENT_EVIDENCE_URL + "). " +
-        "_fireAgent must read n.agentEvidenceUrl, not a (removed) global.",
+        "_fireScrape must read n.agentEvidenceUrl, not a (removed) global.",
       );
     });
 
-    it("T10-fireAgent (R15): _fireAgent embeds n.agentPromptHint in the prompt", async () => {
+    it("T10-fireDecide (R15): _fireDecide embeds n.agentPromptHint in the inferString decide payload", async () => {
       const { platform, contract } = await deploy();
       const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
 
       const reqId = await createAs(
         contract,
@@ -2317,14 +2415,19 @@ describe("CoverageNegotiation", () => {
         AGENT_PROMPT_HINT,
       );
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
-      await contract.connect(provider).requestAdjudication(reqId, { value: FEE });
+      // Amendment 0007: agentPromptHint is embedded in the inferString (decide) payload
+      // built by _fireDecide. Complete the scrape phase to get the decide payload in lastPayload.
+      const deposit = await platform.deposit();
+      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      const scrapeRid = await platform.lastRequestId();
+      await platform.triggerRuling(target, scrapeRid, "scrape-evidence");
 
+      // lastPayload is now the inferString decide payload built by _fireDecide.
       const payload: string = await platform.lastPayload();
-      // The per-neg prompt hint must appear verbatim in the ABI-encoded prompt.
       expect(payload).to.include(
         Buffer.from(AGENT_PROMPT_HINT).toString("hex"),
-        "T10-fireAgent (R15): the inferString prompt payload must contain the per-neg " +
-        "agentPromptHint. _fireAgent must embed n.agentPromptHint.",
+        "T10-fireDecide (R15): the inferString decide payload must contain the per-neg " +
+        "agentPromptHint. _fireDecide must embed n.agentPromptHint.",
       );
     });
 
@@ -2499,7 +2602,7 @@ describe("CoverageNegotiation", () => {
   //   Amendment 0007 phase 1   — AgentPhase tracker + fund-both-calls in requestAdjudication
   //
   // LLM Parse Website agentId: 12875401142070969085
-  // ExtractString selector: keccak256("ExtractString(string,string)")[0:4] = 0xc2dd1a7a
+  // ExtractString selector: keccak256("ExtractString(string,string,string[],string,string,bool,uint8,uint8)")[0:4] = 0xc2dd1a7a
   // ---------------------------------------------------------------------------
   describe("Amendment 0007 phase 1: two-agent scrape-then-decide ruling pipeline", () => {
 
@@ -2666,7 +2769,7 @@ describe("CoverageNegotiation", () => {
       const selectorHex = "0x" + payload.slice(2, 10);
       expect(selectorHex.toLowerCase()).to.equal(EXTRACT_STRING_SELECTOR.toLowerCase(),
         "A0007-S7: _fireScrape payload must start with ExtractString selector " + EXTRACT_STRING_SELECTOR +
-        " (keccak256('ExtractString(string,string)')[0:4])"
+        " (keccak256('ExtractString(string,string,string[],string,string,bool,uint8,uint8)')[0:4])"
       );
 
       // The payload must embed the per-neg agentEvidenceUrl.
@@ -2922,7 +3025,7 @@ describe("CoverageNegotiation", () => {
 
       expect(source).to.include(EXTRACT_STRING_SELECTOR,
         "A0007-S14: scripts/check-ruling-abi.ts must pin the ExtractString selector " + EXTRACT_STRING_SELECTOR +
-        " (keccak256('ExtractString(string,string)')[0:4]) alongside inferString (R12 extension for Amendment 0007)"
+        " (keccak256('ExtractString(string,string,string[],string,string,bool,uint8,uint8)')[0:4]) alongside inferString (R12 extension for Amendment 0007)"
       );
       // The existing inferString selector must still be present.
       expect(source).to.include(INFER_STRING_SELECTOR,
@@ -3022,4 +3125,277 @@ describe("CoverageNegotiation", () => {
     });
 
   }); // end describe "Amendment 0007 phase 1"
+
+  // ---------------------------------------------------------------------------
+  // Branch coverage: accept unknown partyId revert (line 554)
+  // ---------------------------------------------------------------------------
+  it("accept: unknown partyId reverts 'accept: unknown party' (branch coverage)", async () => {
+    const { platform, contract } = await deploy();
+    const [provider, insurer] = await ethers.getSigners();
+    const target = await contract.getAddress();
+    const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+    await platform.triggerRuling(target, requestId, TOKEN_APPROVE);
+    expect(await contract.stateOf(reqId)).to.equal(State.Approved);
+
+    // Pass a partyId that is neither providerId nor insurerId → revert.
+    const UNKNOWN_PARTY_ID = 9999n;
+    await expect(
+      contract.connect(provider).accept(reqId, UNKNOWN_PARTY_ID)
+    ).to.be.revertedWith("accept: unknown party");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Amendment 0007 phase 1 — strict-review fixes (retry round 2)
+  //
+  // HIGH-1  onRulingTimeout must refund pendingDecideFee (R9 / Amendment 0007 §3)
+  // LOW-3   Success-with-empty-responses sub-branch for scrape and decide phases
+  // LOW-4   pendingFeePayer must be cleared in _handleScrapeResponse success branch
+  // ---------------------------------------------------------------------------
+  describe("Amendment 0007 phase 1 — strict-review fixes", () => {
+
+    // -------------------------------------------------------------------------
+    // HIGH-1: onRulingTimeout during the Scraping phase must refund
+    //         pendingDecideFee to pendingFeePayer, reset agentPhase to None,
+    //         and route to EvidenceRequested.
+    //
+    //         Without the fix, a scrape that never calls back and is timed out
+    //         via onRulingTimeout strands the decide-fee ETH in the contract
+    //         forever (R9 violation). The fix must mirror _handleScrapeResponse's
+    //         non-Success branch: zero + refund pendingDecideFee, clear
+    //         pendingFeePayer, reset agentPhase.
+    // -------------------------------------------------------------------------
+    it("HIGH-1 (onRulingTimeout scrape phase): onRulingTimeout refunds pendingDecideFee, clears agentPhase, routes to EvidenceRequested", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      const deposit = await platform.deposit();
+      const twoFees = deposit * 2n;
+
+      // Fire requestAdjudication — scrape agent is now in flight, pendingDecideFee parked.
+      await contract.connect(provider).requestAdjudication(reqId, { value: twoFees });
+      // Contract holds pendingDecideFee (one deposit) while the scrape is pending.
+      expect(await ethers.provider.getBalance(target)).to.equal(deposit,
+        "HIGH-1 setup: contract must hold pendingDecideFee (one deposit) after requestAdjudication"
+      );
+
+      // Advance time past the ruling deadline.
+      await ethers.provider.send("evm_increaseTime", [3601]);
+      await ethers.provider.send("evm_mine", []);
+
+      // onRulingTimeout must: refund pendingDecideFee, reset agentPhase, route EvidenceRequested.
+      await expect(contract.onRulingTimeout(reqId))
+        .to.emit(contract, "RulingTimedOut")
+        .and.to.emit(contract, "EvidenceRequested");
+
+      expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested,
+        "HIGH-1: onRulingTimeout must route to EvidenceRequested"
+      );
+
+      // R9: contract must hold no ETH after the timeout (pendingDecideFee refunded).
+      expect(await ethers.provider.getBalance(target)).to.equal(0n,
+        "HIGH-1: contract must hold no ETH after onRulingTimeout — pendingDecideFee must be refunded (R9)"
+      );
+
+      // agentPhase must be reset to None (not left stale at Scraping).
+      const n = await contract.getNegotiation(reqId);
+      const AgentPhase = { None: 0n, Scraping: 1n, Deciding: 2n };
+      expect(BigInt((n as Record<string, unknown>)["agentPhase"] as bigint)).to.equal(
+        AgentPhase.None,
+        "HIGH-1: agentPhase must be reset to None after onRulingTimeout (not stale Scraping)"
+      );
+
+      // pendingDecideFee must be cleared.
+      const pendingDecideFee = BigInt((n as Record<string, unknown>)["pendingDecideFee"] as bigint);
+      expect(pendingDecideFee).to.equal(0n,
+        "HIGH-1: pendingDecideFee must be cleared (0) after onRulingTimeout"
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // HIGH-1 variant: onRulingTimeout during the Deciding phase (no fee parked)
+    //         should not attempt any refund (pendingDecideFee is already 0 once
+    //         _fireDecide consumed it) and must still route to EvidenceRequested.
+    // -------------------------------------------------------------------------
+    it("HIGH-1b (onRulingTimeout decide phase): onRulingTimeout during Deciding phase routes to EvidenceRequested, no ETH trapped", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      const deposit = await platform.deposit();
+      // Fund and fire the scrape agent.
+      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+
+      // Complete the scrape phase — decide agent is now in flight, pendingDecideFee == 0.
+      const scrapeRid = await platform.lastRequestId();
+      await platform.triggerRuling(target, scrapeRid, "synthetic-decide-phase-evidence");
+
+      // Contract balance must be 0: pendingDecideFee was forwarded to the decide agent.
+      expect(await ethers.provider.getBalance(target)).to.equal(0n,
+        "HIGH-1b setup: contract must hold 0 ETH after _fireDecide forwarded pendingDecideFee"
+      );
+
+      // Advance time past ruling deadline.
+      await ethers.provider.send("evm_increaseTime", [3601]);
+      await ethers.provider.send("evm_mine", []);
+
+      // onRulingTimeout must route to EvidenceRequested without trapping any ETH.
+      await expect(contract.onRulingTimeout(reqId))
+        .to.emit(contract, "RulingTimedOut")
+        .and.to.emit(contract, "EvidenceRequested");
+
+      expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested,
+        "HIGH-1b: onRulingTimeout in Deciding phase must route to EvidenceRequested"
+      );
+      expect(await ethers.provider.getBalance(target)).to.equal(0n,
+        "HIGH-1b: no ETH must be trapped after onRulingTimeout in Deciding phase"
+      );
+
+      // agentPhase must be reset to None.
+      const n = await contract.getNegotiation(reqId);
+      const AgentPhase = { None: 0n, Scraping: 1n, Deciding: 2n };
+      expect(BigInt((n as Record<string, unknown>)["agentPhase"] as bigint)).to.equal(
+        AgentPhase.None,
+        "HIGH-1b: agentPhase must be reset to None after onRulingTimeout in Deciding phase"
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // LOW-3a: Success-status-with-empty-responses in the Scraping phase.
+    //         The scrape agent returns ResponseStatus.Success but with an empty
+    //         responses array. This is the guard that protects abi.decode from
+    //         reverting on an out-of-bounds access. The expected behaviour is the
+    //         same as a non-Success scrape: refund pendingDecideFee, route to
+    //         EvidenceRequested.
+    // -------------------------------------------------------------------------
+    it("LOW-3a (scrape empty-Success): Success status with empty responses refunds pendingDecideFee and routes to EvidenceRequested", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      const deposit = await platform.deposit();
+      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+
+      // Contract holds pendingDecideFee.
+      expect(await ethers.provider.getBalance(target)).to.equal(deposit,
+        "LOW-3a setup: contract must hold pendingDecideFee after requestAdjudication"
+      );
+
+      const scrapeRid = await platform.lastRequestId();
+      // triggerFailure with ResponseStatus.Success but empty responses array.
+      // ResponseStatus.Success == 2, but responses.length == 0 (guard case).
+      // We reuse triggerFailure with Success status (empty responses[]).
+      await expect(platform.triggerFailure(target, scrapeRid, ResponseStatus.Success))
+        .to.emit(contract, "EvidenceRequested");
+
+      expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested,
+        "LOW-3a: Success-with-empty-responses in Scraping phase must route to EvidenceRequested"
+      );
+      // R9: pendingDecideFee must be refunded — no ETH trapped.
+      expect(await ethers.provider.getBalance(target)).to.equal(0n,
+        "LOW-3a: pendingDecideFee must be refunded on empty-Success scrape callback (R9)"
+      );
+
+      const n = await contract.getNegotiation(reqId);
+      const pendingDecideFee = BigInt((n as Record<string, unknown>)["pendingDecideFee"] as bigint);
+      expect(pendingDecideFee).to.equal(0n,
+        "LOW-3a: pendingDecideFee must be cleared after empty-Success scrape callback"
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // LOW-3b: Success-status-with-empty-responses in the Deciding phase.
+    //         The decide agent returns ResponseStatus.Success but with an empty
+    //         responses array. Expected behaviour: route to EvidenceRequested
+    //         (same as non-Success decide). No ETH trapped (pendingDecideFee
+    //         was already spent by _fireDecide, so balance is already 0).
+    // -------------------------------------------------------------------------
+    it("LOW-3b (decide empty-Success): Success status with empty responses in Deciding phase routes to EvidenceRequested", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      const deposit = await platform.deposit();
+      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+
+      // Complete the scrape phase normally.
+      const scrapeRid = await platform.lastRequestId();
+      await platform.triggerRuling(target, scrapeRid, "synthetic-evidence");
+
+      // Now in Deciding phase; decide returns Success but with empty responses.
+      const decideRid = await platform.lastRequestId();
+      await expect(platform.triggerFailure(target, decideRid, ResponseStatus.Success))
+        .to.emit(contract, "EvidenceRequested");
+
+      expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested,
+        "LOW-3b: Success-with-empty-responses in Deciding phase must route to EvidenceRequested"
+      );
+      expect(await ethers.provider.getBalance(target)).to.equal(0n,
+        "LOW-3b: no ETH must be trapped after empty-Success decide callback"
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // LOW-4: _handleScrapeResponse success branch must clear pendingFeePayer.
+    //        After a successful scrape (transition to Deciding phase), both
+    //        pendingDecideFee AND pendingFeePayer must be cleared on the struct
+    //        (the fee was forwarded to _fireDecide, so neither field is live).
+    //        Without the fix, pendingFeePayer holds a stale address after the
+    //        fee is consumed.
+    // -------------------------------------------------------------------------
+    it("LOW-4 (pendingFeePayer cleared on scrape success): pendingFeePayer is zero after successful scrape callback fires _fireDecide", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+
+      const deposit = await platform.deposit();
+      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+
+      // Verify pendingFeePayer is set (non-zero) before the scrape callback.
+      const nBefore = await contract.getNegotiation(reqId);
+      const pendingFeePayerBefore = (nBefore as Record<string, unknown>)["pendingFeePayer"] as string;
+      expect(pendingFeePayerBefore).to.not.equal(
+        ethers.ZeroAddress,
+        "LOW-4 setup: pendingFeePayer must be set (non-zero) after requestAdjudication"
+      );
+
+      // Complete the scrape phase — _handleScrapeResponse success branch runs.
+      const scrapeRid = await platform.lastRequestId();
+      await platform.triggerRuling(target, scrapeRid, "synthetic-scrape-evidence");
+
+      // After scrape success, pendingDecideFee was forwarded to _fireDecide.
+      // pendingFeePayer must also be cleared to zero.
+      const nAfter = await contract.getNegotiation(reqId);
+      const pendingFeePayerAfter = (nAfter as Record<string, unknown>)["pendingFeePayer"] as string;
+      expect(pendingFeePayerAfter).to.equal(
+        ethers.ZeroAddress,
+        "LOW-4: pendingFeePayer must be cleared (address(0)) after the scrape success callback " +
+        "consumes and forwards pendingDecideFee to _fireDecide. Leaving it set is dead state " +
+        "contradicting the 'clear parked-fee bookkeeping once consumed' invariant."
+      );
+
+      // Also confirm pendingDecideFee is 0 (was already tested in A0007-S8 but
+      // included here for completeness of the LOW-4 fix assertion).
+      const pendingDecideFeeAfter = BigInt((nAfter as Record<string, unknown>)["pendingDecideFee"] as bigint);
+      expect(pendingDecideFeeAfter).to.equal(0n,
+        "LOW-4: pendingDecideFee must also be 0 after scrape success (fee forwarded to _fireDecide)"
+      );
+    });
+
+  }); // end describe "Amendment 0007 phase 1 — strict-review fixes"
 });

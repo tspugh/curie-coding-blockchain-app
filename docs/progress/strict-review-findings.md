@@ -1,3 +1,99 @@
+## Amendment 0007 phase 1 — two-agent scrape→decide pipeline (TOTAL-STICKLER, gate FAIL)
+
+**Date:** 2026-06-03
+**Branch:** `feat/amendment-0007-two-agent-pipeline` (working tree vs `origin/main`)
+**Scope (this Unit):** `contracts/contracts/CoverageNegotiation.sol`,
+`contracts/test/CoverageNegotiation.test.ts`, `scripts/check-ruling-abi.ts`, and the
+`docs/progress/{coverage,solidity-compliance}.md` notes for the same Unit.
+**Reviewed against:** Amendment 0007 §1–§3 (the in-scope phase-1 text), SPEC-0006
+R9/R11/R12/R24–R26, SPEC-0004 §3.5, with whole-codebase context.
+
+**Verdict: FAIL — 1 correctness (HIGH), plus 4 LOW (lying comments / missing edge tests / stale residual field).**
+
+Build state is otherwise green: `npx hardhat test` → 116 passing; `hardhat coverage`
+→ CoverageNegotiation.sol 97.5% stmt / 85% branch / 100% func / 98.61% line;
+`scripts/check-ruling-abi.ts` exits 0 and re-derives both selectors
+(`inferString → 0xfe7ca098`, `ExtractString(string,string,string[],string,string,bool,uint8,uint8) → 0xc2dd1a7a`,
+independently confirmed). The selector pins and the interface are correct.
+
+### HIGH-1 (correctness / spec-drift / R9 ETH-trap) — `onRulingTimeout` strands the parked decide fee
+
+`requestAdjudication` now collects **two** fees: it forwards the scrape fee and parks
+the second fee in `n.pendingDecideFee` (contract balance = one deposit while the scrape
+is in flight). The amendment is explicit (§3): *"Either phase's `Failed`/`TimedOut`/empty
+status routes to `EvidenceRequested` and refunds any held decide-phase fee (R9: never
+trap caller ETH)."*
+
+`handleResponse` honours this for the **callback** non-Success path
+(`_handleScrapeResponse` refunds `pendingDecideFee` → `pendingFeePayer`). But the actual
+**timeout** mechanism is the keeper-callable `onRulingTimeout(reqId)` (lines 600-609),
+and it does NOT:
+- clear/refund `n.pendingDecideFee` / `n.pendingFeePayer`, nor
+- reset `n.agentPhase` (it stays `Scraping`).
+
+So if a scrape request never calls back and a keeper times it out, the parked decide fee
+(one full deposit) is **permanently trapped** in the contract, and `agentPhase` is left
+stale. The provider can then `submitEvidence` → `_fireScrape`, which overwrites
+`pendingDecideFee` with a fresh fee — the first fee is lost for good. This is exactly the
+R9 "never trap caller ETH" invariant the Unit claims to uphold, and exactly the
+`TimedOut` branch the amendment says must refund. There is no test for the
+scrape-timeout fee path (the timeout tests predate the two-fee model).
+Fix: `onRulingTimeout` must mirror the `_handleScrapeResponse` non-Success branch —
+zero + refund `pendingDecideFee` to `pendingFeePayer` and reset `agentPhase`.
+
+### LOW-1 (comment that lies) — wrong `ExtractString` preimage in two test comments
+
+`contracts/test/CoverageNegotiation.test.ts:2766` (A0007-S7) and `:3022` (A0007-S14)
+both describe the pinned selector as `keccak256('ExtractString(string,string)')[0:4]`.
+That 2-arg signature actually hashes to `0xcb268554`, NOT the pinned `0xc2dd1a7a`. The
+real preimage is the 8-arg signature
+`ExtractString(string,string,string[],string,string,bool,uint8,uint8)` (correctly used
+in the contract interface and in `check-ruling-abi.ts`). The test comments state a false
+fact about how the load-bearing selector is derived.
+
+### LOW-2 (stale/lying comments referencing a removed function) — `_fireAgent` references in carried-forward tests
+
+`_fireAgent` no longer exists (split into `_fireScrape`/`_fireDecide`), yet tests
+`T9-fireAgent` (`:2347`) and `T10-fireAgent` (`:2396`) keep titles/comments asserting
+"`_fireAgent` … in the inferString prompt". After the split, `requestAdjudication`
+captures the **ExtractString scrape** payload in `lastPayload` (the URL is embedded
+there too, which is why the assertion still passes) — so the comment's claim about the
+"inferString prompt" is now inaccurate. Titles/comments should name `_fireScrape` /
+`_fireDecide` and the payload actually asserted.
+
+### LOW-3 (missing edge case) — no test for `Success` status with empty `responses`
+
+Both phase handlers branch on `status != Success || responses.length == 0`. The
+`responses.length == 0` sub-condition (a Success callback carrying an empty result array,
+and the `abi.decode(responses[0].result, …)` that would otherwise revert) is never
+exercised independently — every failure test uses `triggerFailure` (status=Failed). The
+branch counts as covered via short-circuit, but the empty-but-Success edge (a real
+platform possibility) has no behavioural assertion in either the scrape or decide phase.
+
+### LOW-4 (stale residual struct field) — `pendingFeePayer` not cleared on the scrape success path
+
+In `_handleScrapeResponse` the success branch zeroes `n.pendingDecideFee` but leaves
+`n.pendingFeePayer` set (it is only cleared in the failure branch). Harmless today (the
+stale value is only read in the failure branch, which re-zeroes it), but it is dead
+residual state that contradicts the "clear the parked-fee bookkeeping once consumed"
+intent; clear it alongside `pendingDecideFee` for hygiene.
+
+### Notable (PASS) — verified, not findings
+- Selector pins (`0xc2dd1a7a`, `0xfe7ca098`) and the `ILLMParseWebsiteAgent` interface
+  param list are correct (re-derived).
+- `check-ruling-abi.ts` correctly scopes the inferString check to `_fireDecide` (with
+  legacy `_fireAgent` fallback) and the ExtractString check to `_fireScrape`; no
+  interface-substring false-pass.
+- Decide non-Success path does NOT attempt a phantom refund — correct, because by the
+  Deciding phase the decide fee is already spent and `pendingDecideFee == 0`.
+- CEI/reentrancy: `handleResponse` is platform-gated; the scrape-failure refund `.call`
+  happens after all state effects; a reentrant `handleResponse` would fail the
+  `msg.sender == platform` gate. No new reentrancy surface.
+- `coveredAmount = requestedAmount` on Approve (no benchmark cap) is in scope: Amendment
+  §4 (curated benchmark cap) is NOT part of this phase-1 Unit, so its absence is not drift.
+
+---
+
 ## Tick 87 — SPEC-0006 R16/R18 drug-evidence map + Create.tsx wiring (strict-review, re-run)
 
 **Date:** 2026-06-03

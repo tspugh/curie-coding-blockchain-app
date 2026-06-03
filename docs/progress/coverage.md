@@ -2,6 +2,175 @@
 
 ---
 
+## 2026-06-03 (refresh 7) — Amendment 0007 phase 1 strict-review fixes + 121-test hardhat suite + 234-test src+web/src suite
+
+**Date:** 2026-06-03 · **Branch:** `feat/amendment-0007-two-agent-pipeline`
+**Tool (contracts/):** `npx hardhat coverage` (solidity-coverage v0.8.17)
+**Tool (src/ + web/src/):** `node --experimental-test-coverage --import tsx --test "src/**/*.test.ts" "web/src/**/*.test.ts"` (Node v22)
+**Tests (contracts/):** 121/121 PASS · **Tests (src/ + web/src/):** 234/234 PASS
+
+### Summary of unit changes verified in this run
+
+| Area | Change |
+|---|---|
+| `contracts/contracts/CoverageNegotiation.sol` | Amendment 0007 phase 1 strict-review fixes: `onRulingTimeout` refunds `pendingDecideFee` to `pendingFeePayer` (HIGH-1), clears `agentPhase` to `None`; `_handleScrapeResponse` success branch clears `pendingFeePayer` (LOW-4); `Success`-with-empty-responses guards in both scrape and decide phases (LOW-3a/b). Full two-agent pipeline already present: `AgentPhase` enum, `agentPhase`+`pendingDecideFee`+`pendingFeePayer` fields, `LLM_PARSE_WEBSITE_AGENT_ID`, `ILLMParseWebsiteAgent.ExtractString`, `_fireScrape`+`_fireDecide`. |
+| `contracts/test/CoverageNegotiation.test.ts` | +5 strict-review tests (HIGH-1 scrape phase, HIGH-1b decide phase, LOW-3a scrape empty-Success, LOW-3b decide empty-Success, LOW-4 pendingFeePayer cleared on scrape success); all 121 tests pass |
+| `scripts/check-ruling-abi.ts` | ExtractString selector `0xc2dd1a7a` pinned alongside `inferString` `0xfe7ca098`; `_fireScrape`-scoped check added; exits 0 |
+
+### Coverage results
+
+#### contracts/
+
+```
+--------------------------|----------|----------|----------|----------|----------------|
+File                      |  % Stmts | % Branch |  % Funcs |  % Lines |Uncovered Lines |
+--------------------------|----------|----------|----------|----------|----------------|
+ contracts/               |    97.56 |    85.87 |      100 |    98.65 |                |
+  CoverageNegotiation.sol |    97.56 |    85.87 |      100 |    98.65 |... 0,1082,1083 |
+  ISomniaAgent.sol        |      100 |      100 |      100 |      100 |                |
+ contracts/mocks/         |      100 |      100 |      100 |      100 |                |
+  MockAgentPlatform.sol   |      100 |      100 |      100 |      100 |                |
+  RevertingReceiver.sol   |      100 |      100 |      100 |      100 |                |
+--------------------------|----------|----------|----------|----------|----------------|
+All files                 |    97.64 |    86.02 |      100 |    98.76 |                |
+--------------------------|----------|----------|----------|----------|----------------|
+```
+
+**Line: 98.76% PASS · Branch: 86.02% PASS** (threshold: >= 85% both)
+
+Remaining uncovered lines in `CoverageNegotiation.sol` (lines 1080, 1082, 1083):
+- Inside `_benchmarkCap`'s overflow-detection path (`unchecked` block). `costPlusUnitPrice` and `nadacUnitPrice` are reserved at 0 in string-token mode (SPEC-0006); no public setter exists. Structurally unreachable. Retained for `priceBasisOf` API compatibility only.
+
+#### src/ + web/src/ (combined node coverage run)
+
+```
+# file                                               | line % | branch % | funcs %
+# src/config/networks.ts                             | 100.00 |   100.00 |  100.00
+# src/content/content.ts                             | 100.00 |   100.00 |  100.00
+# src/contract/simulated.ts                          |  96.04 |    75.44 |   70.59  (uncovered: 88 90 101-102 148-149 154 156-164 166 168-171 175-176 197 199-202 226 290-293)
+# src/data/policies.ts                               | 100.00 |   100.00 |  100.00
+# src/integrations/cds-hooks/fixture.ts              | 100.00 |    89.47 |  100.00
+# src/integrations/cds-hooks/index.ts                | 100.00 |   100.00 |  100.00
+# src/integrations/cds-hooks/mapper.ts               | 100.00 |    95.65 |  100.00
+# src/profiles/profiles.ts                           | 100.00 |   100.00 |  100.00
+# src/protocol/ladders.ts                            | 100.00 |   100.00 |  100.00
+# src/protocol/packet.ts                             | 100.00 |   100.00 |  100.00
+# src/protocol/revertReasonMap.ts                    | 100.00 |   100.00 |  100.00
+# src/protocol/scenarioFixtures.test-helpers.ts      | 100.00 |    87.50 |  100.00
+# src/protocol/scenarios.*.test.ts                   | 100.00 |  84-100  |  100.00
+# src/types/coverage.types.ts                        | 100.00 |   100.00 |  100.00
+# src/users/userStore.ts                             | 100.00 |    93.10 |   90.00
+# src/wallet/wallet.ts                               |  89.04 |    84.00 |   77.78  (uncovered: 12-19 30-36 52)
+# web/src/drugEvidenceMap.ts                         | 100.00 |   100.00 |  100.00
+# all files                                          |  99.25 |    93.63 |   96.24
+```
+
+**Aggregate line: 99.25% PASS · Aggregate branch: 93.63% PASS** (threshold: >= 85% both)
+
+Per-file notes on files below 85% branch individually:
+- `src/contract/simulated.ts` branch **75.44%** — below 85% per-file. Uncovered branches are simulation-layer paths for lesser-exercised transitions. Tree aggregate (93.63%) is above threshold.
+- `src/wallet/wallet.ts` branch **84.00%** — below 85% per-file. Uncovered lines 12-19, 30-36, 52 are `RealWallet` construction requiring a live provider (known-exempt path). Tree aggregate is above threshold.
+
+### Overall verdict
+
+| Scope | Line % | Branch % | Threshold | Pass? |
+|---|---|---|---|---|
+| `contracts/` | 98.76 | 86.02 | >= 85% both | **PASS** |
+| `src/ + web/src/` (aggregate) | 99.25 | 93.63 | >= 85% both | **PASS** |
+
+**OVERALL: PASS** across all measured trees.
+
+Per-file under-covered files (below 85% branch individually, though tree aggregates pass):
+- `src/contract/simulated.ts`: 75.44% branch (tree aggregate 93.63% — PASS)
+- `src/wallet/wallet.ts`: 84.00% branch (tree aggregate 93.63% — PASS)
+
+---
+
+## 2026-06-03 (refresh 6) — Amendment 0007 phase 1 two-agent pipeline; 116-test hardhat suite + 234-test src+web/src suite
+
+**Date:** 2026-06-03 · **Branch:** `spec-6-implementation`
+**Tool (contracts/):** `npx hardhat coverage` (solidity-coverage v0.8.17)
+**Tool (src/ + web/src/):** `node --experimental-test-coverage --import tsx --test "src/**/*.test.ts" "web/src/**/*.test.ts"` (Node v22)
+**Tests (contracts/):** 116/116 PASS · **Tests (src/ + web/src/):** 234/234 PASS
+
+### Summary of unit changes verified in this run
+
+| Area | Change |
+|---|---|
+| `contracts/contracts/CoverageNegotiation.sol` | Amendment 0007 phase 1 fully implemented: `AgentPhase` enum (`None`, `Scraping`, `Deciding`); `agentPhase` + `pendingDecideFee` + `pendingFeePayer` fields on `Negotiation` struct; `LLM_PARSE_WEBSITE_AGENT_ID` constant (`12875401142070969085`); `ILLMParseWebsiteAgent` interface with `ExtractString` (selector `0xc2dd1a7a`); `_fireScrape` + `_fireDecide` split from `_fireAgent`; `requestAdjudication` funds both calls, fires LLM Parse Website, parks decide fee; `handleResponse` branches on `agentPhase`; scrape non-success refunds parked fee to `EvidenceRequested`; decide callback decodes token + transitions state |
+| `scripts/check-ruling-abi.ts` | Already updated: pins `ExtractString` selector `0xc2dd1a7a` alongside `inferString` `0xfe7ca098`; `_fireScrape`-scoped check; exit-0 after two-agent migration |
+| `contracts/test/CoverageNegotiation.test.ts` | +18 Amendment 0007 tests (A0007-S1 through A0007-S17) covering enum, struct fields, constants, interface, `_fireScrape`/`_fireDecide` split, fee funding, ExtractString selector, scrape-decide-Approve path, full deny path, scrape non-success, decide non-success, fee math, check-ruling-abi pin, check-ruling-abi exit-0, grep criterion, mock multi-agent routing; +1 branch-coverage test for `accept: unknown party` revert |
+| `createEngageAdjudicate` helper | Updated to drive scrape phase automatically (fires scrape, completes scrape callback, returns decide requestId) |
+
+### Coverage results
+
+#### contracts/
+
+```
+--------------------------|----------|----------|----------|----------|----------------|
+File                      |  % Stmts | % Branch |  % Funcs |  % Lines |Uncovered Lines |
+--------------------------|----------|----------|----------|----------|----------------|
+ contracts/               |     97.5 |    85.00 |      100 |    98.61 |                |
+  CoverageNegotiation.sol |     97.5 |    85.00 |      100 |    98.61 |... 4,1056,1057 |
+  ISomniaAgent.sol        |      100 |      100 |      100 |      100 |                |
+ contracts/mocks/         |      100 |      100 |      100 |      100 |                |
+  MockAgentPlatform.sol   |      100 |      100 |      100 |      100 |                |
+  RevertingReceiver.sol   |      100 |      100 |      100 |      100 |                |
+--------------------------|----------|----------|----------|----------|----------------|
+All files                 |    97.58 |    85.16 |      100 |    98.72 |                |
+--------------------------|----------|----------|----------|----------|----------------|
+```
+
+**Line: 98.72% PASS · Branch: 85.16% PASS** (threshold: >= 85% both)
+
+Remaining uncovered lines in `CoverageNegotiation.sol` (lines 1054, 1056, 1057):
+- Inside `_benchmarkCap`'s overflow-detection path (`unchecked` block). `costPlusUnitPrice` and `nadacUnitPrice` are reserved at 0 in string-token mode (SPEC-0006); no public setter exists. Structurally unreachable. Retained for `priceBasisOf` API compatibility only.
+
+#### src/ + web/src/ (combined node coverage run)
+
+```
+# file                                               | line % | branch % | funcs %
+# src/config/networks.ts                             | 100.00 |   100.00 |  100.00
+# src/content/content.ts                             | 100.00 |   100.00 |  100.00
+# src/contract/simulated.ts                          |  96.04 |    75.44 |   70.59  (uncovered: 88 90 101-102 148-149 154 156-164 166 168-171 175-176 197 199-202 226 290-293)
+# src/data/policies.ts                               | 100.00 |   100.00 |  100.00
+# src/integrations/cds-hooks/fixture.ts              | 100.00 |    89.47 |  100.00
+# src/integrations/cds-hooks/index.ts                | 100.00 |   100.00 |  100.00
+# src/integrations/cds-hooks/mapper.ts               | 100.00 |    95.65 |  100.00
+# src/profiles/profiles.ts                           | 100.00 |   100.00 |  100.00
+# src/protocol/ladders.ts                            | 100.00 |   100.00 |  100.00
+# src/protocol/packet.ts                             | 100.00 |   100.00 |  100.00
+# src/protocol/revertReasonMap.ts                    | 100.00 |   100.00 |  100.00
+# src/protocol/scenarioFixtures.test-helpers.ts      | 100.00 |    87.50 |  100.00
+# src/protocol/scenarios.*.test.ts                   | 100.00 |  84-100  |  100.00
+# src/types/coverage.types.ts                        | 100.00 |   100.00 |  100.00
+# src/users/userStore.ts                             | 100.00 |    93.10 |   90.00
+# src/wallet/wallet.ts                               |  89.04 |    84.00 |   77.78  (uncovered: 12-19 30-36 52)
+# web/src/drugEvidenceMap.ts                         | 100.00 |   100.00 |  100.00
+# all files                                          |  99.25 |    93.63 |   96.24
+```
+
+**Aggregate line: 99.25% PASS · Aggregate branch: 93.63% PASS** (threshold: >= 85% both)
+
+Per-file notes on files below 85% branch individually:
+- `src/contract/simulated.ts` branch **75.44%** — below 85% per-file. Uncovered branches are simulation-layer paths for lesser-exercised transitions. Tree aggregate (93.63%) is above threshold.
+- `src/wallet/wallet.ts` branch **84.00%** — below 85% per-file. Uncovered lines 12-19, 30-36, 52 are `RealWallet` construction requiring a live provider (known-exempt path). Tree aggregate is above threshold.
+
+### Overall verdict
+
+| Scope | Line % | Branch % | Threshold | Pass? |
+|---|---|---|---|---|
+| `contracts/` | 98.72 | 85.16 | >= 85% both | **PASS** |
+| `src/ + web/src/` (aggregate) | 99.25 | 93.63 | >= 85% both | **PASS** |
+
+**OVERALL: PASS** across all measured trees.
+
+Per-file under-covered files (below 85% branch individually, though tree aggregates pass):
+- `src/contract/simulated.ts`: 75.44% branch (tree aggregate 93.63% — PASS)
+- `src/wallet/wallet.ts`: 84.00% branch (tree aggregate 93.63% — PASS)
+
+---
+
 ## 2026-06-03 (refresh 5) — drugEvidenceMap + Create.tsx wiring; 98-test hardhat suite + 234-test src+web/src suite
 
 **Date:** 2026-06-03 · **Branch:** `spec-6-implementation`

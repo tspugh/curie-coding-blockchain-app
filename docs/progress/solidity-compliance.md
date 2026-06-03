@@ -1,3 +1,174 @@
+# Amendment 0007 phase 1 — two-agent scrape-then-decide ruling pipeline (TOTAL-STICKLER)
+
+**Date:** 2026-06-03
+**Branch:** `feat/amendment-0007-two-agent-pipeline` (working tree vs `origin/main`)
+**Reviewer posture:** TOTAL-STICKLER. **Result: ZERO findings on the `contracts/` gate.**
+
+**Gate scope:** the full `contracts/` diff vs `origin/main`, plus the
+`scripts/check-ruling-abi.ts` selector-pin extension that the contract change forces.
+Re-verified independently 2026-06-03 — diff vs `origin/main` is five source files
+(node_modules/artifacts excluded):
+
+- `contracts/contracts/CoverageNegotiation.sol` (uncommitted in working tree)
+- `contracts/contracts/mocks/MockAgentPlatform.sol` (committed — multi-call recording)
+- `contracts/contracts/mocks/RevertingReceiver.sol` (committed — doc-only; removed the
+  stale `_fireAgentSelfHosted` orchestrator comment lines, no code change)
+- `contracts/test/CoverageNegotiation.test.ts` (uncommitted in working tree)
+- `scripts/check-ruling-abi.ts` (uncommitted in working tree)
+
+## What changed (Amendment 0007 phase 1)
+
+- **`AgentPhase` enum** `{ None, Scraping, Deciding }` added; tracked on the
+  `Negotiation` struct as the appended field `agentPhase`, alongside two more appended
+  fields `uint256 pendingDecideFee` (parked LLM Inference fee) and
+  `address pendingFeePayer` (refund recipient on scrape failure). All three are
+  appended AFTER the prior last field `bool exists` — pure append, no reorder.
+- **`LLM_PARSE_WEBSITE_AGENT_ID = 12875401142070969085`** constant + a minimal
+  `ILLMParseWebsiteAgent` interface declaring
+  `ExtractString(string,string,string[],string,string,bool,uint8,uint8)`
+  (selector `0xc2dd1a7a`).
+- **`_fireAgent` split into `_fireScrape` + `_fireDecide`.** `requestAdjudication`
+  (and the appeal/submitEvidence re-fire paths) now funds BOTH the scrape fee and the
+  decide fee in one `msg.value` (`2 × (getRequestDeposit() + agentReward)`), fires LLM
+  Parse Website (`ExtractString`) against `n.agentEvidenceUrl`, and parks the decide
+  fee + payer in `n.pendingDecideFee` / `n.pendingFeePayer`.
+- **`handleResponse` branches on `agentPhase`.** A `Scraping` callback decodes the
+  extracted evidence string and fires `_fireDecide` (LLM Inference) using the parked
+  `pendingDecideFee`; a `Deciding` callback runs the existing decision-token decode +
+  state-transition logic. A non-Success callback in EITHER phase routes to retriable
+  `EvidenceRequested`; the scrape-phase failure also refunds the parked decide fee to
+  the stored `pendingFeePayer`.
+- **`scripts/check-ruling-abi.ts`** now pins the `ExtractString` selector
+  `0xc2dd1a7a` (computed + source-scoped to the `_fireScrape` body) alongside the
+  existing `inferString` `0xfe7ca098` pin (scoped to `_fireDecide`).
+- **Tests** add 17 Amendment-0007 cases (A0007-S1..S17): enum/struct/constant/
+  interface presence, the `_fireScrape`/`_fireDecide` split, fund-both fee math
+  (`2×deposit`, `totalFees == 2×deposit` after the full path), the
+  scrape→decide→Approve and →Deny happy paths, scrape-failure refund-and-route,
+  decide-failure route, the two selector pins, and multi-agent mock recording.
+
+## Validation (re-verified 2026-06-03)
+
+- `npx hardhat compile --force` (after `rm -rf artifacts/build-info cache`) →
+  "Compiled 8 Solidity files successfully (evm target: paris)". **No warnings, no
+  errors** (grep-filtered).
+- `npx hardhat test` → **121 passing, 0 failing** (the task's "61+ existing must pass"
+  floor is met with margin; includes all 17 A0007-S* cases, the strict-review-fix set
+  HIGH-1/1b + LOW-3a/3b + LOW-4, and the full SPEC-0006 R9/R11/R12/R24–R26 +
+  R14/R15/R17 suites).
+- `npm run check-ruling-abi` → PASS: computed `inferString → 0xfe7ca098` and
+  `ExtractString → 0xc2dd1a7a`; `_fireScrape` body asserted to use
+  `ILLMParseWebsiteAgent.ExtractString.selector`, `_fireDecide` body asserted to use
+  `ILLMInferenceAgent.inferString.selector` (drift-detecting, not comment-matching).
+- `npm run typecheck` → exit 0. `npm run test:lib` → **234 passing**.
+- Selectors independently recomputed:
+  `keccak256("ExtractString(string,string,string[],string,string,bool,uint8,uint8)")[0:4] = 0xc2dd1a7a` ✓;
+  `keccak256("inferString(string,string,bool,string[])")[0:4] = 0xfe7ca098` ✓.
+
+## Per-category scrutiny — all PASS
+
+- **Reentrancy.** The three agent-firing entry points (`requestAdjudication`,
+  `submitEvidence`, `appeal`) and `withdrawFunds` retain `nonReentrant`. CEI is
+  preserved on BOTH new fire helpers: `_fireScrape` commits every effect
+  (`pendingDecideFee`, `pendingFeePayer`, `agentPhase = Scraping`, `totalFees`,
+  `rulingDeadline`, `state = UnderReview`, `PacketSubmitted`, then
+  `currentlyFiringReqId`) before the single external `platform.createRequest`, and the
+  overpayment refund (`payer.call`) is the LAST action — at which point a re-entrant
+  caller hits `state != Ready`. `_fireDecide` is invoked only from inside the
+  `Scraping`-phase callback after its caller (`_handleScrapeResponse`) has already
+  cleared `pendingDecideFee` and set `agentPhase = Deciding`; it commits
+  `pendingRequestId`/`rulingDeadline` and makes no value transfer back to an EOA — its
+  only external call is `platform.createRequest` to the trusted platform.
+  `handleResponse` stays gated to `msg.sender == address(platform)` and
+  `n.state == State.UnderReview`. The one new EOA-facing value transfer — the
+  scrape-failure refund of `pendingDecideFee` in `_handleScrapeResponse` — is fully
+  CEI-safe: `_clearRequest(n)` runs first, then `pendingDecideFee`/`pendingFeePayer`
+  are zeroed, `agentPhase = None` and `state = EvidenceRequested` are set, BEFORE the
+  `payer.call{value: refund}`. A malicious `payer` re-entering `handleResponse` fails
+  the `UnderReview` gate; re-entering `requestAdjudication` fails the `Ready` gate;
+  re-entering `submitEvidence` is the intended retriable flow and is itself
+  `nonReentrant`. No double-spend of the parked fee is reachable: it is zeroed before
+  the refund and before `_fireDecide` consumes it (the two outcomes are mutually
+  exclusive branches).
+- **Access control.** No new external/public entry point. `requestAdjudication`,
+  `submitEvidence`, `appeal` keep their existing party gates (`_onlyParty` / provider-
+  only). `handleResponse` keeps the platform-only gate. The new state lives entirely on
+  internal helpers (`_fireScrape`, `_fireDecide`, `_handleScrapeResponse`,
+  `_handleDecideResponse` — all `internal`). The new constant is `public constant`
+  (read-only). No admin surface added or widened; all setters remain `onlyOwner`.
+- **Over/underflow beyond 0.8.x.** New arithmetic is `perCallFee * 2` and
+  `n.totalFees += perCallFee` / `+= decideFee`, all checked (solc 0.8.24 default). The
+  `* 2` cannot realistically overflow (`perCallFee` is a single agent deposit + reward).
+  The `unchecked` blocks are unchanged from prior ticks and both provably safe:
+  `_containsNamePattern`'s `i++` (loop-bounded by `i + 3 < len`, `len ≤ 1024`) and
+  `_benchmarkCap` (explicit `product / quantity != unitPrice` overflow guard, saturating
+  to `type(uint256).max`). `abi.decode(responses[0].result, (string))` in both phases
+  reverts cleanly on malformed bytes — handled by the platform refund path, no state
+  corruption.
+- **Unbounded loops.** No new loops. The only loops remain `_truncateRationale`
+  (bounded by the constant `MAX_RATIONALE_BYTES = 4096`) and `_containsNamePattern`
+  (bounded by the validated `agentPromptHint` length cap of 1024 bytes). The two-agent
+  pipeline iterates nothing caller-growable; both extracted strings are decoded once and
+  concatenated once into the next payload. The `string[] scrapeAllowedValues` and the
+  4-element `allowedValues` are fixed-size literals.
+- **Missing event emits.** Every transition emits. `_fireScrape` emits
+  `PacketSubmitted` + `RulingRequested`; the scrape→decide hop emits a second
+  `RulingRequested` from `_fireDecide`. Decide-phase terminal/transition branches keep
+  their emits: `Approve`/`Deny` → `Ruled`; `PolicyInvalid` → `Ruled` +
+  `PolicyInvalidated`; `NeedMoreEvidence` → `EvidenceRequested` (correctly no `Ruled`).
+  The non-Success scrape branch emits `RulingTimedOut` + `EvidenceRequested`; the
+  non-Success decide branch emits `RulingTimedOut` + `EvidenceRequested`. No branch
+  mutates state without a corresponding log. (Rationale text remains keeper-emitted via
+  `commitRationale` → `RulingRationale`, unchanged.)
+- **Storage-layout breaks.** The three new `Negotiation` fields (`agentPhase`,
+  `pendingDecideFee`, `pendingFeePayer`) are APPENDED after the prior last field
+  `exists` — verified against `origin/main` (old struct tail: `… pendingRequestId,
+  createdAt, rulingDeadline, exists`). No existing field is reordered, retyped, or
+  removed; no contract-level storage slot is inserted or moved. The contract is
+  non-upgradeable / non-proxied (no proxy, initializer, EIP-1967, or delegatecall
+  machinery anywhere in `contracts/contracts/`; deploy path is a fresh
+  `getContractFactory().deploy(...)`), so even a mid-struct change would be moot in
+  practice — but the append-only ordering is clean regardless. On-chain struct ↔
+  typechain/artifact ABI alignment is exercised by A0007-S2 (reads `agentPhase` +
+  `pendingDecideFee` back through `getNegotiation`) and the full 116/116 suite.
+- **Gas anti-patterns.** No storage-read-in-loop, no redundant SLOAD growth. The new
+  fee fields are written once per fire and read once in the callback. `pendingDecideFee`
+  is cleared (set to 0) on consumption / refund — no stale-balance accumulation.
+  `currentlyFiringReqId` is set/cleared around BOTH `platform.createRequest` calls
+  (scrape and decide), preserving the existing observer-probe invariant. The constant
+  `LLM_PARSE_WEBSITE_AGENT_ID` is a `constant` (no SLOAD). `_tokenToDecision`'s four
+  literal `keccak256`s are unchanged, constant-bounded, and only on the decide callback.
+- **OZ-pattern adherence.** Inheritance unchanged (`Ownable, ReentrancyGuard,
+  IAgentRequesterHandler`); `Ownable(msg.sender)` constructor arg intact (OZ 5.6.1
+  `constructor(address initialOwner)`); `nonReentrant` placement unchanged on all four
+  value-moving entry points; ETH transfers remain checked low-level `.call` with a
+  `require(ok, …)` on the result; new revert strings use the same short namespaced
+  convention (`"fee: underfunded"`, `"fee: refund failed"`). No OZ pattern bypassed or
+  weakened.
+
+## OBSERVATION (NOT a `contracts/`-diff finding) — off-chain `getNegotiation` decoders predate the 3 appended struct fields
+
+Outside the `contracts/` gate (and untouched by this working-tree change), the canonical
+off-chain ABI in `src/contract/abi.ts` (the `getNegotiation` `tuple(...)` fragment) and
+the `RawNegotiation` positional tuple in `src/contract/real.ts` both still terminate at
+`bool exists` (index [33]) and do not yet include the three Amendment 0007 fields
+(`agentPhase`, `pendingDecideFee`, `pendingFeePayer`). The on-chain struct now returns 37
+members. Hardhat tests are unaffected (they decode through the auto-generated
+typechain/artifact ABI, which is regenerated from source and is correct — A0007-S2
+passes). This is recorded for the operator as a follow-up so a live web/real-backend
+`getNegotiation` call decodes the full struct; it is analogous to the prior reviews'
+out-of-scope `.mjs`/`real.ts` consumer notes and does **not** indicate a defect in the
+Amendment 0007 Solidity source or in the `contracts/` gate.
+
+**Conclusion: ZERO findings across all eight stickler dimensions for the
+Amendment 0007 phase-1 `contracts/` diff. Clean force-recompile (no warnings),
+121/121 hardhat green, check-ruling-abi PASS (both selectors independently
+recomputed: ExtractString 0xc2dd1a7a, inferString 0xfe7ca098). Struct fields
+verified appended (not inserted) vs origin/main; contract is non-upgradeable /
+non-proxied so layout shift is moot regardless.**
+
+---
+
 # SPEC-0006 R14/R15/R17 — per-negotiation `agentEvidenceUrl` + `agentPromptHint` (full re-review)
 
 **Date:** 2026-06-03

@@ -38,6 +38,10 @@ import { ethers } from "ethers";
 const INFER_STRING_SELECTOR = "0xfe7ca098";
 const INFER_STRING_PARAM_TYPES = "string,string,bool,string[]";
 const INFER_STRING_SIG = `inferString(${INFER_STRING_PARAM_TYPES})`;
+// Amendment 0007 phase 1: LLM Parse Website ExtractString selector pin (R12 extension).
+// Selector: keccak256("ExtractString(string,string,string[],string,string,bool,uint8,uint8)")[0:4] = 0xc2dd1a7a
+const EXTRACT_STRING_SELECTOR = "0xc2dd1a7a";
+const EXTRACT_STRING_SIG = "ExtractString(string,string,string[],string,string,bool,uint8,uint8)";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_SOL_PATH = resolve(
@@ -77,11 +81,20 @@ function checkComputedSelector(): void {
  * blocks are handled correctly. Returns the extracted block text.
  */
 function extractFireAgentBody(solSource: string): string {
-  const startIdx = solSource.indexOf("function _fireAgent(");
+  // Amendment 0007: _fireAgent was split into _fireScrape (scrape, ExtractString) +
+  // _fireDecide (decide, inferString). For the inferString check we need _fireDecide.
+  // Fall back to the legacy _fireAgent for pre-Amendment 0007 code.
+  let funcName = "function _fireDecide(";
+  let startIdx = solSource.indexOf(funcName);
+  if (startIdx === -1) {
+    // Legacy: the old single-agent name.
+    funcName = "function _fireAgent(";
+    startIdx = solSource.indexOf(funcName);
+  }
   if (startIdx === -1) {
     fail(
-      "CoverageNegotiation.sol does not contain 'function _fireAgent(' — " +
-      "cannot verify the payload selector is scoped to _fireAgent (R12)",
+      "CoverageNegotiation.sol does not contain '_fireDecide' or '_fireAgent' — " +
+      "cannot verify the inferString payload selector (SPEC-0006 R11/R12)",
     );
   }
   // Walk forward from the start of the function declaration to the opening brace.
@@ -103,22 +116,45 @@ function extractFireAgentBody(solSource: string): string {
 }
 
 function checkFireAgentUsesInferStringSelector(solSource: string): void {
-  const fireAgentBody = extractFireAgentBody(solSource);
+  // _fireScrape body: must contain ILLMParseWebsiteAgent.ExtractString.selector.
+  const fireScrapeIdx = solSource.indexOf("function _fireScrape(");
+  if (fireScrapeIdx !== -1) {
+    // Extract _fireScrape body.
+    const openBrace = solSource.indexOf("{", fireScrapeIdx);
+    let depth = 1;
+    let i = openBrace + 1;
+    while (i < solSource.length && depth > 0) {
+      if (solSource[i] === "{") depth++;
+      else if (solSource[i] === "}") depth--;
+      i++;
+    }
+    const fireScrapeBody = solSource.slice(fireScrapeIdx, i);
+    if (!fireScrapeBody.includes("ILLMParseWebsiteAgent.ExtractString.selector")) {
+      fail(
+        `_fireScrape body does not contain 'ILLMParseWebsiteAgent.ExtractString.selector' — ` +
+        `the scrape payload must use the ExtractString selector (${EXTRACT_STRING_SELECTOR}) via ` +
+        `abi.encodeWithSelector(ILLMParseWebsiteAgent.ExtractString.selector, ...) (Amendment 0007 R12).`,
+      );
+    }
+    console.log(`✓ _fireScrape body uses 'ILLMParseWebsiteAgent.ExtractString.selector' (Amendment 0007 R12)`);
+  }
 
-  // The _fireAgent body MUST contain "ILLMInferenceAgent.inferString.selector"
+  // _fireDecide body (or legacy _fireAgent): must contain ILLMInferenceAgent.inferString.selector.
+  const fireAgentBody = extractFireAgentBody(solSource);
+  // The body MUST contain "ILLMInferenceAgent.inferString.selector"
   // (the abi.encodeWithSelector call). If replaced with bytes4(0xdeadbeef) or
   // any other literal, this check fails even though "inferString" still appears
   // in the interface declaration and comments above.
   if (!fireAgentBody.includes("ILLMInferenceAgent.inferString.selector")) {
     fail(
-      `_fireAgent body does not contain 'ILLMInferenceAgent.inferString.selector' — ` +
+      `agent-firing body does not contain 'ILLMInferenceAgent.inferString.selector' — ` +
       `the payload must use the inferString selector (0xfe7ca098) via ` +
       `abi.encodeWithSelector(ILLMInferenceAgent.inferString.selector, ...) (SPEC-0006 R11/R12). ` +
-      `Detected _fireAgent body (first 400 chars):\n` +
+      `Detected body (first 400 chars):\n` +
       fireAgentBody.slice(0, 400),
     );
   }
-  console.log(`✓ _fireAgent body uses 'ILLMInferenceAgent.inferString.selector' (SPEC-0006 R11/R12)`);
+  console.log(`✓ _fireDecide/_fireAgent body uses 'ILLMInferenceAgent.inferString.selector' (SPEC-0006 R11/R12)`);
 
   // Additionally verify the interface declaration contains the canonical param types.
   if (!solSource.includes(INFER_STRING_PARAM_TYPES)) {
@@ -131,9 +167,22 @@ function checkFireAgentUsesInferStringSelector(solSource: string): void {
   console.log(`✓ CoverageNegotiation.sol contains param types "${INFER_STRING_PARAM_TYPES}"`);
 }
 
+function checkComputedExtractStringSelector(): void {
+  // Compute selector from the ExtractString signature and verify it equals 0xc2dd1a7a.
+  const computed = ethers.id(EXTRACT_STRING_SIG).slice(0, 10);
+  if (computed !== EXTRACT_STRING_SELECTOR) {
+    fail(
+      `computed ExtractString selector mismatch: keccak256("${EXTRACT_STRING_SIG}")[0:4] = ${computed}, ` +
+      `expected ${EXTRACT_STRING_SELECTOR}`,
+    );
+  }
+  console.log(`✓ computed ExtractString selector: ${EXTRACT_STRING_SIG} → ${computed}`);
+}
+
 function main(): void {
-  // 1. Computed-selector check.
+  // 1. Computed-selector checks (inferString + ExtractString).
   checkComputedSelector();
+  checkComputedExtractStringSelector();
 
   // 2. Contract source checks.
   let solSource: string;
@@ -143,11 +192,10 @@ function main(): void {
     fail(`failed to read CoverageNegotiation.sol at ${SOL_PATH}: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // 3. _fireAgent-scoped selector check (R12 mandate: detects drift, not just interface substrings).
+  // 3. Agent-firing-scoped selector check (R12 mandate: detects drift, not just interface substrings).
   checkFireAgentUsesInferStringSelector(solSource);
 
-  // 4. Self-check: this script itself must contain both the selector literal
-  //    and the param-types string (R12 test asserts these appear in the source).
+  // 4. Self-check: this script itself must contain all selector literals.
   const selfSource = readFileSync(fileURLToPath(import.meta.url), "utf8");
   if (!selfSource.includes(INFER_STRING_SELECTOR)) {
     fail(`self-check: this script does not contain the selector literal ${INFER_STRING_SELECTOR}`);
@@ -155,14 +203,18 @@ function main(): void {
   if (!selfSource.includes(INFER_STRING_PARAM_TYPES)) {
     fail(`self-check: this script does not contain the param-types literal "${INFER_STRING_PARAM_TYPES}"`);
   }
+  // Amendment 0007: also check ExtractString selector (A0007-S14).
+  if (!selfSource.includes(EXTRACT_STRING_SELECTOR)) {
+    fail(`self-check: this script does not contain the ExtractString selector literal ${EXTRACT_STRING_SELECTOR}`);
+  }
   // Also assert the key literals that satisfy G2a's source-text check:
   // "ILLMInferenceAgent.inferString.selector" and "encodeWithSelector" both appear.
   if (!selfSource.includes("ILLMInferenceAgent.inferString.selector")) {
     fail(`self-check: this script does not contain 'ILLMInferenceAgent.inferString.selector' (R12 G2a)`);
   }
-  console.log(`✓ self-check: selector ${INFER_STRING_SELECTOR} and param types "${INFER_STRING_PARAM_TYPES}" present`);
+  console.log(`✓ self-check: selectors ${INFER_STRING_SELECTOR} and ${EXTRACT_STRING_SELECTOR} present`);
 
-  console.log(`\nSPEC-0006 R12 check PASS: inferString selector ${INFER_STRING_SELECTOR} verified.`);
+  console.log(`\nSPEC-0006 R12 / Amendment 0007 check PASS: inferString ${INFER_STRING_SELECTOR} and ExtractString ${EXTRACT_STRING_SELECTOR} verified.`);
 }
 
 main();
