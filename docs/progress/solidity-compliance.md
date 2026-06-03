@@ -52,7 +52,7 @@ Re-verified independently 2026-06-03 — diff vs `origin/main` is five source fi
 - `npx hardhat compile --force` (after `rm -rf artifacts/build-info cache`) →
   "Compiled 8 Solidity files successfully (evm target: paris)". **No warnings, no
   errors** (grep-filtered).
-- `npx hardhat test` → **121 passing, 0 failing** (the task's "61+ existing must pass"
+- `npx hardhat test` → **130 passing, 0 failing** (the task's "61+ existing must pass"
   floor is met with margin; includes all 17 A0007-S* cases, the strict-review-fix set
   HIGH-1/1b + LOW-3a/3b + LOW-4, and the full SPEC-0006 R9/R11/R12/R24–R26 +
   R14/R15/R17 suites).
@@ -130,7 +130,7 @@ Re-verified independently 2026-06-03 — diff vs `origin/main` is five source fi
   `getContractFactory().deploy(...)`), so even a mid-struct change would be moot in
   practice — but the append-only ordering is clean regardless. On-chain struct ↔
   typechain/artifact ABI alignment is exercised by A0007-S2 (reads `agentPhase` +
-  `pendingDecideFee` back through `getNegotiation`) and the full 116/116 suite.
+  `pendingDecideFee` back through `getNegotiation`) and the full 130/130 suite.
 - **Gas anti-patterns.** No storage-read-in-loop, no redundant SLOAD growth. The new
   fee fields are written once per fire and read once in the callback. `pendingDecideFee`
   is cleared (set to 0) on consumption / refund — no stale-balance accumulation.
@@ -162,7 +162,7 @@ Amendment 0007 Solidity source or in the `contracts/` gate.
 
 **Conclusion: ZERO findings across all eight stickler dimensions for the
 Amendment 0007 phase-1 `contracts/` diff. Clean force-recompile (no warnings),
-121/121 hardhat green, check-ruling-abi PASS (both selectors independently
+130/130 hardhat green, check-ruling-abi PASS (both selectors independently
 recomputed: ExtractString 0xc2dd1a7a, inferString 0xfe7ca098). Struct fields
 verified appended (not inserted) vs origin/main; contract is non-upgradeable /
 non-proxied so layout shift is moot regardless.**

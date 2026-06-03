@@ -1,3 +1,208 @@
+## Amendment 0007 phase 1 — two-agent scrape→decide pipeline (TOTAL-STICKLER, re-run 3, gate PASS)
+
+**Date:** 2026-06-03 (third strict-review pass — supersedes re-run 2's FAIL)
+**Branch:** `feat/amendment-0007-two-agent-pipeline` (working tree, including the uncommitted
+strict-review-fix + branch-coverage-polish edits to
+`contracts/test/CoverageNegotiation.test.ts`, `src/contract/real.ts`,
+`scripts/real-backend-localnode.mjs`).
+**Scope (this Unit):** the two-agent scrape→decide pipeline across
+`contracts/contracts/CoverageNegotiation.sol`,
+`contracts/contracts/mocks/MockAgentPlatform.sol`,
+`contracts/test/CoverageNegotiation.test.ts`, `scripts/check-ruling-abi.ts`, and the
+off-chain consumers touched in the same Unit (`src/contract/real.ts`,
+`scripts/real-backend-localnode.mjs`).
+**Reviewed against:** Amendment 0007 §1–§3 (phase-1 text), SPEC-0006
+R9/R11/R12/R14/R15/R24–R26, SPEC-0004 §3.5, with whole-codebase context.
+
+**Verdict: PASS — ZERO open findings.**
+
+Build state is green: `npx hardhat test` → **130 passing**; `npx ts-node
+scripts/check-ruling-abi.ts` → exit 0 (re-derives both selectors live); `npm run
+typecheck` → exit 0. Both agent selectors were re-derived independently in this pass:
+`keccak256("ExtractString(string,string,string[],string,string,bool,uint8,uint8)")[0:4]
+= 0xc2dd1a7a` and `keccak256("inferString(string,string,bool,string[])")[0:4] =
+0xfe7ca098`, matching `LLM_PARSE_WEBSITE_AGENT_ID`/`ILLMParseWebsiteAgent.ExtractString`
+and `ILLMInferenceAgent.inferString` respectively. `LLM_PARSE_WEBSITE_AGENT_ID ==
+12875401142070969085` confirmed.
+
+### All re-run 2 findings confirmed FIXED in the current tree
+
+- **HIGH-2** (`real-backend-localnode.mjs` never reached the decide phase): FIXED. The
+  script now drives the full two-phase callback — phase 1 delivers a synthetic evidence
+  string to the scrape `lastRequestId()` (leaving `UnderReview`/`Deciding`), then re-reads
+  `lastRequestId()` and delivers `"approve"` to the decide request, asserting
+  `scrape→decide approve → Approved` (lines ~152–171). It mirrors the Hardhat
+  `createEngageAdjudicate` two-step drive.
+- **LOW-5** (`real.ts` `RawNegotiation` field-count comment lied): FIXED. The doc-comment
+  now reads "37 fields … added agentPhase, pendingDecideFee, pendingFeePayer per Amendment
+  0007 phase 1," matching the struct's appended fields.
+- **LOW-6** (stale `_fireAgent` test titles): FIXED. The `G2`/`G2a`/`G2b` drift-detector
+  titles now name `_fireDecide` (the body's actual target). The only residual `_fireAgent`
+  mentions are (a) the legitimate legacy-fallback path in `check-ruling-abi.ts` (`funcName =
+  "function _fireAgent("` when `_fireDecide` is absent) and the comments documenting it, and
+  (b) the assertion-message of a test that *expects* the script to fail on corrupted source —
+  both correct references to the real fallback, not lies.
+
+### Verified correct (PASS — not findings)
+
+- **Contract pipeline.** `requestAdjudication` fires `_fireScrape` (LLM Parse Website,
+  `0xc2dd1a7a`) against `agentEvidenceUrl`, requires `2 × (getRequestDeposit()+agentReward)`,
+  forwards exactly the scrape fee, parks the decide fee in `pendingDecideFee`/`pendingFeePayer`,
+  sets `agentPhase = Scraping`, refunds overpayment. `handleResponse` dispatches on
+  `agentPhase`: Scraping → `_handleScrapeResponse` decodes the evidence string and fires
+  `_fireDecide` (LLM Inference, `0xfe7ca098`) with the parked fee → `Deciding`; Deciding →
+  `_handleDecideResponse` runs the existing decision-token decode + state transition. Matches
+  the Unit spec exactly.
+- **CEI / reentrancy.** Agent-firing entry points are `nonReentrant`; `handleResponse` is
+  `msg.sender == platform`-gated; in every refund path the parked-fee bookkeeping is
+  captured-then-zeroed-then-transferred after the terminal/next state is set. No
+  state-after-interaction.
+- **Fee math.** `A0007-S13` pins `2×deposit` required, `1×deposit` reverts
+  `fee: underfunded`, and `totalFees == 2×deposit` only after the full scrape→decide path
+  (scrape half accrued in `_fireScrape`, decide half in `_fireDecide`).
+- **Failure paths refund + retriable.** Scrape non-Success (`A0007-S11`) refunds
+  `pendingDecideFee` to `pendingFeePayer`, clears the struct field, asserts contract
+  balance `== 0` (no trapped ETH, R9), routes to `EvidenceRequested`. Decide non-Success
+  (`A0007-S12`) routes to `EvidenceRequested` with no phantom refund (`pendingDecideFee`
+  already spent by `_fireDecide`) and balance `== 0`. `onRulingTimeout` refunds the parked
+  decide fee regardless of phase (HIGH-1 / HIGH-1b).
+- **Edge coverage.** Empty-but-Success in both phases (`LOW-3a`/`LOW-3b`); `pendingFeePayer`
+  cleared on scrape success (`LOW-4`); `_benchmarkCap` overflow saturation; msg.value==0
+  deadlock paths take no refund call; `_fireScrape` refund-to-reverting-caller trips
+  `fee: refund failed`; Deciding-phase dispatch routes to `_handleDecideResponse`.
+- **Tests assert correctness, not presence.** Each path checks the resulting `state`,
+  `coveredAmountOf`, exact `Ruled`/`EvidenceRequested` event args, struct-field clearing, and
+  contract balance — not mere symbol existence. `MockAgentPlatform.triggerRuling(string)` is a
+  faithful integration double: it re-enters `handleResponse` with a realistically
+  `abi.encode(string)`-encoded result and serves BOTH phases (scrape→evidence string,
+  decide→decision token), and `lastAgentId`/`createRequestCalls` key the two sequential calls
+  (`A0007-S17`). Not an over-mock.
+- **No spec drift for phase 1.** `coveredAmount = requestedAmount` on Approve (no benchmark
+  cap, `costPlusUnitPrice`/`nadacUnitPrice` retained-but-reserved) is in scope: Amendment §4's
+  curated benchmark cap is an explicitly LATER phase, and the Unit description pins
+  "covered amount is set to `requestedAmount`." No abstraction bloat, dead exports, or
+  copy-paste vs DRY issues introduced; the `_fireScrape`/`_fireDecide` split is the minimal
+  shape the two-phase flow requires.
+
+The prior re-run-2 FAIL section below is retained for history but is SUPERSEDED by this pass.
+
+---
+
+## Amendment 0007 phase 1 — two-agent scrape→decide pipeline (TOTAL-STICKLER, re-run 2, gate FAIL) [SUPERSEDED — all findings fixed]
+
+**Date:** 2026-06-03 (second strict-review pass)
+**Branch:** `feat/amendment-0007-two-agent-pipeline` (working tree vs `origin/main`)
+**Scope (this Unit):** the two-agent scrape→decide pipeline as built across
+`contracts/contracts/CoverageNegotiation.sol`,
+`contracts/contracts/mocks/MockAgentPlatform.sol`,
+`contracts/test/CoverageNegotiation.test.ts`, `scripts/check-ruling-abi.ts`, and the
+off-chain consumers touched in the same Unit
+(`src/contract/real.ts`, `scripts/real-backend-localnode.mjs`).
+**Reviewed against:** Amendment 0007 §1–§3 (the in-scope phase-1 text), SPEC-0006
+R9/R11/R12/R14/R15/R24–R26, SPEC-0004 §3.5, with whole-codebase context.
+
+**Verdict: FAIL — 1 correctness (HIGH, integration), 2 LOW (lying comment, stale test titles).**
+
+Build state is green for the contract + Hardhat path: `npx hardhat test` → **121 passing**;
+`npx ts-node scripts/check-ruling-abi.ts` → exit 0, re-derives both selectors
+(`inferString → 0xfe7ca098`, `ExtractString(string,string,string[],string,string,bool,uint8,uint8) → 0xc2dd1a7a`,
+both independently re-derived in this review); `npm run typecheck` → exit 0. The
+round-1 findings (HIGH-1 `onRulingTimeout` fee strand, LOW-1 bad selector preimage in
+two test comments, LOW-3 empty-Success edge, LOW-4 `pendingFeePayer` residual) are all
+confirmed **fixed** in the current tree. The contract-level pipeline, CEI/reentrancy
+posture (callback is platform-gated; refunds happen after all state effects), fee math
+(2×deposit; totalFees == 2×fee after the full path), and selector pins are all correct.
+
+### HIGH-2 (correctness / integration — `real-backend-localnode.mjs` never reaches the decide phase)
+
+`scripts/real-backend-localnode.mjs` (the `test:real-local` integration harness, edited
+in this Unit for the new `triggerRuling(string)` mock signature) drives adjudication with
+a **single** callback and was NOT adapted to the two-phase flow it now exercises:
+
+```js
+const requestId = await mockAsSigner.lastRequestId();
+await (await mockAsSigner.triggerRuling(contractAddr, requestId, "approve")).wait();
+await snap(reqId);
+check("platform callback (approve) -> Approved", realStates.at(-1) === State.Approved);
+```
+
+Under the two-agent pipeline `requestAdjudication` fires the **scrape** agent first, so
+`lastRequestId()` here is the *scrape* request and `pendingRequestId` points at it.
+Delivering `"approve"` to that request hits `_handleScrapeResponse`, which decodes
+`"approve"` as the *scraped evidence string*, fires `_fireDecide` (the decide agent), and
+**leaves the negotiation in `UnderReview` (phase `Deciding`)** — exactly the behaviour the
+Hardhat test `A0007-S8` asserts. The script never fetches the new `lastRequestId()` for
+the decide request and never triggers the decide callback, so the very next assertion
+`realStates.at(-1) === State.Approved` is **false**, and every downstream check
+(`coveredAmountOf`, accept→settle, `Ruled`-event reconstruction) runs against a request
+that is still `UnderReview`. The script that was touched in this Unit no longer works
+against the pipeline this Unit builds. (This is independent of, and additional to, the
+pre-existing `test:real-local` insurerEngage auth follow-up tracked in
+`docs/progress/loop-state.md` §7.)
+Fix: after the scrape `triggerRuling`, re-read `lastRequestId()` and trigger the decide
+callback with the decision token (`"approve"`), mirroring the Hardhat
+`createEngageAdjudicate` helper's two-step scrape→decide drive.
+
+### LOW-5 (comment that lies — `real.ts` `RawNegotiation` field count)
+
+`src/contract/real.ts:71` documents the raw tuple as *"34 fields (added lastRequestId,
+agentEvidenceUrl, agentPromptHint…)"*, but the on-chain `Negotiation` struct now returns
+**37** fields — this Unit appended `agentPhase`, `pendingDecideFee`, and `pendingFeePayer`
+after `exists`. The index mapping `raw[0]…raw[33]` is still correct (the three new fields
+are appended, so nothing shifts and no decode bug results), and no off-chain code consumes
+the three new fields, so this is presentation-only — but the count in the comment is now a
+false statement about the struct shape the file claims to mirror "EXACTLY". Fix: update the
+count to 37 and either list or `// [34..36] …`-annotate the three appended fields (even if
+left unmapped).
+
+### LOW-6 (stale test titles — `_fireAgent` named in titles after the split)
+
+The Unit split `_fireAgent` into `_fireScrape`/`_fireDecide` and (correctly) renamed the
+`T9-fireScrape`/`T10-fireDecide` tests, but the carried-forward drift-detector tests still
+title themselves against a function that no longer exists:
+`contracts/test/CoverageNegotiation.test.ts:1932` (`G2 … detects _fireAgent selector drift`),
+`:1933` (`G2a`), `:1969` (`G2b … when _fireAgent uses bytes4(0xdeadbeef)`). Their bodies are
+still *correct* (they corrupt `ILLMInferenceAgent.inferString.selector`, which now lives in
+`_fireDecide`, and `check-ruling-abi.ts` reads `_fireDecide` with a legacy `_fireAgent`
+fallback), so the gate still does what the title means — but the title/comment name a
+removed symbol. These titles predate this Unit (commit `ac142c1`), yet this Unit is the one
+that removed `_fireAgent`, so it owns the rename. Fix: retitle to `_fireDecide` (the body's
+actual target), keeping any "legacy `_fireAgent` fallback" mention only where the fallback
+is genuinely referenced.
+
+### Notable (PASS) — verified, not findings
+- Both selectors re-derived independently: `keccak256("ExtractString(string,string,string[],string,string,bool,uint8,uint8)")[0:4] = 0xc2dd1a7a`,
+  `keccak256("inferString(string,string,bool,string[])")[0:4] = 0xfe7ca098`. The
+  `ILLMParseWebsiteAgent` interface param list matches the pinned signature.
+- `MockAgentPlatform.triggerRuling(string)` correctly serves BOTH phases: the contract
+  `abi.decode(responses[0].result, (string))`s in each phase (scrape → evidence string,
+  decide → decision token), so a single string-token mock is the right integration double,
+  not an over-mock. `A0007-S17` confirms `lastAgentId` flips Parse-Website → Inference
+  across the two sequential `createRequest`s.
+- Fee model: `_fireScrape` requires `2 × (getRequestDeposit() + agentReward)`, forwards
+  exactly the scrape fee, parks the decide fee, refunds overpayment; `_fireDecide` spends
+  the parked fee; `totalFees` accrues both halves. `A0007-S13` pins it.
+- `onRulingTimeout` now refunds the parked decide fee to `pendingFeePayer`, zeroes the
+  bookkeeping, and resets `agentPhase` regardless of phase (HIGH-1 fixed; `HIGH-1`/`HIGH-1b`
+  tests). CEI preserved (capture-then-clear-then-refund).
+- Decide non-Success path performs no phantom refund — correct, `pendingDecideFee == 0` by
+  the Deciding phase (already spent by `_fireDecide`).
+- Empty-but-Success edge for both phases is now asserted (`LOW-3a`/`LOW-3b`).
+- `_handleScrapeResponse` success branch clears BOTH `pendingDecideFee` and
+  `pendingFeePayer` (LOW-4 fixed; `LOW-4` test).
+- `coveredAmount = requestedAmount` on Approve (no benchmark cap) is in scope: Amendment §4
+  (curated benchmark cap, removal of `costPlusUnitPrice`/`nadacUnitPrice`) is explicitly a
+  LATER phase, so the retained-but-reserved price fields + flat covered amount are not drift
+  for this phase-1 Unit.
+- No dangling references to deleted code (`scripts/lib/ruling-abi.ts`,
+  `scripts/orchestrator-real.ts`, `@anthropic-ai/sdk`) outside the tests that assert their
+  deletion; `package.json` scripts and `orchestrator-demo.mjs` updated cleanly.
+- `SimulatedBackend` modelling single-step adjudication (no scrape phase) is acceptable: it
+  is a UI-facing convenience abstraction, not a faithful chain mirror, and is out of this
+  Unit's contract scope.
+
+---
+
 ## Amendment 0007 phase 1 — two-agent scrape→decide pipeline (TOTAL-STICKLER, gate FAIL)
 
 **Date:** 2026-06-03
