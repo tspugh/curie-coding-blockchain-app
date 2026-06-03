@@ -253,8 +253,9 @@ if (green && doCommit && mode !== 'creativity') {
   const pushTarget = branch || orient && orient.branch || 'HEAD'
   const res = await agent(
     `All gates are green for repo "${repo}". Make ONE clean commit and push.
+- COMMIT ON THE CURRENT BRANCH (${pushTarget}). Do NOT create, switch, or rename branches — no \`git checkout -b\`, no \`git switch -c\`, no feature branch. Verify you are on "${pushTarget}" via \`git -C ${repo} rev-parse --abbrev-ref HEAD\` before committing; if not, STOP and report instead of committing elsewhere.
 - Single conventional commit: feat(<scope>): / fix(<scope>): <unit>. Body: 2-4 bullets — what landed, the test added, which spec R-numbers it satisfies. Footer: \`Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>\`.
-- Update ${repo}/${stateFile}: increment tick, record this focus as done, refresh the verdict table.
+- Update ${repo}/${stateFile}: increment tick, record this focus as done, refresh the verdict table. Do NOT re-introduce superseded/banned items (read the pivot block at the top of the state file first).
 - Pre-commit secret-scan must pass; NEVER use --no-verify or --force-push.
 - \`git -C ${repo} push origin ${pushTarget}\`.
 Unit: ${unit.description}. Spec refs: ${(unit.specRefs || []).join(', ')}.
