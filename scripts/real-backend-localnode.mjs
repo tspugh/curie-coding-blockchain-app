@@ -127,6 +127,8 @@ async function main() {
     daysSupply: DAYS_SUPPLY,
     justificationHash: JUSTIFICATION,
     evidenceUri: ZERO,
+    agentEvidenceUrl: "https://medlineplus.gov/druginfo/meds/a603010.html",
+    agentPromptHint: "Is this drug medically necessary for the patient's condition?",
   });
   await snap(reqId);
   check("createContract -> Open (reqId returned)", reqId === 1n && realStates.at(-1) === State.Open);
@@ -232,6 +234,8 @@ async function main() {
     daysSupply: DAYS_SUPPLY,
     justificationHash: JUSTIFICATION,
     evidenceUri: ZERO,
+    agentEvidenceUrl: "https://medlineplus.gov/druginfo/meds/a603010.html",
+    agentPromptHint: "Is this drug medically necessary for the patient's condition?",
   });
   simStates.push(await sim.stateOf(sreqId));
   await sim.insurerEngage(sreqId, POLICY, POLICY_URI);

@@ -149,6 +149,12 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
         justificationHash: stored.hash,
         evidenceUri:
           evidence.trim() === "" ? ZERO_HASH : hashContent(evidence),
+        // SPEC-0006 R14/R15: per-negotiation public evidence URL + prompt hint
+        // embedded in the inferString prompt. Both MUST be non-empty (the
+        // contract reverts with "evidence: url required" / "evidence: hint
+        // required"). No PHI — the hint references only the (public) drug name.
+        agentEvidenceUrl: "https://medlineplus.gov/druginfo/",
+        agentPromptHint: `Is coverage for ${drug.trim()} medically necessary and FDA-approved?`,
       });
       onCreated(reqId);
     } catch (err) {

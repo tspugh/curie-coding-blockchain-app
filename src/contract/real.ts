@@ -68,7 +68,8 @@ const LOG_PAGE_SIZE = 1_000;
 
 /**
  * Raw `Negotiation` tuple returned by ethers — field order matches the Solidity
- * struct (and `abi.ts`) EXACTLY. 31 fields.
+ * struct (and `abi.ts`) EXACTLY. 34 fields (added lastRequestId, agentEvidenceUrl,
+ * agentPromptHint per SPEC-0006 R14/R15).
  */
 type RawNegotiation = readonly [
   bigint, // [0]  providerId
@@ -90,18 +91,21 @@ type RawNegotiation = readonly [
   string, // [16] clauseRef
   string, // [17] standardRef
   bigint | number, // [18] lastDecision (uint8)
-  boolean, // [19] hasRuling
-  bigint, // [20] round
-  bigint | number, // [21] payerLine (uint8)
-  bigint | number, // [22] appealRound (uint8)
-  boolean, // [23] providerAccepted
-  boolean, // [24] insurerAccepted
-  bigint, // [25] totalFees
-  bigint | number, // [26] state (uint8)
-  bigint, // [27] pendingRequestId
-  bigint, // [28] createdAt
-  bigint, // [29] rulingDeadline
-  boolean, // [30] exists
+  bigint, // [19] lastRequestId
+  boolean, // [20] hasRuling
+  string, // [21] agentEvidenceUrl
+  string, // [22] agentPromptHint
+  bigint, // [23] round
+  bigint | number, // [24] payerLine (uint8)
+  bigint | number, // [25] appealRound (uint8)
+  boolean, // [26] providerAccepted
+  boolean, // [27] insurerAccepted
+  bigint, // [28] totalFees
+  bigint | number, // [29] state (uint8)
+  bigint, // [30] pendingRequestId
+  bigint, // [31] createdAt
+  bigint, // [32] rulingDeadline
+  boolean, // [33] exists
 ];
 
 /** Raw `priceBasisOf` tuple returned by ethers — matches the view's return order. */
@@ -136,6 +140,8 @@ interface CoverageContract extends ethers.BaseContract {
     justificationHash: string,
     evidenceUri: string,
     payerLine: number,
+    agentEvidenceUrl: string,
+    agentPromptHint: string,
   ): Promise<ethers.ContractTransactionResponse>;
   insurerEngage(reqId: bigint, policyHash: string, policyUri: string): Promise<ethers.ContractTransactionResponse>;
   requestAdjudication(reqId: bigint, overrides?: Overrides): Promise<ethers.ContractTransactionResponse>;
@@ -268,6 +274,8 @@ export class RealBackend implements CoverageNegotiationClient {
         params.justificationHash,
         params.evidenceUri,
         params.payerLine,
+        params.agentEvidenceUrl,
+        params.agentPromptHint,
       ),
     );
     // Recover reqId from the ContractCreated event (return values aren't
@@ -645,18 +653,20 @@ export class RealBackend implements CoverageNegotiationClient {
       clauseRef: raw[16],
       standardRef: raw[17],
       lastDecision: Number(raw[18]) as Decision,
-      hasRuling: raw[19],
-      round: raw[20],
-      payerLine: Number(raw[21]) as PayerLine,
-      appealRound: Number(raw[22]),
-      providerAccepted: raw[23],
-      insurerAccepted: raw[24],
-      totalFees: raw[25],
-      state: Number(raw[26]) as State,
-      pendingRequestId: raw[27],
-      createdAt: raw[28],
-      rulingDeadline: raw[29],
-      exists: raw[30],
+      hasRuling: raw[20] as boolean,
+      round: raw[23] as bigint,
+      payerLine: Number(raw[24]) as PayerLine,
+      appealRound: Number(raw[25]),
+      providerAccepted: raw[26] as boolean,
+      insurerAccepted: raw[27] as boolean,
+      totalFees: raw[28] as bigint,
+      state: Number(raw[29]) as State,
+      pendingRequestId: raw[30] as bigint,
+      createdAt: raw[31] as bigint,
+      rulingDeadline: raw[32] as bigint,
+      exists: raw[33] as boolean,
+      agentEvidenceUrl: raw[21] as string,
+      agentPromptHint: raw[22] as string,
     };
   }
 

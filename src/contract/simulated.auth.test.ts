@@ -43,6 +43,8 @@ function params(over: Partial<CreateContractParams> = {}): CreateContractParams 
     justificationHash: JUSTIFICATION_HASH,
     evidenceUri: EVIDENCE_URI,
     payerLine: PayerLine.PartD,
+    agentEvidenceUrl: "https://medlineplus.gov/druginfo/meds/a603010.html",
+    agentPromptHint: "Is coverage for this drug medically necessary and FDA-approved?",
     ...over,
   };
 }

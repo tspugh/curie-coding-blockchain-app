@@ -52,6 +52,16 @@ export interface NegotiationScript {
   /** Payer line governing the appeal ladder (SPEC-0004 R13). */
   readonly payerLine: PayerLine;
   /**
+   * Per-negotiation public evidence URL for the LLM agent (SPEC-0006 R14).
+   * Must be non-empty — the contract reverts with "evidence: url required" if empty (R17).
+   */
+  readonly agentEvidenceUrl: string;
+  /**
+   * Per-negotiation prompt hint embedded in the inferString call (SPEC-0006 R15).
+   * Must be non-empty — the contract reverts with "evidence: hint required" if empty (R17).
+   */
+  readonly agentPromptHint: string;
+  /**
    * What to do once the first ruling lands. Default: `accept-and-settle` on a
    * ruled state, `submit-evidence` on EvidenceRequested, else `stop`.
    */
@@ -116,6 +126,8 @@ export async function runNegotiation(
       justification: script.justification,
       requestedAmount: script.requestedAmount,
       quantity: script.quantity,
+      agentEvidenceUrl: script.agentEvidenceUrl,
+      agentPromptHint: script.agentPromptHint,
       ...(script.daysSupply !== undefined ? { daysSupply: script.daysSupply } : {}),
       ...(script.evidenceRef !== undefined ? { evidence: script.evidenceRef } : {}),
     });

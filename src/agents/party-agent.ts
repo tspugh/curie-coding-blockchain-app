@@ -52,6 +52,16 @@ export interface FileRequestInput {
   readonly evidence?: string;
   /** Payer line governing the appeal ladder (SPEC-0004 R13). Required — no silent default. */
   readonly payerLine: PayerLine;
+  /**
+   * Per-negotiation public evidence URL for the LLM agent (SPEC-0006 R14).
+   * Must be non-empty — the contract and simulated backend both enforce this (R17).
+   */
+  readonly agentEvidenceUrl: string;
+  /**
+   * Per-negotiation prompt hint embedded in the inferString call (SPEC-0006 R15).
+   * Must be non-empty — the contract and simulated backend both enforce this (R17).
+   */
+  readonly agentPromptHint: string;
 }
 
 /** An off-chain party actor bound to one identity. */
@@ -88,6 +98,8 @@ export class PartyAgent {
       daysSupply: input.daysSupply ?? 0n,
       justificationHash,
       evidenceUri,
+      agentEvidenceUrl: input.agentEvidenceUrl,
+      agentPromptHint: input.agentPromptHint,
     });
   }
 

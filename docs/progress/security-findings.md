@@ -1,3 +1,51 @@
+## 2026-06-03 (refresh 2) — SPEC-0006 R14/R15/R17 per-negotiation agent fields (security-review)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode)
+**Base:** `origin/main` (d7b5190)
+**Branch:** `spec-6-implementation` + uncommitted working tree
+**Scope of change:** Add per-negotiation `agentEvidenceUrl` + `agentPromptHint` to the
+`Negotiation` struct and `createContract` signature (R14/R15/R17); remove the
+contract-level `agentEvidenceUrl` global and its `setAgentEvidenceUrl` owner-setter;
+rewire `_fireAgent` to read `n.agentEvidenceUrl` and embed `n.agentPromptHint` instead of
+the hardcoded `"rheumatoid arthritis"` global; propagate the two trailing string params
+through `CreateContractParams`, `simulated.ts`, and `real.ts`; add Hardhat T9/T10/T11.
+**Verdict:** PASS (zero findings)
+
+### Hard gate
+
+| Gate | Status | Evidence |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | The two new on-chain strings are caller-supplied and structurally separate from the patient justification body, which stays off-chain — only its opaque `keccak256` `justificationHash` is on-chain. `_fireAgent` (`CoverageNegotiation.sol:806-816`) builds the `inferString` prompt from exactly `n.agentPromptHint` + `n.agentEvidenceUrl` + static framing; no patient data is concatenated. Every fixture in the diff is public, non-PHI: evidence URLs `https://medlineplus.gov/druginfo/meds/a603010.html` and `https://www.fda.gov/media/119435/download` (public drug-info / FDA pages); prompt hints are generic clinical *questions* (drug + indication only) with no names, MRNs, DOB, or SSNs. The hardcoded `"rheumatoid arthritis"` prompt is deleted from the contract (the only remaining occurrence in-tree is a synthetic *policy* description in `src/data/policies.ts`, pre-existing, outside this diff). Diff-wide scan for `private key`/64-hex/`mnemonic`/`secret`/`password`/`api key`/`ssn`/`mrn`/`dob`/`date of birth`/`patient name` returned zero matches. |
+| No secrets | PASS | No private keys, mnemonics, API keys, tokens, or credentials anywhere in the diff. The new fields carry only public URLs and clinical-question strings. |
+| Signing-key hygiene | PASS | Diff touches no key-handling, wallet-construction, or signer code (`src/wallet/*` unchanged). Net attack-surface *reduction*: removing `setAgentEvidenceUrl(string) onlyOwner` eliminates a piece of owner-mutable on-chain state; evidence URL/hint are now fixed per negotiation at `createContract` time by the provider (the `msg.sender == providerAddr` gate is retained). |
+
+### Integrity checks (non-gate, verified clean)
+
+- **Struct ↔ ABI ↔ decode ordering.** New fields inserted at the same position (after
+  `lastRequestId`/`hasRuling`, before `round`) in all three representations: the Solidity
+  struct (`CoverageNegotiation.sol:117-118`), the `getNegotiation` tuple in
+  `src/contract/abi.ts`, and the `RawNegotiation` index map + decode in
+  `src/contract/real.ts` (`raw[21]`→`agentEvidenceUrl`, `raw[22]`→`agentPromptHint`, all
+  later indices shifted +2). No tuple mis-decode that could misattribute or leak a field.
+- **Defense-in-depth guard parity.** `createContract` reverts `evidence: url required` /
+  `evidence: hint required` on empty input (`CoverageNegotiation.sol:355-356`), mirrored
+  in `SimulatedBackend.createContract` (`src/contract/simulated.ts:290-291`); T11a/b assert
+  both revert strings.
+- **Clean compile.** `npx hardhat compile --force` succeeds (8 Solidity files, 40
+  typings) — the struct/ABI changes are valid and self-consistent.
+
+### Non-security observations (recorded for the build loop, not gate findings)
+
+- SPEC-0006 R14/R15 upper length caps (URL ≤ 512 bytes, hint ≤ 1024 bytes): **enforced**
+  at `CoverageNegotiation.sol:355-365` (`bytes(url).length > 0 && <= 512`;
+  `bytes(hint).length > 0 && <= 1024`). Covered by passing tests T11c and T11d.
+- SPEC-0006 R15's `[A-Z][a-z]+ [A-Z]` PHI-name pattern reject: **enforced** on-chain by
+  `_containsNamePattern` (`CoverageNegotiation.sol:766-792`), mirrored in
+  `simulated.ts`. Covered by passing test T11e.
+
+---
+
 ## 2026-06-03 — SPEC-0006 `inferString` cascade (security-review)
 
 **Date:** 2026-06-03

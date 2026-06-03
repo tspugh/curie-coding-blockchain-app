@@ -7,6 +7,8 @@ export type RevertReason =
   | "auth: not provider"
   | "qty: zero"
   | "create: self-contract"
+  | "evidence: url required"
+  | "evidence: hint required"
   // engage guards
   | "engage: not Open"
   | "auth: not insurer"
@@ -86,6 +88,16 @@ export const REVERT_REASON_MAP: Readonly<Record<RevertReason, RevertReasonEntry>
       headline: "Provider and insurer cannot be the same address",
       details:
         "A coverage negotiation requires two distinct parties. Use different wallet addresses for the provider and the insurer.",
+    },
+    "evidence: url required": {
+      headline: "Evidence URL is required",
+      details:
+        "An evidence URL must be provided and must be between 1 and 512 bytes long. Enter a valid public evidence URL before submitting.",
+    },
+    "evidence: hint required": {
+      headline: "Prompt hint is required",
+      details:
+        "A prompt hint must be provided and must be between 1 and 1024 bytes long, and must not contain patient-name patterns. Enter a valid drug-specific question before submitting.",
     },
 
     // ── engage ────────────────────────────────────────────────────────────────

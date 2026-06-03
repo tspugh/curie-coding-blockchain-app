@@ -1,3 +1,122 @@
+# SPEC-0006 R14/R15/R17 — per-negotiation `agentEvidenceUrl` + `agentPromptHint` (full re-review)
+
+**Date:** 2026-06-03
+**Branch:** `spec-6-implementation` (working tree vs `origin/main`)
+**Reviewer posture:** TOTAL-STICKLER. **Result: ZERO findings.**
+
+**Scope:** the full working-tree `contracts/` diff vs `origin/main`, re-reviewed after
+the per-negotiation evidence-URL / prompt-hint unit landed on top of the inferString
+migration. This entry supersedes the per-category verdicts in the
+`2026-06-03 @ a64f80d` section below and CLOSES its two residual notes (see
+"Prior notes — now closed").
+
+Diff under review (Solidity):
+
+- `contracts/contracts/CoverageNegotiation.sol` —
+  - `Negotiation` struct gains `uint256 lastRequestId`, `string agentEvidenceUrl`,
+    `string agentPromptHint` (R14/R15);
+  - the contract-level `string public agentEvidenceUrl` global and its
+    `setAgentEvidenceUrl(string)` owner-setter are **removed**;
+  - `createContract` signature gains two trailing `string calldata` params
+    (`agentEvidenceUrl_`, `agentPromptHint_`) with non-empty `require` guards
+    (`"evidence: url required"` / `"evidence: hint required"` — R17);
+  - `_fireAgent` now reads `n.agentEvidenceUrl` / `n.agentPromptHint` and embeds
+    them in the `inferString` prompt (the hardcoded "rheumatoid arthritis" global
+    prompt is gone);
+  - the dead `event PolicyFlagged` declaration is removed.
+- `contracts/test/CoverageNegotiation.test.ts` — adds T9 (per-neg URL stored), T10
+  (per-neg hint stored), T11a/T11b (empty-field reverts), plus `_fireAgent`-payload,
+  types, simulated- and real-backend propagation assertions.
+
+Also propagated (TS, outside `contracts/` but part of the unit): `src/contract/types.ts`
+(`CreateContractParams` +2 required fields), `src/contract/simulated.ts` (store +
+non-empty enforcement), `src/contract/real.ts` (ABI-encode the 2 trailing params + the
+34-field `RawNegotiation` re-index), `src/contract/abi.ts` (`createContract` +
+`getNegotiation` tuple).
+
+## Validation (this pass)
+
+- `npx hardhat compile` → "Compiled 8 Solidity files successfully" (solc 0.8.24,
+  optimizer runs 200, viaIR). No warnings.
+- `npx hardhat test` → **98 passing, 0 failing** — includes T9/T10/T11
+  (and the T11c/T11d/T11e over-length + name-pattern edge cases), the
+  `_fireAgent` per-neg payload tests, R24–R26, the R9 self-hosted-teardown negative
+  assertions, and the `PolicyFlagged`-removed / `setAgentEvidenceUrl`-removed gates.
+  Re-confirmed 2026-06-03: clean `npx hardhat compile` (no warnings), 98/98 green,
+  `tsc -p tsconfig.json --noEmit` exit 0, `npm run test:lib` 209/209. Struct↔ABI
+  tuple field order independently verified aligned 34/34 (positional decode safe).
+- `npm run typecheck` → exit 0. `npm run test:lib` → **209 passing**.
+- `npm run check-ruling-abi` → PASS (`inferString` selector `0xfe7ca098` asserted
+  **inside** the `_fireAgent` body, not just a comment/interface).
+
+## Per-category scrutiny — all PASS
+
+- **Reentrancy.** Unchanged posture. Agent-firing entry points
+  (`requestAdjudication`, `submitEvidence`, `appeal`) + `withdrawFunds` carry
+  `nonReentrant`; `_fireAgent` keeps CEI (state → `UnderReview`, `totalFees`,
+  `rulingDeadline` committed before `platform.createRequest`; refund last). The new
+  `n.agentEvidenceUrl`/`n.agentPromptHint` storage reads in `_fireAgent` happen before
+  the external call and introduce no new external interaction. A platform re-entering
+  during `createRequest` still hits `require(reqId != 0)` because
+  `_requestToNegotiation[requestId]` is written only after the call returns.
+  `handleResponse` and `commitRationale` make no external calls.
+- **Access control.** `createContract` keeps `msg.sender == providerAddr`. The removed
+  `setAgentEvidenceUrl` owner-setter leaves no orphaned mutator; per-neg URL/hint are
+  now set once, at creation, by the authenticated provider only. `commitRationale`
+  is `onlyOwner`. All admin setters remain `onlyOwner`. No new ungated entry point.
+- **Over/underflow beyond 0.8.x.** No new arithmetic on the live path beyond the
+  string-length `require`s. `_truncateRationale`'s indexing is in-bounds (buffer sized
+  `MAX_RATIONALE_BYTES + 3`; the copy loop only runs in the `b.length >
+  MAX_RATIONALE_BYTES` branch). `abi.encodePacked(n.agentPromptHint, …, n.agentEvidenceUrl, …)`
+  is a memory concat, not arithmetic. `abi.decode(result,(string))` reverts cleanly on
+  malformed bytes (routes to the refund/timeout path).
+- **Unbounded loops.** Only `_truncateRationale`, bounded by the constant
+  `MAX_RATIONALE_BYTES = 4096`. The two new fields are strings concatenated once in
+  `_fireAgent`, never iterated in a Solidity loop. No iteration over caller-controlled
+  array lengths anywhere (the old dynamic `uint16[]/bytes32[]` decode is gone).
+- **Missing event emits.** Every transition still emits; `createContract` emits
+  `ContractCreated` (the two new strings are stored, not separately logged — consistent
+  with the existing struct fields that are also unlogged and read back via
+  `getNegotiation`). `commitRationale` emits `RulingRationale`. The removed
+  `PolicyFlagged` was dead (no emit site); its removal announces nothing less.
+- **Storage-layout breaks.** `CoverageNegotiation` is non-upgradeable and directly
+  deployed (`deploy.ts` → `getContractFactory().deploy()`; no proxy / delegatecall /
+  initializer / EIP-1967 wrapping). Inserting `lastRequestId` + two `string` fields
+  mid-struct and removing the contract-level `agentEvidenceUrl` string slot is **not** a
+  layout hazard: each deploy is fresh storage. The off-chain readers were updated in
+  lockstep — `abi.ts` `getNegotiation` tuple order, `real.ts` `RawNegotiation` 34-field
+  indices ([18] lastDecision, [19] lastRequestId, [20] hasRuling, [21] agentEvidenceUrl,
+  [22] agentPromptHint, [23] round …), and `mapNegotiation` all match the Solidity
+  field order exactly. Typecheck (0) + the T9-real/T10-real position tests confirm.
+- **Gas anti-patterns.** No storage-read-in-loop. `MAX_RATIONALE_BYTES` is a `constant`.
+  `_fireAgent` reads each new field from storage once into the payload. View functions
+  returning the now-larger struct (two extra strings) are `external view`, never on a
+  state-changing path.
+- **OZ-pattern adherence.** Inheritance and `Ownable(msg.sender)` unchanged.
+  `nonReentrant` placement unchanged. ETH transfers remain checked low-level `.call`.
+  The new guards use the standard short namespaced `require` strings consistent with the
+  surrounding `createContract` validations.
+
+## Prior notes — now closed
+
+- The `2026-06-03 @ a64f80d` section flagged the dead **`event PolicyFlagged`**
+  declaration as a hygiene NIT. **CLOSED** — the declaration is removed from the
+  contract (asserted by the `PolicyFlagged-removed` test).
+- That section's OBSERVATION (three stale OLD-shape consumers: `src/contract/real.ts`
+  event list/`Ruled` decoder, plus the two `.mjs` demo/local-node harnesses). **CLOSED
+  for `real.ts`** — its `EVENT_NAMES` now lists `RulingRationale` (not `PolicyFlagged`)
+  and the `Ruled` decoder reads the 4-arg shape (asserted by `stale-real-ts-*` tests).
+  The two `.mjs` demo/integration harnesses are outside the `contracts/` gate and out
+  of scope for this unit; they remain an operator follow-up, not a compliance finding.
+- The `agentId` constructor anonymisation and the retained zero-valued
+  `priceBasisOf`/`costPlusUnitPrice`/`nadacUnitPrice` API-compat surface are intentional
+  and documented (see the notes in the section below) — non-findings.
+
+**Conclusion: ZERO findings across all eight stickler dimensions for the full
+`contracts/` diff, including the SPEC-0006 R14/R15/R17 per-negotiation unit.**
+
+---
+
 # SPEC-0006 (R9/R11/R12/R24–R26) — inferString migration + self-hosted teardown
 
 **Date:** 2026-06-03

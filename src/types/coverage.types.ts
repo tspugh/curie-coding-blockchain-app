@@ -148,6 +148,10 @@ export interface Negotiation {
   readonly rulingDeadline: bigint;
   /** Whether the record exists (always true for a returned view). */
   readonly exists: boolean;
+  /** Per-negotiation public evidence URL for the LLM agent (SPEC-0006 R14). */
+  readonly agentEvidenceUrl: string;
+  /** Per-negotiation prompt hint embedded in the inferString call (SPEC-0006 R15). */
+  readonly agentPromptHint: string;
 }
 
 /**

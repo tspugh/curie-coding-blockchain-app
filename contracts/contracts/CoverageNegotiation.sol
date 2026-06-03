@@ -114,6 +114,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         Decision lastDecision; // latest agent decision (meaningful once ruled)
         uint256 lastRequestId; // requestId from the ruling that set lastDecision
         bool hasRuling; // whether an agent decision has landed
+        string agentEvidenceUrl; // per-neg public evidence URL for the LLM agent (SPEC-0006 R14)
+        string agentPromptHint; // per-neg prompt hint embedded in the inferString call (SPEC-0006 R15)
         // ROUND SEMANTICS: this struct carries TWO related counters that are NOT
         // interchangeable. Read both before reasoning about appeal state.
         //
@@ -180,11 +182,6 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
     /// @notice Maximum adjudication rounds before an appeal forces `Deadlocked` (R6c).
     uint256 public maxRounds = 3;
-
-    /// @notice URL the Somnia LLM Inference agent uses as context for necessity determination.
-    /// @dev Embedded in the `inferString` prompt. No PHI — only a public drug info page.
-    string public agentEvidenceUrl =
-        "https://medlineplus.gov/druginfo/meds/a603010.html";
 
     /// @notice The reqId currently being fired at the agent platform. Set inside
     ///         `_fireAgent` before `platform.createRequest`, cleared after. Lets a
@@ -304,11 +301,6 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         rulingTimeout = seconds_;
     }
 
-    /// @notice Update the URL the Somnia LLM agent uses as context for necessity determination.
-    function setAgentEvidenceUrl(string calldata url) external onlyOwner {
-        agentEvidenceUrl = url;
-    }
-
     /// @notice Owner-settable appeal round cap N (R6c). Must be >= 1.
     function setMaxRounds(uint256 maxRounds_) external onlyOwner {
         require(maxRounds_ >= 1, "maxRounds: < 1");
@@ -352,12 +344,26 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         uint256 daysSupply,
         bytes32 justificationHash,
         bytes32 evidenceUri,
-        PayerLine payerLine
+        PayerLine payerLine,
+        string calldata agentEvidenceUrl_,
+        string calldata agentPromptHint_
     ) external returns (uint256 reqId) {
         require(providerAddr != address(0) && insurerAddr != address(0), "addr: zero");
         require(msg.sender == providerAddr, "auth: not provider");
         require(quantity > 0, "qty: zero"); // quantity drives the deterministic cap (R6a)
         require(providerAddr != insurerAddr, "create: self-contract"); // SPEC-0004 R2b
+        // SPEC-0006 R14: URL must be 1..512 bytes.
+        require(
+            bytes(agentEvidenceUrl_).length > 0 && bytes(agentEvidenceUrl_).length <= 512,
+            "evidence: url required"
+        );
+        // SPEC-0006 R15: hint must be 1..1024 bytes and must not contain a bracketed
+        // patient-name pattern ([A-Z][a-z]+ [A-Z]) — defense-in-depth PHI guard.
+        require(
+            bytes(agentPromptHint_).length > 0 && bytes(agentPromptHint_).length <= 1024
+            && !_containsNamePattern(agentPromptHint_),
+            "evidence: hint required"
+        );
 
         reqId = _nextId++;
         Negotiation storage n = _negotiations[reqId];
@@ -373,6 +379,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         n.evidenceUri = evidenceUri;
         n.payerLine = payerLine;
         n.appealRound = 0;
+        n.agentEvidenceUrl = agentEvidenceUrl_;
+        n.agentPromptHint = agentPromptHint_;
         n.state = State.Open;
         n.createdAt = block.timestamp;
         n.exists = true;
@@ -750,6 +758,39 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     // Internals
     // ---------------------------------------------------------------------
 
+    /// @dev Returns true when `s` contains the patient-name pattern [A-Z][a-z]+ [A-Z]
+    ///      (uppercase letter, one-or-more lowercase letters, a space, uppercase letter).
+    ///      Used as a defense-in-depth PHI guard on agentPromptHint (SPEC-0006 R15).
+    ///      PHI-freeness remains the caller's responsibility; this rejects common
+    ///      patterns only.
+    function _containsNamePattern(string calldata s) internal pure returns (bool) {
+        bytes memory b = bytes(s);
+        uint256 len = b.length;
+        // Need at least 4 bytes: A a(+) SPACE A.
+        if (len < 4) return false;
+        for (uint256 i = 0; i + 3 < len; ) {
+            uint8 c0 = uint8(b[i]);
+            // State machine: looking for A a+ SPACE A
+            if (c0 >= 65 && c0 <= 90) { // 'A'..'Z'
+                uint256 j = i + 1;
+                // Consume one or more lowercase letters.
+                while (j < len && uint8(b[j]) >= 97 && uint8(b[j]) <= 122) { // 'a'..'z'
+                    j++;
+                }
+                // Must have advanced at least one lowercase.
+                if (j > i + 1 && j + 1 < len) {
+                    uint8 sp = uint8(b[j]);
+                    uint8 c2 = uint8(b[j + 1]);
+                    if (sp == 32 && c2 >= 65 && c2 <= 90) { // space + uppercase
+                        return true;
+                    }
+                }
+            }
+            unchecked { i++; }
+        }
+        return false;
+    }
+
     /// @dev Map an inferString allowedValues token to Decision.
     ///      Unknown tokens fall through to NeedMoreEvidence (defensive fallback —
     ///      the contract never transitions to a terminal state on a garbage token).
@@ -789,7 +830,10 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     ///
     ///      Payload: `inferString(prompt, system, chainOfThought, allowedValues)` —
     ///      the canonical Somnia LLM Inference agent selector `0xfe7ca098` (SPEC-0006
-    ///      R11). No PHI in the prompt — only public drug info page URL is referenced.
+    ///      R11). The prompt embeds the per-negotiation `n.agentEvidenceUrl` and
+    ///      `n.agentPromptHint` (caller-supplied; PHI-freeness is the caller's
+    ///      responsibility — the contract's R15 guard rejects common patient-name
+    ///      patterns as defense-in-depth, but cannot guarantee all forms of PHI).
     ///
     ///      FEE MODEL (R9): caller funds the per-request fee on the agent-firing entry
     ///      point. Fee = getRequestDeposit() + agentReward. Caller must cover it;
@@ -808,8 +852,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         bytes memory payload = abi.encodeWithSelector(
             ILLMInferenceAgent.inferString.selector,
             string(abi.encodePacked(
-                "Is coverage for this drug medically necessary and FDA-approved? "
-                "Evidence URL: ", agentEvidenceUrl,
+                n.agentPromptHint,
+                " Evidence URL: ", n.agentEvidenceUrl,
                 " Reply with exactly one of the allowed values."
             )),
             "You are a medical necessity arbiter. Evaluate the drug coverage request and return exactly one decision token.",

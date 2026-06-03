@@ -54,6 +54,16 @@ export interface CreateContractParams {
   readonly justificationHash: string;
   /** Opaque 0x-bytes32 ref to the public-evidence doc (use ZERO_HASH if none). */
   readonly evidenceUri: string;
+  /**
+   * Per-negotiation public evidence URL embedded in the `inferString` prompt (SPEC-0006 R14).
+   * Must be a non-empty string — the contract reverts with `"evidence: url required"` if empty.
+   */
+  readonly agentEvidenceUrl: string;
+  /**
+   * Per-negotiation prompt hint embedded in the `inferString` prompt (SPEC-0006 R15).
+   * Must be a non-empty string — the contract reverts with `"evidence: hint required"` if empty.
+   */
+  readonly agentPromptHint: string;
 }
 
 /** Filter for {@link CoverageNegotiationClient.getEvents} (historical reconstruction). */

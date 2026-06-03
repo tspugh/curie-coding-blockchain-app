@@ -9156,3 +9156,264 @@ cleanup gap; G4 dead price plumbing). The cascade compiles, all 76 tests pass, a
 prior tick's F1/F3/F4/F5/F7 were remediated — but `chainOfThought=false` (G1) silently
 defeats the reasoning-capture the same unit is supposed to deliver, and R12's
 `_fireAgent` drift gate (G2) remains unmet by the script the requirement names.
+
+## SPEC-0006 R14/R15/R17 — per-negotiation `agentEvidenceUrl` + `agentPromptHint` (strict-review)
+
+> **SUPERSEDED** by the REMEDIATION tick entry below. All 6 findings (C1 caps, C2 PHI
+> reject, M1 dead `@ts-expect-error`, M2 `createWithEvidence`, L1–L4) are discharged;
+> see the REMEDIATION entry for the current state.
+
+**Date:** 2026-06-03
+**Scope (unit):** Add per-negotiation `agentEvidenceUrl` + `agentPromptHint` to the
+`Negotiation` struct and `createContract`; remove the contract-level `agentEvidenceUrl`
+global + `setAgentEvidenceUrl` setter; rewire `_fireAgent` to read `n.agentEvidenceUrl`
+and embed `n.agentPromptHint`; propagate through `CreateContractParams` (types.ts),
+`simulated.ts`, `real.ts`; add Hardhat T9/T10/T11.
+**Files:** `contracts/contracts/CoverageNegotiation.sol`,
+`contracts/test/CoverageNegotiation.test.ts`, `src/contract/{abi,real,simulated,types}.ts`,
+`src/types/coverage.types.ts`, `src/orchestrator.ts`, `src/agents/party-agent.ts`.
+**Build:** clean compile + `npx hardhat test` → **95 passing** (incl. the new R14/R15/R17 block).
+
+**Verdict: FAIL — 6 live findings (all superseded/discharged; see REMEDIATION entry).** The core mechanism (struct fields, signature,
+`_fireAgent` rewire, ABI realignment, propagation) is correct and the on-chain
+behavioral tests (T9/T10/T11, T9-fireAgent/T10-fireAgent) genuinely exercise it — but
+the unit (a) **under-implements MUST-level clauses of R14 and R15** (length caps, PHI
+pattern reject), (b) ships **14 now-dead `@ts-expect-error` directives whose comments
+lie** and which break any `tsc` gate over the test, (c) leaves several **source-grep
+"assert-presence" tests** plus a **redundant helper with false comments**, and (d) leaves
+a **comment in `_fireAgent` that overstates the PHI guarantee**.
+
+### CRITICAL
+
+- **C1 — R14/R15 MUST length caps NOT enforced (spec drift; under-implementation).**
+  R14 (spec `:156-157`): `createContract` "MUST require `bytes(url).length > 0` **and
+  `bytes(url).length <= 512`**." R15 (`:162`): hint "MUST require length > 0 **and ≤ 1024
+  chars**." The contract (`CoverageNegotiation.sol:355-356`) enforces ONLY `length > 0`
+  for both; no `<= 512` / `<= 1024` guard anywhere (grep for `512`/`1024` in the contract
+  and `simulated.ts` returns zero). The comments tag these guards `// SPEC-0006 R17` /
+  cite R14/R15, implying compliance, while satisfying only the lower bound. The
+  implementer's own `security-findings.md` addition acknowledges the gap ("upper length
+  caps … are specified but the contract enforces only `length > 0`") — acknowledging a
+  MUST gap in a progress note does not discharge it, and no spec amendment waives it.
+  Either implement the caps (+ a T11 case for over-length revert) or land an amendment.
+
+- **C2 — R15 MUST PHI-name reject NOT implemented (spec drift; touches the PHI hard
+  rule).** R15 (`:162-165`): the hint "MUST NOT contain anything matching `[A-Z][a-z]+
+  [A-Z]`-bracketed patient names. (PHI-free assertion …)." No such check exists in the
+  contract or `simulated.ts`. This is the on-chain defense-in-depth the spec encoded for
+  the vision-wide "PHI never goes on-chain" hard rule; the new prompt-hint field is
+  free provider text that flows verbatim into the `inferString` payload, so the absence
+  is load-bearing, not cosmetic. Again self-acknowledged in `security-findings.md`
+  ("R15's `[A-Z][a-z]+ [A-Z]` PHI-name assertion is documented but not [enforced]") with
+  no amendment.
+
+### MEDIUM
+
+- **M1 — 14 dead `@ts-expect-error` directives with lying comments (breaks any `tsc`
+  gate; comments that lie).** Every `createContract` call site in the test still carries
+  `// @ts-expect-error — extra params added by R14/R15` (lines 83, 128, 162, 213, 237,
+  243, 249, 256, 550, 622, 1055) or `… not yet in the ABI; will compile once the contract
+  and typechain types are regenerated` (2076, 2157, 2184). The contract + typechain ARE
+  regenerated — those calls are now type-correct, so every directive is unused. Verified
+  empirically: `npx hardhat clean && compile` (regenerates typechain), then a strict
+  `tsc --noEmit` over the test + `typechain-types` reports `error TS2578: Unused
+  '@ts-expect-error' directive.` at exactly those lines. Hardhat's transpile-only test
+  runner hides this today (suite passes), but the directives are dead code and their
+  comments are false ("not yet in the ABI", "production code has not been written"). Any
+  CI `tsc`/typecheck step over the contracts tests fails. Delete all 14 directives + the
+  stale comments now that the signature exists.
+
+- **M2 — `createWithEvidence` helper is a near-duplicate of `createAs` with a false
+  comment (premature/redundant abstraction + comment that lies).** The new helper
+  (`test:2063-2094`) duplicates `createAs` (`:73-100`) almost verbatim; its only delta is
+  letting the URL/hint vary instead of the `DEFAULT_*` constants. Its header comment
+  ("The existing `createAs` helper does not include these params yet (production code has
+  not been written), so we call the contract directly here") is FALSE — `createAs` DOES
+  pass `DEFAULT_AGENT_EVIDENCE_URL`/`DEFAULT_AGENT_PROMPT_HINT` (`:96-97`). DRY: extend
+  `createAs` with optional `(url, hint)` params and delete `createWithEvidence`.
+
+### LOW
+
+- **L1 — six "assert-presence-not-correctness" source-grep tests.** `T9-types`,
+  `T10-types` (`:2296-2322`), `T11-simulated`, `T11-simulated-hint` (`:2324-2350`),
+  `T9-real`, `T10-real` (`:2352-2378`) `readFileSync` the `.ts` source and assert
+  `source.includes("agentEvidenceUrl")` / `includes("evidence: url required")`. These
+  pass on a string appearing in a comment, an unrelated field, or a broken assignment —
+  they never import and exercise `SimulatedBackend.createContract` / `RealBackend` /
+  `CreateContractParams`. `T11-simulated*` is the worst: `simulated.ts` IS unit-testable
+  in-process (it is plain TS), so the empty-URL/empty-hint guard should be asserted by a
+  real `expect(() => backend.createContract({… agentEvidenceUrl: "" })).to.throw(
+  "evidence: url required")`, not a grep. (The `T9/T10/T11a/T11b` contract tests and
+  `T9-fireAgent`/`T10-fireAgent` — which read `MockAgentPlatform.lastPayload()` and assert
+  the hint/URL bytes are in the real ABI-encoded payload — ARE genuine and correct;
+  the grep tests are the weak tail.)
+
+- **L2 — stale comments in T9/T10/T9-fireAgent/T10-fireAgent claiming the test "is
+  written to FAIL right now" / the field "does not exist on the current struct" /
+  production code "has not been written" (`:2103-2117`, `:2210-2212`, `:2259-2260`).**
+  Implementation is done and tests pass green; these red-phase TDD comments now lie and
+  should be removed.
+
+- **L3 — `_fireAgent` doc comment overstates the PHI guarantee (`CoverageNegotiation.sol:790`).**
+  "No PHI in the prompt — only public drug info page URL is referenced." The prompt now
+  embeds caller-supplied, per-negotiation `n.agentPromptHint` (free text) + `n.agentEvidenceUrl`,
+  not a fixed public page. With C2 unimplemented, nothing in the contract guarantees the
+  hint is PHI-free. The comment should state the prompt is caller-supplied and that
+  PHI-freeness is the caller's responsibility (until the R15 reject lands).
+
+- **L4 — new createContract reverts missing from the R16 user-facing revert map.**
+  `src/protocol/revertReasonMap.ts` documents `RevertReason` as the exhaustive set of
+  "Known revert string literals emitted by CoverageNegotiation.sol" and groups
+  `qty: zero` / `create: self-contract` under "createContract guards", but the two new
+  createContract reverts (`evidence: url required`, `evidence: hint required`) were not
+  added to the union or the copy map. Per SPEC-0003 R16 the map is meant to translate
+  every contract revert to plain-English copy; these two now surface as raw strings.
+
+### NITs (not promoted)
+
+- The new `describe`'s `T9 (R14)` collides in label-prefix with the pre-existing
+  `T9 (R11/R12/R13)` `it` (`:541`). The new block disambiguates its own siblings
+  (`T9-fireAgent`, `T9-types`, `T9-real`) but the bare `T9` reuse is mildly confusing.
+  Pre-existing numbering scheme; not introduced fault.
+- `mapNegotiation` in `real.ts` orders the object literal `agentEvidenceUrl`/`agentPromptHint`
+  AFTER `exists` even though their raw indices ([21]/[22]) sit mid-tuple. Harmless
+  (object key order is irrelevant) but reads against the otherwise index-ordered literal.
+
+### Verified-correct (not findings)
+
+- Struct field order (…lastDecision[18], lastRequestId[19], hasRuling[20],
+  agentEvidenceUrl[21], agentPromptHint[22], round[23]…) matches `abi.ts`'s
+  `getNegotiation` tuple AND `real.ts`'s `RawNegotiation` + `mapNegotiation` exactly.
+  This diff ALSO correctly fixes a latent pre-existing bug: HEAD's `abi.ts`/`real.ts`
+  omitted `lastRequestId` (present in the Solidity struct since an earlier tick), so the
+  committed decoder mis-read `hasRuling` onward by one slot; realigning here is a
+  necessary correctness fix, not scope creep.
+- Propagation is complete and type-tight: `CreateContractParams`, `FileRequestInput`,
+  `NegotiationScript` all declare the two fields as REQUIRED (non-optional) strings;
+  every caller (`party-agent`, `orchestrator`, both sim test `params()` helpers) supplies
+  them; no compile break. `simulated.ts` mirrors the contract guard
+  (`evidence: url required` / `evidence: hint required`).
+- `setAgentEvidenceUrl` removal is clean (no orphaned callers in src/scripts; the
+  `T9-fireAgent` ABI-fragment assertion proves the getter+setter are gone from the ABI).
+
+## SPEC-0006 R14/R15/R17 — per-neg `agentEvidenceUrl` + `agentPromptHint` (strict-review, REMEDIATION tick)
+
+**Date:** 2026-06-03 (refresh)
+**Scope (unit):** Add per-neg `agentEvidenceUrl` + `agentPromptHint` to the `Negotiation`
+struct + `createContract`; remove the contract-level global + `setAgentEvidenceUrl`;
+rewire `_fireAgent`; propagate through `CreateContractParams`/`simulated.ts`/`real.ts`;
+add Hardhat T9/T10/T11.
+**Build:** `tsc -p tsconfig.json` clean (exit 0); `npx hardhat test` → **98 passing**;
+`node --import tsx --test` sim suites → 20 passing.
+
+**Verdict: FAIL — 4 live findings.** The previous tick's CRITICAL/MEDIUM gaps (length
+caps, PHI-name reject, 14 dead `@ts-expect-error`, `createWithEvidence` dup, L3
+`_fireAgent` comment, L4 revert-map) are **genuinely remediated** in this tree — the
+core mechanism (struct fields, signature, `_fireAgent` rewire, ABI/RawNegotiation
+realignment incl. the latent `lastRequestId` slot fix, propagation, the `<=512`/`<=1024`
+caps, `_containsNamePattern` which I verified byte-for-byte equivalent to the TS regex
+across 200k fuzzed inputs) is correct and the on-chain behavioral tests are real. But
+four things were left behind by the remediation:
+
+### F1 (HIGH) — two `package.json` script callers now broken (regression; required fields not propagated)
+Making `agentEvidenceUrl`/`agentPromptHint` REQUIRED on `CreateContractParams` and
+`NegotiationScript` broke the two untyped `.mjs` consumers, which `tsc`/`typecheck` does
+not cover so the build stays green:
+- `scripts/real-backend-localnode.mjs:118-130` — `real.createContract({…})` object omits
+  both fields → contract reverts `"evidence: url required"`; the `createContract -> Open`
+  check fails. Wired as `npm run test:real-local` (the real-backend integration smoke).
+- `scripts/orchestrator-demo.mjs:57-66` — `baseScript` omits both fields; every
+  `runNegotiation` → `fileRequest` → `SimulatedBackend.createContract` throws
+  `"evidence: url required"` at the first call. Wired as `npm run demo:orchestrator`.
+  Add non-empty `agentEvidenceUrl`/`agentPromptHint` to both call sites.
+
+### F2 (MEDIUM) — three test comments that lie about the implementation state (comment-that-lies / weak-test signal)
+`contracts/test/CoverageNegotiation.test.ts` lines 2156-2157, 2188-2189, 2222 each say
+"**No such guard exists yet — this test FAILS until the contract enforces the upper
+bound**" (T11c/T11d/T11e). The guard IS in the same diff
+(`CoverageNegotiation.sol:350-360` + `_containsNamePattern`) and the tests pass green.
+Stale red-phase TDD prose. Also: T11c/T11d build only an over-length input and assert the
+same `"evidence: url required"` / `"evidence: hint required"` string the empty-check
+emits, so they cannot prove the revert came from the cap rather than emptiness — fine as
+long as the comments don't claim otherwise. Delete the false comments.
+
+### F3 (MEDIUM) — `docs/progress/security-findings.md` "Residual / accepted" notes contradict the shipped code (doc-that-lies)
+The new security-review entry's residual list still asserts:
+"SPEC-0006 R14/R15 upper length caps … are specified but the contract enforces only
+`length > 0`" and "R15's `[A-Z][a-z]+ [A-Z]` PHI-name assertion is documented but not
+machine-enforced (impractical on-chain)." Both are FALSE for this tree — the caps and the
+on-chain `_containsNamePattern` reject ARE enforced and covered by T11c/d/e. A progress
+note that describes the *prior* un-remediated state as the current state is a lying doc;
+update it to "enforced" or delete the residual bullets.
+
+### F4 (LOW) — this file's prior FAIL entry was not reconciled (stale ledger)
+The immediately-preceding R14/R15/R17 entry in THIS file (the "FAIL — 6 live findings"
+block: C1 caps, C2 PHI reject, M1 14 ts-expect-error, M2 `createWithEvidence`, L1–L4)
+describes a state this tree no longer matches — all six are fixed. A reader hitting that
+block first will mis-judge the unit as still-failing. Either mark it superseded by this
+entry or note inline that C1/C2/M1/M2/L1–L4 are discharged.
+
+### Verified-correct (not findings)
+- Struct/ABI/RawNegotiation field order aligned end-to-end (…lastDecision[18],
+  lastRequestId[19], hasRuling[20], agentEvidenceUrl[21], agentPromptHint[22], round[23]…);
+  the `getNegotiation` tuple in `abi.ts` and `mapNegotiation` in `real.ts` decode it
+  correctly, including the previously-omitted `lastRequestId` slot now repaired here.
+- `simulated.ts` guard mirrors the contract byte-for-byte (`TextEncoder().encode().length`
+  for the 512/1024 caps; same `/[A-Z][a-z]+ [A-Z]/` regex). T11-simulated/-hint exercise
+  the real in-process backend via dynamic import of `dist/`, not a source-grep.
+- Propagation type-tight: both fields REQUIRED on `CreateContractParams`,
+  `FileRequestInput`, `NegotiationScript`; every TS caller supplies them; `tsc` clean.
+- `revertReasonMap.ts` union + copy map now include both new reverts (prior L4 fixed).
+
+---
+
+## Tick (gate re-review) — SPEC-0006 R14/R15/R17 per-neg evidence URL + prompt hint
+
+**Date:** 2026-06-03 (gatekeeper re-review of the working-tree diff vs `origin/main`)
+**Scope (unit):** per-neg `agentEvidenceUrl` + `agentPromptHint` on the `Negotiation`
+struct + `createContract`; remove contract-level global + `setAgentEvidenceUrl`; rewire
+`_fireAgent`; propagate through `CreateContractParams`/`simulated.ts`/`real.ts`; T9/T10/T11.
+**Build:** `tsc -p tsconfig.json --noEmit` clean; `npm run build` clean; `npx hardhat test`
+→ **98 passing** (incl. the 14 new R14/R15/R17 cases); `node --import tsx --test` → **209
+passing**.
+
+**Verdict: FAIL — 1 live finding (residual of the prior tick's F1, which itself
+under-counted the callers).**
+
+### G1 (HIGH) — `scripts/real-backend-localnode.mjs:225` still omits the now-required fields (runtime break; incomplete F1 remediation)
+The prior REMEDIATION tick fixed the **first** `createContract` caller in this file
+(the RealBackend block, now `:118-131`, carries `agentEvidenceUrl`/`agentPromptHint`) and
+the `orchestrator-demo.mjs` `baseScript`. But the file has a **second** caller — the
+`sim.createContract({…})` at `scripts/real-backend-localnode.mjs:225-236` that drives the
+"R11/T7: SimulatedBackend yields the IDENTICAL state sequence" parity smoke — and it was
+left untouched. Because `simulated.ts` now enforces the same non-empty guard, this call
+throws `"evidence: url required"` at runtime (reproduced in isolation against `dist/`),
+so `npm run test:real-local`'s parity section fails. `.mjs` is not covered by `tsc`, so
+the build stays green and the gap is invisible to the type-check. The prior F1 entry
+named only `:118-130`; this sibling caller was never listed.
+Fix: add non-empty `agentEvidenceUrl`/`agentPromptHint` to the `:225` object too.
+
+### Re-verified RESOLVED since the prior tick (not findings)
+- F1 (real caller + `orchestrator-demo.mjs`): both fixed in-tree — **but** the `:225` sim
+  caller above remains, so F1 is only partially discharged.
+- F2 (lying red-phase TDD comments in the T11c/d/e tests): gone — no "No such guard exists
+  yet" / "FAILS until …" prose remains; comments now describe the live guards.
+- F3 (`security-findings.md` residual notes claiming caps/PHI-reject unenforced):
+  corrected — `:41-42` now states the caps are enforced and covered by T11c/T11d.
+- F4 (stale prior FAIL ledger block): reconciled — `:9162` marks it SUPERSEDED, all 6
+  prior findings discharged.
+
+### Verified-correct (spot-checked this pass, not findings)
+- Struct ↔ `abi.ts` tuple ↔ `RawNegotiation` index map aligned end-to-end through the
+  inserted `lastRequestId`/`agentEvidenceUrl`/`agentPromptHint` slots; `real.ts`
+  `mapNegotiation` decodes raw[19..22] correctly.
+- Contract byte-caps (`bytes().length <= 512`/`<= 1024`) match `simulated.ts`
+  (`TextEncoder().encode().length`) and the spec's `bytes(...).length` wording (no
+  char-vs-byte drift). `_containsNamePattern` is equivalent to the TS `/[A-Z][a-z]+ [A-Z]/`
+  for the documented pattern; T11e exercises it.
+- `_fireAgent` now embeds `n.agentPromptHint` + `n.agentEvidenceUrl` (no global, no
+  hardcoded indication); T9/T10-fireAgent assert the bytes appear in `lastPayload`.
+- Every **TypeScript** caller (`Create.tsx`, `party-agent.ts`, `orchestrator.ts`, both
+  sim test `params()` helpers) supplies both fields; `revertReasonMap` union + copy
+  updated. The only un-propagated caller is the untyped `.mjs` one in G1.
+

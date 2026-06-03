@@ -170,6 +170,8 @@ interface SimNegotiation {
   createdAt: bigint;
   rulingDeadline: bigint;
   exists: boolean;
+  agentEvidenceUrl: string; // per-neg evidence URL (SPEC-0006 R14)
+  agentPromptHint: string;  // per-neg prompt hint (SPEC-0006 R15)
 }
 
 /**
@@ -224,6 +226,15 @@ let _nextUsedLeafHashes: `0x${string}`[] = [];
  */
 export function setNextUsedLeafHashes(arr: `0x${string}`[]): void {
   _nextUsedLeafHashes = arr;
+}
+
+/**
+ * Returns true when `s` contains the patient-name pattern [A-Z][a-z]+ [A-Z]
+ * (uppercase letter, one-or-more lowercase letters, a space, uppercase letter).
+ * Mirrors the Solidity `_containsNamePattern` defense-in-depth PHI guard (SPEC-0006 R15).
+ */
+function _containsNamePattern(s: string): boolean {
+  return /[A-Z][a-z]+ [A-Z]/.test(s);
 }
 
 /** In-memory backend behind the shared client interface. */
@@ -285,6 +296,18 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     if (params.providerAddr.toLowerCase() === params.insurerAddr.toLowerCase()) {
       throw new Error("create: self-contract");
     }
+    // SPEC-0006 R14: URL must be 1..512 bytes.
+    if (!params.agentEvidenceUrl || new TextEncoder().encode(params.agentEvidenceUrl).length > 512) {
+      throw new Error("evidence: url required");
+    }
+    // SPEC-0006 R15: hint must be 1..1024 bytes and must not contain a patient-name pattern.
+    if (
+      !params.agentPromptHint ||
+      new TextEncoder().encode(params.agentPromptHint).length > 1024 ||
+      _containsNamePattern(params.agentPromptHint)
+    ) {
+      throw new Error("evidence: hint required");
+    }
 
     const reqId = this.nextId++;
     const now = BigInt(Math.floor(Date.now() / 1000));
@@ -320,6 +343,8 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       createdAt: now,
       rulingDeadline: 0n,
       exists: true,
+      agentEvidenceUrl: params.agentEvidenceUrl,
+      agentPromptHint: params.agentPromptHint,
     });
 
     this.emit({
@@ -781,6 +806,8 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       createdAt: n.createdAt,
       rulingDeadline: n.rulingDeadline,
       exists: n.exists,
+      agentEvidenceUrl: n.agentEvidenceUrl,
+      agentPromptHint: n.agentPromptHint,
     };
   }
 
