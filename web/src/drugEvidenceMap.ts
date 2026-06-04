@@ -21,39 +21,40 @@ export interface EvidenceEntry {
  * Lecanemab, Tirzepatide, Dupilumab.
  */
 export const DRUG_EVIDENCE_MAP: Readonly<Record<string, EvidenceEntry>> = {
+  // Evidence URLs MUST be scraper-friendly static HTML for the Somnia LLM Parse
+  // Website agent (verified 2026-06-04). Wikipedia drug pages are used: every one
+  // returns static HTML with the drug's FDA-approval + indication content in the
+  // raw markup (free-probe verified), and the Adalimumab page is PROVEN to scrape
+  // successfully on-chain (testnet requestId 4435826 → Success). The prior
+  // MedlinePlus URLs were inconsistent (ustekinumab/dupilumab render the drug
+  // content via JS → empty scrape; the Lecanemab FDA PDF was a 404 + non-HTML).
   adalimumab: {
-    evidenceUrl:
-      "https://medlineplus.gov/druginfo/meds/a603010.html",
+    evidenceUrl: "https://en.wikipedia.org/wiki/Adalimumab",
     promptHint:
       "Evaluate whether adalimumab (Humira) is medically necessary and FDA-approved for the stated indication, referencing current ACCP/ACR criteria and biosimilar step-therapy requirements.",
   },
   semaglutide: {
-    evidenceUrl:
-      "https://medlineplus.gov/druginfo/meds/a618008.html",
+    evidenceUrl: "https://en.wikipedia.org/wiki/Semaglutide",
     promptHint:
       "Evaluate whether semaglutide (Ozempic/Wegovy) is medically necessary and FDA-approved for the stated indication, referencing ADA glycaemic-control guidelines and BMI/comorbidity criteria for the obesity indication.",
   },
   ustekinumab: {
-    evidenceUrl:
-      "https://medlineplus.gov/druginfo/meds/a611003.html",
+    evidenceUrl: "https://en.wikipedia.org/wiki/Ustekinumab",
     promptHint:
       "Evaluate whether ustekinumab (Stelara) is medically necessary and FDA-approved for the stated indication, referencing AAD/ACG moderate-to-severe disease criteria and prior biologic step-therapy history.",
   },
   lecanemab: {
-    evidenceUrl:
-      "https://www.accessdata.fda.gov/drugsatfda_docs/label/2023/761269s001lbl.pdf",
+    evidenceUrl: "https://en.wikipedia.org/wiki/Lecanemab",
     promptHint:
       "Evaluate whether lecanemab (Leqembi) is medically necessary and FDA-approved for the stated indication, referencing the accelerated approval criteria for early Alzheimer's disease, confirmed amyloid pathology requirements, and CMS coverage conditions.",
   },
   tirzepatide: {
-    evidenceUrl:
-      "https://medlineplus.gov/druginfo/meds/a622044.html",
+    evidenceUrl: "https://en.wikipedia.org/wiki/Tirzepatide",
     promptHint:
       "Evaluate whether tirzepatide (Mounjaro/Zepbound) is medically necessary and FDA-approved for the stated indication, referencing ADA glucose-lowering algorithm for type 2 diabetes or SURMOUNT trial BMI/comorbidity criteria for the obesity indication.",
   },
   dupilumab: {
-    evidenceUrl:
-      "https://medlineplus.gov/druginfo/meds/a617010.html",
+    evidenceUrl: "https://en.wikipedia.org/wiki/Dupilumab",
     promptHint:
       "Evaluate whether dupilumab (Dupixent) is medically necessary and FDA-approved for the stated indication, referencing AAD/AAAAI moderate-to-severe disease criteria, ICS or topical corticosteroid step-therapy requirements, and the approved age range for the specific indication.",
   },
