@@ -174,6 +174,9 @@ interface SimNegotiation {
   exists: boolean;
   agentEvidenceUrl: string; // per-neg evidence URL (SPEC-0006 R14)
   agentPromptHint: string;  // per-neg prompt hint (SPEC-0006 R15)
+  agentPhase: number;       // two-agent phase tracker (0=None/1=Scraping/2=Deciding — Amendment 0007)
+  pendingDecideFee: bigint; // parked LLM Inference fee for pending Decide-phase call (Amendment 0007)
+  pendingFeePayer: string;  // address of the fee payer for the parked decide fee (Amendment 0007)
 }
 
 /**
@@ -348,6 +351,9 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       exists: true,
       agentEvidenceUrl: params.agentEvidenceUrl,
       agentPromptHint: params.agentPromptHint,
+      agentPhase: 0,
+      pendingDecideFee: 0n,
+      pendingFeePayer: ethers.ZeroAddress,
     });
 
     this.emit({
@@ -947,6 +953,9 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       exists: n.exists,
       agentEvidenceUrl: n.agentEvidenceUrl,
       agentPromptHint: n.agentPromptHint,
+      agentPhase: n.agentPhase,
+      pendingDecideFee: n.pendingDecideFee,
+      pendingFeePayer: n.pendingFeePayer,
     };
   }
 

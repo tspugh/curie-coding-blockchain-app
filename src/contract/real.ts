@@ -696,6 +696,9 @@ export class RealBackend implements CoverageNegotiationClient {
       exists: raw[34] as boolean,
       agentEvidenceUrl: raw[22] as string,
       agentPromptHint: raw[23] as string,
+      agentPhase: Number(raw[35]),
+      pendingDecideFee: raw[36] as bigint,
+      pendingFeePayer: raw[37] as string,
     };
   }
 

@@ -154,6 +154,12 @@ export interface Negotiation {
   readonly agentEvidenceUrl: string;
   /** Per-negotiation prompt hint embedded in the inferString call (SPEC-0006 R15). */
   readonly agentPromptHint: string;
+  /** Current two-agent phase tracker (0=None, 1=Scraping, 2=Deciding — Amendment 0007 phase 1). */
+  readonly agentPhase: number;
+  /** Parked LLM Inference fee for the pending Decide-phase agent call (Amendment 0007). */
+  readonly pendingDecideFee: bigint;
+  /** Address of the fee payer for the parked decide fee (Amendment 0007). */
+  readonly pendingFeePayer: string;
 }
 
 /**
