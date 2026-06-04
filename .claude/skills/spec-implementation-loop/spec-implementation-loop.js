@@ -254,12 +254,31 @@ if (green && doCommit && mode !== 'creativity') {
   phase('Commit')
   const pushTarget = branch || orient && orient.branch || 'HEAD'
   const res = await agent(
-    `All gates are green for repo "${repo}". Make ONE clean commit and push.
-- COMMIT ON THE CURRENT BRANCH (${pushTarget}). Do NOT create, switch, or rename branches — no \`git checkout -b\`, no \`git switch -c\`, no feature branch. Verify you are on "${pushTarget}" via \`git -C ${repo} rev-parse --abbrev-ref HEAD\` before committing; if not, STOP and report instead of committing elsewhere.
-- Single conventional commit: feat(<scope>): / fix(<scope>): <unit>. Body: 2-4 bullets — what landed, the test added, which spec R-numbers it satisfies. Footer: \`Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>\`.
-- Update ${repo}/${stateFile}: increment tick, record this focus as done, refresh the verdict table. Do NOT re-introduce superseded/banned items (read the pivot block at the top of the state file first).
-- Pre-commit secret-scan must pass; NEVER use --no-verify or --force-push.
-- \`git -C ${repo} push origin ${pushTarget}\`.
+    `All gates are green for repo "${repo}". Commit the working tree and push.
+
+WHY THIS MATTERS: this loop commits DIRECTLY to the long-lived working branch
+"${pushTarget}". Pull requests are opened SEPARATELY by a human. A per-unit
+feature branch is WRONG here — it fragments the cascade and forces a manual
+fix-up every tick. Do not apply git-flow / feature-branch habits.
+
+The ONLY git commands you may run in this step are these THREE, verbatim, in
+order — no \`git checkout\`, no \`git switch\`, no \`git branch\`, no
+\`git checkout -b\`, no \`git rebase\`, no \`git stash\`, nothing else:
+
+  1. git -C ${repo} rev-parse --abbrev-ref HEAD
+     → MUST print exactly "${pushTarget}". If it prints anything else, STOP
+       immediately and return "wrong-branch: <name>" as your result. Do NOT
+       switch or create a branch to fix it — just stop.
+  2. git -C ${repo} add -A && git -C ${repo} commit -m "<message>"
+  3. git -C ${repo} push origin ${pushTarget}
+
+Commit message: ONE conventional commit — feat(<scope>): / fix(<scope>): <unit>.
+Body: 2-4 bullets (what landed, the test added, the spec R-numbers). Footer:
+\`Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>\`.
+Before committing, update ${repo}/${stateFile}: increment tick, record this focus
+as done, refresh the verdict table — and do NOT re-introduce superseded/banned
+items (read the pivot block at the top of the state file first).
+Pre-commit secret-scan must pass; NEVER use --no-verify or --force-push.
 Unit: ${unit.description}. Spec refs: ${(unit.specRefs || []).join(', ')}.
 Report the commit SHA and confirm the push succeeded.`,
     { label: 'commit+push', model: 'sonnet', phase: 'Commit' },
