@@ -21,6 +21,7 @@ import { test } from "node:test";
 import { ethers } from "ethers";
 
 import { PayerLine } from "../types/coverage.types.js";
+import { decodeNegotiationRaw } from "./real.js";
 import { SimulatedBackend } from "./simulated.js";
 import type { CreateContractParams } from "./types.js";
 
@@ -180,41 +181,72 @@ test("Amendment-0007: SimulatedBackend snapshot round-trip does not throw and ma
 });
 
 // ---------------------------------------------------------------------------
-// (f) decodeNegotiation (real.ts path) does not throw for valid raw[35-37]
-//     Synthetic raw-array round-trip: we construct a minimal fake RawNegotiation
-//     tuple that matches what the chain would return and verify decodeNegotiation
-//     accepts raw[35]=0, raw[36]=0n, raw[37]=ZeroAddress without error.
+// (f) decodeNegotiationRaw (real.ts test-seam) maps raw[35], raw[36], raw[37]
+//     to agentPhase, pendingDecideFee, pendingFeePayer correctly.
 //
-//     NOTE: RealBackend requires a wallet + network — we exercise decodeNegotiation
-//     indirectly by verifying the RawNegotiation type comment in real.ts documents
-//     indices 35-37 correctly (structural test) and that the SimulatedBackend
-//     snapshot values for the same fields are consistent with those defaults.
-//     A direct unit test of RealBackend.decodeNegotiation is deferred to the
-//     integration suite (requires a Somnia testnet node at chain 50312).
+//     We build a minimal synthetic 38-element tuple that matches the on-chain
+//     struct layout, set raw[35]=1 (Scraping), raw[36]=42n, raw[37]=INSURER,
+//     and verify decodeNegotiationRaw maps those three positions exactly. This
+//     is the highest-risk off-by-one surface of the 38-field sync: a position
+//     error at 35/36/37 would silently produce wrong values at runtime without
+//     this direct positional test. No live chain or wallet needed.
 // ---------------------------------------------------------------------------
 
-test("Amendment-0007: RawNegotiation type documents raw[35]=agentPhase, raw[36]=pendingDecideFee, raw[37]=pendingFeePayer (sync check)", async () => {
-  // Import real.ts indirectly through the contract index to confirm the module
-  // loads without TS compile errors after the three new fields are wired.
-  // The test file is compiled by tsx at import time — if real.ts still lacks the
-  // field mappings in decodeNegotiation this import will succeed (runtime check)
-  // but the TypeScript typecheck (tsc --noEmit) will catch the gap.
-  //
-  // Runtime guard: a snapshot from SimulatedBackend should produce the same
-  // three default values that a freshly-deployed on-chain negotiation would
-  // return at raw[35-37] — both sides default to (0, 0n, ZeroAddress).
-  const b = backend();
-  b.setCaller(PROVIDER);
-  const reqId = await b.createContract(PARAMS);
-  const n = await b.getNegotiation(reqId);
-  const nAny = n as unknown as Record<string, unknown>;
+test("Amendment-0007: decodeNegotiationRaw maps raw[35]=agentPhase, raw[36]=pendingDecideFee, raw[37]=pendingFeePayer with correct positional decode", () => {
+  // Build a synthetic 38-element raw tuple. Positions [0-34] use zero/false/empty
+  // defaults; we set [35-37] to non-zero sentinel values to prove the mapping is
+  // positionally exact (any off-by-one would produce 0/0n/ZeroAddress instead).
+  const ZERO_HASH = ethers.ZeroHash;
+  const ZERO_ADDR = ethers.ZeroAddress;
+  const raw: readonly unknown[] = [
+    /* [0]  providerId          */ 0n,
+    /* [1]  insurerId           */ 0n,
+    /* [2]  providerAddr        */ ZERO_ADDR,
+    /* [3]  insurerAddr         */ ZERO_ADDR,
+    /* [4]  drugRef             */ ZERO_HASH,
+    /* [5]  requestedAmount     */ 0n,
+    /* [6]  quantity            */ 0n,
+    /* [7]  daysSupply          */ 0n,
+    /* [8]  justificationHash   */ ZERO_HASH,
+    /* [9]  evidenceUri         */ ZERO_HASH,
+    /* [10] policyHash          */ ZERO_HASH,
+    /* [11] policyUri           */ ZERO_HASH,
+    /* [12] coveredAmount       */ 0n,
+    /* [13] escrowAmount        */ 0n,
+    /* [14] costPlusUnitPrice   */ 0n,
+    /* [15] nadacUnitPrice      */ 0n,
+    /* [16] rationaleHash       */ ZERO_HASH,
+    /* [17] clauseRef           */ "",
+    /* [18] standardRef         */ "",
+    /* [19] lastDecision        */ 0,
+    /* [20] lastRequestId       */ 0n,
+    /* [21] hasRuling           */ false,
+    /* [22] agentEvidenceUrl    */ "",
+    /* [23] agentPromptHint     */ "",
+    /* [24] round               */ 0n,
+    /* [25] payerLine           */ 0,
+    /* [26] appealRound         */ 0,
+    /* [27] providerAccepted    */ false,
+    /* [28] insurerAccepted     */ false,
+    /* [29] totalFees           */ 0n,
+    /* [30] state               */ 0,
+    /* [31] pendingRequestId    */ 0n,
+    /* [32] createdAt           */ 0n,
+    /* [33] rulingDeadline      */ 0n,
+    /* [34] exists              */ true,
+    /* [35] agentPhase          */ 1,     // sentinel: Scraping (not None=0)
+    /* [36] pendingDecideFee    */ 42n,   // sentinel: non-zero fee
+    /* [37] pendingFeePayer     */ INSURER, // sentinel: non-zero address
+  ];
 
-  // Confirms the simulated decoder (snapshot) and the real decoder (decodeNegotiation)
-  // will agree on the zero defaults for raw[35-37] once decodeNegotiation is patched.
-  assert.equal(nAny["agentPhase"], 0,
-    "raw[35]=agentPhase default (0 = None) must match on-chain initialisation");
-  assert.equal(nAny["pendingDecideFee"], 0n,
-    "raw[36]=pendingDecideFee default (0n) must match on-chain initialisation");
-  assert.equal(nAny["pendingFeePayer"], ethers.ZeroAddress,
-    "raw[37]=pendingFeePayer default (ZeroAddress) must match on-chain initialisation");
+  assert.equal(raw.length, 38, "synthetic tuple must have exactly 38 elements (38-field struct sanity check)");
+
+  const n = decodeNegotiationRaw(raw);
+
+  assert.equal(n.agentPhase, 1,
+    "raw[35] must decode to agentPhase=1 (Scraping) — positional mapping check");
+  assert.equal(n.pendingDecideFee, 42n,
+    "raw[36] must decode to pendingDecideFee=42n — positional mapping check");
+  assert.equal(n.pendingFeePayer, INSURER,
+    "raw[37] must decode to pendingFeePayer=INSURER — positional mapping check");
 });

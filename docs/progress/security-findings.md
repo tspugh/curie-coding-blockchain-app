@@ -1,3 +1,37 @@
+## 2026-06-04 (refresh 13) — Amendment 0007 phase-tracker off-chain sync (`agentPhase` / `pendingDecideFee` / `pendingFeePayer`) (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-04
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-derivation from source over the *current* diff (`.` vs `origin/main`), focused on the Amendment 0007 phase-tracker unit (`48f68a9`) and re-swept over the full branch hard gates.
+**Base:** `origin/main`
+**Branch:** `spec-6-implementation`
+**Change under review (the phase-tracker sync unit):** the TypeScript off-chain layer is brought into full sync with the 38-field on-chain `Negotiation` struct by adding three phase-tracker fields (Amendment 0007 phase 1: two-agent scrape→decide pipeline):
+- **edit** `src/types/coverage.types.ts` — adds `agentPhase: number` (0=None / 1=Scraping / 2=Deciding), `pendingDecideFee: bigint`, `pendingFeePayer: string` to the `Negotiation` interface (the single shared vocabulary for both backends + the web layer).
+- **edit** `src/contract/simulated.ts` — adds the same three fields to the mutable `SimNegotiation` mirror, initialises them in `createContract` to `0 / 0n / ethers.ZeroAddress`, and propagates them in `snapshot()`.
+- **edit** `src/contract/real.ts` — `decodeNegotiation` now maps `raw[35]` → `Number(agentPhase)`, `raw[36]` → `pendingDecideFee`, `raw[37]` → `pendingFeePayer`; the `RawNegotiation` tuple type documents indices 35–37.
+- **new** `src/contract/simulated.agentphase.test.ts` — 6 tests pinning: fresh-negotiation defaults (`agentPhase === 0`, `pendingDecideFee === 0n`, `pendingFeePayer === ZeroAddress`), the three field names exist on the snapshot, and a `snapshot()` round-trip that does not throw.
+
+**Build/test state verified this run:** `npm run typecheck` clean (`tsc --noEmit`, zero errors); `simulated.agentphase.test.ts` → 6/6 pass.
+
+**Verdict:** PASS (zero findings)
+
+### Hard gate — re-derived over the phase-tracker change
+
+| Gate | Result | Evidence (verified line-by-line this run) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | The three new fields carry only a phase enum (`uint8`), a fee amount (`uint256` wei), and a fee-payer wallet address — no clinical payload, no patient identifier, by type. The off-chain change is pure plumbing: it mirrors existing on-chain slots into TS; it commits nothing new on-chain and persists no data of its own. The only fixtures introduced are in `simulated.agentphase.test.ts` and are fully synthetic: addresses `0xaa…aa` / `0xbb…bb` (`"aa".repeat(20)` / `"bb".repeat(20)`), `drugRef = ethers.id("DRUG:adalimumab")` (a keccak hash of a drug name, not patient data), a generic non-PHI prompt hint `"Is coverage for this drug medically necessary?"`, and the public drug-info evidence URL `https://medlineplus.gov/druginfo/meds/a603013.html`. A diff-wide PHI scan over added code/fixture lines (SSN `\d{3}-\d{2}-\d{4}`, `MRN`, `DOB`/`date of birth`, `MM/DD/YYYY`, patient-name patterns) returned zero real-PHI matches — only NO-PHI guard assertions elsewhere in the branch. The on-chain `inferString` prompt (`CoverageNegotiation.sol:_fireDecide`, L1165–1170) is built from `agentPromptHint` (size-bounded ≤1024 B + `_containsNamePattern` defense-in-depth guard) + the public `agentEvidenceUrl` + scrape-agent-extracted *public* evidence + static framing — no patient justification body is ever concatenated on-chain; only its `keccak256` `justificationHash` is. |
+| No secrets | PASS | No private keys, mnemonics, API keys, tokens, or credentials in the added lines. A 64-hex scan over added code lines (`src/**`, `web/src/**`, `scripts/**`, `contracts/**`, `vite.config.ts`, `package.json`) returned exactly one match — `0xdeadbeef…0001`, an obvious synthetic test hash, not a key. `pendingFeePayer` is an *address* (public 20-byte value), not key material. The only tracked env file is `.env.example`, which holds empty placeholders and public contract/platform addresses (`0x461aeC33…`, `0x037Bb9C7…`) — no secret values. The two deterministic Anvil keys referenced in `scripts/real-backend-localnode.mjs` are pre-existing public test vectors (env-overridable) and are *not* in this diff's added lines. Branch-wide the diff is a net secret-surface *reduction*: the banned `@anthropic-ai/sdk` / `ANTHROPIC_API_KEY` self-host path is removed — `scripts/orchestrator-real.ts` is deleted (confirmed absent on disk this run) and no live `@anthropic-ai/sdk` / `new Anthropic` / `ANTHROPIC_API_KEY` import remains in `src/`, `web/src/`, `scripts/`, or `contracts/scripts/`. (`.env.example` still carries a stale `ANTHROPIC_API_KEY=` empty-placeholder comment block — a documentation-hygiene nit, not a secret and not a finding.) `.gitignore` changes only ADD ignores (`.codesign/`, `*.bak.*`, `coverage/`) — they never un-ignore a secret. |
+| Signing-key hygiene | PASS | This unit touches no key material, wallet, or signer — the three added fields are read-only decoded values (`snapshot()` / `decodeNegotiation`) and an initialiser writing constants (`0` / `0n` / `ethers.ZeroAddress`). No key is constructed, read, logged, embedded, or persisted. `pendingFeePayer` stores a public payer address only. Branch-wide unchanged: `scripts/verify-deploy.ts` reads `VITE_PRIVATE_KEY` solely to derive and log the **public** operator address (`new ethers.Wallet(...).address`), never the key, never a signed/sent tx. |
+
+### Additional checks (defense-in-depth, this unit)
+
+- **38-field struct parity.** The ABI tuple in `src/contract/abi.ts` (`getNegotiation` return) lists all 38 fields ending in `uint8 agentPhase, uint256 pendingDecideFee, address pendingFeePayer`, in declaration order; `real.ts`'s `RawNegotiation` indices `[35]/[36]/[37]` line up with those ABI positions; `simulated.ts`'s `snapshot()` returns the same key set. The three layers agree — no decode-offset / field-shift bug that could mis-attribute a value (e.g. read a fee as an address) was found.
+- **Type integrity.** `agentPhase` is decoded via `Number(raw[35])` (the enum is a small `uint8`, no precision loss); `pendingDecideFee` stays a `bigint` (no JS-number truncation of a wei amount); `pendingFeePayer` stays a `string` address. No lossy coercion that could corrupt an amount or address.
+- **No new I/O, network, or contract-call paths.** The change adds no `fetch`/`fs`/`child_process`/`eval`, no new write method, and no new event. Attack surface is unchanged by this unit.
+
+### Verdict: PASS (zero findings)
+
+---
+
 ## 2026-06-04 (refresh 12) — SPEC-0006 R21 `runLivenessDebounce` extraction (security-review, TOTAL-STICKLER, F4'-clearing pass)
 
 **Date:** 2026-06-04

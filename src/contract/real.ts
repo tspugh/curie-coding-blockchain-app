@@ -68,7 +68,7 @@ const LOG_PAGE_SIZE = 1_000;
 
 /**
  * Raw `Negotiation` tuple returned by ethers — field order matches the Solidity
- * struct (and `abi.ts`) EXACTLY. 37 fields (added lastRequestId, agentEvidenceUrl,
+ * struct (and `abi.ts`) EXACTLY. 38 fields (added lastRequestId, agentEvidenceUrl,
  * agentPromptHint per SPEC-0006 R14/R15; added agentPhase, pendingDecideFee,
  * pendingFeePayer per Amendment 0007 phase 1).
  */
@@ -112,6 +112,55 @@ type RawNegotiation = readonly [
   bigint, // [36] pendingDecideFee (parked LLM Inference fee for phase 2 — Amendment 0007)
   string, // [37] pendingFeePayer (address of the fee payer for the parked decide fee)
 ];
+
+/**
+ * Decode a raw 38-element `getNegotiation` tuple (as returned by ethers) into a
+ * typed {@link Negotiation} object. Exported for unit-testing without a live chain
+ * — callers may construct a synthetic tuple and verify the positional mapping.
+ *
+ * @internal test-seam — production code must go through {@link RealBackend.getNegotiation}.
+ */
+export function decodeNegotiationRaw(raw: readonly unknown[]): Negotiation {
+  return {
+    providerId: raw[0] as bigint,
+    insurerId: raw[1] as bigint,
+    providerAddr: raw[2] as string,
+    insurerAddr: raw[3] as string,
+    drugRef: raw[4] as string,
+    requestedAmount: raw[5] as bigint,
+    quantity: raw[6] as bigint,
+    daysSupply: raw[7] as bigint,
+    justificationHash: raw[8] as string,
+    evidenceUri: raw[9] as string,
+    policyHash: raw[10] as string,
+    policyUri: raw[11] as string,
+    coveredAmount: raw[12] as bigint,
+    escrowAmount: raw[13] as bigint,
+    costPlusUnitPrice: raw[14] as bigint,
+    nadacUnitPrice: raw[15] as bigint,
+    rationaleHash: raw[16] as string,
+    clauseRef: raw[17] as string,
+    standardRef: raw[18] as string,
+    lastDecision: Number(raw[19]) as Decision,
+    hasRuling: raw[21] as boolean,
+    round: raw[24] as bigint,
+    payerLine: Number(raw[25]) as PayerLine,
+    appealRound: Number(raw[26]),
+    providerAccepted: raw[27] as boolean,
+    insurerAccepted: raw[28] as boolean,
+    totalFees: raw[29] as bigint,
+    state: Number(raw[30]) as State,
+    pendingRequestId: raw[31] as bigint,
+    createdAt: raw[32] as bigint,
+    rulingDeadline: raw[33] as bigint,
+    exists: raw[34] as boolean,
+    agentEvidenceUrl: raw[22] as string,
+    agentPromptHint: raw[23] as string,
+    agentPhase: Number(raw[35]),
+    pendingDecideFee: raw[36] as bigint,
+    pendingFeePayer: raw[37] as string,
+  };
+}
 
 /** Raw `priceBasisOf` tuple returned by ethers — matches the view's return order. */
 type RawPriceBasis = readonly [
@@ -661,45 +710,7 @@ export class RealBackend implements CoverageNegotiationClient {
   // ---------------------------------------------------------------------
 
   private decodeNegotiation(raw: RawNegotiation): Negotiation {
-    return {
-      providerId: raw[0],
-      insurerId: raw[1],
-      providerAddr: raw[2],
-      insurerAddr: raw[3],
-      drugRef: raw[4],
-      requestedAmount: raw[5],
-      quantity: raw[6],
-      daysSupply: raw[7],
-      justificationHash: raw[8],
-      evidenceUri: raw[9],
-      policyHash: raw[10],
-      policyUri: raw[11],
-      coveredAmount: raw[12],
-      escrowAmount: raw[13],
-      costPlusUnitPrice: raw[14],
-      nadacUnitPrice: raw[15],
-      rationaleHash: raw[16],
-      clauseRef: raw[17],
-      standardRef: raw[18],
-      lastDecision: Number(raw[19]) as Decision,
-      hasRuling: raw[21] as boolean,
-      round: raw[24] as bigint,
-      payerLine: Number(raw[25]) as PayerLine,
-      appealRound: Number(raw[26]),
-      providerAccepted: raw[27] as boolean,
-      insurerAccepted: raw[28] as boolean,
-      totalFees: raw[29] as bigint,
-      state: Number(raw[30]) as State,
-      pendingRequestId: raw[31] as bigint,
-      createdAt: raw[32] as bigint,
-      rulingDeadline: raw[33] as bigint,
-      exists: raw[34] as boolean,
-      agentEvidenceUrl: raw[22] as string,
-      agentPromptHint: raw[23] as string,
-      agentPhase: Number(raw[35]),
-      pendingDecideFee: raw[36] as bigint,
-      pendingFeePayer: raw[37] as string,
-    };
+    return decodeNegotiationRaw(raw);
   }
 
   private extractReqIdFromReceipt(

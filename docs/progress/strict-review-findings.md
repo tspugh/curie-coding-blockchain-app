@@ -1,3 +1,78 @@
+## Amendment 0007 — phase-tracker fields (`agentPhase`/`pendingDecideFee`/`pendingFeePayer`) off-chain sync (TOTAL-STICKLER, gate FAIL)
+
+**Date:** 2026-06-04
+**Branch:** `spec-6-implementation` vs `origin/main`. Unit commit `48f68a9`.
+**Reviewer:** Claude Opus 4.8 (strict-review gate, TOTAL-STICKLER) — independent
+re-derivation from source over the current diff (`.` vs `origin/main`), scoped to the
+unit that adds the three Amendment-0007 phase-tracker fields to the off-chain
+`Negotiation` interface and both decoder paths.
+
+**Unit under review:**
+- `src/types/coverage.types.ts` — `Negotiation` gains `agentPhase: number`,
+  `pendingDecideFee: bigint`, `pendingFeePayer: string`.
+- `src/contract/simulated.ts` — `SimNegotiation` gains the three fields; initialised to
+  `0 / 0n / ethers.ZeroAddress` in `createContract`; propagated in `snapshot()`.
+- `src/contract/real.ts` — `decodeNegotiation` maps `raw[35]/[36]/[37]`.
+- `src/contract/simulated.agentphase.test.ts` — 6 tests.
+
+**What is correct (verified, not taken on faith):**
+- Struct/index alignment is exact. `CoverageNegotiation.sol` `struct Negotiation`
+  (lines 122-177) has 38 fields; declaration-order enumeration confirms (0-based)
+  `exists=raw[34]`, `agentPhase=raw[35]`, `pendingDecideFee=raw[36]`,
+  `pendingFeePayer=raw[37]`. The `abi.ts` `getNegotiation` tuple ends with
+  `... bool exists, uint8 agentPhase, uint256 pendingDecideFee, address pendingFeePayer`,
+  matching the positional decode. `RealBackend.decodeNegotiation` decodes the full
+  array consistently.
+- `agentPhase: Number(raw[35])` correctly coerces the ethers `uint8`/bigint enum to
+  `number`; `pendingFeePayer` typed `string` (address); `pendingDecideFee` typed `bigint`.
+- `tsc --noEmit` is clean (exit 0). Typecheck completeness implies no other
+  `Negotiation`/`SimNegotiation` literal silently drops the fields.
+- The 6 tests run green via `tsx --test`.
+
+**Verdict: FAIL — 2 findings.**
+
+### F-A0007-1 (LIE/WEAK-TEST, must-fix) — test (f) name + comment describe a synthetic `decodeNegotiation` round-trip that the body never performs
+
+`src/contract/simulated.agentphase.test.ts:182-220`. The test is named
+`"... RawNegotiation type documents raw[35]=agentPhase ... (sync check)"` and its header
+block states (lines 183-186):
+
+> (f) decodeNegotiation (real.ts path) does not throw for valid raw[35-37]
+>     Synthetic raw-array round-trip: we construct a minimal fake RawNegotiation
+>     tuple that matches what the chain would return and verify decodeNegotiation
+>     accepts raw[35]=0, raw[36]=0n, raw[37]=ZeroAddress without error.
+
+No such tuple is constructed and `decodeNegotiation` is never called — `grep` confirms the
+file contains no `raw[`-index construction, no `RawNegotiation` value, no `RealBackend`
+instantiation, and no `decodeNegotiation` invocation. Lines 188-193 then *contradict* the
+preceding lines in the same block ("we exercise decodeNegotiation indirectly ... A direct
+unit test of RealBackend.decodeNegotiation is deferred to the integration suite"). The
+actual body (206-220) re-creates a SimulatedBackend negotiation and re-asserts the
+`(0, 0n, ZeroAddress)` snapshot defaults already covered by tests (a)/(b)/(c)/(e) — so it
+adds no new coverage and asserts presence-of-defaults, not correctness of the real decoder
+it names. The lines 184-186 comment lies about code that does not exist. The real.ts
+positional decode (the highest-risk part of this unit — an off-by-one at raw[35-37] would
+silently mis-map fields and is exactly what "full sync" must guard) is therefore
+**untested**. Fix: either construct a 38-element synthetic raw tuple and assert
+`decodeNegotiation` maps [35]/[36]/[37] to `agentPhase`/`pendingDecideFee`/`pendingFeePayer`
+(make the method testable or build the tuple and decode via a thin seam), or delete the
+redundant test and its misleading comment outright. Do not leave a test whose name and
+comment claim coverage it does not provide.
+
+### F-A0007-2 (LYING-COMMENT, must-fix) — `RawNegotiation` header says "37 fields" for a 38-entry tuple
+
+`src/contract/real.ts:70-74`. The header reads "37 fields (added lastRequestId,
+agentEvidenceUrl, agentPromptHint per SPEC-0006 R14/R15; added agentPhase, pendingDecideFee,
+pendingFeePayer per Amendment 0007 phase 1)." The tuple immediately below lists entries
+`[0]`–`[37]` = **38** entries, matching the 38-field on-chain struct and the abi.ts tuple.
+The count "37" is wrong (stale from before the three Amendment-0007 fields were appended).
+This is precisely the sync-documentation that this unit's stated goal — "full sync with the
+38-field on-chain struct" — is supposed to make truthful. Fix: change "37 fields" to
+"38 fields". (Introduced in `26dac4c`, but it is within the diff vs `origin/main` and the
+unit's charter is the 38-field sync, so it is in scope.)
+
+---
+
 ## SPEC-0006 R21 — `runLivenessDebounce` extraction clears F4' (TOTAL-STICKLER, gate PASS)
 
 **Date:** 2026-06-04
