@@ -1,11 +1,80 @@
 # Browser-verify
 
-Last run: SPEC-0006 R21 browser-verify re-run — 2026-06-04 —
-**sim-mode harness 109/109 PASS** across 23 scenarios. Unit tests 322/322 PASS.
-SPEC-0006 R21 implementation confirmed complete end-to-end: `urlLiveness.ts`,
-`urlLiveness.test.ts`, `Create.tsx` useEffect + liveness banner, `vite.config.ts`
-`urlProbePlugin` middleware, `livenessGate.ts`, `probeHandler.ts`,
-`Create.liveness.test.ts` — all green.
+Last run: Extract-Create `runLivenessDebounce` unit — 2026-06-04 —
+**sim-mode harness 109/109 PASS** across 23 scenarios. Unit tests 331/331 PASS.
+F4' (strict-review gate FAIL) resolved: `runLivenessDebounce` extracted from
+`Create.tsx`'s `useEffect` into `web/src/livenessDebounce.ts` (pure, injectable,
+no React dependency); 9 new unit tests in `web/src/livenessDebounce.test.ts`
+covering debounce firing, stale-response cancellation, and empty-URL short-circuit.
+Gate turns from FAIL to PASS.
+
+## Extract-Create `runLivenessDebounce` unit — 2026-06-04
+
+Branch: `spec-6-implementation`
+
+### Unit tests — 331/331 PASS
+
+Run: `npm run test:lib`
+
+```
+# tests 331
+# suites 0
+# pass 331
+# fail 0
+# duration_ms 10098
+```
+
+New tests in `web/src/livenessDebounce.test.ts` (9 tests):
+- debounce fires after PROBE_DEBOUNCE_MS: onResult NOT called before delay, IS called once after
+- cleanup cancels in-flight probe — stale-response guard discards result
+- empty URL returns immediately without scheduling timer or calling probe/onResult
+- whitespace-only URL treated as empty — same short-circuit
+- cleanup before debounce fires: cancels timer so probe is never called
+- sim mode (isReal=false): helper still schedules and delivers result
+- PROBE_DEBOUNCE_MS exported and equals 600
+- module has no React import (pure function contract)
+- R1 NO-PHI: no SSN/DOB/phone/email patterns in test fixtures
+
+### E2E harness — 109/109 PASS
+
+Build: `VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run build && VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run web:build`
+Run: `SKIP_SERVE=1 SKIP_BUILD=1 CHROME_PATH=$HOME/.cache/ms-playwright/chromium-1223/chrome-linux/chrome bash web/tests/agent-browser/run.sh`
+
+```
+Scenario A   happy-path lifecycle            7/7
+Scenario B   no PHI on-chain                 3/3
+Scenario C   adjudication gating             1/1
+Scenario C2  policy invalidated              4/4
+Scenario D   profile switching               4/4
+Scenario E   sample case prefill             7/7
+Scenario F   note verify                     2/2
+Scenario G   observer / non-party            3/3
+Scenario H   CDS Hooks prefill               4/4
+Scenario I   persisted users                 4/4
+Scenario J   demo-mode toggle                8/8
+Scenario K   key-paste derives address       6/6
+Scenario L3  provider refuse                 5/5
+Scenario L1  evidence resubmit               5/5
+Scenario L2  appeal                          5/5
+Scenario L4  withdraw                        4/4
+Scenario L10 payer-line round-trip           2/2
+Scenario L7  custom-policy composer          4/4
+Scenario L5  provider feedback note          3/3
+Scenario M1  denial happy-path               6/6
+Scenario M2  NeedMoreEvidence -> Denied      5/5
+Scenario M3  appeal -> Denied                5/5
+Scenario R25 commitRationale + rationale card 12/12
+──────────────────────────────────────────
+Total: 109 passed, 0 failed
+```
+
+### F4' resolution summary
+
+The only remaining strict-review FAIL finding (F4') was: the `useEffect` debounce +
+stale-response cancellation in `Create.tsx` had no executing test. Fixed by extracting
+the logic into `runLivenessDebounce` (`web/src/livenessDebounce.ts`), a pure, injectable
+helper with no React dependency, and adding `web/src/livenessDebounce.test.ts` with 9
+unit tests. `Create.tsx` delegates its `useEffect` body to the new helper. Gate: PASS.
 
 ## SPEC-0006 R21 browser-verify re-run — 2026-06-04
 

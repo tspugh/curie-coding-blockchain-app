@@ -1,3 +1,89 @@
+## SPEC-0006 R21 — `runLivenessDebounce` extraction clears F4' (TOTAL-STICKLER, gate PASS)
+
+**Date:** 2026-06-04
+**Branch:** `feat/livenessDebounce-extraction` vs `origin/main`.
+**Reviewer:** Claude Opus 4.8 (strict-review gate, TOTAL-STICKLER) — independent
+re-derivation from source over the *current* diff (`.` vs `origin/main`), focused on the
+unit that clears the sole remaining strict-review FAIL finding **F4'**.
+
+**Unit under review:** extraction of `Create.tsx`'s `useEffect` debounce + stale-response
+guard into a pure, injectable helper, plus its unit tests and the `Create.tsx` rewire:
+
+- **new** `web/src/livenessDebounce.ts` — `runLivenessDebounce(url, isReal, onResult, options?)`:
+  a `setTimeout` + boolean-`cancelled`-flag helper. No React import (verified). Its only
+  effect is calling the injected `onResult` once the injected `probe` resolves, gated by the
+  `cancelled` flag set in the returned cleanup. Empty/whitespace `url` short-circuits to a
+  no-op cleanup (no timer, no probe, no `onResult`). Defaults to `probeUrlLiveness` +
+  `PROBE_DEBOUNCE_MS = 600`.
+- **new** `web/src/livenessDebounce.test.ts` — 9 behavioral tests (see below).
+- **edit** `web/src/views/Create.tsx:74-84` — the `useEffect` now delegates to
+  `runLivenessDebounce(agentEvidenceUrl, IS_REAL, setUrlLivenessResult)`; the inline
+  `setTimeout`/`cancelled`/`timerId` block, the local `PROBE_DEBOUNCE_MS`, the direct
+  `probeUrlLiveness` import, and the unused `useRef` import are gone (`grep` confirms none
+  of these tokens remain in `Create.tsx`).
+
+**Verdict: PASS — zero findings.**
+
+### F4' — RESOLVED (the mandated extraction-and-test is exactly what landed)
+
+F4' asked for the debounce + stale-response cancellation to be factored into a pure,
+injectable helper and unit-tested, rather than left as the one untested limb behind a
+hand-rewritten replica. That is precisely what `runLivenessDebounce` + its test deliver.
+The three F4'-named behaviors each have a *real, executing* test that asserts correctness,
+not presence:
+
+- **Debounce fires** (`livenessDebounce.test.ts:74-97`) — asserts `onResult` is NOT called
+  before `PROBE_DEBOUNCE_MS` elapses and IS called exactly once after, with the correct
+  result payload. Pins the timing contract, not just "a call happened".
+- **Stale-response cancellation** (`:103-136`) — uses a *hanging* probe: fires the debounce
+  so the probe is genuinely in-flight, calls `cleanup()`, *then* resolves the probe, and
+  asserts the result is discarded. This reaches the real `if (!cancelled)` branch
+  (`livenessDebounce.ts:79`) — the exact branch F4' said had zero coverage. Not a
+  same-URL replica trick; a true latest-wins cancellation.
+- **Empty-URL short-circuit** (`:142-175`) — asserts an empty `url` schedules no timer,
+  calls neither `probe` nor `onResult` even after `PROBE_DEBOUNCE_MS + 100` ms.
+
+Plus four reinforcing tests (whitespace-only treated as empty; early `cleanup()` cancels
+the timer so `probe` is never called; sim mode passes `sim=true` to the probe; the
+`PROBE_DEBOUNCE_MS === 600` pin) and two invariants (the module has no `from "react"`
+import; a NO-PHI fixture regression). The probe is *injected*, not mocked-where-integration-
+is-required: the helper is genuinely pure (timer + flag), so injection is the correct seam,
+and the production default remains the real `probeUrlLiveness`.
+
+### Anti-pattern sweep — nothing to flag
+
+- **Over-engineering / dead params.** The `isReal` arg is not dead: it is wired to the
+  probe's real `sim` argument (`probe(trimmed, !isReal)`, `:78`), keeping the helper
+  faithful to the `probeUrlLiveness(url, sim)` contract; hard-coding `sim=false` would be a
+  worse, less-honest seam. `Create.tsx`'s separate sim-mode early-return is documented in
+  the helper's own contract (`:13-15, 44-49`) as caller-enforced — comment matches code.
+- **Dead exports.** `ProbeFunction` / `LivenessDebounceOptions` are exported to type the
+  injection seam (the `options.probe` param and options bag) — the entire point of the
+  testable helper; both are referenced inside the module. Not dead.
+- **Weak tests.** None — every assertion checks a behavior/value, not mere presence; the
+  stale-guard test exercises the previously-uncovered cancellation branch.
+- **Lying / restating comments.** Comments are accurate (verified line-by-line). The
+  `Create.tsx` useEffect comment correctly says the debounce/guard is delegated to the
+  helper; the helper's docstring correctly scopes what it does and does NOT enforce.
+- **DRY / copy-paste.** Clean separation: timer+guard here, gate decision in
+  `livenessGate.ts`, probe + cache in `urlLiveness.ts`, server fetch in `probeHandler.ts`.
+  No duplication; no premature abstraction.
+- **Spec drift.** `PROBE_DEBOUNCE_MS = 600` is consistent across helper, test pin, and the
+  `Create.tsx` "Fires 600 ms" comment. R21's UI-gate intent is preserved.
+
+### Gate evidence (re-run this pass)
+
+- `node --import tsx --test web/src/livenessDebounce.test.ts` → **9/9 PASS**.
+- `node --import tsx --test "web/src/**/*.test.ts"` → **89/89 PASS** (no regression).
+- `npx tsc -p tsconfig.json --noEmit` → clean (exit 0).
+- `grep` confirms `Create.tsx` retains no `useRef`, no local `PROBE_DEBOUNCE_MS`, no direct
+  `probeUrlLiveness`/`setTimeout`/`cancelled`/`timerId`; the F1/F2/F3 leftovers
+  (`runLivenessEffect`, `mock.timers`, `seedLivenessCacheEntry`) are absent repo-wide.
+
+**Strict gate for SPEC-0006 R21: FAIL → PASS.** All of F1, F2, F3, F4, F4' are resolved.
+
+---
+
 ## SPEC-0006 R21 — pre-submit evidence-URL liveness check (`urlLiveness.ts` + `probeHandler.ts` + `livenessGate.ts` + `__probe` proxy + `Create.tsx`) (TOTAL-STICKLER, gate FAIL)
 
 **Date:** 2026-06-04

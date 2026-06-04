@@ -1,3 +1,52 @@
+## 2026-06-04 (refresh 12) — SPEC-0006 R21 `runLivenessDebounce` extraction (security-review, TOTAL-STICKLER, F4'-clearing pass)
+
+**Date:** 2026-06-04
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-derivation from source over the *current* diff (`.` vs `origin/main`), including the working-tree refactor that clears the strict-review FAIL finding F4'.
+**Base:** `origin/main`
+**Branch:** `spec-6-implementation`
+**Change under review (the F4'-clearing unit):** the debounce + stale-response-guard
+logic of `Create.tsx`'s evidence-URL liveness `useEffect` is extracted into a pure,
+injectable helper and unit-tested:
+- **new** `web/src/livenessDebounce.ts` — `runLivenessDebounce(url, isReal, onResult, options?)`: a pure timer + stale-guard helper. No React import, no network/fs/`eval`/`env`/`child_process`; its only effect is calling the injected `onResult` once the injected `probe` resolves, gated by a `cancelled` flag set in the returned cleanup. Defaults to `probeUrlLiveness` + `PROBE_DEBOUNCE_MS = 600`.
+- **new** `web/src/livenessDebounce.test.ts` — 9 tests: debounce fires after the delay, cleanup cancels an in-flight probe (stale-response guard), empty/whitespace URL short-circuit (no timer, no probe, no `onResult`), early-cleanup cancels the timer, sim-mode passes `sim=true` to the probe, `PROBE_DEBOUNCE_MS === 600`, the module has no React import, and a NO-PHI fixture regression.
+- **edit** `web/src/views/Create.tsx` — the `useEffect` now delegates to `runLivenessDebounce(agentEvidenceUrl, IS_REAL, setUrlLivenessResult)`; the inline `setTimeout`/`cancelled`/`timerId` block, the local `PROBE_DEBOUNCE_MS` constant, the `probeUrlLiveness` import, and the now-unused `useRef` import are removed.
+
+**Verdict:** PASS (zero findings)
+
+**Strict-review cross-reference:** this pass clears strict-review finding **F4'** (the
+`useEffect` debounce + stale-response cancellation had no executing test). The fix is the
+extraction-and-unit-test mandated by F4' itself; F1–F4 of that strict review were already
+resolved (`mock` import / `runLivenessEffect` dead scaffold / `seedLivenessCacheEntry`
+test-only export all gone — verified in source this run). Strict gate FAIL → PASS.
+
+### Hard gate — re-derived over the F4'-clearing change
+
+| Gate | Result | Evidence (verified line-by-line this run) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | The extraction adds **no on-chain field and no fixture data**. `runLivenessDebounce` handles only a `url: string` it never persists; it commits nothing on-chain (it runs pre-submit, before `createContract`). The sole fixture in `livenessDebounce.test.ts` is the synthetic public URL `https://medlineplus.gov/druginfo/meds/a603010.html`; the file ships its own NO-PHI regression test (SSN/DOB/phone/email regex over the fixtures, all asserted absent). Diff-wide PHI scan over **added** code lines (`*.ts/*.tsx/*.sol/*.mjs/*.js`) returned only PHI-*absence* guard assertions (e.g. the `ZZ_SECRET_PHI_TOKEN` sentinel checked for absence, `R1 NO-PHI` DOB/SSN negative regexes) and the synthetic rejected-input probe — no real PHI. The off-chain patient justification is unchanged; only its `keccak256` hash remains the on-chain artefact. |
+| No secrets | PASS | `livenessDebounce.ts` / `.test.ts` / the `Create.tsx` edit contain **no** private keys, mnemonics, API keys, tokens, or credentials, and perform no env/fs/network I/O of their own (the helper calls only an *injected* probe; in production that probe is the existing dev-only `/__probe` path). The only 64-hex string anywhere in the added diff lines is the synthetic test hash `0xdeadbeef…0001`. Branch-wide the diff remains a net secret-surface *reduction* (the banned `@anthropic-ai/sdk` / `ANTHROPIC_API_KEY` self-host path is deleted). `.env*` stay gitignored/untracked; `.gitignore` changes only ADD ignores. |
+| Signing-key hygiene | PASS | The F4'-clearing change touches **no** key material, wallet, or signer — `runLivenessDebounce` is a `setTimeout` + boolean-flag helper with no crypto, and the `Create.tsx` edit only moves that logic out of the component. No key is constructed, read, logged, embedded, or persisted. Branch-wide unchanged from refresh 11: `verify-deploy.ts` reads `VITE_PRIVATE_KEY` solely to derive and log the **public** operator address, never the key, never a signed/sent tx. |
+
+### SSRF surface — unchanged, still documented-not-a-finding
+
+The extraction does **not** touch the `GET /__probe?url=<encoded>` dev-server middleware,
+the only server-side-fetch-of-caller-URL surface. It remains registered exclusively inside
+`configureServer` (Vite dev-server only — absent from `vite build` and `vite preview`),
+downloads ≤ 1 byte (`Range: bytes=0-0`) under a 10 s timeout, and returns only
+`{ ok, status, error? }` (body never forwarded). Adjudication is identical to refresh 11:
+dev-only, bounded blast radius, must gain an RFC-1918/link-local/metadata allowlist if ever
+promoted to production. `runLivenessDebounce` calls this only via an injected/default probe;
+it adds no new network reach. No action required.
+
+### Verification this run
+
+- `node --import tsx --test web/src/livenessDebounce.test.ts` → **9/9 PASS**.
+- `node --import tsx --test "web/src/**/*.test.ts"` → **89/89 PASS** (no regression from the extraction).
+- `npm run typecheck` (`tsc -p tsconfig.json --noEmit`) → **clean** (no errors).
+- `grep` confirms `Create.tsx` retains no `useRef`, no local `PROBE_DEBOUNCE_MS`, no direct `probeUrlLiveness` import — all delegated to the helper.
+
+---
+
 ## 2026-06-04 (refresh 11) — SPEC-0006 R21 pre-submit evidence-URL liveness check (security-review, TOTAL-STICKLER re-run)
 
 **Date:** 2026-06-04
