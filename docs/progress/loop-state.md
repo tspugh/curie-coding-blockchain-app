@@ -60,11 +60,11 @@ block, not the stale verdict table below (kept for audit trail only).
 
 ---
 
-**Last updated:** 2026-06-03 (tick 151 — `feat(web)`: SPEC-0006 R16/R18/R20 drug-evidence map + Create.tsx auto-fill + form validation. `web/src/drugEvidenceMap.ts` ships all six R18 fixtures (Adalimumab, Semaglutide, Ustekinumab, Lecanemab, Tirzepatide, Dupilumab) with brand-alias resolution. `Create.tsx` wires `applyDrugLookup` to the drug-name field — auto-fills `agentEvidenceUrl` + `agentPromptHint` on match; manual override preserved; submit button disabled while either field is empty. Hardcoded MedlinePlus fallback and generic prompt hint replaced by state values. 234/234 tests pass. Tick counter advanced 150 → 151.)
-**Current mode:** `impl` — SPEC-0006 cascade on `spec-6-implementation`. Landed: inferString migration + self-host teardown (`ac142c1`), per-neg agentEvidenceUrl/agentPromptHint (`b4e92d4`), drug-evidence map + Create.tsx auto-fill (`1a0c57f`). NO `ANTHROPIC_API_KEY` / orchestrator / `0x2c561f33…` — those are BANNED (see pivot block).
-**Current tick:** 151
-**Last focus:** SPEC-0006 R16/R18/R20 — drug-evidence map (`drugEvidenceMap.ts`) + Create.tsx auto-fill + form validation. All six R18 drug fixtures present; brand aliases resolve; submit gated on non-empty evidence URL and prompt hint.
-**Last commit:** `399b99f` (tick 150 tighten AC4 + verify 97/97 E2E) → tick 151 commits drug-evidence map integration.
+**Last updated:** 2026-06-04 (tick 152 — `feat(amendment-0007)`: Add phase-tracker fields (`agentPhase`, `pendingDecideFee`, `pendingFeePayer`) to off-chain `Negotiation` interface and both decoder paths, bringing the TypeScript layer into full sync with the 38-field on-chain struct. `src/types/coverage.types.ts` + `src/contract/simulated.ts` (SimNegotiation + createContract init + snapshot) + `src/contract/real.ts` (raw[35-37] positional decode) + `src/contract/simulated.agentphase.test.ts` (6 tests: zero-state, structural field-name, snapshot round-trip, positional decode). 337/337 lib tests + 166/166 hardhat tests pass. Tick counter advanced 151 → 152.)
+**Current mode:** `impl` — SPEC-0006 cascade on `spec-6-implementation`. Landed: inferString migration + self-host teardown (`ac142c1`), per-neg agentEvidenceUrl/agentPromptHint (`b4e92d4`), drug-evidence map + Create.tsx auto-fill (`1a0c57f`), Amendment 0007 phase-tracker fields (`48f68a9`, `9b3095a`, `7c5dcfa`). NO `ANTHROPIC_API_KEY` / orchestrator / `0x2c561f33…` — those are BANNED (see pivot block).
+**Current tick:** 152
+**Last focus:** Amendment 0007 phase-tracker fields — `agentPhase` (0=None/1=Scraping/2=Deciding), `pendingDecideFee`, `pendingFeePayer` added to `Negotiation` interface, `SimNegotiation`, `createContract` init, `snapshot()`, and `decodeNegotiationRaw` raw[35–37] mapping. 6 tests in `simulated.agentphase.test.ts` all pass. Strict review: ZERO findings, gate PASS.
+**Last commit:** `7c5dcfa` (tick 152 — Amendment 0007 phase-tracker fields complete, strict review PASS)
 
 > **History rotation note (tick 145):** earlier reviewer-history blocks (ticks
 > 122-128), tick-summary blocks (115-120, 107-113, 98-106, and the older 90-96
@@ -79,8 +79,8 @@ block, not the stale verdict table below (kept for audit trail only).
 | `npm test` (umbrella) | ✓ PASS — chain runs in ~19s end-to-end |
 | `npm run check-ruling-abi` | ✓ static + 5/5 round-trips |
 | TypeScript typecheck | ✓ project tsc clean |
-| Lib tests | ✓ **234/234** (tick 151: +25 drugEvidenceMap tests) |
-| Hardhat tests | ✓ **61/61** (Amendment 0006 + R26 + admin-setter + state-guard) |
+| Lib tests | ✓ **337/337** (tick 152: +6 Amendment 0007 agentphase tests; 234→337 across ticks 151–152) |
+| Hardhat tests | ✓ **166/166** (includes Amendment 0007 phase-tracker + escrow + scrape coverage) |
 | Coverage (src/, measured subset) | ✓ 98.85% line / 92.25% branch — PASS |
 | Coverage (src/contract/simulated.ts single file) | ⚠ 75.45% branch (was 68.63%; +6.82pp tick 144) — subset overall still PASS |
 | Coverage (contracts/, CoverageNegotiation.sol) | ✓ 86.42% branch — PASS ≥85% gate |
@@ -105,13 +105,7 @@ OR `ANTHROPIC_API_KEY` for a smaller-scope Tick A live smoke (current STT
 sufficient for that).
 
 **Top-of-queue (SPEC-0006 cascade — supersedes the stale Amendment-0006 queue below the pivot block):**
-1. **Two-agent scrape phase** (Amendment 0007 phase 1): `requestAdjudication`
-   fires **LLM Parse Website** (`12875401142070969085`, `ExtractString`
-   `0xc2dd1a7a`) to scrape `agentEvidenceUrl`; its callback fires **LLM
-   Inference** (`inferString`) to decide. Add the `agentPhase`
-   (None→Scraping→Deciding) tracker + fund both calls from `requestAdjudication`.
-   (SPEC-0006 §3.6.1; this is why Medicaid evidence works — reason over scraped
-   policy text, not an ICD-10 lookup.)
+1. **Two-agent scrape phase off-chain sync** ✓ DONE (tick 152) — `agentPhase` / `pendingDecideFee` / `pendingFeePayer` fields added to `Negotiation` interface, `SimNegotiation`, `createContract` init, `snapshot()`, and `decodeNegotiationRaw` raw[35–37]. 6 tests pass. **Next sub-unit:** wire the on-chain `_fireAgent` two-step (LLM Parse Website `12875401142070969085` `ExtractString 0xc2dd1a7a` scrape → LLM Inference `inferString` decide) into `CoverageNegotiation.sol:_fireScrape` + `_handleScrapeResponse`; fund both calls from `requestAdjudication`; redeploy. (SPEC-0006 §3.6.1.)
 2. **`commitRationale` + receipts** (Amendment 0007 §5, R24): keeper fetches the
    LLM Inference receipt by `requestId` (`receipts.testnet.agents.somnia.host`),
    commits real reasoning text + keccak256 on-chain. (Already partly landed in
