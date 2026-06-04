@@ -603,8 +603,6 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
         appealRound={n.appealRound}
       />
 
-      <RulingRationaleCard events={timeline} />
-
       <div className={`detail-grid${isInsurer ? " is-insurer" : ""}`}>
         <div className="card actions">
           {nextStep && isParty && (
@@ -1050,64 +1048,6 @@ function decisionLabel(d: Decision): string {
     case Decision.PolicyInvalid: return "Policy Voided";
     default: return "Unknown";
   }
-}
-
-/**
- * R25 rationale card. Renders every `RulingRationale` event for the current
- * negotiation in chronological order (oldest first, newest last). Each entry
- * shows the decision label, rationale text, clause reference, standard
- * reference, and a Somnia explorer deep-link when a txHash is present.
- * Hidden when no `RulingRationale` events exist.
- */
-function RulingRationaleCard({ events }: { readonly events: readonly CoverageEvent[] }) {
-  const rationaleEvents = events.filter(
-    (e): e is Extract<CoverageEvent, { name: "RulingRationale" }> => e.name === "RulingRationale",
-  );
-
-  if (rationaleEvents.length === 0) return null;
-
-  return (
-    <section className="card ruling-rationale" data-testid="ruling-rationale">
-      <h2>AI Ruling Rationale</h2>
-      <ol className="rationale-list">
-        {rationaleEvents.map((ev, i) => (
-          <li key={`${ev.txHash ?? "noTx"}-${String(ev.reqId)}-${i}`} className="rationale-entry">
-            <div className="rationale-decision">
-              <strong>{decisionLabel(ev.decision)}</strong>
-              <span className="rationale-round"> · Round {i + 1}</span>
-            </div>
-            <p className="rationale-text">{ev.rationale}</p>
-            {ev.clauseReference && (
-              <div className="rationale-ref">
-                <span className="rationale-ref-label">Policy clause:</span>{" "}
-                <code>{ev.clauseReference}</code>
-              </div>
-            )}
-            {ev.standardReference && (
-              <div className="rationale-ref">
-                <span className="rationale-ref-label">Standard:</span>{" "}
-                <code>{ev.standardReference}</code>
-              </div>
-            )}
-            {ev.txHash ? (
-              <a
-                className="rationale-explorer-link"
-                href={txUrl(SOMNIA_TESTNET, ev.txHash)}
-                target="_blank"
-                rel="noreferrer"
-                data-testid="rationale-explorer-link"
-              >
-                View on Somnia Explorer ↗{" "}
-                <span className="ev-tx-chip">{shortHex(ev.txHash)}</span>
-              </a>
-            ) : (
-              <span className="ev-tx-chip is-empty">no tx (simulated)</span>
-            )}
-          </li>
-        ))}
-      </ol>
-    </section>
-  );
 }
 
 function VerifyOnChain({ event }: { readonly event: CoverageEvent }) {

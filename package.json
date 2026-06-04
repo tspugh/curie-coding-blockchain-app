@@ -24,9 +24,7 @@
     "test:real-local": "bash scripts/real-backend-localnode.sh",
     "demo:orchestrator": "node scripts/orchestrator-demo.mjs",
     "check-ruling-abi": "tsx scripts/check-ruling-abi.ts",
-    "verify-deploy": "tsx scripts/verify-deploy.ts",
-    "keeper": "tsx scripts/keeper.ts",
-    "keeper:once": "tsx scripts/keeper.ts --once"
+    "verify-deploy": "tsx scripts/verify-deploy.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
