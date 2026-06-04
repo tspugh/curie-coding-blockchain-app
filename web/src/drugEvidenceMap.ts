@@ -28,35 +28,41 @@ export const DRUG_EVIDENCE_MAP: Readonly<Record<string, EvidenceEntry>> = {
   // successfully on-chain (testnet requestId 4435826 → Success). The prior
   // MedlinePlus URLs were inconsistent (ustekinumab/dupilumab render the drug
   // content via JS → empty scrape; the Lecanemab FDA PDF was a 404 + non-HTML).
+  // promptHints state a concrete FDA-approved indication + an explicit decision
+  // rubric so the medical-necessity arbiter (LLM Inference) can return a clean
+  // verdict from the scraped evidence — `needs_more_info` is confined to "the
+  // evidence does not establish FDA approval". Phrasing avoids adjacent
+  // Title-Case words (the contract's PHI name-pattern guard `[A-Z][a-z]+ [A-Z]`)
+  // and contains no patient identifiers (synthetic indication only).
   adalimumab: {
     evidenceUrl: "https://en.wikipedia.org/wiki/Adalimumab",
     promptHint:
-      "Evaluate whether adalimumab (Humira) is medically necessary and FDA-approved for the stated indication, referencing current ACCP/ACR criteria and biosimilar step-therapy requirements.",
+      "A patient with moderate-to-severe plaque psoriasis and inadequate response to topical therapy requests adalimumab (Humira). Based on the public drug evidence provided, reply approve if adalimumab is FDA-approved for this indication and the request is medically necessary; reply deny if it is not an approved use; reply needs_more_info only if the evidence does not establish FDA approval.",
   },
   semaglutide: {
     evidenceUrl: "https://en.wikipedia.org/wiki/Semaglutide",
     promptHint:
-      "Evaluate whether semaglutide (Ozempic/Wegovy) is medically necessary and FDA-approved for the stated indication, referencing ADA glycaemic-control guidelines and BMI/comorbidity criteria for the obesity indication.",
+      "A patient with type 2 diabetes and established cardiovascular disease requests semaglutide (Ozempic). Based on the public drug evidence provided, reply approve if semaglutide is FDA-approved for this indication and the request is medically necessary; reply deny if it is not an approved use; reply needs_more_info only if the evidence does not establish FDA approval.",
   },
   ustekinumab: {
     evidenceUrl: "https://en.wikipedia.org/wiki/Ustekinumab",
     promptHint:
-      "Evaluate whether ustekinumab (Stelara) is medically necessary and FDA-approved for the stated indication, referencing AAD/ACG moderate-to-severe disease criteria and prior biologic step-therapy history.",
+      "A patient with moderately-to-severely active Crohn's disease after anti-tnf failure requests ustekinumab (Stelara). Based on the public drug evidence provided, reply approve if ustekinumab is FDA-approved for this indication and the request is medically necessary; reply deny if it is not an approved use; reply needs_more_info only if the evidence does not establish FDA approval.",
   },
   lecanemab: {
     evidenceUrl: "https://en.wikipedia.org/wiki/Lecanemab",
     promptHint:
-      "Evaluate whether lecanemab (Leqembi) is medically necessary and FDA-approved for the stated indication, referencing the accelerated approval criteria for early Alzheimer's disease, confirmed amyloid pathology requirements, and CMS coverage conditions.",
+      "A patient with early Alzheimer's disease and biomarker-confirmed amyloid pathology requests lecanemab (Leqembi). Based on the public drug evidence provided, reply approve if lecanemab is FDA-approved for this indication and the request is medically necessary; reply deny if it is not an approved use; reply needs_more_info only if the evidence does not establish FDA approval.",
   },
   tirzepatide: {
     evidenceUrl: "https://en.wikipedia.org/wiki/Tirzepatide",
     promptHint:
-      "Evaluate whether tirzepatide (Mounjaro/Zepbound) is medically necessary and FDA-approved for the stated indication, referencing ADA glucose-lowering algorithm for type 2 diabetes or SURMOUNT trial BMI/comorbidity criteria for the obesity indication.",
+      "A patient with type 2 diabetes and inadequate glycaemic control on metformin requests tirzepatide (Mounjaro). Based on the public drug evidence provided, reply approve if tirzepatide is FDA-approved for this indication and the request is medically necessary; reply deny if it is not an approved use; reply needs_more_info only if the evidence does not establish FDA approval.",
   },
   dupilumab: {
     evidenceUrl: "https://en.wikipedia.org/wiki/Dupilumab",
     promptHint:
-      "Evaluate whether dupilumab (Dupixent) is medically necessary and FDA-approved for the stated indication, referencing AAD/AAAAI moderate-to-severe disease criteria, ICS or topical corticosteroid step-therapy requirements, and the approved age range for the specific indication.",
+      "A patient with severe eosinophilic asthma uncontrolled on high-dose inhaled corticosteroids requests dupilumab (Dupixent). Based on the public drug evidence provided, reply approve if dupilumab is FDA-approved for this indication and the request is medically necessary; reply deny if it is not an approved use; reply needs_more_info only if the evidence does not establish FDA approval.",
   },
 };
 
