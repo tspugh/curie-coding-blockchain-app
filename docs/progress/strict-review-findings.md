@@ -1,75 +1,92 @@
 ## Amendment 0007 — phase-tracker fields (`agentPhase`/`pendingDecideFee`/`pendingFeePayer`) off-chain sync (TOTAL-STICKLER, gate FAIL)
 
-**Date:** 2026-06-04
-**Branch:** `spec-6-implementation` vs `origin/main`. Unit commit `48f68a9`.
+**Date:** 2026-06-04 (re-review of the fixed unit)
+**Branch:** `spec-6-implementation` vs `origin/main`. Unit commits `48f68a9` (fields) +
+`9b3095a` (test-seam + direct positional test).
 **Reviewer:** Claude Opus 4.8 (strict-review gate, TOTAL-STICKLER) — independent
-re-derivation from source over the current diff (`.` vs `origin/main`), scoped to the
-unit that adds the three Amendment-0007 phase-tracker fields to the off-chain
-`Negotiation` interface and both decoder paths.
+re-derivation from source over the current diff (`.` vs `origin/main`), scoped to the unit
+that adds the three Amendment-0007 phase-tracker fields to the off-chain `Negotiation`
+interface and both decoder paths.
 
 **Unit under review:**
 - `src/types/coverage.types.ts` — `Negotiation` gains `agentPhase: number`,
-  `pendingDecideFee: bigint`, `pendingFeePayer: string`.
-- `src/contract/simulated.ts` — `SimNegotiation` gains the three fields; initialised to
-  `0 / 0n / ethers.ZeroAddress` in `createContract`; propagated in `snapshot()`.
-- `src/contract/real.ts` — `decodeNegotiation` maps `raw[35]/[36]/[37]`.
+  `pendingDecideFee: bigint`, `pendingFeePayer: string` (lines 157-162).
+- `src/contract/simulated.ts` — `SimNegotiation` gains the three fields (177-179);
+  initialised to `0 / 0n / ethers.ZeroAddress` in `createContract` (354-356); propagated in
+  `snapshot()` (956-958).
+- `src/contract/real.ts` — `decodeNegotiationRaw` maps `raw[35]/[36]/[37]` (159-161); the
+  `RawNegotiation` tuple documents the 38 positions (75-114); `decodeNegotiation` delegates
+  to the exported `decodeNegotiationRaw` test-seam (712-713).
 - `src/contract/simulated.agentphase.test.ts` — 6 tests.
 
 **What is correct (verified, not taken on faith):**
-- Struct/index alignment is exact. `CoverageNegotiation.sol` `struct Negotiation`
-  (lines 122-177) has 38 fields; declaration-order enumeration confirms (0-based)
-  `exists=raw[34]`, `agentPhase=raw[35]`, `pendingDecideFee=raw[36]`,
-  `pendingFeePayer=raw[37]`. The `abi.ts` `getNegotiation` tuple ends with
-  `... bool exists, uint8 agentPhase, uint256 pendingDecideFee, address pendingFeePayer`,
-  matching the positional decode. `RealBackend.decodeNegotiation` decodes the full
-  array consistently.
-- `agentPhase: Number(raw[35])` correctly coerces the ethers `uint8`/bigint enum to
-  `number`; `pendingFeePayer` typed `string` (address); `pendingDecideFee` typed `bigint`.
-- `tsc --noEmit` is clean (exit 0). Typecheck completeness implies no other
-  `Negotiation`/`SimNegotiation` literal silently drops the fields.
-- The 6 tests run green via `tsx --test`.
+- **Struct / abi / decode index alignment is exact.** `CoverageNegotiation.sol`
+  `struct Negotiation` (122-177) is 38 fields ending `... bool exists; AgentPhase agentPhase;
+  uint256 pendingDecideFee; address pendingFeePayer;`. Declaration-order enumeration gives
+  (0-based) `exists=34`, `agentPhase=35`, `pendingDecideFee=36`, `pendingFeePayer=37`. The
+  `abi.ts` `getNegotiation` tuple (line 28) ends in the same three fields in the same order;
+  `real.ts` `RawNegotiation` (75-114) and `decodeNegotiationRaw` (159-161) map exactly those
+  positions. `enum AgentPhase { None, Scraping, Deciding }` (CoverageNegotiation.sol:109) ⇒
+  `0/1/2`, matching every comment.
+- **Type coercion is right.** `agentPhase: Number(raw[35])` coerces the ethers uint8/bigint
+  enum to `number`; `pendingDecideFee` typed `bigint`; `pendingFeePayer` typed `string`
+  (address) — consistent with the interface and the simulated init values.
+- **`snapshot()` and `createContract` are complete.** Both list all 38 fields; the three new
+  ones are present and not silently dropped. `tsc --noEmit` is clean (exit 0) — type
+  completeness implies no other `Negotiation`/`SimNegotiation` literal in the tree omits them.
+- **Test (f) is genuine, not presence-theatre.** `simulated.agentphase.test.ts:195-252`
+  builds a synthetic 38-element tuple, sets the off-by-one-sensitive positions to non-default
+  sentinels (`raw[35]=1`, `raw[36]=42n`, `raw[37]=INSURER`), calls the production
+  `decodeNegotiationRaw`, and asserts each decodes to the right field. This is the
+  highest-risk surface of a positional decode and it is correctly pinned. Test (f) also reads
+  `n.agentPhase/pendingDecideFee/pendingFeePayer` *directly* (no cast), so the `Negotiation`
+  interface declaration is type-pinned by the suite: drop a field and (f) fails to compile.
+- **Gate evidence (re-run):** `node --import tsx --test src/contract/simulated.agentphase.test.ts`
+  → 6/6 PASS; `node --import tsx --test "src/**/*.test.ts"` → 248/248 PASS; `npm run typecheck`
+  → clean.
 
-**Verdict: FAIL — 2 findings.**
+**Prior findings from the `48f68a9` review — both RESOLVED (re-verified):**
+- **F-A0007-1 (weak/lying test (f))** — RESOLVED by `9b3095a`. The old test (f) never called
+  the real decoder and only re-asserted simulated snapshot defaults; the current test (f)
+  (195-252) constructs the synthetic raw tuple and calls `decodeNegotiationRaw` with non-zero
+  sentinels, exactly as the fix demanded. The real-path positional decode is now tested.
+- **F-A0007-2 ("37 fields" lying header)** — RESOLVED. `real.ts:71` now reads "38 fields";
+  the tuple has entries `[0]`–`[37]` = 38, consistent with the struct and the abi.
 
-### F-A0007-1 (LIE/WEAK-TEST, must-fix) — test (f) name + comment describe a synthetic `decodeNegotiation` round-trip that the body never performs
+**Verdict: FAIL — 1 finding.** The implementation and the real-decoder test are correct; the
+remaining defect is in the simulated/default-value tests, whose comments now lie about how the
+assertions are wired.
 
-`src/contract/simulated.agentphase.test.ts:182-220`. The test is named
-`"... RawNegotiation type documents raw[35]=agentPhase ... (sync check)"` and its header
-block states (lines 183-186):
+### F-A0007-3 (LYING-COMMENT + WEAK-TEST, must-fix) — tests (a)/(b)/(c) carry stale TDD "WILL FAIL until … added to the interface" comments paired with `as unknown as {…}` casts that sever exactly that linkage
 
-> (f) decodeNegotiation (real.ts path) does not throw for valid raw[35-37]
->     Synthetic raw-array round-trip: we construct a minimal fake RawNegotiation
->     tuple that matches what the chain would return and verify decodeNegotiation
->     accepts raw[35]=0, raw[36]=0n, raw[37]=ZeroAddress without error.
+`src/contract/simulated.agentphase.test.ts`. The header (line 9, "These tests MUST FAIL
+until: 1. `Negotiation` interface gains … 2. `SimNegotiation` gains …") and three inline
+comments — line 68 ("This assertion WILL FAIL until **agentPhase is added to the Negotiation
+interface** and SimNegotiation is initialised with `agentPhase: 0`"), line 89 (same for
+`pendingDecideFee`), line 110 (same for `pendingFeePayer`) — are red-phase TDD prose that is
+now **false**: the fields are on the interface, `SimNegotiation` is initialised, and all
+three assertions PASS. The comments describe a failure condition that no longer obtains.
 
-No such tuple is constructed and `decodeNegotiation` is never called — `grep` confirms the
-file contains no `raw[`-index construction, no `RawNegotiation` value, no `RealBackend`
-instantiation, and no `decodeNegotiation` invocation. Lines 188-193 then *contradict* the
-preceding lines in the same block ("we exercise decodeNegotiation indirectly ... A direct
-unit test of RealBackend.decodeNegotiation is deferred to the integration suite"). The
-actual body (206-220) re-creates a SimulatedBackend negotiation and re-asserts the
-`(0, 0n, ZeroAddress)` snapshot defaults already covered by tests (a)/(b)/(c)/(e) — so it
-adds no new coverage and asserts presence-of-defaults, not correctness of the real decoder
-it names. The lines 184-186 comment lies about code that does not exist. The real.ts
-positional decode (the highest-risk part of this unit — an off-by-one at raw[35-37] would
-silently mis-map fields and is exactly what "full sync" must guard) is therefore
-**untested**. Fix: either construct a 38-element synthetic raw tuple and assert
-`decodeNegotiation` maps [35]/[36]/[37] to `agentPhase`/`pendingDecideFee`/`pendingFeePayer`
-(make the method testable or build the tuple and decode via a thin seam), or delete the
-redundant test and its misleading comment outright. Do not leave a test whose name and
-comment claim coverage it does not provide.
+Worse, the assertions they annotate read the value through `(n as unknown as { agentPhase:
+number }).agentPhase` (lines 71, 92, 113). `as unknown as {…}` **discards** the `Negotiation`
+type, so the very linkage the comment claims drives the failure ("WILL FAIL until added to
+the interface") is severed: if `agentPhase` were removed from `Negotiation`, these three
+assertions would still compile and (because `snapshot()` still emits the runtime key) still
+pass. The comment asserts an interface-coupling the cast deliberately breaks — a comment that
+lies about the code beneath it, on a unit whose entire charter is interface↔struct sync.
 
-### F-A0007-2 (LYING-COMMENT, must-fix) — `RawNegotiation` header says "37 fields" for a 38-entry tuple
+The casts are also unnecessary: the fields are on `Negotiation` (proven by test (f)'s
+cast-free `n.agentPhase` access compiling under a clean `tsc --noEmit`), so plain
+`n.agentPhase` / `n.pendingDecideFee` / `n.pendingFeePayer` typechecks. Using the cast instead
+makes (a)/(b)/(c)/(d)/(e) **weaker** than (f): they no longer fail to compile if a field is
+dropped from the interface, defeating the structural guard the unit is supposed to provide.
 
-`src/contract/real.ts:70-74`. The header reads "37 fields (added lastRequestId,
-agentEvidenceUrl, agentPromptHint per SPEC-0006 R14/R15; added agentPhase, pendingDecideFee,
-pendingFeePayer per Amendment 0007 phase 1)." The tuple immediately below lists entries
-`[0]`–`[37]` = **38** entries, matching the 38-field on-chain struct and the abi.ts tuple.
-The count "37" is wrong (stale from before the three Amendment-0007 fields were appended).
-This is precisely the sync-documentation that this unit's stated goal — "full sync with the
-38-field on-chain struct" — is supposed to make truthful. Fix: change "37 fields" to
-"38 fields". (Introduced in `26dac4c`, but it is within the diff vs `origin/main` and the
-unit's charter is the 38-field sync, so it is in scope.)
+Fix: drop the `as unknown as {…}` casts in (a)/(b)/(c)/(d)/(e) and read the fields directly
+(restoring the compile-time interface guard), and delete the stale "WILL FAIL until … added
+to the interface" / "MUST FAIL until" red-phase comments (the tests are green and merged; the
+preamble no longer describes the code). With direct access the three default-value assertions
+keep their runtime value and regain the type-level pin that test (f) already demonstrates is
+available.
 
 ---
 

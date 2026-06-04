@@ -6,12 +6,6 @@
  *   - SPEC-0006 §3.6.1: agentPhase None→Scraping→Deciding two-agent tracker
  *   - Amendment 0007 phase 1: agentPhase + pendingDecideFee + pendingFeePayer fields
  *
- * These tests MUST FAIL until:
- *   1. `Negotiation` interface gains agentPhase / pendingDecideFee / pendingFeePayer
- *   2. `SimNegotiation` gains those fields and createContract initialises them
- *   3. snapshot() propagates them
- *   4. decodeNegotiation() in real.ts maps raw[35-37]
- *
  * No mocking of the contract or agent — all assertions drive real SimulatedBackend
  * state machine paths.  No PHI — only synthetic addresses and hashes.
  */
@@ -65,10 +59,8 @@ test("Amendment-0007: freshly created negotiation has agentPhase === 0 (None)", 
   const n = await b.getNegotiation(reqId);
 
   // agentPhase must be 0 (None — no Scraping or Deciding agent has been fired yet).
-  // This assertion WILL FAIL until agentPhase is added to the Negotiation interface
-  // and SimNegotiation is initialised with agentPhase: 0.
   assert.equal(
-    (n as unknown as { agentPhase: number }).agentPhase,
+    n.agentPhase,
     0,
     "agentPhase must be 0 (None) on a freshly created negotiation (Amendment 0007 phase 1)",
   );
@@ -86,10 +78,8 @@ test("Amendment-0007: freshly created negotiation has pendingDecideFee === 0n", 
   const n = await b.getNegotiation(reqId);
 
   // pendingDecideFee must be 0n — no LLM Inference fee has been parked yet.
-  // This assertion WILL FAIL until pendingDecideFee is added to the Negotiation interface
-  // and SimNegotiation is initialised with pendingDecideFee: 0n.
   assert.equal(
-    (n as unknown as { pendingDecideFee: bigint }).pendingDecideFee,
+    n.pendingDecideFee,
     0n,
     "pendingDecideFee must be 0n on a freshly created negotiation (Amendment 0007 phase 1)",
   );
@@ -107,10 +97,8 @@ test("Amendment-0007: freshly created negotiation has pendingFeePayer === ZeroAd
   const n = await b.getNegotiation(reqId);
 
   // pendingFeePayer must be ethers.ZeroAddress — no fee payer has been designated yet.
-  // This assertion WILL FAIL until pendingFeePayer is added to the Negotiation interface
-  // and SimNegotiation is initialised with pendingFeePayer: ethers.ZeroAddress.
   assert.equal(
-    (n as unknown as { pendingFeePayer: string }).pendingFeePayer,
+    n.pendingFeePayer,
     ethers.ZeroAddress,
     "pendingFeePayer must be ZeroAddress on a freshly created negotiation (Amendment 0007 phase 1)",
   );
@@ -126,21 +114,20 @@ test("Amendment-0007: Negotiation snapshot exposes agentPhase, pendingDecideFee,
   const reqId = await b.createContract(PARAMS);
 
   const n = await b.getNegotiation(reqId);
-  const nAny = n as unknown as Record<string, unknown>;
 
   // All three field names must exist on the returned snapshot object.
-  // TypeScript will enforce via the Negotiation interface once the fields are declared;
-  // the runtime assertion below additionally catches a snapshot() that silently drops them.
+  // The Negotiation interface enforces presence at compile time; the runtime
+  // assertions below additionally catch a snapshot() that silently drops them.
   assert.ok(
-    "agentPhase" in nAny,
+    "agentPhase" in n,
     "Negotiation snapshot must have an 'agentPhase' field (Amendment 0007 phase 1)",
   );
   assert.ok(
-    "pendingDecideFee" in nAny,
+    "pendingDecideFee" in n,
     "Negotiation snapshot must have a 'pendingDecideFee' field (Amendment 0007 phase 1)",
   );
   assert.ok(
-    "pendingFeePayer" in nAny,
+    "pendingFeePayer" in n,
     "Negotiation snapshot must have a 'pendingFeePayer' field (Amendment 0007 phase 1)",
   );
 });
@@ -158,25 +145,18 @@ test("Amendment-0007: SimulatedBackend snapshot round-trip does not throw and ma
   const reqId = await b.createContract(PARAMS);
 
   // getNegotiation internally calls snapshot(), which must not throw even after
-  // the three new fields are wired. The two assertions below re-verify the values
+  // the three new fields are wired. The assertions below re-verify the values
   // from a second snapshot call, guarding against any lazy initialisation issue.
   let n: Awaited<ReturnType<typeof b.getNegotiation>>;
   await assert.doesNotReject(async () => {
     n = await b.getNegotiation(reqId);
   }, "snapshot() must not throw after agentPhase/pendingDecideFee/pendingFeePayer are initialised");
 
-  // Narrow to the patched shape for value checks.
-  const patched = n! as unknown as {
-    agentPhase: number;
-    pendingDecideFee: bigint;
-    pendingFeePayer: string;
-  };
-
-  assert.equal(patched.agentPhase, 0,
+  assert.equal(n!.agentPhase, 0,
     "snapshot round-trip: agentPhase must be 0 (None)");
-  assert.equal(patched.pendingDecideFee, 0n,
+  assert.equal(n!.pendingDecideFee, 0n,
     "snapshot round-trip: pendingDecideFee must be 0n");
-  assert.equal(patched.pendingFeePayer, ethers.ZeroAddress,
+  assert.equal(n!.pendingFeePayer, ethers.ZeroAddress,
     "snapshot round-trip: pendingFeePayer must be ZeroAddress");
 });
 
