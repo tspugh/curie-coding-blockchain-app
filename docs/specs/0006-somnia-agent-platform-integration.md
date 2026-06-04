@@ -243,6 +243,21 @@ all on testnet, with no off-chain shortcuts.
 
 ### 2.8 AI reasoning visible in the case
 
+> **DESCOPED for V0 (2026-06-04).** R24/R25's free-text rationale surface (the
+> `RulingRationale` event + the `ruling-rationale` card + the rationale keeper)
+> was removed: it only existed because the **constrained** `inferString` decide
+> call strips the response to the decision token and pushes the chain-of-thought
+> into the off-chain receipt, which then needed an off-chain keeper to commit
+> on-chain. The cleaner path — if reasoning is wanted back — is to capture it
+> **natively on-chain** via an *unconstrained* `inferString` (the model's
+> chain-of-thought comes back in `responses[0].result`) decoded in
+> `handleResponse`, with the decision parsed from the final line. The **verdict**
+> (Approve/Deny/etc. + covered amount) is fully on-chain via the `Ruled` event and
+> is shown by the "AI Decision" panel (§2.9 R30a) — that is retained. The contract
+> `commitRationale` + `RulingRationale` definitions remain in source but dormant
+> (no redeploy). R24/R25/R26 below are the *original* design, kept for when
+> reasoning is reintroduced natively.
+
 > **Reasoning source (Amendment 0007).** The constrained `inferString` decision
 > call (§3.6.1) returns only the decision token, but `chainOfThought = true`
 > means the model's **actual reasoning is captured in the Somnia receipt**
@@ -309,6 +324,13 @@ all on testnet, with no off-chain shortcuts.
 - **R30 (SHOULD) Screenshots per layout R.** Each tick that closes
   R27-R29 attaches a viewport screenshot to
   `docs/progress/browser-verify.md`.
+- **R30a (SHOULD) Modest AI Decision verdict.** The Detail view's "AI
+  Decision" panel (`data-testid="ruling-panel"`) renders the verdict
+  (Approved / Denied / More-Evidence / Policy-Voided) as a **compact
+  status row, not an oversized hero banner**: the verdict icon ≤ ~22px,
+  the decision label ≤ ~15px, and the result row uses tight padding
+  (~10–14px) with a 1px border. The verdict is informative but does not
+  visually dominate the action panel + timeline.
 
 ### 2.10 Generalized N-user runtime registry (merged from SPEC-0005 §3.3)
 
