@@ -241,6 +241,10 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   // extractRevertReason (which requires an object — string messages would lose the
   // mapping). Validation errors below pass plain strings (already user-facing).
   const [error, setError] = useState<unknown>(null);
+  // Bumped after every `run()` action to force an immediate view re-fetch
+  // (see run()), so status transitions like submitEvidence → UnderReview show
+  // without waiting on the event subscription.
+  const [refreshTick, setRefreshTick] = useState(0);
 
   const [policyText, setPolicyText] = useState("");
   // SPEC-0005 R14: the policy choice is the curated policy's id, or the
@@ -293,7 +297,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
       }
     })();
     return () => { cancelled = true; };
-  }, [reqId, events]);
+  }, [reqId, events, refreshTick]);
 
   // Forward the raw error to ErrorCard, which runs the SPEC-0003 R16
   // revert-reason mapping itself. (Pre-formatting the message here would
@@ -304,6 +308,13 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
       await action();
     } catch (err) {
       setError(err);
+    } finally {
+      // Force an immediate view re-fetch after every action. submitEvidence /
+      // appeal re-fire the agent in the same tx, so by the time the tx resolves
+      // the on-chain state is already UnderReview — refreshing here flips the
+      // status tag to "AI reviewing…" right away instead of waiting on the
+      // subscribe event round-trip (which can lag seconds on Somnia).
+      setRefreshTick((t) => t + 1);
     }
   }
 
@@ -417,13 +428,22 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
             </dd>
             <dt>AI Decision</dt>
             <dd data-testid="ruling-panel">
-              {lastRuled ? (
+              {/* UnderReview takes priority over any prior ruling: after a
+                  re-fire (submitEvidence / appeal) the negotiation is being
+                  re-adjudicated, so the tag must read "AI reviewing…" live
+                  rather than show the stale previous verdict. Order:
+                  reviewing → settled verdict → awaiting-evidence → undecided. */}
+              {state === State.UnderReview ? (
+                <span className="muted">🤖 AI reviewing…</span>
+              ) : lastRuled ? (
                 <span className={lastRuled.decision === Decision.Approve ? "ok-text" : lastRuled.decision === Decision.Deny ? "bad" : ""}>
                   {decisionLabel(lastRuled.decision)}
                   {lastRuled.decision === Decision.Approve && <> · {fmtAmount(lastRuled.coveredAmount)} covered</>}
                 </span>
+              ) : state === State.EvidenceRequested ? (
+                <span className="muted">⏳ Awaiting more evidence</span>
               ) : (
-                state === State.UnderReview ? "🤖 AI reviewing…" : "Not yet decided"
+                "Not yet decided"
               )}
             </dd>
             <dt>Healthcare Provider</dt>
