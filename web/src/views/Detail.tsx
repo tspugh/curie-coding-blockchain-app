@@ -415,6 +415,17 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                 ? <strong className="ok-text">{fmtAmount(n.coveredAmount)}</strong>
                 : "—"}
             </dd>
+            <dt>AI Decision</dt>
+            <dd data-testid="ruling-panel">
+              {lastRuled ? (
+                <span className={lastRuled.decision === Decision.Approve ? "ok-text" : lastRuled.decision === Decision.Deny ? "bad" : ""}>
+                  {decisionLabel(lastRuled.decision)}
+                  {lastRuled.decision === Decision.Approve && <> · {fmtAmount(lastRuled.coveredAmount)} covered</>}
+                </span>
+              ) : (
+                state === State.UnderReview ? "🤖 AI reviewing…" : "Not yet decided"
+              )}
+            </dd>
             <dt>Healthcare Provider</dt>
             <dd>
               {activeProfile.label}
@@ -493,117 +504,6 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
           )}
         </div>
 
-        {/* AI Decision */}
-        <div className="card ruling" data-testid="ruling-panel">
-          <h2>AI Decision</h2>
-          {lastRuled ? (
-            <div className="ruling-hero">
-              {lastRuled.decision === Decision.Approve && (
-                <div className="ruling-result approved">
-                  <span className="ruling-icon">✓</span>
-                  <div>
-                    <strong>Approved</strong>
-                    <p>{fmtAmount(lastRuled.coveredAmount)} covered</p>
-                  </div>
-                </div>
-              )}
-              {lastRuled.decision === Decision.Deny && (
-                <div className="ruling-result denied">
-                  <span className="ruling-icon">✗</span>
-                  <div>
-                    <strong>Denied</strong>
-                    <p>Coverage request was not approved</p>
-                  </div>
-                </div>
-              )}
-              {lastRuled.decision === Decision.NeedMoreEvidence && (
-                <div className="ruling-result evidence">
-                  <span className="ruling-icon">?</span>
-                  <div>
-                    <strong>More Evidence Needed</strong>
-                    <p>Submit additional clinical documentation</p>
-                  </div>
-                </div>
-              )}
-              {lastRuled.decision === Decision.PolicyInvalid && (
-                <div className="ruling-result voided">
-                  <span className="ruling-icon">⚠</span>
-                  <div>
-                    <strong>Policy Voided</strong>
-                    <p>AI detected a non-compliant clause</p>
-                  </div>
-                </div>
-              )}
-              <dl className="ruling-meta">
-                <dt>Covered amount</dt>
-                <dd data-testid="ruling-covered">{fmtAmount(lastRuled.coveredAmount)}</dd>
-                <dt>Round</dt>
-                <dd data-testid="ruling-decision">{n.round.toString()}</dd>
-              </dl>
-              {(lastRuled || settled) && (
-                <VerifyOnChain event={settled ?? lastRuled!} />
-              )}
-            </div>
-          ) : (
-            <p className="hint">
-              {state === State.UnderReview
-                ? "🤖 AI is reviewing this request…"
-                : "No decision yet — request AI arbitration to begin."}
-            </p>
-          )}
-        </div>
-      </div>
-
-      <PriceGauge requested={n.requestedAmount} basis={priceBasis} covered={n.coveredAmount} />
-
-      {/* Policy voided explanation */}
-      {isVoided && policyFlagged && (
-        <div className="card gotcha" data-testid="gotcha-panel">
-          <h2>⚠ Policy Voided — AI Detected a Non-Compliant Clause</h2>
-          <p className="gotcha-explain">
-            The insurance policy contained a clause that directly contradicts the
-            FDA-approved indication for this medication. The AI refused to apply it
-            and invalidated the policy — protecting the patient from unlawful coverage
-            denials.
-          </p>
-          <div className="gotcha-cols">
-            <div className="gotcha-col">
-              <h3>Offending Policy Clause</h3>
-              <p className="gotcha-clause" data-testid="gotcha-clause">
-                {SAMPLE_CASE.nonCompliantPolicyText}
-              </p>
-            </div>
-            <div className="gotcha-col">
-              <h3>FDA-Approved Indication — {FDA_DRUG_LABEL}</h3>
-              <p className="gotcha-fda" data-testid="gotcha-fda-citation">
-                {FDA_INDICATION_TEXT}
-              </p>
-              <p className="hint">
-                Source:{" "}
-                <a href={FDA_LABEL_URL} target="_blank" rel="noreferrer">
-                  openFDA HUMIRA label
-                </a>{" "}
-                (demo fixture)
-              </p>
-            </div>
-          </div>
-          <p className="hint gotcha-refs">
-            On-chain evidence:{" "}
-            <code title={policyFlagged.clauseRef}>{shortHex(policyFlagged.clauseRef)}</code>
-            {policyFlagged.clauseRef === CLAUSE_REF ? " (clause PD-ADA-09)" : ""}
-            {" · "}
-            <code title={policyFlagged.standardRef}>{shortHex(policyFlagged.standardRef)}</code>
-            {policyFlagged.standardRef === STANDARD_REF ? " (FDA HUMIRA indication)" : ""}
-          </p>
-        </div>
-      )}
-
-      <AppealLadder
-        payerLine={n.payerLine}
-        appealRound={n.appealRound}
-      />
-
-      <div className={`detail-grid${isInsurer ? " is-insurer" : ""}`}>
         <div className="card actions">
           {nextStep && isParty && (
             <div className="next-step" data-testid="next-step-banner">
@@ -995,45 +895,95 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
             </p>
           )}
         </div>
+      </div>
 
-        <div className="card timeline" data-testid="timeline-card">
-          <h2>Timeline (live)</h2>
-          <ol data-testid="timeline">
-            {timeline.length === 0 ? (
-              <li className="empty">No events yet.</li>
-            ) : (
-              // Newest-first per prototype EventLog (screens.jsx:391).
-              [...timeline].reverse().map((e, i) => (
-                <li
-                  key={`${e.txHash ?? "noTx"}-${e.name}-${i}`}
-                  className={`ev-row tone-${eventTone(e.name)}`}
-                >
-                  <div className="ev-row-head">
-                    <span className="ev-name">
-                      {FRIENDLY_EVENT[e.name] ?? e.name}
-                    </span>
-                  </div>
-                  <div className="ev-desc">{describeEvent(e)}</div>
-                  <div className="ev-row-foot">
-                    {e.txHash ? (
-                      <a
-                        className="ev-tx-chip"
-                        href={txUrl(SOMNIA_TESTNET, e.txHash)}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        {shortHex(e.txHash)}
-                      </a>
-                    ) : (
-                      <span className="ev-tx-chip is-empty">no tx</span>
-                    )}
-                    <span className="ev-attr">{eventAttribution(e)}</span>
-                  </div>
-                </li>
-              ))
-            )}
-          </ol>
+
+      <PriceGauge requested={n.requestedAmount} basis={priceBasis} covered={n.coveredAmount} />
+
+      {/* Policy voided explanation */}
+      {isVoided && policyFlagged && (
+        <div className="card gotcha" data-testid="gotcha-panel">
+          <h2>⚠ Policy Voided — AI Detected a Non-Compliant Clause</h2>
+          <p className="gotcha-explain">
+            The insurance policy contained a clause that directly contradicts the
+            FDA-approved indication for this medication. The AI refused to apply it
+            and invalidated the policy — protecting the patient from unlawful coverage
+            denials.
+          </p>
+          <div className="gotcha-cols">
+            <div className="gotcha-col">
+              <h3>Offending Policy Clause</h3>
+              <p className="gotcha-clause" data-testid="gotcha-clause">
+                {SAMPLE_CASE.nonCompliantPolicyText}
+              </p>
+            </div>
+            <div className="gotcha-col">
+              <h3>FDA-Approved Indication — {FDA_DRUG_LABEL}</h3>
+              <p className="gotcha-fda" data-testid="gotcha-fda-citation">
+                {FDA_INDICATION_TEXT}
+              </p>
+              <p className="hint">
+                Source:{" "}
+                <a href={FDA_LABEL_URL} target="_blank" rel="noreferrer">
+                  openFDA HUMIRA label
+                </a>{" "}
+                (demo fixture)
+              </p>
+            </div>
+          </div>
+          <p className="hint gotcha-refs">
+            On-chain evidence:{" "}
+            <code title={policyFlagged.clauseRef}>{shortHex(policyFlagged.clauseRef)}</code>
+            {policyFlagged.clauseRef === CLAUSE_REF ? " (clause PD-ADA-09)" : ""}
+            {" · "}
+            <code title={policyFlagged.standardRef}>{shortHex(policyFlagged.standardRef)}</code>
+            {policyFlagged.standardRef === STANDARD_REF ? " (FDA HUMIRA indication)" : ""}
+          </p>
         </div>
+      )}
+
+      <AppealLadder
+        payerLine={n.payerLine}
+        appealRound={n.appealRound}
+      />
+
+      <div className="card timeline" data-testid="timeline-card">
+        <h2>Timeline (live)</h2>
+        <ol data-testid="timeline">
+          {timeline.length === 0 ? (
+            <li className="empty">No events yet.</li>
+          ) : (
+            // Newest-first per prototype EventLog (screens.jsx:391).
+            [...timeline].reverse().map((e, i) => (
+              <li
+                key={`${e.txHash ?? "noTx"}-${e.name}-${i}`}
+                className={`ev-row tone-${eventTone(e.name)}`}
+              >
+                <div className="ev-row-head">
+                  <span className="ev-name">
+                    {FRIENDLY_EVENT[e.name] ?? e.name}
+                  </span>
+                </div>
+                <div className="ev-desc">{describeEvent(e)}</div>
+                <div className="ev-row-foot">
+                  {e.txHash ? (
+                    <a
+                      className="ev-tx-chip"
+                      href={txUrl(SOMNIA_TESTNET, e.txHash)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {shortHex(e.txHash)}
+                    </a>
+                  ) : (
+                    <span className="ev-tx-chip is-empty">no tx</span>
+                  )}
+                  <span className="ev-attr">{eventAttribution(e)}</span>
+                </div>
+              </li>
+            ))
+          )}
+        </ol>
       </div>
     </section>
   );
