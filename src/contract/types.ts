@@ -198,8 +198,17 @@ export interface CoverageNegotiationClient {
    * it from `eth_getLogs` (`queryFilter`); the simulated backend returns its
    * recorded in-memory log. Events are returned in chronological order and may
    * be narrowed by {@link EventFilter} (e.g. a single `reqId`).
+   *
+   * `onBatch`, when supplied, is invoked with each page-batch of events as it is
+   * fetched — newest activity first — so a consumer can paint the most recent
+   * events within ~1s instead of waiting for a full multi-minute log sweep to
+   * resolve. Each batch is chronologically sorted within itself; the final
+   * resolved array remains the complete chronological timeline.
    */
-  getEvents(filter?: EventFilter): Promise<CoverageEvent[]>;
+  getEvents(
+    filter?: EventFilter,
+    onBatch?: (batch: CoverageEvent[]) => void,
+  ): Promise<CoverageEvent[]>;
 
   /**
    * Subscribe to negotiation events. Returns an unsubscribe handle. The listener

@@ -504,7 +504,10 @@ export class RealBackend implements CoverageNegotiationClient {
     "FeedbackPosted",
   ];
 
-  async getEvents(filter: EventFilter = {}): Promise<CoverageEvent[]> {
+  async getEvents(
+    filter: EventFilter = {},
+    onBatch?: (batch: CoverageEvent[]) => void,
+  ): Promise<CoverageEvent[]> {
     // Resolve absolute block bounds. Somnia testnet RPC caps `eth_getLogs` to
     // 1000 blocks per request — so unbounded "fromBlock: 0" calls revert with
     // "block range exceeds 1000" and the dashboard stays empty (the
@@ -541,6 +544,12 @@ export class RealBackend implements CoverageNegotiationClient {
     for (let start = fromAbs; start <= toAbs; start += LOG_PAGE_SIZE) {
       ranges.push([start, Math.min(start + LOG_PAGE_SIZE - 1, toAbs)]);
     }
+    // NEWEST-FIRST: scan the highest block ranges first so that, with a
+    // progressive `onBatch` consumer, the most recent activity (what a user
+    // actually looks at) paints within ~1s instead of after the full ~25s
+    // sweep over ~900 pages. The final resolved array is still globally
+    // chronological — only the *delivery* order is reversed.
+    ranges.reverse();
     const PAGE_CONCURRENCY = 24;
     for (let i = 0; i < ranges.length; i += PAGE_CONCURRENCY) {
       const batch = ranges.slice(i, i + PAGE_CONCURRENCY);
@@ -563,6 +572,7 @@ export class RealBackend implements CoverageNegotiationClient {
             .catch(() => [] as ethers.Log[]),
         ),
       );
+      const batchHits: Array<{ ev: CoverageEvent; block: number; index: number }> = [];
       for (const logs of pageResults) {
         for (const log of logs) {
           let parsed: ethers.LogDescription | null;
@@ -573,7 +583,7 @@ export class RealBackend implements CoverageNegotiationClient {
           }
           if (!parsed || !eventSet.has(parsed.name)) continue;
           const name = parsed.name as CoverageEventName;
-          collected.push({
+          batchHits.push({
             ev: this.buildEvent(name, [...parsed.args], {
               txHash: log.transactionHash,
               blockNumber: log.blockNumber,
@@ -582,6 +592,13 @@ export class RealBackend implements CoverageNegotiationClient {
             index: log.index,
           });
         }
+      }
+      collected.push(...batchHits);
+      // Stream this batch to the consumer (sorted within itself) so the UI can
+      // paint incrementally; the caller is responsible for merging/re-sorting.
+      if (onBatch && batchHits.length > 0) {
+        batchHits.sort((a, b) => a.block - b.block || a.index - b.index);
+        onBatch(batchHits.map((c) => c.ev));
       }
     }
     // Chronological order: block, then log index within a block.

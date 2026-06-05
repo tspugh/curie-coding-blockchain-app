@@ -694,13 +694,20 @@ export class SimulatedBackend implements CoverageNegotiationClient {
   // Events
   // ---------------------------------------------------------------------
 
-  async getEvents(filter: EventFilter = {}): Promise<CoverageEvent[]> {
+  async getEvents(
+    filter: EventFilter = {},
+    onBatch?: (batch: CoverageEvent[]) => void,
+  ): Promise<CoverageEvent[]> {
     // The recorded log IS the simulated chain history (no blocks to scan).
     const all =
       filter.reqId === undefined
         ? this.history
         : this.history.filter((e) => e.reqId === filter.reqId);
-    return all.map((e) => ({ ...e }));
+    const copy = all.map((e) => ({ ...e }));
+    // No paging in memory: deliver the whole history as a single batch so the
+    // progressive-consumer code path behaves identically against either backend.
+    if (onBatch && copy.length > 0) onBatch(copy);
+    return copy;
   }
 
   subscribe(listener: CoverageEventListener): Unsubscribe {
