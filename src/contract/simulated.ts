@@ -415,11 +415,13 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     this.fireAgent(reqId, n);
   }
 
-  async submitEvidence(reqId: bigint, evidenceUri: string): Promise<void> {
+  async submitEvidence(reqId: bigint, newEvidenceUrl: string): Promise<void> {
     const n = this.must(reqId);
     if (n.state !== State.EvidenceRequested) throw new Error("evidence: wrong state");
     this.onlyProvider(n); // R11: provider-only
-    if (evidenceUri === ZERO_HASH) throw new Error("evidence: empty");
+    // A0009: a new public evidence URL the re-scrape targets (1..512 bytes).
+    if (newEvidenceUrl.length === 0 || newEvidenceUrl.length > 512)
+      throw new Error("evidence: url required");
 
     // A0008 §3 / contract parity: at the round cap the submission deadlocks instead of
     // re-firing (mirrors CoverageNegotiation.sol L502-521). CEI order: state + escrow
@@ -432,16 +434,18 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       return;
     }
 
-    n.evidenceUri = evidenceUri;
+    // A0009: repoint the scrape target at the new URL (parity with the contract).
+    n.agentEvidenceUrl = newEvidenceUrl;
+    n.evidenceUri = newEvidenceUrl;
     n.round += 1n;
-    this.emit({ name: "EvidenceSubmitted", reqId, evidenceUri });
+    this.emit({ name: "EvidenceSubmitted", reqId, evidenceUri: newEvidenceUrl });
     this.fireAgent(reqId, n);
   }
 
   async appeal(
     reqId: bigint,
     partyId: bigint,
-    evidenceUri: string,
+    newEvidenceUrl: string,
     reasonHash: string,
   ): Promise<void> {
     const n = this.must(reqId);
@@ -453,7 +457,9 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     if (partyId !== n.providerId && partyId !== n.insurerId) {
       throw new Error("appeal: unknown party");
     }
-    if (evidenceUri === ZERO_HASH) throw new Error("appeal: needs evidence");
+    // A0009: an appeal supplies a new public evidence URL to re-scrape.
+    if (newEvidenceUrl.length === 0 || newEvidenceUrl.length > 512)
+      throw new Error("appeal: needs evidence");
 
     // Bounded to N rounds: at the cap an appeal deadlocks instead of re-firing (R6c).
     if (n.round >= this.maxRounds) {
@@ -464,11 +470,13 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       return;
     }
 
-    n.evidenceUri = evidenceUri;
+    // A0009: re-scrape the new URL (parity with the contract).
+    n.agentEvidenceUrl = newEvidenceUrl;
+    n.evidenceUri = newEvidenceUrl;
     n.rationaleHash = reasonHash;
     n.round += 1n;
     n.appealRound += 1;
-    this.emit({ name: "Appealed", reqId, partyId, evidenceUri, round: n.round });
+    this.emit({ name: "Appealed", reqId, partyId, evidenceUri: newEvidenceUrl, round: n.round });
     this.fireAgent(reqId, n);
   }
 

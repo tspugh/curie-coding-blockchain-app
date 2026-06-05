@@ -790,11 +790,13 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                 type="button"
                 data-testid="appeal-submit"
                 onClick={() => {
-                  if (!appealEvidence.trim()) { setError("New evidence is required to appeal."); return; }
+                  if (!appealEvidence.trim()) { setError("New evidence URL is required to appeal."); return; }
+                  // A0009: pass the raw public URL — the contract re-scrapes it.
+                  // The reason ref stays a hash (free text, may be PHI-adjacent).
                   void run(() =>
                     client.negotiation.appeal(
                       reqId, partyId,
-                      hashContent(appealEvidence),
+                      appealEvidence.trim(),
                       hashContent(`reason:${appealEvidence}`),
                     ),
                   );
@@ -839,9 +841,11 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                 className="primary"
                 data-testid="evidence-submit"
                 onClick={() => {
-                  if (!evidenceText.trim()) { setError("Evidence reference is required."); return; }
+                  if (!evidenceText.trim()) { setError("A public evidence URL is required."); return; }
+                  // A0009: pass the raw public URL — the contract re-scrapes it
+                  // (replacing the original evidence source for the next ruling).
                   void run(() =>
-                    client.negotiation.submitEvidence(reqId, hashContent(evidenceText)),
+                    client.negotiation.submitEvidence(reqId, evidenceText.trim()),
                   );
                   setEvidenceText("");
                 }}

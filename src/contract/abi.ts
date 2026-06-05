@@ -13,8 +13,11 @@ export const COVERAGE_NEGOTIATION_ABI = [
   "function createContract(uint256 providerId, uint256 insurerId, address providerAddr, address insurerAddr, bytes32 drugRef, uint256 requestedAmount, uint256 quantity, uint256 daysSupply, bytes32 justificationHash, bytes32 evidenceUri, uint8 payerLine, string agentEvidenceUrl, string agentPromptHint) external returns (uint256 reqId)",
   "function insurerEngage(uint256 reqId, bytes32 policyHash, bytes32 policyUri) external payable",
   "function requestAdjudication(uint256 reqId) external payable",
-  "function submitEvidence(uint256 reqId, bytes32 evidenceUri) external payable",
-  "function appeal(uint256 reqId, uint256 partyId, bytes32 evidenceUri, bytes32 reasonHash) external payable",
+  // A0009: evidence arg is now a public URL string (the re-scrape target); the
+  // contract derives + emits its keccak audit hash, so the *event* sigs below
+  // keep bytes32 evidenceUri.
+  "function submitEvidence(uint256 reqId, string newEvidenceUrl) external payable",
+  "function appeal(uint256 reqId, uint256 partyId, string newEvidenceUrl, bytes32 reasonHash) external payable",
   "function accept(uint256 reqId, uint256 partyId) external",
   "function settle(uint256 reqId) external",
   "function refuse(uint256 reqId, bytes32 reasonHash) external",

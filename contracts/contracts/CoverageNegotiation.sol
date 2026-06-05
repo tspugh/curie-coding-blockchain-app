@@ -493,11 +493,17 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     ///         to terminal `Deadlocked` without firing — mirroring `appeal`'s behavior
     ///         so a NeedMoreEvidence ↔ submitEvidence cycle can't loop indefinitely.
     /// @dev Provider-only (R11). Records only the opaque evidence ref (R3/R4).
-    function submitEvidence(uint256 reqId, bytes32 evidenceUri) external payable nonReentrant {
+    function submitEvidence(uint256 reqId, string calldata newEvidenceUrl) external payable nonReentrant {
         Negotiation storage n = _get(reqId);
         require(n.state == State.EvidenceRequested, "evidence: wrong state");
         require(msg.sender == n.providerAddr, "auth: not provider");
-        require(evidenceUri != bytes32(0), "evidence: empty");
+        // A0009: the resubmission is a NEW public evidence URL the re-scrape will
+        // target (1..512 bytes, mirroring the R14 createContract bound). The old
+        // bytes32 evidenceUri is now derived as a keccak audit hash below.
+        require(
+            bytes(newEvidenceUrl).length > 0 && bytes(newEvidenceUrl).length <= 512,
+            "evidence: url required"
+        );
 
         // Bounded to N rounds: at the cap, the submission deadlocks instead of re-firing.
         // No agent fires → refund the caller's full `msg.value` (R9: never silently retain
@@ -525,9 +531,12 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
             return;
         }
 
-        n.evidenceUri = evidenceUri;
+        // A0009: point the scrape at the NEW URL; keep a keccak audit hash in the
+        // event (no raw text/PHI on-chain). `_fireScrape` reads `n.agentEvidenceUrl`.
+        n.agentEvidenceUrl = newEvidenceUrl;
+        n.evidenceUri = keccak256(bytes(newEvidenceUrl));
         n.round += 1;
-        emit EvidenceSubmitted(reqId, evidenceUri);
+        emit EvidenceSubmitted(reqId, n.evidenceUri);
         _fireScrape(reqId, n, msg.sender);
     }
 
@@ -546,14 +555,18 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     function appeal(
         uint256 reqId,
         uint256 partyId,
-        bytes32 evidenceUri,
+        string calldata newEvidenceUrl,
         bytes32 reasonHash
     ) external payable nonReentrant {
         Negotiation storage n = _get(reqId);
         require(n.state == State.Denied, "appeal: prior ruling not Deny");
         _onlyParty(n);
         require(partyId == n.providerId || partyId == n.insurerId, "appeal: unknown party");
-        require(evidenceUri != bytes32(0), "appeal: needs evidence");
+        // A0009: an appeal supplies a NEW public evidence URL to re-scrape.
+        require(
+            bytes(newEvidenceUrl).length > 0 && bytes(newEvidenceUrl).length <= 512,
+            "appeal: needs evidence"
+        );
 
         // Bounded to N rounds: at the cap, an appeal deadlocks instead of re-firing.
         // No agent fires, so no fee is charged — refund the caller's full `msg.value`
@@ -582,11 +595,13 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
             return;
         }
 
-        n.evidenceUri = evidenceUri;
+        // A0009: re-scrape the new URL; keep a keccak audit hash for the event.
+        n.agentEvidenceUrl = newEvidenceUrl;
+        n.evidenceUri = keccak256(bytes(newEvidenceUrl));
         n.rationaleHash = reasonHash; // carry the appellant's stated reason ref
         n.round += 1;
         n.appealRound += 1;
-        emit Appealed(reqId, partyId, evidenceUri, n.round);
+        emit Appealed(reqId, partyId, n.evidenceUri, n.round);
         _fireScrape(reqId, n, msg.sender);
     }
 
@@ -1146,6 +1161,41 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     ///
     ///      Note: the decide fee accounting (totalFees accumulation) happens here so
     ///      the full 2×fee is reflected in totalFees after the complete path.
+    /// @dev Minimal uint8 → decimal string (0..255). Inlined rather than pulling
+    ///      OpenZeppelin `Strings`, whose `Bytes.sol` dependency uses the Cancun
+    ///      `mcopy` opcode this build's EVM target does not emit.
+    function _u8ToString(uint8 v) internal pure returns (string memory) {
+        if (v == 0) return "0";
+        uint8 len;
+        for (uint8 j = v; j != 0; j /= 10) {
+            len++;
+        }
+        bytes memory b = new bytes(len);
+        for (uint8 k = len; v != 0; v /= 10) {
+            k--;
+            b[k] = bytes1(uint8(48 + (v % 10)));
+        }
+        return string(b);
+    }
+
+    /// @dev A0010: render the appeal-ladder rung as a prompt clause so the
+    ///      decide agent knows which regulatory stage it is ruling at. Composed
+    ///      only of enum labels + an integer — no free text, no PHI (R4).
+    function _ladderContext(PayerLine line, uint8 round) internal pure returns (string memory) {
+        string memory lineName = line == PayerLine.PartD
+            ? "PartD"
+            : line == PayerLine.Commercial
+                ? "Commercial"
+                : "Medicaid";
+        return string(abi.encodePacked(
+            " Appeal context: ",
+            lineName,
+            " review ladder, stage ",
+            _u8ToString(round),
+            " (stage 0 = initial determination); apply progressively stricter medical-necessity scrutiny at higher stages."
+        ));
+    }
+
     function _fireDecide(
         uint256 reqId,
         Negotiation storage n,
@@ -1164,6 +1214,7 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
             ILLMInferenceAgent.inferString.selector,
             string(abi.encodePacked(
                 n.agentPromptHint,
+                _ladderContext(n.payerLine, n.appealRound), // A0010: rung → prompt
                 " Evidence URL: ", n.agentEvidenceUrl,
                 " Extracted evidence: ", evidence,
                 " Reply with exactly one of the allowed values."

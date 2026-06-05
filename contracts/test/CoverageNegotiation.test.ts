@@ -32,8 +32,14 @@ const AGENT_ID = 7n;
 // Opaque refs / hashes — never raw content (R3/R4).
 const DRUG_REF = ethers.id("DRUG:semaglutide");
 const JUSTIFICATION_HASH = ethers.id("de-identified-justification");
-const EVIDENCE_URI = ethers.id("ipfs://evidence-v1");
-const EVIDENCE_URI_2 = ethers.id("ipfs://evidence-v2");
+// A0009: submitEvidence/appeal take a public evidence URL (string); the contract
+// stores/emits its keccak audit hash. The *_URL strings are the call args; the
+// *_URI hashes are what the contract records, so event/state assertions use the
+// hash (ethers.id(url) == keccak256(utf8(url)) == the contract's evidenceUri).
+const EVIDENCE_URL = "ipfs://evidence-v1";
+const EVIDENCE_URL_2 = "ipfs://evidence-v2";
+const EVIDENCE_URI = ethers.id(EVIDENCE_URL);
+const EVIDENCE_URI_2 = ethers.id(EVIDENCE_URL_2);
 const POLICY_HASH = ethers.id("policy-body");
 const POLICY_URI = ethers.id("ipfs://policy");
 const RATIONALE_HASH = ethers.id("rationale:necessary");
@@ -315,7 +321,7 @@ describe("CoverageNegotiation", () => {
     const rid1Decide = await platform.lastRequestId();
     await platform.triggerRuling(target, rid1Decide, TOKEN_NEEDS_MORE_INFO);
     // submitEvidence re-fires the scrape agent (round 2) — PacketSubmitted emitted.
-    await expect(contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI_2, { value: deposit * 2n }))
+    await expect(contract.connect(provider).submitEvidence(reqId, EVIDENCE_URL_2, { value: deposit * 2n }))
       .to.emit(contract, "PacketSubmitted")
       .withArgs(reqId, 2n, EVIDENCE_URI_2, EVIDENCE_URI_2);
     // Complete round-2 scrape → decide → deny.
@@ -324,7 +330,7 @@ describe("CoverageNegotiation", () => {
     const rid2Decide = await platform.lastRequestId();
     await platform.triggerRuling(target, rid2Decide, TOKEN_DENY);
     // Appeal re-fires the scrape agent (round 3) — PacketSubmitted emitted.
-    await expect(contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: deposit * 2n }))
+    await expect(contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URL, REASON_HASH, { value: deposit * 2n }))
       .to.emit(contract, "PacketSubmitted")
       .withArgs(reqId, 3n, EVIDENCE_URI, EVIDENCE_URI);
   });
@@ -361,12 +367,12 @@ describe("CoverageNegotiation", () => {
         .to.emit(contract, "EvidenceRequested");
       expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested);
 
-      // empty evidence reverts
+      // empty evidence URL reverts (A0009: url required, 1..512 bytes)
       await expect(
-        contract.connect(provider).submitEvidence(reqId, ethers.ZeroHash, { value: FEE })
-      ).to.be.revertedWith("evidence: empty");
+        contract.connect(provider).submitEvidence(reqId, "", { value: FEE })
+      ).to.be.revertedWith("evidence: url required");
 
-      await expect(contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI_2, { value: FEE }))
+      await expect(contract.connect(provider).submitEvidence(reqId, EVIDENCE_URL_2, { value: FEE }))
         .to.emit(contract, "EvidenceSubmitted")
         .withArgs(reqId, EVIDENCE_URI_2);
       expect(await contract.stateOf(reqId)).to.equal(State.UnderReview);
@@ -476,14 +482,14 @@ describe("CoverageNegotiation", () => {
 
     // price-only / empty-evidence appeal reverts.
     await expect(
-      contract.connect(insurer).appeal(reqId, INSURER_ID, ethers.ZeroHash, REASON_HASH, { value: FEE })
+      contract.connect(insurer).appeal(reqId, INSURER_ID, "", REASON_HASH, { value: FEE })
     ).to.be.revertedWith("appeal: needs evidence");
 
     // appeal with new evidence (round 1 < maxRounds 2) → re-fires, round becomes 2.
     // Amendment 0007: appeal fires the scrape agent (phase 1); fund both calls.
     const deposit = await platform.deposit();
     expect((await contract.getNegotiation(reqId)).appealRound).to.equal(0); // before bump
-    await expect(contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URI_2, REASON_HASH, { value: deposit * 2n }))
+    await expect(contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URL_2, REASON_HASH, { value: deposit * 2n }))
       .to.emit(contract, "Appealed")
       .withArgs(reqId, PROVIDER_ID, EVIDENCE_URI_2, 2n);
     expect(await contract.stateOf(reqId)).to.equal(State.UnderReview);
@@ -498,7 +504,7 @@ describe("CoverageNegotiation", () => {
     await platform.triggerRuling(target, rid2Decide, TOKEN_DENY);
     expect(await contract.stateOf(reqId)).to.equal(State.Denied);
 
-    await expect(contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE }))
+    await expect(contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URL, REASON_HASH, { value: FEE }))
       .to.emit(contract, "Deadlocked")
       .withArgs(reqId, 2n);
     expect(await contract.stateOf(reqId)).to.equal(State.Deadlocked);
@@ -512,7 +518,7 @@ describe("CoverageNegotiation", () => {
     await platform.triggerRuling(target, requestId, TOKEN_APPROVE);
     expect(await contract.stateOf(reqId)).to.equal(State.Approved);
     await expect(
-      contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI_2, REASON_HASH, { value: FEE })
+      contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URL_2, REASON_HASH, { value: FEE })
     ).to.be.revertedWith("appeal: prior ruling not Deny");
   });
 
@@ -631,9 +637,9 @@ describe("CoverageNegotiation", () => {
     // attacker cannot submitEvidence even when applicable — first drive to EvidenceRequested.
     await platform.triggerRuling(target, decideRid1, TOKEN_NEEDS_MORE_INFO);
     await expect(
-      contract.connect(attacker).submitEvidence(reqId, EVIDENCE_URI_2, { value: deposit * 2n })
+      contract.connect(attacker).submitEvidence(reqId, EVIDENCE_URL_2, { value: deposit * 2n })
     ).to.be.revertedWith("auth: not provider");
-    await contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI_2, { value: deposit * 2n });
+    await contract.connect(provider).submitEvidence(reqId, EVIDENCE_URL_2, { value: deposit * 2n });
     // Complete the scrape+decide phases for the submitEvidence round → deny.
     const scrapeRid2 = await platform.lastRequestId();
     await platform.triggerRuling(target, scrapeRid2, "evidence-string-2");
@@ -642,7 +648,7 @@ describe("CoverageNegotiation", () => {
 
     // attacker cannot appeal / accept / settle on a ruled request.
     await expect(
-      contract.connect(attacker).appeal(reqId, PROVIDER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      contract.connect(attacker).appeal(reqId, PROVIDER_ID, EVIDENCE_URL, REASON_HASH, { value: FEE })
     ).to.be.revertedWith("auth: not a party");
     await expect(contract.connect(attacker).accept(reqId, PROVIDER_ID)).to.be.revertedWith("auth: not a party");
     await expect(contract.connect(attacker).settle(reqId)).to.be.revertedWith("auth: not a party");
@@ -721,9 +727,9 @@ describe("CoverageNegotiation", () => {
     const { reqId: r3, requestId: rq3 } = await createEngageAdjudicate(contract, platform, provider, insurer);
     await platform.triggerRuling(target, rq3, TOKEN_NEEDS_MORE_INFO);
     await expect(
-      contract.connect(provider).submitEvidence(r3, EVIDENCE_URI_2, { value: twoFees - 1n })
+      contract.connect(provider).submitEvidence(r3, EVIDENCE_URL_2, { value: twoFees - 1n })
     ).to.be.revertedWith("fee: underfunded");
-    await contract.connect(provider).submitEvidence(r3, EVIDENCE_URI_2, { value: twoFees });
+    await contract.connect(provider).submitEvidence(r3, EVIDENCE_URL_2, { value: twoFees });
     // Complete the submit-evidence two-phase flow.
     const subScrape = await platform.lastRequestId();
     await platform.triggerRuling(target, subScrape, "sub-evidence");
@@ -736,9 +742,9 @@ describe("CoverageNegotiation", () => {
     const { reqId: r4, requestId: rq4 } = await createEngageAdjudicate(contract, platform, provider, insurer);
     await platform.triggerRuling(target, rq4, TOKEN_DENY);
     await expect(
-      contract.connect(provider).appeal(r4, PROVIDER_ID, EVIDENCE_URI_2, REASON_HASH, { value: twoFees - 1n })
+      contract.connect(provider).appeal(r4, PROVIDER_ID, EVIDENCE_URL_2, REASON_HASH, { value: twoFees - 1n })
     ).to.be.revertedWith("fee: underfunded");
-    await contract.connect(provider).appeal(r4, PROVIDER_ID, EVIDENCE_URI_2, REASON_HASH, { value: twoFees });
+    await contract.connect(provider).appeal(r4, PROVIDER_ID, EVIDENCE_URL_2, REASON_HASH, { value: twoFees });
     // Complete the appeal two-phase flow.
     const appScrape = await platform.lastRequestId();
     await platform.triggerRuling(target, appScrape, "appeal-evidence");
@@ -763,7 +769,7 @@ describe("CoverageNegotiation", () => {
     const balBefore = await ethers.provider.getBalance(insurer.address);
     const tx = await contract
       .connect(insurer)
-      .appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value });
+      .appeal(reqId, INSURER_ID, EVIDENCE_URL, REASON_HASH, { value });
     const rc = await tx.wait();
     const gas = rc!.gasUsed * rc!.gasPrice;
     const balAfter = await ethers.provider.getBalance(insurer.address);
@@ -792,7 +798,7 @@ describe("CoverageNegotiation", () => {
 
     const value = ethers.parseEther("0.02");
     const balBefore = await ethers.provider.getBalance(provider.address);
-    const tx = await contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI_2, { value });
+    const tx = await contract.connect(provider).submitEvidence(reqId, EVIDENCE_URL_2, { value });
     const rc = await tx.wait();
     const gas = rc!.gasUsed * rc!.gasPrice;
     const balAfter = await ethers.provider.getBalance(provider.address);
@@ -814,11 +820,11 @@ describe("CoverageNegotiation", () => {
     await expect(contract.connect(provider).settle(reqId)).to.be.revertedWith("settle: not ruled");
     await expect(contract.connect(provider).accept(reqId, PROVIDER_ID)).to.be.revertedWith("accept: not ruled");
     await expect(
-      contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+      contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URL, REASON_HASH, { value: FEE })
     ).to.be.revertedWith("appeal: prior ruling not Deny");
     // submitEvidence reverts on the state guard before the fee check — no value needed here.
     await expect(
-      contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI)
+      contract.connect(provider).submitEvidence(reqId, EVIDENCE_URL)
     ).to.be.revertedWith("evidence: wrong state");
 
     // Non-platform caller cannot invoke the callback.
@@ -906,7 +912,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
       expect(await contract.stateOf(reqId)).to.equal(State.Ready);
       await expect(
-        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URL, REASON_HASH, { value: FEE })
       ).to.be.revertedWith("appeal: prior ruling not Deny");
     });
 
@@ -916,7 +922,7 @@ describe("CoverageNegotiation", () => {
       const { reqId } = await createEngageAdjudicate(contract, platform, provider, insurer);
       expect(await contract.stateOf(reqId)).to.equal(State.UnderReview);
       await expect(
-        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URL, REASON_HASH, { value: FEE })
       ).to.be.revertedWith("appeal: prior ruling not Deny");
     });
 
@@ -928,7 +934,7 @@ describe("CoverageNegotiation", () => {
       await platform.triggerRuling(target, requestId, TOKEN_NEEDS_MORE_INFO);
       expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested);
       await expect(
-        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URL, REASON_HASH, { value: FEE })
       ).to.be.revertedWith("appeal: prior ruling not Deny");
     });
 
@@ -940,7 +946,7 @@ describe("CoverageNegotiation", () => {
       await platform.triggerRuling(target, requestId, TOKEN_APPROVE);
       expect(await contract.stateOf(reqId)).to.equal(State.Approved);
       await expect(
-        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URL, REASON_HASH, { value: FEE })
       ).to.be.revertedWith("appeal: prior ruling not Deny");
     });
 
@@ -955,7 +961,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).settle(reqId);
       expect(await contract.stateOf(reqId)).to.equal(State.Settled);
       await expect(
-        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URL, REASON_HASH, { value: FEE })
       ).to.be.revertedWith("appeal: prior ruling not Deny");
     });
 
@@ -966,10 +972,10 @@ describe("CoverageNegotiation", () => {
       await contract.setMaxRounds(1n);
       const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
       await platform.triggerRuling(target, requestId, TOKEN_DENY);
-      await contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE });
+      await contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URL, REASON_HASH, { value: FEE });
       expect(await contract.stateOf(reqId)).to.equal(State.Deadlocked);
       await expect(
-        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URL, REASON_HASH, { value: FEE })
       ).to.be.revertedWith("appeal: prior ruling not Deny");
     });
 
@@ -981,7 +987,7 @@ describe("CoverageNegotiation", () => {
       await platform.triggerRuling(target, requestId, TOKEN_POLICY_INVALID);
       expect(await contract.stateOf(reqId)).to.equal(State.PolicyInvalidated);
       await expect(
-        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URL, REASON_HASH, { value: FEE })
       ).to.be.revertedWith("appeal: prior ruling not Deny");
     });
 
@@ -993,7 +999,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(provider).refuse(reqId, REASON_HASH);
       expect(await contract.stateOf(reqId)).to.equal(State.ProviderRefused);
       await expect(
-        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URL, REASON_HASH, { value: FEE })
       ).to.be.revertedWith("appeal: prior ruling not Deny");
     });
 
@@ -1004,7 +1010,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(provider).withdraw(reqId);
       expect(await contract.stateOf(reqId)).to.equal(State.Withdrawn);
       await expect(
-        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: FEE })
+        contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URL, REASON_HASH, { value: FEE })
       ).to.be.revertedWith("appeal: prior ruling not Deny");
     });
   });
@@ -1180,7 +1186,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
       expect(await contract.stateOf(reqId)).to.equal(State.Ready);
       await expect(
-        contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI)
+        contract.connect(provider).submitEvidence(reqId, EVIDENCE_URL)
       ).to.be.revertedWith("evidence: wrong state");
     });
 
@@ -1200,7 +1206,7 @@ describe("CoverageNegotiation", () => {
       const reqId = await createAs(contract, provider, insurer.address);
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
       await expect(
-        contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URI, ethers.id("appeal:reason"))
+        contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URL, ethers.id("appeal:reason"))
       ).to.be.revertedWith("appeal: prior ruling not Deny");
     });
   });
@@ -1287,6 +1293,60 @@ describe("CoverageNegotiation", () => {
         "2nd static word must be a dynamic offset >= 128");
       expect(w3).to.be.greaterThanOrEqual(128n,
         "4th static word must be a dynamic offset >= 128");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Amendment 0009 (real evidence resubmission) + 0010 (ladder rung → decide prompt)
+  // ---------------------------------------------------------------------------
+  describe("Amendment 0009/0010: real evidence resubmission + ladder context", () => {
+    const LLM_INFERENCE_AGENT_ID = 12847293847561029384n;
+
+    it("A0010: the decide prompt embeds the appeal-ladder rung (payer line + stage)", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      await contract.setAgentId(LLM_INFERENCE_AGENT_ID);
+
+      // createAs default payerLine = PartD, appealRound = 0 (initial determination).
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
+      const deposit = await platform.deposit();
+      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      // complete the scrape phase → fires _fireDecide → decide payload in lastPayload.
+      await platform.triggerRuling(target, await platform.lastRequestId(), "scrape-evidence");
+
+      const payload: string = await platform.lastPayload();
+      const [prompt] = ethers.AbiCoder.defaultAbiCoder().decode(
+        ["string", "string", "bool", "string[]"],
+        "0x" + payload.slice(10),
+      );
+      expect(prompt).to.contain("Appeal context:");
+      expect(prompt).to.contain("PartD review ladder, stage 0");
+    });
+
+    it("A0009: submitEvidence repoints agentEvidenceUrl so the re-scrape targets the NEW url", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      await contract.setAgentId(LLM_INFERENCE_AGENT_ID);
+
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
+      const deposit = await platform.deposit();
+      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      // scrape → decide needs_more_info → EvidenceRequested
+      await platform.triggerRuling(target, await platform.lastRequestId(), "scrape-evidence");
+      await platform.triggerRuling(target, await platform.lastRequestId(), TOKEN_NEEDS_MORE_INFO);
+      expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested);
+
+      const NEW_URL = "https://en.wikipedia.org/wiki/Adalimumab";
+      await contract.connect(provider).submitEvidence(reqId, NEW_URL, { value: deposit * 2n });
+
+      const n = await contract.getNegotiation(reqId);
+      expect(n.agentEvidenceUrl).to.equal(NEW_URL); // re-scrape now reads the new url
+      expect(n.evidenceUri).to.equal(ethers.id(NEW_URL)); // keccak audit hash matches
+      expect(await contract.stateOf(reqId)).to.equal(State.UnderReview); // re-fired
     });
   });
 
@@ -3575,7 +3635,7 @@ describe("CoverageNegotiation", () => {
         const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
         await platform.triggerRuling(target, requestId, TOKEN_DENY);
         // At round cap: appeal routes to Deadlocked.
-        await contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URI, REASON_HASH, { value: ethers.parseEther("0.01") });
+        await contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URL, REASON_HASH, { value: ethers.parseEther("0.01") });
         expect(await contract.stateOf(reqId)).to.equal(State.Deadlocked);
         await expect(
           contract.connect(provider).postFeedback(reqId, RATIONALE_HASH, EVIDENCE_URI)
@@ -3722,7 +3782,7 @@ describe("CoverageNegotiation", () => {
 
       // submitEvidence at the round cap with msg.value == 0 — deadlock path, no refund needed.
       await expect(
-        contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI_2, { value: 0n })
+        contract.connect(provider).submitEvidence(reqId, EVIDENCE_URL_2, { value: 0n })
       ).to.emit(contract, "Deadlocked")
         .withArgs(reqId, 1n);
       expect(await contract.stateOf(reqId)).to.equal(State.Deadlocked);
@@ -3743,7 +3803,7 @@ describe("CoverageNegotiation", () => {
 
       // appeal at the round cap with msg.value == 0 — deadlock path, no refund needed.
       await expect(
-        contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URI, REASON_HASH, { value: 0n })
+        contract.connect(provider).appeal(reqId, PROVIDER_ID, EVIDENCE_URL, REASON_HASH, { value: 0n })
       ).to.emit(contract, "Deadlocked")
         .withArgs(reqId, 1n);
       expect(await contract.stateOf(reqId)).to.equal(State.Deadlocked);
@@ -4258,7 +4318,7 @@ describe("CoverageNegotiation", () => {
         await platform.triggerRuling(target, s, "evidence");
         const d = await platform.lastRequestId();
         await platform.triggerRuling(target, d, TOKEN_DENY);
-        await contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: 0n });
+        await contract.connect(insurer).appeal(reqId, INSURER_ID, EVIDENCE_URL, REASON_HASH, { value: 0n });
         expect(await contract.stateOf(reqId)).to.equal(State.Deadlocked);
         expect(await ethers.provider.getBalance(target)).to.equal(0n, "Deadlocked: balance must be 0");
       }
@@ -4916,7 +4976,7 @@ describe("CoverageNegotiation", () => {
       expect(await contract.roundOf(reqId)).to.equal(1n); // at cap
 
       // submitEvidence at cap → Deadlocked → tries to refund reverterAddr → fails.
-      await expect(contract.connect(provider).submitEvidence(reqId, EVIDENCE_URI_2, { value: 0n }))
+      await expect(contract.connect(provider).submitEvidence(reqId, EVIDENCE_URL_2, { value: 0n }))
         .to.be.revertedWith("deadlock: escrow refund failed");
 
       await ethers.provider.send("hardhat_stopImpersonatingAccount", [reverterAddr]);
@@ -4949,7 +5009,7 @@ describe("CoverageNegotiation", () => {
       expect(await contract.roundOf(reqId)).to.equal(1n); // at cap, state = Denied
 
       // appeal at cap → Deadlocked → tries to refund reverterAddr → fails.
-      await expect(contract.connect(reverterSigner).appeal(reqId, INSURER_ID, EVIDENCE_URI, REASON_HASH, { value: 0n }))
+      await expect(contract.connect(reverterSigner).appeal(reqId, INSURER_ID, EVIDENCE_URL, REASON_HASH, { value: 0n }))
         .to.be.revertedWith("deadlock: escrow refund failed");
 
       await ethers.provider.send("hardhat_stopImpersonatingAccount", [reverterAddr]);
