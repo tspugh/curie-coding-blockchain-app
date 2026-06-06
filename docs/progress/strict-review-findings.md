@@ -7,13 +7,13 @@ policies to `POLICY_LIBRARY`; update `policies.test.ts` to pin the new structura
 R5: `Attestation` shape; R10/R12: the two worked-example policies exist with correct clauses
 and source-URL constants).
 
-**Date:** 2026-06-07
+**Date:** 2026-06-07 (FAIL tick) / 2026-06-07 (PASS re-run at HEAD 66b8273)
 **Branch:** `spec/0007-clause-impl` vs `origin/main` (slice of `origin/main…HEAD`).
 **Reviewer stance:** TOTAL-STICKLER. Scope = the unit's slice of the diff, read against
 SPEC-0007 (§2 R1/R2/R5/R10/R12, §3.1 types, §3.5–§3.7 worked examples) and the whole-codebase
 context (single `src/data/policies.ts`, `src/index.ts` re-exports).
 
-**Result: ONE finding (LOW). Gate FAIL.**
+**Result: ZERO findings. Gate PASS.** (HEAD 66b8273 — F1 resolved by adding the reverse-biconditional test.)
 
 ## Files reviewed (unit scope)
 
@@ -22,13 +22,15 @@ context (single `src/data/policies.ts`, `src/index.ts` re-exports).
   `OPENFDA_WELLBUTRIN_URL` constants; `type`/`check` retrofitted onto the four pre-existing
   policies; two new policies (`commercial-pa-adalimumab-plaque-psoriasis` §3.6,
   `commercial-pa-bupropion-adhd` §3.7).
-- `src/data/policies.test.ts` — 11 new tests (R1 ×2, R2 ×1, R5 ×2, R10 ×4, R12 ×2).
+- `src/data/policies.test.ts` — 12 new tests (R1 ×2, R2 ×2 [forward + reverse], R5 ×2,
+  R10 ×4, R12 ×2); 26 total pass.
 - `src/index.ts:124` — re-exports `PolicyClause` (consumer surface present).
 
 ## Verification performed (what holds)
 
-1. **All 25 tests pass; `tsc --noEmit` exit 0.** Ran `node --import tsx --test
-   src/data/policies.test.ts` (25/25) and `npx tsc -p tsconfig.json --noEmit` (clean).
+1. **All 26 tests pass; `tsc --noEmit` exit 0.** Ran `node --import tsx --test
+   src/data/policies.test.ts` (26/26) and `npx tsc -p tsconfig.json --noEmit` (clean) at
+   HEAD 66b8273.
 
 2. **In-scope tests are correctness-pinning, not presence-only — mutation-verified.**
    - Rename `commercial-pa-adalimumab-plaque-psoriasis` → the R10 "policy exists" test fails
@@ -39,6 +41,11 @@ context (single `src/data/policies.ts`, `src/index.ts` re-exports).
    - Flip PP-COM-02 `kind: "dosing"` → `"indication"` → R10 "≥2 public incl. one dosing"
      test fails (pins the §3.6 dosing clause, not mere public-clause count).
    - Set a clause `type` to a non-member string → the R1 type-set test fails.
+   - **F1 mutation (reverse-biconditional):** adding
+     `check: { kind: "indication", param: "x", sourceUrl: "https://x.test" }` to the attested
+     clause `PP-COM-03` now causes the R2 reverse-direction test
+     (`"SPEC-0007 R2: no attested clause carries a check object (iff invariant)"`,
+     `policies.test.ts:239`) to FAIL — confirming the invariant is fully closed.
 
 3. **Spec-faithful data, PHI-free.** §3.6 policy = 2 public (indication+dosing) + 2 attested
    (step-therapy + TB), source `OPENFDA_HUMIRA_URL` — matches §3.6. §3.7 policy = indication
@@ -60,41 +67,54 @@ context (single `src/data/policies.ts`, `src/index.ts` re-exports).
 
 ## Findings
 
-### F1 (LOW · weak test / in-file comment over-claims) — the `check`-presence biconditional is only half-pinned; an attested clause may silently carry a `check`
+**(None at HEAD 66b8273. See below for the resolved F1 record.)**
 
-`src/data/policies.ts:14` (file doc) and `:55-64` mirror SPEC-0007 §3.1 / R2 in stating the
-clause invariant as a **biconditional**:
+### F1 (LOW · RESOLVED at HEAD 66b8273) — the `check`-presence biconditional was only half-pinned; an attested clause could silently carry a `check`
+
+**Status: RESOLVED** — commit 66b8273 (`test(spec-0007): F1 — pin the reverse half of the
+check-presence iff invariant`) added the missing reverse-direction assertion to
+`src/data/policies.test.ts`.
+
+**Original finding:** `src/data/policies.ts:14` (file doc) and `:55-64` mirror SPEC-0007 §3.1 / R2
+in stating the clause invariant as a **biconditional**:
 
 ```
  *   - `check?` — present iff type === "public": { kind, param, sourceUrl }.
 ```
 
-The test suite pins only the **forward** half (public ⟹ has `check`,
-`src/data/policies.test.ts:210`). The **reverse** half (attested ⟹ no `check`) is undefended:
+The test suite pinned only the **forward** half (public ⟹ has `check`,
+`src/data/policies.test.ts:210`). The **reverse** half (attested ⟹ no `check`) was undefended:
 `check?` is declared optional on *every* `PolicyClause` regardless of `type`, so an attested
-clause carrying a stray `check` object is structurally legal to both TypeScript and the tests.
+clause carrying a stray `check` object was structurally legal to both TypeScript and the tests.
 
-Mutation-proven: adding
-`check: { kind: "indication", param: "x", sourceUrl: "https://x.test" }` to the attested clause
-`PP-COM-03` leaves **all 25 tests green and `tsc --noEmit` exit 0** — no test or type catches
-the violation. The file's own "present **iff**" comment (and spec R2's "iff") therefore make a
-stronger claim than the suite enforces; a future edit can break the invariant the comment
-asserts without any signal.
+**Fix applied:** Added the following test at `src/data/policies.test.ts:239` (HEAD 66b8273):
 
-Fix (pick one):
-- Add a test asserting `c.check == null` for every `type === "attested"` clause (mirror of the
-  existing R2 public-clause loop), closing the biconditional the comment already promises; **or**
-- If only the forward direction is intended to be enforced, soften the doc comment at `:14`
-  from "present iff type === public" to "present when type === public" so the comment no longer
-  over-claims relative to the tests.
+```ts
+// SPEC-0007 R2 (reverse half) — the `check` presence is a BICONDITIONAL: a
+// `check` object appears *iff* the clause is public. Pin the reverse direction
+// (attested clause => NO check) so the "present iff type === public" invariant in
+// policies.ts:14 is fully defended (forward half above; F1 strict-review fix).
+test("SPEC-0007 R2: no attested clause carries a check object (iff invariant)", () => {
+  for (const p of POLICY_LIBRARY) {
+    for (const c of p.clauses) {
+      if (c.type !== "attested") continue;
+      assert.ok(
+        c.check == null,
+        `${p.id}/${c.id}: attested clause must NOT carry a check object`,
+      );
+    }
+  }
+});
+```
+
+**Mutation proof:** Adding `check: { kind: "indication", param: "x", sourceUrl: "https://x.test" }`
+to attested clause `PP-COM-03` now causes test 18 to FAIL with:
+`PP-COM-03: attested clause must NOT carry a check object` — the reverse-biconditional invariant
+is closed.
 
 ## Disposition
 
-The data layer and the four in-scope, unit-named test groups (R1/R2/R5/R10/R12) are correct,
-PHI-free, faithful to SPEC-0007 §3.1/§3.6/§3.7, and mutation-verified as correctness-pinning —
-no correctness, drift, dead-code, DRY, or over-engineering finding there, and the prior tick's
-F1 (loose R10 existence test) is resolved. The single remaining finding is a half-enforced
-invariant: the in-file/spec "present **iff** type === public" biconditional is only pinned in
-the public→check direction, and the attested→no-check direction is silently violable (proven).
-Because the gate requires ZERO findings: **FAIL**. Resolving F1 (add the reverse-direction test,
-or downgrade the comment's "iff" to "when") clears the gate.
+PASS. The data layer and all in-scope test groups (R1/R2 forward+reverse, R5, R10, R12) are
+correct, PHI-free, faithful to SPEC-0007 §3.1/§3.6/§3.7, and mutation-verified as
+correctness-pinning. The previously open F1 (attested→no-check direction undefended) is
+resolved at HEAD 66b8273 by the reverse-direction assertion. Zero findings remain. **Gate: PASS.**
