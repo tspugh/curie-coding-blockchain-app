@@ -7,16 +7,20 @@ export function shortHex(hex: string, lead = 6, tail = 4): string {
   return `${hex.slice(0, lead)}…${hex.slice(-tail)}`;
 }
 
-/** Format a bigint amount for display (plain decimal; these are demo dollars). */
+/**
+ * Format a wei amount for display, explicitly labelled `wei`. The requested /
+ * escrow / covered amounts are denominated in WEI (not STT, not dollars) — the
+ * insurer locks exactly this many wei at `insurerEngage` (A0008).
+ */
 export function fmtAmount(v: bigint): string {
-  return v.toString();
+  return `${v.toString()} wei`;
 }
 
 /** One-line human summary of an event for the timeline (every event — R16). */
 export function describeEvent(e: CoverageEvent): string {
   switch (e.name) {
     case "ContractCreated":
-      return `Filed — provider ${e.providerId} → insurer ${e.insurerId}, requested ${e.requestedAmount}, drug ${shortHex(e.drugRef)}`;
+      return `Filed — provider ${e.providerId} → insurer ${e.insurerId}, requested ${fmtAmount(e.requestedAmount)}, drug ${shortHex(e.drugRef)}`;
     case "ContentCommitted":
       return `Justification committed — hash ${shortHex(e.contentHash)} (body stays off-chain)`;
     case "InsurerEngaged":
@@ -32,7 +36,7 @@ export function describeEvent(e: CoverageEvent): string {
     case "Ruled":
       // SPEC-0006 R24: Ruled event carries only (requestId, decision, coveredAmount).
       // clauseRef / receiptId were removed; rationale is now in RulingRationale.
-      return `Arbiter ruled "${DECISION_NAMES[e.decision]}" — covered ${e.coveredAmount}`;
+      return `Arbiter ruled "${DECISION_NAMES[e.decision]}" — covered ${fmtAmount(e.coveredAmount)}`;
     case "RulingRationale":
       return `Ruling rationale committed — decision ${DECISION_NAMES[e.decision]}`;
     case "PolicyInvalidated":
@@ -47,7 +51,7 @@ export function describeEvent(e: CoverageEvent): string {
       return `Ruling accepted by party ${e.partyId}`;
     case "Settled":
       // A0008 §2: refundedToInsurer is the real released amount, not a fee marker.
-      return `Settled — covered ${e.coveredAmount}, refunded to insurer ${e.refundedToInsurer}`;
+      return `Settled — covered ${fmtAmount(e.coveredAmount)}, refunded to insurer ${fmtAmount(e.refundedToInsurer)}`;
     case "Deadlocked":
       return `Deadlocked after ${e.rounds} round(s) — no mutual acceptance`;
     case "ProviderRefused":

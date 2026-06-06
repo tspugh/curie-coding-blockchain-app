@@ -54,6 +54,8 @@ export const SAMPLE_CASE: SampleCase = {
     "formulary coverage exception with prior authorization.",
   ].join(" "),
   drug: "Adalimumab (RxNorm 1366724 / NDC 00074-3799-02)",
+  // In WEI (escrowed by the insurer at engage). Small so the demo insurer
+  // wallet trivially covers it; symbolic stand-in for the coverage value.
   requestedAmount: "5200",
   // 2 prefilled pens — the cap driver (NDC-pinned dispensed units, R2/R6a).
   quantity: "2",

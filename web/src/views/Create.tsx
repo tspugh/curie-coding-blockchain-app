@@ -159,13 +159,16 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
     e.preventDefault();
     setError(null);
 
+    // Amount is in WEI (escrowed by the insurer at engage). quantity /
+    // daysSupply are also plain integers.
     const requestedAmount = parseAmount(amount);
     const quantityVal = parseAmount(quantity);
     const daysSupplyVal = daysSupply.trim() === "" ? 0n : parseAmount(daysSupply);
 
     if (!justification.trim()) return setError("Clinical justification is required.");
     if (!drug.trim()) return setError("Medication name is required.");
-    if (requestedAmount === null) return setError("Amount must be a number.");
+    if (requestedAmount === null || requestedAmount === 0n)
+      return setError("Amount must be a positive whole number of wei.");
     if (quantityVal === null || quantityVal <= 0n)
       return setError("Quantity must be a whole number greater than 0.");
     if (daysSupplyVal === null)
@@ -336,7 +339,7 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
         </div>
 
         <label>
-          Amount Requested ($)
+          Amount Requested (wei)
           <input
             data-testid="create-amount"
             type="text"
@@ -345,6 +348,7 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
             onChange={(e) => setAmount(e.target.value)}
             placeholder="5200"
           />
+          <span className="field-hint">In wei (not STT) — the insurer escrows exactly this many wei at engage; refunded on denial.</span>
         </label>
 
         <label>
