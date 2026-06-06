@@ -112,6 +112,8 @@ export interface Negotiation {
   readonly policyUri: string;
   /** Deterministic covered amount = min(requested, cap) on approve; else 0 (R6a). */
   readonly coveredAmount: bigint;
+  /** ETH locked at insurerEngage; released/refunded at settle or terminal (A0008). */
+  readonly escrowAmount: bigint;
   /** Mark Cuban Cost Plus per-unit price the agent looked up (cap basis — R6a/R10). */
   readonly costPlusUnitPrice: bigint;
   /** NADAC per-unit acquisition-cost FLOOR reference (R6a/R10). */
@@ -148,6 +150,16 @@ export interface Negotiation {
   readonly rulingDeadline: bigint;
   /** Whether the record exists (always true for a returned view). */
   readonly exists: boolean;
+  /** Per-negotiation public evidence URL for the LLM agent (SPEC-0006 R14). */
+  readonly agentEvidenceUrl: string;
+  /** Per-negotiation prompt hint embedded in the inferString call (SPEC-0006 R15). */
+  readonly agentPromptHint: string;
+  /** Current two-agent phase tracker (0=None, 1=Scraping, 2=Deciding — Amendment 0007 phase 1). */
+  readonly agentPhase: number;
+  /** Parked LLM Inference fee for the pending Decide-phase agent call (Amendment 0007). */
+  readonly pendingDecideFee: bigint;
+  /** Address of the fee payer for the parked decide fee (Amendment 0007). */
+  readonly pendingFeePayer: string;
 }
 
 /**
@@ -190,7 +202,7 @@ export type CoverageEventName =
   | "PacketSubmitted"
   | "RulingRequested"
   | "Ruled"
-  | "PolicyFlagged"
+  | "RulingRationale"
   | "PolicyInvalidated"
   | "EvidenceRequested"
   | "EvidenceSubmitted"
@@ -264,26 +276,31 @@ export interface PacketSubmittedEvent extends BaseEvent {
   readonly packetUrl: string;
 }
 
+/**
+ * SPEC-0006 R24: 4-arg Ruled event emitted by handleResponse.
+ * Shape: (reqId indexed, requestId indexed, decision indexed, coveredAmount).
+ * The rationale is now committed separately via commitRationale → RulingRationale event.
+ */
 export interface RuledEvent extends BaseEvent {
   readonly name: "Ruled";
   readonly requestId: bigint;
   readonly decision: Decision;
   readonly coveredAmount: bigint;
-  readonly rationaleHash: string;
-  readonly clauseRef: string;
-  readonly receiptId: bigint;
-  // SPEC-0004 §3.5 R23: clause indices voided per R23's on-label-policy-void path (amendment 0005).
-  readonly policyVoidedClauseIndices: readonly number[];
-  /** SPEC-0004 §3.5 R11: packet-entry indices the ruling relied on. */
-  readonly usedReferenceIndices: readonly number[];
-  /** SPEC-0004 §3.5 R11: leaf hashes for the cited references (replay-verification anchor). */
-  readonly usedLeafHashes: readonly `0x${string}`[];
 }
 
-export interface PolicyFlaggedEvent extends BaseEvent {
-  readonly name: "PolicyFlagged";
-  readonly clauseRef: string;
-  readonly standardRef: string;
+/**
+ * SPEC-0006 R24–R26: emitted by commitRationale after the keeper transcribes
+ * the agent's chain-of-thought from the receipt.
+ * Shape: (reqId indexed, requestId indexed, decision indexed, rationale string,
+ *         clauseReference string, standardReference string).
+ */
+export interface RulingRationaleEvent extends BaseEvent {
+  readonly name: "RulingRationale";
+  readonly requestId: bigint;
+  readonly decision: Decision;
+  readonly rationale: string;
+  readonly clauseReference: string;
+  readonly standardReference: string;
 }
 
 export interface PolicyInvalidatedEvent extends BaseEvent {
@@ -316,7 +333,8 @@ export interface AcceptedEvent extends BaseEvent {
 export interface SettledEvent extends BaseEvent {
   readonly name: "Settled";
   readonly coveredAmount: bigint;
-  readonly feePerParty: bigint;
+  /** ETH refunded to the insurer: escrowAmount − coveredAmount on Approved; full escrow on Denied (A0008 §2). */
+  readonly refundedToInsurer: bigint;
 }
 
 export interface DeadlockedEvent extends BaseEvent {
@@ -354,7 +372,7 @@ export type CoverageEvent =
   | PacketSubmittedEvent
   | RulingRequestedEvent
   | RuledEvent
-  | PolicyFlaggedEvent
+  | RulingRationaleEvent
   | PolicyInvalidatedEvent
   | EvidenceRequestedEvent
   | EvidenceSubmittedEvent

@@ -35,3 +35,11 @@ remotion/*
 !.claude/skills/
 !.claude/hooks/
 contracts/scripts/restore-real-platform.ts
+
+# Local codesign drafts (not part of the product build)
+.codesign/
+# Stray package-lock backups from earlier reference-doc work
+contracts/package-lock.json.bak.*
+
+# Generated test-coverage output
+coverage/

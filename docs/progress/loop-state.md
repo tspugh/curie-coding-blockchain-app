@@ -4,11 +4,67 @@
 > [`docs/loop-prompts/spec-4-implementation-loop.md`](../loop-prompts/spec-4-implementation-loop.md)
 > for the procedure that reads + writes this file.
 
-**Last updated:** 2026-05-30 (tick 150 — **SKIP-TICK** per the loop's Phase-8 "gate could not run → skip for THIS tick only and note in loop-state.md" provision. Tick 149 noted the closable-without-external-action queue was empty; tick 150 confirmed via a tight ≤5-tool-use Sonnet planning-subagent sweep. External state unchanged: wallet 5.50 STT, ANTHROPIC_API_KEY unset, both real-mode paths blocked. Remaining open OQs are either user-preference decisions (SPEC-0003 Q2, SPEC-0005 OQ1, OQ5 gating-cadence) or separate workstreams (SPEC-0004 TASK-1 real de-id'd corpus / TASK-2 case-research outputs / TASK-3 arbiter prompt design) or already-deferred (SPEC-0005 OQ2 → v1.5). All gates passing where applicable. The honest move per the loop's "On token budget — IGNORE" clause ("if a tick can't complete a step ... let next tick pick up") and Phase-8 ("Gate could not run → skip for this tick only") is to record the skip rather than manufacture diminishing-returns polish. Working tree clean; no new commit beyond this loop-state note. Counter advanced 149 → 150.)
-**Current mode:** `impl` — steady state still gated on real-mode browser-verify against `0x2c561f33…488ac93` (wallet 5.50 STT < ~7.35 needed for full sweep; or `ANTHROPIC_API_KEY` for smaller Tick A smoke).
-**Current tick:** 150
-**Last focus:** Skip-tick. Planning subagent confirmed no closable item remains without external action (wallet refund or `ANTHROPIC_API_KEY`). Recording per Phase-8 to maintain audit trail.
-**Last commit:** `510ecd8` (tick 149 SPEC-0003 Q1/Q3 closures) → tick 150 commits this skip-note only.
+---
+
+## ⚠ SPEC-0006 PIVOT — read this first (tick 151, 2026-06-03, branch `spec-6-implementation`)
+
+**Everything below this block describes the Amendment-0006 self-hosted
+architecture, which SPEC-0006 §2.3 (R0/R9/R10) now BANS.** Do NOT plan any
+unit that uses `scripts/orchestrator-real.ts`, the `selfHosted` contract path,
+`ANTHROPIC_API_KEY`, the old contract `0x2c561f33…488ac93`, or any off-chain
+LLM in the contract-execution path. Those are superseded targets.
+
+**Current architecture (SPEC-0006, Approved 2026-06-03):** real adjudication
+originates from a single on-chain call to the canonical Somnia AI Agent
+Platform `0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776` via
+`IAgentRequester.createRequest` + the 4-arg `handleResponse` callback. No
+detour through any off-chain process.
+
+**Resolved (SPEC-0006 R-OPEN-1–4, via `scripts/identify-inference-agent.ts`):**
+- Chosen agent: **LLM Inference**, `agentId 12847293847561029384` (testnet+mainnet).
+- Method: `inferString(string,string,bool,string[])`, selector `0xfe7ca098`,
+  decision constrained via non-empty `allowedValues`.
+- `getRequestDeposit()` = 0.03 STT (read dynamically; never hardcode).
+- `inferString` returns a single `string` — `handleResponse` decodes one string.
+
+**Provider wallet** `0x204031FA1ad46a2D453b7c54fC28Ff1787Bd9128` ≈ 3.7 STT;
+insurer (deterministic) `0x3F236fcac19fB951d5714F9Bc7ad5aE6724EB317` ≈ 0.5 STT
+— both funded, both real-mode-capable. No `ANTHROPIC_API_KEY` involved.
+
+**Latest exploratory deploy** `0xaFf3fA6B80E8a8C479fe59F1ECDb4a6B6704635f`
+(spec-4 source, `selfHosted=false`) proved the platform path works end-to-end
+but still calls **8-param `ExtractANumber`** (wrong agent + stale ABI) → rulings
+land in `EvidenceRequested`. The SPEC-0006 cascade replaces that.
+
+**SPEC-0006 implementation cascade (the real top-of-queue):**
+1. **`_fireAgent` → LLM Inference.** Replace the `ExtractANumber` payload with
+   `inferString` (agentId `12847293847561029384`, selector `0xfe7ca098`,
+   `allowedValues = ["approve","deny","needs_more_info","policy_invalid"]`).
+   Pin agentId + cost constants. **This is the keystone — unblocks every
+   downstream verification.** (SPEC-0006 R11/R12, SPEC-0004.1 R1.)
+2. **`handleResponse` decodes a single string** ruling; parse decision token +
+   rationale; emit `RulingRationale` (R24–R26).
+3. **Self-host + stub surface removal** (R9): delete `selfHosted`,
+   `setPlatformSelfHosted`, `_fireAgentSelfHosted`, `_selfHostedNonce`,
+   `scripts/orchestrator-real.ts`, `@anthropic-ai/sdk` dep, the CI lint edge.
+4. **Per-negotiation `agentEvidenceUrl` + `agentPromptHint`** on the struct
+   (R14/R15); `createContract` gains them; drop the contract-level global.
+5. **Drug→evidence map + 6 fixtures** (R16/R18); URL-liveness check (R21).
+6. **Redeploy** + R44 headline gate against ≥2 of the 6 examples; R55 three
+   named flow scenarios; R48–R51/R56–R58 history hydration.
+7. **SPEC-0004.1 ledger absorption** (R1–R12 into owning durable specs); delete
+   the fractional ledger when empty.
+
+**SPEC-0006 R-OPEN-1–4 are CLOSED; SPEC-0005 is Superseded.** Plan from this
+block, not the stale verdict table below (kept for audit trail only).
+
+---
+
+**Last updated:** 2026-06-04 (tick 152 — `feat(amendment-0007)`: Add phase-tracker fields (`agentPhase`, `pendingDecideFee`, `pendingFeePayer`) to off-chain `Negotiation` interface and both decoder paths, bringing the TypeScript layer into full sync with the 38-field on-chain struct. `src/types/coverage.types.ts` + `src/contract/simulated.ts` (SimNegotiation + createContract init + snapshot) + `src/contract/real.ts` (raw[35-37] positional decode) + `src/contract/simulated.agentphase.test.ts` (6 tests: zero-state, structural field-name, snapshot round-trip, positional decode). 337/337 lib tests + 166/166 hardhat tests pass. Tick counter advanced 151 → 152.)
+**Current mode:** `impl` — SPEC-0006 cascade on `spec-6-implementation`. Landed: inferString migration + self-host teardown (`ac142c1`), per-neg agentEvidenceUrl/agentPromptHint (`b4e92d4`), drug-evidence map + Create.tsx auto-fill (`1a0c57f`), Amendment 0007 phase-tracker fields (`48f68a9`, `9b3095a`, `7c5dcfa`). NO `ANTHROPIC_API_KEY` / orchestrator / `0x2c561f33…` — those are BANNED (see pivot block).
+**Current tick:** 152
+**Last focus:** Amendment 0007 phase-tracker fields — `agentPhase` (0=None/1=Scraping/2=Deciding), `pendingDecideFee`, `pendingFeePayer` added to `Negotiation` interface, `SimNegotiation`, `createContract` init, `snapshot()`, and `decodeNegotiationRaw` raw[35–37] mapping. 6 tests in `simulated.agentphase.test.ts` all pass. Strict review: ZERO findings, gate PASS.
+**Last commit:** `7c5dcfa` (tick 152 — Amendment 0007 phase-tracker fields complete, strict review PASS)
 
 > **History rotation note (tick 145):** earlier reviewer-history blocks (ticks
 > 122-128), tick-summary blocks (115-120, 107-113, 98-106, and the older 90-96
@@ -23,8 +79,8 @@
 | `npm test` (umbrella) | ✓ PASS — chain runs in ~19s end-to-end |
 | `npm run check-ruling-abi` | ✓ static + 5/5 round-trips |
 | TypeScript typecheck | ✓ project tsc clean |
-| Lib tests | ✓ **209/209** (was 196 pre-tick-144 transition tests) |
-| Hardhat tests | ✓ **61/61** (Amendment 0006 + R26 + admin-setter + state-guard) |
+| Lib tests | ✓ **337/337** (tick 152: +6 Amendment 0007 agentphase tests; 234→337 across ticks 151–152) |
+| Hardhat tests | ✓ **166/166** (includes Amendment 0007 phase-tracker + escrow + scrape coverage) |
 | Coverage (src/, measured subset) | ✓ 98.85% line / 92.25% branch — PASS |
 | Coverage (src/contract/simulated.ts single file) | ⚠ 75.45% branch (was 68.63%; +6.82pp tick 144) — subset overall still PASS |
 | Coverage (contracts/, CoverageNegotiation.sol) | ✓ 86.42% branch — PASS ≥85% gate |
@@ -48,23 +104,22 @@ contract**, blocked on either wallet refund (need ~8 STT total; current 5.50)
 OR `ANTHROPIC_API_KEY` for a smaller-scope Tick A live smoke (current STT
 sufficient for that).
 
-**Top-of-queue going into tick 151:**
-1. **Tick A live smoke test** — single requestAdjudication via orchestrator
-   + Claude SDK on `0x2c561f33…`. Affordable (~0.5 STT). Requires
-   `ANTHROPIC_API_KEY`.
-2. **Re-run browser-verify real mode** — needs wallet refunded to ~8 STT,
-   OR run a curated subset that fits the 5.50 STT budget.
-3. **Cron restart** — canonical loop-prompt has many substantive updates
-   (check-ruling-abi gate, npm test umbrella, deployed contract address,
-   reviewer cadence) since cron `18c86caf` was created. Operational; needs
-   user to restart the cron with the updated body.
-4. **`simulated.ts` further branch coverage** — diminishing returns; gate
-   is already passing for the src/ subset. Tick 144 closed 68.63% → 75.45%;
-   further closes would need helper-function tests.
-5. **State-machine branch coverage continuation in `CoverageNegotiation.sol`** —
-   diminishing returns; gate is already passing.
-6. **OQ-sweep continuation** — SPEC-0003 Q2 (UX funding-flow shortcut) is a
-   user-pref decision, not closable autonomously. SPEC-0004 TASK-1/2/3 remain
-   open as separate workstreams. SPEC-0005 OQ5 (real-chain cost decision) was
-   updated tick 147 but the gating-cadence decision (per-PR vs nightly) is a
-   user call. The closable-without-external-action queue is now empty.
+**Top-of-queue (SPEC-0006 cascade — supersedes the stale Amendment-0006 queue below the pivot block):**
+1. **Two-agent scrape phase off-chain sync** ✓ DONE (tick 152) — `agentPhase` / `pendingDecideFee` / `pendingFeePayer` fields added to `Negotiation` interface, `SimNegotiation`, `createContract` init, `snapshot()`, and `decodeNegotiationRaw` raw[35–37]. 6 tests pass. **Next sub-unit:** wire the on-chain `_fireAgent` two-step (LLM Parse Website `12875401142070969085` `ExtractString 0xc2dd1a7a` scrape → LLM Inference `inferString` decide) into `CoverageNegotiation.sol:_fireScrape` + `_handleScrapeResponse`; fund both calls from `requestAdjudication`; redeploy. (SPEC-0006 §3.6.1.)
+2. **`commitRationale` + receipts** (Amendment 0007 §5, R24): keeper fetches the
+   LLM Inference receipt by `requestId` (`receipts.testnet.agents.somnia.host`),
+   commits real reasoning text + keccak256 on-chain. (Already partly landed in
+   `ac142c1` — verify the keeper path + UI surfacing.)
+3. **Real escrow** (Amendment 0008, SPEC-0001 R8): `insurerEngage` payable,
+   insurer deposits `requestedAmount`; `settle` releases `coveredAmount` →
+   provider, refunds remainder → insurer; terminal-non-settle refunds full
+   escrow. CEI + nonReentrant, pull-over-push (R-OPEN-9, security gate decides).
+4. **URL-liveness check (R21)** + `__probe` Vite proxy; **6 per-example E2E
+   scenarios (R19)** + **R55 three named flow scenarios**.
+5. **Redeploy** the SPEC-0006 contract + R44 headline real-wallet gate against
+   ≥2 of the 6 examples; R48–R51/R56–R58 history hydration.
+6. **SPEC-0004.1 ledger absorption** (R1–R12 into owning durable specs); delete
+   the fractional ledger when empty.
+7. **Pre-existing follow-up (not a loop gate):** `test:real-local` insurerEngage
+   `auth: not insurer` — localnode smoke calls insurerEngage via the
+   provider-signer backend; needs a distinct insurer-signer backend.

@@ -204,7 +204,8 @@ scenario_happy_path() {
   ab wait 1800 >/dev/null
   assert_eq "approve ruling routes to Approved" "4" "$(state_of 1)"
   # R6a: deterministic covered amount = min(5200, 2100 × 2) = 4200.
-  assert_eq "covered = min(requested, costPlus × qty) (R6a)" "4200" "$(covered_of 1)"
+  # SPEC-0006 R24: coveredAmount = requestedAmount (no AI price cap).
+  assert_eq "covered = requestedAmount (SPEC-0006 R24)" "5200" "$(covered_of 1)"
 
   # Act: both parties accept, then settle (R8 event marker + 50/50 fee).
   eval_click accept-submit
@@ -300,12 +301,6 @@ scenario_policy_invalidated() {
   eval_click engage-noncompliant-toggle
   eval_click engage-submit
   ab wait 300 >/dev/null
-  # SPEC-0004 §3.5 R23: prime a populated `policyVoidedClauseIndices` so the
-  # ruling-meta panel surfaces the new "Voided clauses" row (tick 51 UI).
-  # SPEC-0004 §3.5 R11: prime ruling-citation indices too so the "Cited
-  # references" row also renders.
-  ev "window.__curie.setNextPolicyVoidedClauseIndices([2]); 1" >/dev/null
-  ev "window.__curie.setNextUsedReferenceIndices([0, 3]); 1" >/dev/null
   eval_click decision-void   # 3 = Decision.PolicyInvalid
   eval_click adjudicate-submit
   ab wait 1800 >/dev/null
@@ -323,13 +318,9 @@ scenario_policy_invalidated() {
     *psoriasis*) echo "  ✓ FDA indication citation shown"; PASS=$((PASS + 1));;
     *) echo "  ✗ FDA indication citation not shown"; FAIL=$((FAIL + 1));;
   esac
-
-  # SPEC-0004 §3.5 R11 + R23: the tick-51 ruling-meta rows surface the
-  # primed sim values once the Ruled event is decoded.
-  assert_eq "ruling-meta surfaces R23 voided clauses" "[2]" \
-    "$(ab get text "[data-testid=ruling-voided-clauses]" | tail -1)"
-  assert_eq "ruling-meta surfaces R11 cited references" "[0, 3]" \
-    "$(ab get text "[data-testid=ruling-used-refs]" | tail -1)"
+  # NOTE: ruling-voided-clauses / ruling-used-refs rows were removed in SPEC-0006
+  # (the 4-arg Ruled event no longer carries policyVoidedClauseIndices or
+  # usedReferenceIndices; those SPEC-0004 fields don't exist in the new schema).
 }
 
 # ===========================================================================

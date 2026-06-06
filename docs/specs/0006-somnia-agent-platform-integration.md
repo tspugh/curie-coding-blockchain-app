@@ -1,6 +1,6 @@
 # SPEC-0006: On-chain Somnia agent integration + generalized cases + usability
 
-**Status:** Draft · **Owner:** tspugh · **Date:** 2026-06-01 (merges SPEC-0005)
+**Status:** Approved · **Owner:** tspugh · **Date:** 2026-06-01 (merges SPEC-0005); R-OPEN-1–4 resolved 2026-06-03 (LLM Inference agentId + ABI pinned)
 
 > Authored 2026-05-30 from on-chain probes + Somnia docs research; **revised
 > 2026-06-01 to merge SPEC-0005 (usability + integration testing) and add four
@@ -131,8 +131,11 @@ all on testnet, with no off-chain shortcuts.
   matches Curie's "given policy + evidence, decide" pattern), LLM Parse
   Website, or JSON API Request. Selection rationale + chosen `agentId`
   + chosen method + chosen ABI MUST be documented in §3.6 before R12
-  can pass. (Per R-OPEN-1, the LLM Inference testnet agent ID is not in
-  published docs and MUST be resolved before R11 closes.)
+  can pass. **CHOSEN: LLM Inference, `agentId 12847293847561029384`,
+  method `inferString(string,string,bool,string[])` (selector
+  `0xfe7ca098`)** — resolved 2026-06-03 (R-OPEN-1/R-OPEN-2), documented
+  in §3.6. The decision token is constrained via a non-empty
+  `allowedValues` (`["approve","deny","needs_more_info","policy_invalid"]`).
 - **R12 (MUST) Build-time ABI drift detector.** Extend
   `scripts/check-ruling-abi.ts` to pin the chosen agent's selector +
   param types verbatim. The script MUST fail the build if the on-chain
@@ -240,9 +243,36 @@ all on testnet, with no off-chain shortcuts.
 
 ### 2.8 AI reasoning visible in the case
 
+> **DESCOPED for V0 (2026-06-04).** R24/R25's free-text rationale surface (the
+> `RulingRationale` event + the `ruling-rationale` card + the rationale keeper)
+> was removed: it only existed because the **constrained** `inferString` decide
+> call strips the response to the decision token and pushes the chain-of-thought
+> into the off-chain receipt, which then needed an off-chain keeper to commit
+> on-chain. The cleaner path — if reasoning is wanted back — is to capture it
+> **natively on-chain** via an *unconstrained* `inferString` (the model's
+> chain-of-thought comes back in `responses[0].result`) decoded in
+> `handleResponse`, with the decision parsed from the final line. The **verdict**
+> (Approve/Deny/etc. + covered amount) is fully on-chain via the `Ruled` event and
+> is shown by the "AI Decision" panel (§2.9 R30a) — that is retained. The contract
+> `commitRationale` + `RulingRationale` definitions remain in source but dormant
+> (no redeploy). R24/R25/R26 below are the *original* design, kept for when
+> reasoning is reintroduced natively.
+
+> **Reasoning source (Amendment 0007).** The constrained `inferString` decision
+> call (§3.6.1) returns only the decision token, but `chainOfThought = true`
+> means the model's **actual reasoning is captured in the Somnia receipt**
+> (`reasoning` step), retrievable by the decision `requestId` at
+> `https://receipts.testnet.agents.somnia.host?requestId=<id>`. A keeper fetches
+> it and calls `commitRationale(reqId, rationale, …)` (§3.6.3), which emits the
+> **real reasoning text** in `RulingRationale` and stores its `keccak256` on
+> chain. Somnia's receipt is canonical; the on-chain hash is tamper-evidence.
+> The UI reads `RulingRationale` (or fetches the receipt directly). This is the
+> model's real chain-of-thought — **not** a templated summary.
+
 - **R24 (MUST) On-chain reasoning event.** The contract MUST emit a
-  new event whenever it processes a successful agent response,
-  carrying the LLM's free-text rationale (capped):
+  `RulingRationale` event carrying the agent's real reasoning (sourced
+  from the LLM Inference receipt per §3.6.3, committed via
+  `commitRationale`), capped:
 
   ```solidity
   event RulingRationale(
@@ -294,6 +324,13 @@ all on testnet, with no off-chain shortcuts.
 - **R30 (SHOULD) Screenshots per layout R.** Each tick that closes
   R27-R29 attaches a viewport screenshot to
   `docs/progress/browser-verify.md`.
+- **R30a (SHOULD) Modest AI Decision verdict.** The Detail view's "AI
+  Decision" panel (`data-testid="ruling-panel"`) renders the verdict
+  (Approved / Denied / More-Evidence / Policy-Voided) as a **compact
+  status row, not an oversized hero banner**: the verdict icon ≤ ~22px,
+  the decision label ≤ ~15px, and the result row uses tight padding
+  (~10–14px) with a 1px border. The verdict is informative but does not
+  visually dominate the action panel + timeline.
 
 ### 2.10 Generalized N-user runtime registry (merged from SPEC-0005 §3.3)
 
@@ -702,12 +739,115 @@ struct Request {
 
 | Agent | Testnet `agentId` | Methods | Curie fit |
 |---|---|---|---|
-| **LLM Inference** | **Not published** (resolve via R-OPEN-1) | `inferString`, `inferNumber`, `inferChat`, `inferToolsChat` | **Best fit.** Open LLM completion: prompt + context → structured result. Maps directly to "given policy + evidence packet, decide approve/deny". Returns text rationale that powers R24's `RulingRationale` event. |
-| LLM Parse Website | `12875401142070969085` | `ExtractANumber(string,string,uint256,uint256,string,string,bool,uint8,uint8)` (9 params) + `ExtractString` variant | Workable fallback. Phrase as: "given this drug information page <evidenceUrl>, is the drug FDA-indicated for <indication>? Return 1=APPROVE / 0=DENY." Rationale text isn't first-class but the agent returns a structured numeric result; we'd surface a templated rationale instead. |
-| JSON API Request | Not published (R-OPEN-2) | `fetchUint(string url, string selector, uint8 decimals)`, plus `fetchString` variant | Not a fit. |
+| **LLM Inference** | **`12847293847561029384`** (R-OPEN-1 resolved; same on mainnet) | `inferString` (`0xfe7ca098`), `inferNumber` (`0xc6833c3d`), `inferChat` (`0xbee8d139`), `inferToolsChat` (`0xd0683905`) | **Best fit + CHOSEN.** Open LLM completion: prompt + context → structured result. Maps directly to "given policy + evidence packet, decide approve/deny". Returns text rationale that powers R24's `RulingRationale` event. |
+| LLM Parse Website | `12875401142070969085` | `ExtractANumber(string,string,uint256,uint256,string,string,bool,uint8,uint8)` (9 params, `0x2623e955`) + `ExtractString` (`0xc2dd1a7a`) | Workable fallback. Phrase as: "given this drug information page <evidenceUrl>, is the drug FDA-indicated for <indication>? Return 1=APPROVE / 0=DENY." Rationale text isn't first-class but the agent returns a structured numeric result; we'd surface a templated rationale instead. |
+| JSON API Request | `13174292974160097713` (R-OPEN-2 resolved) | `fetchUint(string,string,uint8)` (`0x3bbc1302`), `fetchString(string,string)` (`0xe003c22e`) | Not a fit. |
 
 **Preferred:** LLM Inference (rationale-first). **Fallback:** LLM Parse
 Website with corrected 9-param signature.
+
+### 3.6.1 Two-agent ruling flow + response contract (Amendment 0007)
+
+Adjudication runs as **two sequential agent calls** coordinated by an
+`agentPhase` field on the negotiation (`None → Scraping → Deciding → None`).
+`requestAdjudication` is `payable` and funds **both** calls up front (scrape fee
++ decide fee); the decide fee is held by the contract and spent when phase 2
+fires.
+
+**Phase 1 — scrape (`agentPhase = Scraping`).** `requestAdjudication` fires
+**LLM Parse Website** (`agentId 12875401142070969085`, `ExtractString` selector
+`0xc2dd1a7a`) against the per-negotiation `agentEvidenceUrl` (R14), extracting
+the coverage-relevant indication/policy text. State → `UnderReview`; the scrape
+`requestId` is mapped with `phase = Scraping`.
+
+**Phase 2 — decide (`agentPhase = Deciding`).** The scrape `handleResponse`
+decodes the extracted evidence string, then fires **LLM Inference**
+(`agentId 12847293847561029384`,
+`inferString(string,string,bool,string[])` selector `0xfe7ca098`) with:
+
+```
+chainOfThought = true                  // enriches the receipt's `reasoning` step (R24)
+allowedValues  = ["approve", "deny", "needs_more_info", "policy_invalid"]
+prompt         = built from { scraped evidence, agentPromptHint, policy clauses }
+system         = necessity-arbiter rubric (evidence-grounded; NOT an ICD-10 lookup)
+```
+
+A non-empty `allowedValues` constrains the subcommittee to **exactly one of the
+four tokens** (verified against
+`https://docs.somnia.network/agents/base-agents/llm-inference`).
+`chainOfThought = true` does not change the on-chain `response` (still one
+constrained token) — it enriches the **receipt** the UI later reads (R24).
+**No PHI** in any string (SPEC-0001 R3/R4).
+
+**Decision decode.** On the decision `Success` response, `handleResponse` decodes
+a single string and maps it:
+
+| Returned token | `Decision` | Terminal/route |
+|---|---|---|
+| `"approve"` | `Approve` | `Approved`, `coveredAmount = min(requested, benchmarkUnitPrice × quantity)` |
+| `"deny"` | `Deny` | `Denied`, `coveredAmount = 0` |
+| `"needs_more_info"` | `NeedMoreEvidence` | `EvidenceRequested` (retriable) |
+| `"policy_invalid"` | `PolicyInvalid` | `PolicyInvalidated` (R6b, narrowed by Amendment 0005) |
+| anything else / empty | — | `EvidenceRequested` (defensive — contract does not trust the platform blindly) |
+
+```solidity
+string memory tok = abi.decode(responses[0].result, (string));
+Decision decision = _tokenToDecision(tok); // unknown → route to EvidenceRequested
+```
+
+Either phase returning a non-`Success` status (or `responses.length == 0`)
+routes to `EvidenceRequested` and refunds any held decide-phase fee (R9: never
+trap caller ETH).
+
+**Why two calls (not the old single-agent 10-tuple):** Medicaid and similar
+coverage is evidence-driven, not an ICD-10-code lookup — the model must reason
+over the *actual* policy/evidence text, so LLM Parse Website scrapes it first and
+LLM Inference decides over it. Neither agent returns prices or rationale in its
+result string: the **price cap is a curated benchmark** (§3.6.2) and the **real
+reasoning is read from the receipt** (§3.6.3).
+
+### 3.6.3 Receipt-sourced reasoning + on-chain hash commit (Amendment 0007 — R24)
+
+The LLM Inference receipt carries the model's actual chain-of-thought (the
+`reasoning` step), retrievable by the decision `requestId` at
+`https://receipts.testnet.agents.somnia.host?requestId=<id>`. After the decision
+`handleResponse` finalizes the ruling on-chain, an off-chain **keeper** (or the
+UI) fetches that receipt and calls:
+
+```solidity
+function commitRationale(
+    uint256 reqId,
+    string  calldata rationale,        // capped at 4096 chars (R26)
+    string  calldata clauseReference,
+    string  calldata standardReference
+) external onlyKeeper;
+```
+
+It stores `rationaleHash = keccak256(rationale)` and emits `RulingRationale`.
+**It MUST NOT mutate any ruling/escrow/state field** — the decision +
+`coveredAmount` + state transition were finalized by the agent callback before
+any keeper runs, so the keeper only transcribes already-produced reasoning
+(SPEC-0006 **R0-compliant**: it neither computes nor shapes the ruling). Somnia's
+receipt (keyed by `requestId`) is the **canonical** record; the on-chain hash is
+tamper-evidence for the committed text.
+
+### 3.6.2 Deterministic cap from a curated benchmark (Amendment 0007 — amends SPEC-0001 R6a)
+
+The covered amount stays deterministic and **not AI-chosen**, but the benchmark
+unit price is no longer an agent output. `createContract` accepts a
+`uint256 benchmarkUnitPrice` (wei), sourced client-side from the curated
+`web/src/drugEvidenceMap.ts` / `src/data` price table (same curated map as
+R16/R18). Stored on the `Negotiation`. On `Approve`:
+
+```
+coveredAmount = benchmarkUnitPrice == 0
+    ? requestedAmount                                   // custom drug, no curated price → uncapped
+    : _min(requestedAmount, benchmarkUnitPrice * quantity);
+```
+
+The agent's former `costPlusUnitPrice` / `nadacUnitPrice` outputs are removed
+from the ruling path. NADAC, if shown, is a curated floor reference, not an
+agent output.
 
 ### 3.7 Per-negotiation evidence URL + prompt hint (R14/R15)
 
@@ -830,7 +970,7 @@ totalDeposit = platform.getRequestDeposit() + (costPerAgent × subcommitteeSize)
 |---|---|---|---|
 | LLM Parse Website | `0.10 ether` | 3 | `0.30 STT` |
 | JSON API Request | `0.03 ether` | 3 | `0.09 STT` |
-| LLM Inference | **TBD** (R-OPEN-3) | 3 | TBD |
+| **LLM Inference** | `0.10 ether` (safe upper bound; `0.07–0.09` observed on chain) | 3 | `0.21–0.30 STT` |
 
 `platform.getRequestDeposit()` is read at request time; do NOT
 hardcode.
@@ -1180,23 +1320,35 @@ the test implementation. Synthetic data only. Test IDs trace to R-ids.
 
 ## 8. Open questions
 
-- **R-OPEN-1 (HIGH — blocks R11):** What is the numeric on-chain
-  `agentId` for **LLM Inference** on Somnia testnet (chain 50312)?
-  Resolution paths: (a) parse `RequestCreated` event logs from
-  `0x037Bb9C…` for distinct `(agentId, payload-method)` pairs; (b)
-  registry view function (currently unknown); (c) ask Somnia devrel
-  via Discord `#dev-chat` or `developers@somnia.foundation`.
-- **R-OPEN-2 (HIGH — blocks R12):** For the chosen agent (LLM
-  Inference preferred), what is the exact registered ABI selector +
-  param types on `0x037Bb9C…`?
-- **R-OPEN-3 (MED — affects R5 hardcoding):** What is the current
-  value of `platform.getRequestDeposit()` on canonical testnet
-  `0x037Bb9C…`? Resolution: read-only RPC at deploy time; spec
-  prefers dynamic read so this is informational.
-- **R-OPEN-4 (MED — affects T26 / T24):** For LLM Inference's
-  `inferString` / `inferChat`, what is the decoded response shape?
-  Single string? Tuple `(string text, uint256 score)`? Drives the
-  rationale-decoding logic in `handleResponse`.
+- **R-OPEN-1 — RESOLVED (2026-06-03).** The numeric on-chain `agentId`
+  for **LLM Inference** is **`12847293847561029384`** on BOTH Somnia
+  testnet (chain 50312) and mainnet (chain 5031 — Somnia uses consistent
+  agent IDs across networks). Resolved via path (a): `scripts/identify-inference-agent.ts`
+  scanned `RequestCreated` logs on `0x037Bb9C…` and matched the
+  `inferString` selector `0xfe7ca098` (48 calls), `inferChat`
+  `0xbee8d139`, and `inferNumber` `0xc6833c3d` against that agentId.
+  Recorded in the `somnia-agent` skill §3.1. **R11 unblocked.**
+- **R-OPEN-2 — RESOLVED (2026-06-03).** LLM Inference's registered ABI
+  on `0x037Bb9C…`: `inferString(string,string,bool,string[])`
+  (selector `0xfe7ca098`), `inferNumber(string,string,int256,int256,bool)`
+  (`0xc6833c3d`), `inferChat(string[],string[],bool)` (`0xbee8d139`),
+  `inferToolsChat(...)` (`0xd0683905`). Curie uses `inferString` with a
+  non-empty `allowedValues` to constrain the decision. Selectors verified
+  on-chain by the discovery script; pinned in `somnia-agent` §3.1.
+  **R12 can now pin a real selector.**
+- **R-OPEN-3 — RESOLVED (2026-06-03).** `platform.getRequestDeposit()`
+  on canonical testnet `0x037Bb9C…` reads **`0.03 STT`**
+  (`0x6a94d74f430000` wei) as of the 2026-06-02 redeploy session. The
+  spec still mandates a dynamic read at request time (R5) — this value is
+  informational and MUST NOT be hardcoded.
+- **R-OPEN-4 — RESOLVED (2026-06-03).** `inferString` returns a **single
+  `string`** (`abi.decode(responses[i].result, (string))`); `inferChat`
+  likewise returns one `string`; `inferNumber` returns one `int256`.
+  There is no tuple. `handleResponse` decodes `responses[0].result` as a
+  single string and parses Curie's structured ruling out of that text
+  (decision token via the constrained `allowedValues`, plus a rationale
+  body for the `RulingRationale` event). Source: `somnia-agent` skill
+  §3.1 method table.
 - **R-OPEN-5 (MED — affects R21):** Will the FDA / DailyMed pages
   consistently allow `HEAD` requests cross-origin from a browser?
   If not (typical), R21 falls back to the Vite `__probe` proxy in
@@ -1209,6 +1361,18 @@ the test implementation. Synthetic data only. Test IDs trace to R-ids.
   retain ONLY in `scripts/dev-*.ts` / `scripts/eval-*.ts` files;
   remove from any code reachable from the contract or
   integration-test path; CI lints the import edge.**
+- **R-OPEN-8 — RESOLVED (2026-06-03, Amendment 0007):** The LLM's
+  *actual* reasoning is sourced from the **Somnia receipt** (`reasoning`
+  step, `chainOfThought = true`), retrieved by `requestId` and committed
+  on-chain via `commitRationale` (§3.6.3) — no second inference call and
+  no templated summary. Canonical record = Somnia receipt; on-chain hash
+  = tamper-evidence.
+- **R-OPEN-9 (opened by Amendment 0008 — escrow safety):** Final
+  pull-vs-push decision for escrow release/refund in `settle` and the
+  terminal-non-settle transitions. Pull (per-address `owed` +
+  `withdraw()`) is preferred for reentrancy safety; push (`call` +
+  `nonReentrant`) is the single-tx-settlement fallback. The
+  security-auditor gate decides before any funded run.
 
 ---
 

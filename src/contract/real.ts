@@ -68,7 +68,9 @@ const LOG_PAGE_SIZE = 1_000;
 
 /**
  * Raw `Negotiation` tuple returned by ethers — field order matches the Solidity
- * struct (and `abi.ts`) EXACTLY. 31 fields.
+ * struct (and `abi.ts`) EXACTLY. 38 fields (added lastRequestId, agentEvidenceUrl,
+ * agentPromptHint per SPEC-0006 R14/R15; added agentPhase, pendingDecideFee,
+ * pendingFeePayer per Amendment 0007 phase 1).
  */
 type RawNegotiation = readonly [
   bigint, // [0]  providerId
@@ -84,25 +86,81 @@ type RawNegotiation = readonly [
   string, // [10] policyHash
   string, // [11] policyUri
   bigint, // [12] coveredAmount
-  bigint, // [13] costPlusUnitPrice
-  bigint, // [14] nadacUnitPrice
-  string, // [15] rationaleHash
-  string, // [16] clauseRef
-  string, // [17] standardRef
-  bigint | number, // [18] lastDecision (uint8)
-  boolean, // [19] hasRuling
-  bigint, // [20] round
-  bigint | number, // [21] payerLine (uint8)
-  bigint | number, // [22] appealRound (uint8)
-  boolean, // [23] providerAccepted
-  boolean, // [24] insurerAccepted
-  bigint, // [25] totalFees
-  bigint | number, // [26] state (uint8)
-  bigint, // [27] pendingRequestId
-  bigint, // [28] createdAt
-  bigint, // [29] rulingDeadline
-  boolean, // [30] exists
+  bigint, // [13] escrowAmount (ETH locked at insurerEngage — A0008)
+  bigint, // [14] costPlusUnitPrice
+  bigint, // [15] nadacUnitPrice
+  string, // [16] rationaleHash
+  string, // [17] clauseRef
+  string, // [18] standardRef
+  bigint | number, // [19] lastDecision (uint8)
+  bigint, // [20] lastRequestId
+  boolean, // [21] hasRuling
+  string, // [22] agentEvidenceUrl
+  string, // [23] agentPromptHint
+  bigint, // [24] round
+  bigint | number, // [25] payerLine (uint8)
+  bigint | number, // [26] appealRound (uint8)
+  boolean, // [27] providerAccepted
+  boolean, // [28] insurerAccepted
+  bigint, // [29] totalFees
+  bigint | number, // [30] state (uint8)
+  bigint, // [31] pendingRequestId
+  bigint, // [32] createdAt
+  bigint, // [33] rulingDeadline
+  boolean, // [34] exists
+  bigint | number, // [35] agentPhase (uint8, AgentPhase enum — Amendment 0007 phase 1)
+  bigint, // [36] pendingDecideFee (parked LLM Inference fee for phase 2 — Amendment 0007)
+  string, // [37] pendingFeePayer (address of the fee payer for the parked decide fee)
 ];
+
+/**
+ * Decode a raw 38-element `getNegotiation` tuple (as returned by ethers) into a
+ * typed {@link Negotiation} object. Exported for unit-testing without a live chain
+ * — callers may construct a synthetic tuple and verify the positional mapping.
+ *
+ * @internal test-seam — production code must go through {@link RealBackend.getNegotiation}.
+ */
+export function decodeNegotiationRaw(raw: readonly unknown[]): Negotiation {
+  return {
+    providerId: raw[0] as bigint,
+    insurerId: raw[1] as bigint,
+    providerAddr: raw[2] as string,
+    insurerAddr: raw[3] as string,
+    drugRef: raw[4] as string,
+    requestedAmount: raw[5] as bigint,
+    quantity: raw[6] as bigint,
+    daysSupply: raw[7] as bigint,
+    justificationHash: raw[8] as string,
+    evidenceUri: raw[9] as string,
+    policyHash: raw[10] as string,
+    policyUri: raw[11] as string,
+    coveredAmount: raw[12] as bigint,
+    escrowAmount: raw[13] as bigint,
+    costPlusUnitPrice: raw[14] as bigint,
+    nadacUnitPrice: raw[15] as bigint,
+    rationaleHash: raw[16] as string,
+    clauseRef: raw[17] as string,
+    standardRef: raw[18] as string,
+    lastDecision: Number(raw[19]) as Decision,
+    hasRuling: raw[21] as boolean,
+    round: raw[24] as bigint,
+    payerLine: Number(raw[25]) as PayerLine,
+    appealRound: Number(raw[26]),
+    providerAccepted: raw[27] as boolean,
+    insurerAccepted: raw[28] as boolean,
+    totalFees: raw[29] as bigint,
+    state: Number(raw[30]) as State,
+    pendingRequestId: raw[31] as bigint,
+    createdAt: raw[32] as bigint,
+    rulingDeadline: raw[33] as bigint,
+    exists: raw[34] as boolean,
+    agentEvidenceUrl: raw[22] as string,
+    agentPromptHint: raw[23] as string,
+    agentPhase: Number(raw[35]),
+    pendingDecideFee: raw[36] as bigint,
+    pendingFeePayer: raw[37] as string,
+  };
+}
 
 /** Raw `priceBasisOf` tuple returned by ethers — matches the view's return order. */
 type RawPriceBasis = readonly [
@@ -136,8 +194,10 @@ interface CoverageContract extends ethers.BaseContract {
     justificationHash: string,
     evidenceUri: string,
     payerLine: number,
+    agentEvidenceUrl: string,
+    agentPromptHint: string,
   ): Promise<ethers.ContractTransactionResponse>;
-  insurerEngage(reqId: bigint, policyHash: string, policyUri: string): Promise<ethers.ContractTransactionResponse>;
+  insurerEngage(reqId: bigint, policyHash: string, policyUri: string, overrides?: Overrides): Promise<ethers.ContractTransactionResponse>;
   requestAdjudication(reqId: bigint, overrides?: Overrides): Promise<ethers.ContractTransactionResponse>;
   submitEvidence(reqId: bigint, evidenceUri: string, overrides?: Overrides): Promise<ethers.ContractTransactionResponse>;
   appeal(
@@ -153,6 +213,7 @@ interface CoverageContract extends ethers.BaseContract {
   withdraw(reqId: bigint): Promise<ethers.ContractTransactionResponse>;
   onRulingTimeout(reqId: bigint): Promise<ethers.ContractTransactionResponse>;
   postFeedback(reqId: bigint, msgHash: string, uri: string): Promise<ethers.ContractTransactionResponse>;
+  commitRationale(reqId: bigint, rationale: string, clauseReference: string, standardReference: string): Promise<ethers.ContractTransactionResponse>;
   getNegotiation(reqId: bigint): Promise<RawNegotiation>;
   stateOf(reqId: bigint): Promise<bigint | number>;
   coveredAmountOf(reqId: bigint): Promise<bigint>;
@@ -268,6 +329,8 @@ export class RealBackend implements CoverageNegotiationClient {
         params.justificationHash,
         params.evidenceUri,
         params.payerLine,
+        params.agentEvidenceUrl,
+        params.agentPromptHint,
       ),
     );
     // Recover reqId from the ContractCreated event (return values aren't
@@ -280,8 +343,16 @@ export class RealBackend implements CoverageNegotiationClient {
     return reqId;
   }
 
-  async insurerEngage(reqId: bigint, policyHash: string, policyUri: string): Promise<void> {
-    await this._send("insurerEngage", 0n, this.contract.insurerEngage(reqId, policyHash, policyUri));
+  async insurerEngage(reqId: bigint, policyHash: string, policyUri: string, depositAmount?: bigint): Promise<void> {
+    // A0008: default to requestedAmount (exact required escrow) when caller omits depositAmount,
+    // matching the SimulatedBackend default (depositAmount ?? n.requestedAmount). This ensures
+    // both backends behave identically when depositAmount is omitted.
+    const value = depositAmount ?? (await this.getNegotiation(reqId)).requestedAmount;
+    await this._send(
+      "insurerEngage",
+      value,
+      this.contract.insurerEngage(reqId, policyHash, policyUri, { value }),
+    );
   }
 
   async requestAdjudication(reqId: bigint): Promise<void> {
@@ -337,6 +408,19 @@ export class RealBackend implements CoverageNegotiationClient {
 
   async postFeedback(reqId: bigint, msgHash: string, uri: string): Promise<void> {
     await this._send("postFeedback", 0n, this.contract.postFeedback(reqId, msgHash, uri));
+  }
+
+  async commitRationale(
+    reqId: bigint,
+    rationale: string,
+    clauseReference: string,
+    standardReference: string,
+  ): Promise<void> {
+    await this._send(
+      "commitRationale",
+      0n,
+      this.contract.commitRationale(reqId, rationale, clauseReference, standardReference),
+    );
   }
 
   // ---------------------------------------------------------------------
@@ -406,7 +490,7 @@ export class RealBackend implements CoverageNegotiationClient {
     "PacketSubmitted",
     "RulingRequested",
     "Ruled",
-    "PolicyFlagged",
+    "RulingRationale",
     "PolicyInvalidated",
     "EvidenceRequested",
     "EvidenceSubmitted",
@@ -420,7 +504,10 @@ export class RealBackend implements CoverageNegotiationClient {
     "FeedbackPosted",
   ];
 
-  async getEvents(filter: EventFilter = {}): Promise<CoverageEvent[]> {
+  async getEvents(
+    filter: EventFilter = {},
+    onBatch?: (batch: CoverageEvent[]) => void,
+  ): Promise<CoverageEvent[]> {
     // Resolve absolute block bounds. Somnia testnet RPC caps `eth_getLogs` to
     // 1000 blocks per request — so unbounded "fromBlock: 0" calls revert with
     // "block range exceeds 1000" and the dashboard stays empty (the
@@ -447,34 +534,71 @@ export class RealBackend implements CoverageNegotiationClient {
 
     const collected: Array<{ ev: CoverageEvent; block: number; index: number }> = [];
 
+    // Build the page ranges, then fetch them in BOUNDED-PARALLEL batches.
+    // Somnia testnet produces ~10 blocks/sec, so a day-old deploymentBlock is
+    // ~900k blocks = ~900 `eth_getLogs` pages. Sequential paging takes ~160s
+    // (the timeline shows "No events yet" for minutes); batched-parallel paging
+    // cuts a full hydration to ~25s while staying within the RPC's tolerance
+    // (verified: concurrency 24–40 over 900 pages returns 0 page errors).
+    const ranges: Array<[number, number]> = [];
     for (let start = fromAbs; start <= toAbs; start += LOG_PAGE_SIZE) {
-      const end = Math.min(start + LOG_PAGE_SIZE - 1, toAbs);
-      const logs = await this.provider.getLogs({
-        address: contractAddr,
-        fromBlock: start,
-        toBlock: end,
-        // Every event in EVENT_NAMES has `reqId` as the first indexed topic, so
-        // topics[1] == reqId-padded-bytes32 when a single negotiation is asked
-        // for. `topics[0]` (signature) stays open — we filter by name below.
-        ...(reqIdTopic !== null ? { topics: [null, reqIdTopic] } : {}),
-      });
-      for (const log of logs) {
-        let parsed: ethers.LogDescription | null;
-        try {
-          parsed = iface.parseLog(log);
-        } catch {
-          continue;
+      ranges.push([start, Math.min(start + LOG_PAGE_SIZE - 1, toAbs)]);
+    }
+    // NEWEST-FIRST: scan the highest block ranges first so that, with a
+    // progressive `onBatch` consumer, the most recent activity (what a user
+    // actually looks at) paints within ~1s instead of after the full ~25s
+    // sweep over ~900 pages. The final resolved array is still globally
+    // chronological — only the *delivery* order is reversed.
+    ranges.reverse();
+    const PAGE_CONCURRENCY = 24;
+    for (let i = 0; i < ranges.length; i += PAGE_CONCURRENCY) {
+      const batch = ranges.slice(i, i + PAGE_CONCURRENCY);
+      const pageResults = await Promise.all(
+        batch.map(([start, end]) =>
+          this.provider
+            .getLogs({
+              address: contractAddr,
+              fromBlock: start,
+              toBlock: end,
+              // Every event in EVENT_NAMES has `reqId` as the first indexed
+              // topic, so topics[1] == reqId-padded-bytes32 when a single
+              // negotiation is asked for. `topics[0]` (signature) stays open —
+              // we filter by name below.
+              ...(reqIdTopic !== null ? { topics: [null, reqIdTopic] } : {}),
+            })
+            // Tolerate a transient single-page failure rather than abort the
+            // whole hydration; a missed page just omits a few events until the
+            // next refresh.
+            .catch(() => [] as ethers.Log[]),
+        ),
+      );
+      const batchHits: Array<{ ev: CoverageEvent; block: number; index: number }> = [];
+      for (const logs of pageResults) {
+        for (const log of logs) {
+          let parsed: ethers.LogDescription | null;
+          try {
+            parsed = iface.parseLog(log);
+          } catch {
+            continue;
+          }
+          if (!parsed || !eventSet.has(parsed.name)) continue;
+          const name = parsed.name as CoverageEventName;
+          batchHits.push({
+            ev: this.buildEvent(name, [...parsed.args], {
+              txHash: log.transactionHash,
+              blockNumber: log.blockNumber,
+            }),
+            block: log.blockNumber,
+            index: log.index,
+          });
         }
-        if (!parsed || !eventSet.has(parsed.name)) continue;
-        const name = parsed.name as CoverageEventName;
-        collected.push({
-          ev: this.buildEvent(name, [...parsed.args], {
-            txHash: log.transactionHash,
-            blockNumber: log.blockNumber,
-          }),
-          block: log.blockNumber,
-          index: log.index,
-        });
+      }
+      collected.push(...batchHits);
+      // Stream this batch to the consumer (sorted within itself) so the UI can
+      // paint incrementally; the caller is responsible for merging/re-sorting.
+      if (onBatch && batchHits.length > 0) {
+        batchHits.sort((a, b) => a.block - b.block || a.index - b.index);
+        onBatch(batchHits.map((c) => c.ev));
       }
     }
     // Chronological order: block, then log index within a block.
@@ -551,22 +675,30 @@ export class RealBackend implements CoverageNegotiationClient {
       case "RulingRequested":
         return { name, reqId, requestId: a[1] as bigint, fee: a[2] as bigint, ...meta };
       case "Ruled":
+        // SPEC-0006 R24: 4-arg shape: (reqId indexed, requestId indexed, decision indexed, coveredAmount).
+        // Rationale is now emitted separately via the RulingRationale event (commitRationale).
         return {
           name,
           reqId,
           requestId: a[1] as bigint,
           decision: Number(a[2]) as Decision,
           coveredAmount: a[3] as bigint,
-          rationaleHash: a[4] as string,
-          clauseRef: a[5] as string,
-          receiptId: a[6] as bigint,
-          policyVoidedClauseIndices: ((a[7] as bigint[] | undefined) ?? []).map(Number),
-          usedReferenceIndices: ((a[8] as bigint[] | undefined) ?? []).map(Number),
-          usedLeafHashes: ((a[9] as `0x${string}`[] | undefined) ?? []),
           ...meta,
         };
-      case "PolicyFlagged":
-        return { name, reqId, clauseRef: a[1] as string, standardRef: a[2] as string, ...meta };
+      case "RulingRationale":
+        // SPEC-0006 R24–R26: emitted by commitRationale.
+        // Args: (reqId indexed, requestId indexed, decision indexed, rationale string,
+        //        clauseReference string, standardReference string)
+        return {
+          name,
+          reqId,
+          requestId: a[1] as bigint,
+          decision: Number(a[2]) as Decision,
+          rationale: a[3] as string,
+          clauseReference: a[4] as string,
+          standardReference: a[5] as string,
+          ...meta,
+        };
       case "PolicyInvalidated":
         return { name, reqId, clauseRef: a[1] as string, standardRef: a[2] as string, ...meta };
       case "EvidenceRequested":
@@ -585,7 +717,8 @@ export class RealBackend implements CoverageNegotiationClient {
       case "Accepted":
         return { name, reqId, partyId: a[1] as bigint, ...meta };
       case "Settled":
-        return { name, reqId, coveredAmount: a[1] as bigint, feePerParty: a[2] as bigint, ...meta };
+        // A0008 §2: third arg is refundedToInsurer (renamed from feePerParty).
+        return { name, reqId, coveredAmount: a[1] as bigint, refundedToInsurer: a[2] as bigint, ...meta };
       case "Deadlocked":
         return { name, reqId, rounds: a[1] as bigint, ...meta };
       case "ProviderRefused":
@@ -617,39 +750,7 @@ export class RealBackend implements CoverageNegotiationClient {
   // ---------------------------------------------------------------------
 
   private decodeNegotiation(raw: RawNegotiation): Negotiation {
-    return {
-      providerId: raw[0],
-      insurerId: raw[1],
-      providerAddr: raw[2],
-      insurerAddr: raw[3],
-      drugRef: raw[4],
-      requestedAmount: raw[5],
-      quantity: raw[6],
-      daysSupply: raw[7],
-      justificationHash: raw[8],
-      evidenceUri: raw[9],
-      policyHash: raw[10],
-      policyUri: raw[11],
-      coveredAmount: raw[12],
-      costPlusUnitPrice: raw[13],
-      nadacUnitPrice: raw[14],
-      rationaleHash: raw[15],
-      clauseRef: raw[16],
-      standardRef: raw[17],
-      lastDecision: Number(raw[18]) as Decision,
-      hasRuling: raw[19],
-      round: raw[20],
-      payerLine: Number(raw[21]) as PayerLine,
-      appealRound: Number(raw[22]),
-      providerAccepted: raw[23],
-      insurerAccepted: raw[24],
-      totalFees: raw[25],
-      state: Number(raw[26]) as State,
-      pendingRequestId: raw[27],
-      createdAt: raw[28],
-      rulingDeadline: raw[29],
-      exists: raw[30],
-    };
+    return decodeNegotiationRaw(raw);
   }
 
   private extractReqIdFromReceipt(

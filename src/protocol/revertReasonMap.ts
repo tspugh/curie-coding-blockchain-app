@@ -7,10 +7,14 @@ export type RevertReason =
   | "auth: not provider"
   | "qty: zero"
   | "create: self-contract"
+  | "evidence: url required"
+  | "evidence: hint required"
   // engage guards
   | "engage: not Open"
   | "auth: not insurer"
   | "policy: empty"
+  | "escrow: underfunded"
+  | "escrow: refund failed"
   // adjudicate guards
   | "adjudicate: not Ready"
   // submitEvidence guards
@@ -24,10 +28,19 @@ export type RevertReason =
   | "accept: not ruled"
   | "settle: not ruled"
   | "settle: not both accepted"
+  // settle transfer guards (A0008)
+  | "settle: provider transfer failed"
+  | "settle: insurer refund failed"
+  // deadlock escrow refund guard (A0008 — CoverageNegotiation.sol L519, L576)
+  | "deadlock: escrow refund failed"
   // refuse / withdraw / feedback guards
   | "refuse: not refusable"
+  | "refuse: escrow refund failed"
   | "withdraw: terminal"
+  | "withdraw: escrow refund failed"
   | "feedback: terminal"
+  // policy-invalidated escrow refund guard (A0008)
+  | "policy_invalid: escrow refund failed"
   // timeout guard
   | "timeout: not UnderReview"
   | "timeout: too early"
@@ -87,6 +100,16 @@ export const REVERT_REASON_MAP: Readonly<Record<RevertReason, RevertReasonEntry>
       details:
         "A coverage negotiation requires two distinct parties. Use different wallet addresses for the provider and the insurer.",
     },
+    "evidence: url required": {
+      headline: "Evidence URL is required",
+      details:
+        "An evidence URL must be provided and must be between 1 and 512 bytes long. Enter a valid public evidence URL before submitting.",
+    },
+    "evidence: hint required": {
+      headline: "Prompt hint is required",
+      details:
+        "A prompt hint must be provided and must be between 1 and 1024 bytes long, and must not contain patient-name patterns. Enter a valid drug-specific question before submitting.",
+    },
 
     // ── engage ────────────────────────────────────────────────────────────────
     "engage: not Open": {
@@ -103,6 +126,17 @@ export const REVERT_REASON_MAP: Readonly<Record<RevertReason, RevertReasonEntry>
       headline: "Policy hash is required",
       details:
         "A policy must be selected or entered before engaging. Choose a policy and try again.",
+    },
+
+    "escrow: underfunded": {
+      headline: "Escrow deposit is too small",
+      details:
+        "The insurer must deposit at least the requested amount to lock in escrow at engagement. Increase the transaction value to at least the requested amount and try again.",
+    },
+    "escrow: refund failed": {
+      headline: "Escrow overpayment refund failed",
+      details:
+        "The contract attempted to refund the excess deposit above the requested amount but the transfer failed. This is an internal error — please contact support.",
     },
 
     // ── adjudicate ────────────────────────────────────────────────────────────
@@ -158,16 +192,50 @@ export const REVERT_REASON_MAP: Readonly<Record<RevertReason, RevertReasonEntry>
         "Settlement requires both the provider and the insurer to accept the ruling. Check whether both acceptances are recorded and try again.",
     },
 
+    // ── settle transfer failures (A0008) ──────────────────────────────────────
+    "settle: provider transfer failed": {
+      headline: "Settlement failed — provider transfer rejected",
+      details:
+        "The contract was unable to send the covered amount to the provider's address. The provider's wallet may not be able to receive ETH. Please contact support.",
+    },
+    "settle: insurer refund failed": {
+      headline: "Settlement failed — insurer refund rejected",
+      details:
+        "The contract was unable to refund the remainder to the insurer's address. The insurer's wallet may not be able to receive ETH. Please contact support.",
+    },
+
+    // ── deadlock escrow refund (A0008 — appeal/submitEvidence at round cap) ─────
+    "deadlock: escrow refund failed": {
+      headline: "Deadlock failed — escrow refund rejected",
+      details:
+        "The contract attempted to refund the escrowed amount to the insurer's address when the negotiation reached deadlock, but the transfer failed. The insurer's wallet may not be able to receive ETH. Please contact support.",
+    },
+
     // ── refuse / withdraw / feedback ──────────────────────────────────────────
     "refuse: not refusable": {
       headline: "This contract cannot be refused in its current state",
       details:
         "Refusal is only available for contracts in a refusable state (e.g. Open or Ready). Refresh to see the current state.",
     },
+    "refuse: escrow refund failed": {
+      headline: "Refusal failed — escrow refund rejected",
+      details:
+        "The contract was unable to refund the escrowed amount to the insurer's address during refusal. The insurer's wallet may not be able to receive ETH. Please contact support.",
+    },
     "withdraw: terminal": {
       headline: "This contract has already reached a terminal state",
       details:
         "Withdrawal is only possible while the contract is still active. The contract is already settled, refused, or otherwise finalized.",
+    },
+    "withdraw: escrow refund failed": {
+      headline: "Withdrawal failed — escrow refund rejected",
+      details:
+        "The contract was unable to refund the escrowed amount to the insurer's address during withdrawal. The insurer's wallet may not be able to receive ETH. Please contact support.",
+    },
+    "policy_invalid: escrow refund failed": {
+      headline: "Policy invalidation failed — escrow refund rejected",
+      details:
+        "The contract was unable to refund the escrowed amount to the insurer's address when the policy was invalidated. The insurer's wallet may not be able to receive ETH. Please contact support.",
     },
     "feedback: terminal": {
       headline: "Feedback cannot be submitted — contract is finalized",

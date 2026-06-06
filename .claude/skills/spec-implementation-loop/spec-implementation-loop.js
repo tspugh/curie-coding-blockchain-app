@@ -141,9 +141,17 @@ const VERDICT_SCHEMA = {
 phase('Orient')
 const orient = await agent(
   `You are orienting one tick of a spec-implementation loop in repo "${repo}".
-${branch ? `Assert the checked-out branch is "${branch}".` : 'Report the checked-out branch.'}
-Steps: \`git -C ${repo} status\`; read ${repo}/${stateFile} if it exists (mode, tick, queue, last focus); \`git -C ${repo} log --oneline -10\`.
-Report whether the tree is clean, the current tick, a short state summary, any unresolved findings to prioritize, and which trees (src/contracts/web) the recent + queued work touches.
+
+IMPORTANT — repo scoping: "${repo}" may be a git repo NESTED inside a parent/outer
+git repo (e.g. an app repo inside a PM repo). You MUST inspect ONLY "${repo}".
+Run EVERY git command with the \`-C ${repo}\` flag — never a bare \`git status\`/
+\`git log\` (a bare command reports your shell's cwd, which may be the OUTER repo).
+The reported \`branch\` and \`clean\` fields MUST describe "${repo}" exclusively;
+completely ignore the state, branch, and untracked files of any parent or sibling
+repo. If the outer repo is dirty but "${repo}" is clean, report clean: true.
+${branch ? `The checked-out branch of "${repo}" MUST be "${branch}" — assert it via \`git -C ${repo} rev-parse --abbrev-ref HEAD\`.` : 'Report the checked-out branch of "${repo}".'}
+Steps: \`git -C ${repo} status --porcelain\` (clean ⇔ empty output) and \`git -C ${repo} rev-parse --abbrev-ref HEAD\`; read ${repo}/${stateFile} if it exists (mode, tick, queue, last focus); \`git -C ${repo} log --oneline -10\`.
+Report whether THE "${repo}" tree is clean, the current tick, a short state summary, any unresolved findings to prioritize, and which trees (src/contracts/web) the recent + queued work touches.
 Do NOT modify anything.`,
   { schema: ORIENT_SCHEMA, model: 'sonnet', phase: 'Orient' },
 )
@@ -207,17 +215,19 @@ while (round < maxRounds) {
     ? `\nThis is retry round ${round}. The previous attempt FAILED these gates — fix every one:\n- ${priorFindings.join('\n- ')}`
     : ''
 
+  const gitDiscipline = `\nGIT DISCIPLINE: Leave your changes UNCOMMITTED in the working tree. Do NOT run git commit, git checkout -b, git switch, git branch, git push, or git stash — the loop's dedicated commit phase makes the single commit on the current branch after all gates pass. Edit files only; never touch git refs.`
+
   await agent(
     `TDD step for repo "${repo}". Unit: ${unit.description}
 Acceptance: ${unit.acceptanceCriterion}. Spec refs: ${(unit.specRefs || []).join(', ')}.
-Write the FAILING test(s) first that pin the acceptance criterion to real behavior — no mocking of the database/contract/agent where the spec claims integration coverage (integration tests hit Somnia testnet chain 50312 + a real agent call). PHI never in fixtures — synthetic only. Run the test and confirm it currently fails for the right reason. Do not implement production code.${fixContext}`,
+Write the FAILING test(s) first that pin the acceptance criterion to real behavior — no mocking of the database/contract/agent where the spec claims integration coverage (integration tests hit Somnia testnet chain 50312 + a real agent call). PHI never in fixtures — synthetic only. Run the test and confirm it currently fails for the right reason. Do not implement production code.${gitDiscipline}${fixContext}`,
     { label: `tdd r${round}`, model: 'sonnet', phase: 'Build' },
   )
 
   await agent(
     `Implement the unit in repo "${repo}" so the failing test(s) pass. Unit: ${unit.description}
 Acceptance: ${unit.acceptanceCriterion}. Touch only what's needed. TypeScript-only; chain access via somnia-agent-kit (no REST); no PHI on-chain or in fixtures.
-After implementing: run the repo lint command and the test suite; reconcile so the new test passes and nothing else breaks; remove any TODO/FIXME/commented-out scaffolding you introduced. Leave no half-state.${fixContext}`,
+After implementing: run the repo lint command and the test suite; reconcile so the new test passes and nothing else breaks; remove any TODO/FIXME/commented-out scaffolding you introduced. Leave no half-state.${gitDiscipline}${fixContext}`,
     { label: `dev r${round}`, model: 'sonnet', phase: 'Build' },
   )
 
@@ -244,11 +254,31 @@ if (green && doCommit && mode !== 'creativity') {
   phase('Commit')
   const pushTarget = branch || orient && orient.branch || 'HEAD'
   const res = await agent(
-    `All gates are green for repo "${repo}". Make ONE clean commit and push.
-- Single conventional commit: feat(<scope>): / fix(<scope>): <unit>. Body: 2-4 bullets — what landed, the test added, which spec R-numbers it satisfies. Footer: \`Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>\`.
-- Update ${repo}/${stateFile}: increment tick, record this focus as done, refresh the verdict table.
-- Pre-commit secret-scan must pass; NEVER use --no-verify or --force-push.
-- \`git -C ${repo} push origin ${pushTarget}\`.
+    `All gates are green for repo "${repo}". Commit the working tree and push.
+
+WHY THIS MATTERS: this loop commits DIRECTLY to the long-lived working branch
+"${pushTarget}". Pull requests are opened SEPARATELY by a human. A per-unit
+feature branch is WRONG here — it fragments the cascade and forces a manual
+fix-up every tick. Do not apply git-flow / feature-branch habits.
+
+The ONLY git commands you may run in this step are these THREE, verbatim, in
+order — no \`git checkout\`, no \`git switch\`, no \`git branch\`, no
+\`git checkout -b\`, no \`git rebase\`, no \`git stash\`, nothing else:
+
+  1. git -C ${repo} rev-parse --abbrev-ref HEAD
+     → MUST print exactly "${pushTarget}". If it prints anything else, STOP
+       immediately and return "wrong-branch: <name>" as your result. Do NOT
+       switch or create a branch to fix it — just stop.
+  2. git -C ${repo} add -A && git -C ${repo} commit -m "<message>"
+  3. git -C ${repo} push origin ${pushTarget}
+
+Commit message: ONE conventional commit — feat(<scope>): / fix(<scope>): <unit>.
+Body: 2-4 bullets (what landed, the test added, the spec R-numbers). Footer:
+\`Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>\`.
+Before committing, update ${repo}/${stateFile}: increment tick, record this focus
+as done, refresh the verdict table — and do NOT re-introduce superseded/banned
+items (read the pivot block at the top of the state file first).
+Pre-commit secret-scan must pass; NEVER use --no-verify or --force-push.
 Unit: ${unit.description}. Spec refs: ${(unit.specRefs || []).join(', ')}.
 Report the commit SHA and confirm the push succeeded.`,
     { label: 'commit+push', model: 'sonnet', phase: 'Commit' },

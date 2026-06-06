@@ -1,3 +1,910 @@
+## 2026-06-04 (refresh 13) — Amendment 0007 phase-tracker off-chain sync (`agentPhase` / `pendingDecideFee` / `pendingFeePayer`) (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-04
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-derivation from source over the *current* diff (`.` vs `origin/main`), focused on the Amendment 0007 phase-tracker unit (`48f68a9`) and re-swept over the full branch hard gates.
+**Base:** `origin/main`
+**Branch:** `spec-6-implementation`
+**Change under review (the phase-tracker sync unit):** the TypeScript off-chain layer is brought into full sync with the 38-field on-chain `Negotiation` struct by adding three phase-tracker fields (Amendment 0007 phase 1: two-agent scrape→decide pipeline):
+- **edit** `src/types/coverage.types.ts` — adds `agentPhase: number` (0=None / 1=Scraping / 2=Deciding), `pendingDecideFee: bigint`, `pendingFeePayer: string` to the `Negotiation` interface (the single shared vocabulary for both backends + the web layer).
+- **edit** `src/contract/simulated.ts` — adds the same three fields to the mutable `SimNegotiation` mirror, initialises them in `createContract` to `0 / 0n / ethers.ZeroAddress`, and propagates them in `snapshot()`.
+- **edit** `src/contract/real.ts` — `decodeNegotiation` now maps `raw[35]` → `Number(agentPhase)`, `raw[36]` → `pendingDecideFee`, `raw[37]` → `pendingFeePayer`; the `RawNegotiation` tuple type documents indices 35–37.
+- **new** `src/contract/simulated.agentphase.test.ts` — 6 tests pinning: fresh-negotiation defaults (`agentPhase === 0`, `pendingDecideFee === 0n`, `pendingFeePayer === ZeroAddress`), the three field names exist on the snapshot, and a `snapshot()` round-trip that does not throw.
+
+**Build/test state verified this run:** `npm run typecheck` clean (`tsc --noEmit`, zero errors); `simulated.agentphase.test.ts` → 6/6 pass.
+
+**Verdict:** PASS (zero findings)
+
+### Hard gate — re-derived over the phase-tracker change
+
+| Gate | Result | Evidence (verified line-by-line this run) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | The three new fields carry only a phase enum (`uint8`), a fee amount (`uint256` wei), and a fee-payer wallet address — no clinical payload, no patient identifier, by type. The off-chain change is pure plumbing: it mirrors existing on-chain slots into TS; it commits nothing new on-chain and persists no data of its own. The only fixtures introduced are in `simulated.agentphase.test.ts` and are fully synthetic: addresses `0xaa…aa` / `0xbb…bb` (`"aa".repeat(20)` / `"bb".repeat(20)`), `drugRef = ethers.id("DRUG:adalimumab")` (a keccak hash of a drug name, not patient data), a generic non-PHI prompt hint `"Is coverage for this drug medically necessary?"`, and the public drug-info evidence URL `https://medlineplus.gov/druginfo/meds/a603013.html`. A diff-wide PHI scan over added code/fixture lines (SSN `\d{3}-\d{2}-\d{4}`, `MRN`, `DOB`/`date of birth`, `MM/DD/YYYY`, patient-name patterns) returned zero real-PHI matches — only NO-PHI guard assertions elsewhere in the branch. The on-chain `inferString` prompt (`CoverageNegotiation.sol:_fireDecide`, L1165–1170) is built from `agentPromptHint` (size-bounded ≤1024 B + `_containsNamePattern` defense-in-depth guard) + the public `agentEvidenceUrl` + scrape-agent-extracted *public* evidence + static framing — no patient justification body is ever concatenated on-chain; only its `keccak256` `justificationHash` is. |
+| No secrets | PASS | No private keys, mnemonics, API keys, tokens, or credentials in the added lines. A 64-hex scan over added code lines (`src/**`, `web/src/**`, `scripts/**`, `contracts/**`, `vite.config.ts`, `package.json`) returned exactly one match — `0xdeadbeef…0001`, an obvious synthetic test hash, not a key. `pendingFeePayer` is an *address* (public 20-byte value), not key material. The only tracked env file is `.env.example`, which holds empty placeholders and public contract/platform addresses (`0x461aeC33…`, `0x037Bb9C7…`) — no secret values. The two deterministic Anvil keys referenced in `scripts/real-backend-localnode.mjs` are pre-existing public test vectors (env-overridable) and are *not* in this diff's added lines. Branch-wide the diff is a net secret-surface *reduction*: the banned `@anthropic-ai/sdk` / `ANTHROPIC_API_KEY` self-host path is removed — `scripts/orchestrator-real.ts` is deleted (confirmed absent on disk this run) and no live `@anthropic-ai/sdk` / `new Anthropic` / `ANTHROPIC_API_KEY` import remains in `src/`, `web/src/`, `scripts/`, or `contracts/scripts/`. (`.env.example` still carries a stale `ANTHROPIC_API_KEY=` empty-placeholder comment block — a documentation-hygiene nit, not a secret and not a finding.) `.gitignore` changes only ADD ignores (`.codesign/`, `*.bak.*`, `coverage/`) — they never un-ignore a secret. |
+| Signing-key hygiene | PASS | This unit touches no key material, wallet, or signer — the three added fields are read-only decoded values (`snapshot()` / `decodeNegotiation`) and an initialiser writing constants (`0` / `0n` / `ethers.ZeroAddress`). No key is constructed, read, logged, embedded, or persisted. `pendingFeePayer` stores a public payer address only. Branch-wide unchanged: `scripts/verify-deploy.ts` reads `VITE_PRIVATE_KEY` solely to derive and log the **public** operator address (`new ethers.Wallet(...).address`), never the key, never a signed/sent tx. |
+
+### Additional checks (defense-in-depth, this unit)
+
+- **38-field struct parity.** The ABI tuple in `src/contract/abi.ts` (`getNegotiation` return) lists all 38 fields ending in `uint8 agentPhase, uint256 pendingDecideFee, address pendingFeePayer`, in declaration order; `real.ts`'s `RawNegotiation` indices `[35]/[36]/[37]` line up with those ABI positions; `simulated.ts`'s `snapshot()` returns the same key set. The three layers agree — no decode-offset / field-shift bug that could mis-attribute a value (e.g. read a fee as an address) was found.
+- **Type integrity.** `agentPhase` is decoded via `Number(raw[35])` (the enum is a small `uint8`, no precision loss); `pendingDecideFee` stays a `bigint` (no JS-number truncation of a wei amount); `pendingFeePayer` stays a `string` address. No lossy coercion that could corrupt an amount or address.
+- **No new I/O, network, or contract-call paths.** The change adds no `fetch`/`fs`/`child_process`/`eval`, no new write method, and no new event. Attack surface is unchanged by this unit.
+
+### Verdict: PASS (zero findings)
+
+---
+
+## 2026-06-04 (refresh 12) — SPEC-0006 R21 `runLivenessDebounce` extraction (security-review, TOTAL-STICKLER, F4'-clearing pass)
+
+**Date:** 2026-06-04
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-derivation from source over the *current* diff (`.` vs `origin/main`), including the working-tree refactor that clears the strict-review FAIL finding F4'.
+**Base:** `origin/main`
+**Branch:** `spec-6-implementation`
+**Change under review (the F4'-clearing unit):** the debounce + stale-response-guard
+logic of `Create.tsx`'s evidence-URL liveness `useEffect` is extracted into a pure,
+injectable helper and unit-tested:
+- **new** `web/src/livenessDebounce.ts` — `runLivenessDebounce(url, isReal, onResult, options?)`: a pure timer + stale-guard helper. No React import, no network/fs/`eval`/`env`/`child_process`; its only effect is calling the injected `onResult` once the injected `probe` resolves, gated by a `cancelled` flag set in the returned cleanup. Defaults to `probeUrlLiveness` + `PROBE_DEBOUNCE_MS = 600`.
+- **new** `web/src/livenessDebounce.test.ts` — 9 tests: debounce fires after the delay, cleanup cancels an in-flight probe (stale-response guard), empty/whitespace URL short-circuit (no timer, no probe, no `onResult`), early-cleanup cancels the timer, sim-mode passes `sim=true` to the probe, `PROBE_DEBOUNCE_MS === 600`, the module has no React import, and a NO-PHI fixture regression.
+- **edit** `web/src/views/Create.tsx` — the `useEffect` now delegates to `runLivenessDebounce(agentEvidenceUrl, IS_REAL, setUrlLivenessResult)`; the inline `setTimeout`/`cancelled`/`timerId` block, the local `PROBE_DEBOUNCE_MS` constant, the `probeUrlLiveness` import, and the now-unused `useRef` import are removed.
+
+**Verdict:** PASS (zero findings)
+
+**Strict-review cross-reference:** this pass clears strict-review finding **F4'** (the
+`useEffect` debounce + stale-response cancellation had no executing test). The fix is the
+extraction-and-unit-test mandated by F4' itself; F1–F4 of that strict review were already
+resolved (`mock` import / `runLivenessEffect` dead scaffold / `seedLivenessCacheEntry`
+test-only export all gone — verified in source this run). Strict gate FAIL → PASS.
+
+### Hard gate — re-derived over the F4'-clearing change
+
+| Gate | Result | Evidence (verified line-by-line this run) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | The extraction adds **no on-chain field and no fixture data**. `runLivenessDebounce` handles only a `url: string` it never persists; it commits nothing on-chain (it runs pre-submit, before `createContract`). The sole fixture in `livenessDebounce.test.ts` is the synthetic public URL `https://medlineplus.gov/druginfo/meds/a603010.html`; the file ships its own NO-PHI regression test (SSN/DOB/phone/email regex over the fixtures, all asserted absent). Diff-wide PHI scan over **added** code lines (`*.ts/*.tsx/*.sol/*.mjs/*.js`) returned only PHI-*absence* guard assertions (e.g. the `ZZ_SECRET_PHI_TOKEN` sentinel checked for absence, `R1 NO-PHI` DOB/SSN negative regexes) and the synthetic rejected-input probe — no real PHI. The off-chain patient justification is unchanged; only its `keccak256` hash remains the on-chain artefact. |
+| No secrets | PASS | `livenessDebounce.ts` / `.test.ts` / the `Create.tsx` edit contain **no** private keys, mnemonics, API keys, tokens, or credentials, and perform no env/fs/network I/O of their own (the helper calls only an *injected* probe; in production that probe is the existing dev-only `/__probe` path). The only 64-hex string anywhere in the added diff lines is the synthetic test hash `0xdeadbeef…0001`. Branch-wide the diff remains a net secret-surface *reduction* (the banned `@anthropic-ai/sdk` / `ANTHROPIC_API_KEY` self-host path is deleted). `.env*` stay gitignored/untracked; `.gitignore` changes only ADD ignores. |
+| Signing-key hygiene | PASS | The F4'-clearing change touches **no** key material, wallet, or signer — `runLivenessDebounce` is a `setTimeout` + boolean-flag helper with no crypto, and the `Create.tsx` edit only moves that logic out of the component. No key is constructed, read, logged, embedded, or persisted. Branch-wide unchanged from refresh 11: `verify-deploy.ts` reads `VITE_PRIVATE_KEY` solely to derive and log the **public** operator address, never the key, never a signed/sent tx. |
+
+### SSRF surface — unchanged, still documented-not-a-finding
+
+The extraction does **not** touch the `GET /__probe?url=<encoded>` dev-server middleware,
+the only server-side-fetch-of-caller-URL surface. It remains registered exclusively inside
+`configureServer` (Vite dev-server only — absent from `vite build` and `vite preview`),
+downloads ≤ 1 byte (`Range: bytes=0-0`) under a 10 s timeout, and returns only
+`{ ok, status, error? }` (body never forwarded). Adjudication is identical to refresh 11:
+dev-only, bounded blast radius, must gain an RFC-1918/link-local/metadata allowlist if ever
+promoted to production. `runLivenessDebounce` calls this only via an injected/default probe;
+it adds no new network reach. No action required.
+
+### Verification this run
+
+- `node --import tsx --test web/src/livenessDebounce.test.ts` → **9/9 PASS**.
+- `node --import tsx --test "web/src/**/*.test.ts"` → **89/89 PASS** (no regression from the extraction).
+- `npm run typecheck` (`tsc -p tsconfig.json --noEmit`) → **clean** (no errors).
+- `grep` confirms `Create.tsx` retains no `useRef`, no local `PROBE_DEBOUNCE_MS`, no direct `probeUrlLiveness` import — all delegated to the helper.
+
+---
+
+## 2026-06-04 (refresh 11) — SPEC-0006 R21 pre-submit evidence-URL liveness check (security-review, TOTAL-STICKLER re-run)
+
+**Date:** 2026-06-04
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-derivation from source; did not trust the refresh-10 write-up
+**Base:** `origin/main`
+**Branch:** `spec-6-implementation` (working tree clean except for the four `docs/progress/*.md` review notes)
+**Unit under review:** SPEC-0006 R21 — pre-submit evidence-URL liveness check. Shipped implementation:
+- `probeUrlLiveness(url, sim)` helper + 24 h per-URL memo cache + `formatLivenessError`/`clearLivenessCache`/`seedLivenessCacheEntry` (`web/src/urlLiveness.ts`);
+- pure server-side fetch logic `executeProbe(url, timeout=10_000)` (`web/src/probeHandler.ts`), factored out of `vite.config.ts` for unit-testability;
+- the `GET /__probe?url=<encoded>` Vite dev-server middleware (`vite.config.ts` `urlProbePlugin`, L108-154);
+- pure submit-gate / banner-visibility helpers `isSubmitBlockedByLiveness` / `shouldShowLivenessBanner` (`web/src/livenessGate.ts`);
+- the debounced (`PROBE_DEBOUNCE_MS = 600`) `useEffect` + `data-testid="url-liveness-error"` banner + `create-submit` disable-gate in `web/src/views/Create.tsx` (L21-22, L27-28, L48-110, L415-417, L435-441);
+- unit tests `urlLiveness.test.ts`, `probeHandler.test.ts`, `livenessGate.test.ts`, `views/Create.liveness.test.ts`.
+**Verdict:** PASS (zero findings)
+
+### Hard gate — independently re-derived this run
+
+| Gate | Result | Evidence (re-verified line-by-line) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | R21 adds **no on-chain field**. It is a pre-submit, client-side gate that runs *before* `createContract` and persists nothing on-chain; `probeUrlLiveness`/`executeProbe` handle only the public `agentEvidenceUrl` (curated MedlinePlus/FDA-label URLs from `drugEvidenceMap.ts`, or a manual public override). The patient justification body still stays off-chain — only its `keccak256` `justificationHash` is committed. Diff-wide PHI-token scan (`\b\d{3}-\d{2}-\d{4}\b`, `social security`, `date of birth`, `\bdob\b`, `\bmrn\b`, `medical record`, `patient [A-Z][a-z]+ [A-Z]`, `\bssn\b`) over **added** code lines (`*.ts/*.tsx/*.sol/*.mjs/*.js`) returned only benign hits: the synthetic negative-test probe `"Is semaglutide necessary for patient John S with T2DM?"` (`CoverageNegotiation.test.ts:2336`) — an input asserted to be **rejected** with `revertedWith("evidence: hint required")` (T11e, never stored) — plus PHI-*absence* regression assertions and a PHI-absence comment. R21 fixtures are synthetic public URLs (`https://medlineplus.gov/druginfo/meds/a603010.html`, `...DEAD_SYNTHETIC_ENTRY.html`); `urlLiveness.test.ts` ships an explicit NO-PHI regression test (SSN/DOB/phone/email regex over the fixtures, all negative). |
+| No secrets | PASS | 64-hex / `private[_ ]?key` / `api[_ ]?key` / `mnemonic` / `secret` / `bearer` / `BEGIN…PRIVATE` / `password` scan over **added** code lines returned only two benign hits: a `VITE_PRIVATE_KEY` *comment* in `verify-deploy.ts` documenting that the key is used solely to derive the operator address, and the synthetic test hash `0xdeadbeef…0001`. Neither is a secret. The probe sends **no credentials** — `executeProbe` issues `fetch(url, { method: "GET", headers: { Range: "bytes=0-0" }, signal, redirect: "follow" })`, a single `Range` header only. Branch-wide the diff is a net secret-surface *reduction*: it deletes the banned self-host path (`scripts/orchestrator-real.ts` −456, `contracts/scripts/setup-selfhosted-2026-05-30.ts` −16); no live `@anthropic-ai/sdk` / `new Anthropic` / `ANTHROPIC_API_KEY` import remains in `src/`, `scripts/`, `web/src/`. `.env`/`.env.*` are gitignored and **untracked** (only `.env.example` is tracked, with empty placeholder values); no env file appears in the diff; `.gitignore` changes only ADD ignores (`.codesign/`, `*.bak.*`, `coverage/`) — never un-ignore a secret. |
+| Signing-key hygiene | PASS | R21 performs no signing and touches no key material — it is a read-only liveness probe with no wallet/signer construction anywhere in its added lines. Branch-wide: `scripts/verify-deploy.ts` reads `VITE_PRIVATE_KEY` only to derive `wallet.address` (`new ethers.Wallet(PRIVATE_KEY).address`, L76-77) and logs **only the public operator address** (`console.log(  operator: ${operatorAddr})`, L83) — never the key, never a signed/sent tx. No key is logged, embedded, or persisted by this unit. |
+
+### SSRF surface assessment (documented, not a finding — re-verified)
+
+The `GET /__probe?url=<encoded>` middleware performs a **server-side fetch of a
+caller-supplied URL** — a textbook SSRF shape. It is **not a finding** under this gate,
+for reasons re-verified in source this run:
+
+- **Dev-server-only, never shipped.** `urlProbePlugin` registers exclusively inside
+  `configureServer(server)` (`vite.config.ts:129`), the Vite dev-server hook. It is
+  absent from the production `vite build` bundle and from `vite preview` (only
+  `allowedHosts` appears under `preview`). No production HTTP surface exposes it. This
+  mirrors the pre-existing, already-accepted `/__log/tx` dev sink.
+- **Single-developer local trust boundary.** The dev server binds locally; the only
+  external exposure is the opt-in quick-tunnel (`allowedHosts: [".trycloudflare.com",
+  ".ts.net"]`) — an explicit, ephemeral developer action, not a deployed service.
+- **Bounded blast radius — body never returned.** `executeProbe` downloads ≤ 1 byte
+  (`Range: bytes=0-0`), runs under a 10 s `AbortController` timeout, and returns **only**
+  `{ ok: boolean, status: number, error?: string }`. The response *body is never read or
+  forwarded to the browser*, so the endpoint cannot exfiltrate internal-service content;
+  it leaks at most a boolean + numeric status of the attacker-known URL. `redirect:
+  "follow"` + `status < 400` is intentional (a followed-3xx reads ok:true) and does not
+  change the body-confidentiality property.
+
+Tracked so the surface is visible: if `/__probe` is ever promoted to a production/edge
+function it MUST gain an allowlist (or a deny-list of RFC-1918 / link-local /
+metadata-endpoint targets) before shipping. No action required for the dev-only R21 unit.
+
+### Deliberate deviation from the unit wording (not a finding)
+
+The unit task describes a HEAD-first probe with a bare-GET fallback. The shipped
+`executeProbe` issues a single `Range: bytes=0-0` GET directly and omits HEAD entirely,
+documented as deliberate in both `probeHandler.ts` and `vite.config.ts`: the probe runs
+server-side (no CORS), so the CORS-workaround motivation for HEAD disappears, and a
+Range-GET is universally supported while avoiding a two-round-trip cost. This is a
+behavioral simplification with no security impact (it strictly downloads *less* data than
+a full GET and still respects the 10 s timeout).
+
+### XSS / web review
+
+- No new HTML sink: `dangerouslySetInnerHTML` / `innerHTML` / `eval(` / `new Function` /
+  `document.write` scan over **added** `web/**` lines returned nothing. The
+  `url-liveness-error` banner renders the status/error via auto-escaping JSX text
+  interpolation only (`formatLivenessError(urlLivenessResult!)`); the interpolated
+  `error` originates from the dev-server probe (a server-side fetch error message), not
+  from a stored on-chain value.
+- Sim-mode bypass + submit gate re-verified in `livenessGate.ts` + `Create.tsx`: in sim
+  mode (`!IS_REAL`) `isSubmitBlockedByLiveness` returns `false` and
+  `shouldShowLivenessBanner` returns `false` (effect also returns early, never probes);
+  in real mode the button stays disabled until `urlLivenessResult.ok === true`.
+
+### Verification (this gate)
+
+- `node --import tsx --test web/src/urlLiveness.test.ts web/src/probeHandler.test.ts web/src/livenessGate.test.ts web/src/views/Create.liveness.test.ts` → **55/55 pass** (urlLiveness 18, probeHandler 14, livenessGate 16, Create.liveness 7).
+- `node --import tsx --test "web/src/**/*.test.ts"` → **80/80 pass** (no regression in the drugEvidenceMap / shared suites).
+- `node --import tsx --test "src/**/*.test.ts" "web/src/**/*.test.ts"` → **322/322 pass** (full lib suite).
+- `npx tsc -p tsconfig.json --noEmit` → clean (exit 0).
+
+> Note vs refresh-10: the refresh-10 entry's counts ("30/30" urlLiveness, "55/55" web/src) are stale — the R21 fetch logic was split into `probeHandler.ts` and the gate logic into `livenessGate.ts`, each with their own suites, and a `Create.liveness.test.ts` was added; the R21 unit now totals 55 tests, the full `web/src/**` suite 80, and the full lib suite 322. The substantive PASS verdict is unchanged; this refresh re-derives it against the current tree.
+
+### Verdict: PASS (zero findings)
+
+---
+
+## 2026-06-03 (refresh 10) — SPEC-0006 R21 pre-submit evidence-URL liveness check (security-review, TOTAL-STICKLER re-run)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-derivation from source, not trusting the refresh-9 write-up
+**Base:** `origin/main`
+**Branch:** `spec-6-implementation` (working tree clean)
+**Unit under review:** SPEC-0006 R21 — pre-submit evidence-URL liveness check.
+The shipped implementation comprises:
+- `probeUrlLiveness(url, sim)` helper + 24 h per-URL memo cache (`web/src/urlLiveness.ts`);
+- the pure server-side fetch logic `executeProbe(url, timeout=10_000)`
+  (`web/src/probeHandler.ts`) — factored out of `vite.config.ts` so it is
+  unit-testable without a Vite server;
+- the `GET /__probe?url=<encoded>` Vite dev-server middleware
+  (`vite.config.ts` `urlProbePlugin`, L108-154);
+- the debounced (`PROBE_DEBOUNCE_MS = 600`) `useEffect` + `data-testid="url-liveness-error"`
+  banner + `create-submit` disable-gate in `web/src/views/Create.tsx`
+  (L67-109, L414-422, L438-445);
+- unit tests `web/src/urlLiveness.test.ts` (30 tests) + `web/src/probeHandler.test.ts`.
+**Verdict:** PASS (zero findings)
+
+### Hard gate — independently re-derived this run
+
+| Gate | Result | Evidence (re-verified line-by-line) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | R21 adds **no on-chain field**. It is a pre-submit, client-side gate that runs *before* `createContract` and persists nothing on-chain; `probeUrlLiveness`/`executeProbe` handle only the public `agentEvidenceUrl` (curated MedlinePlus/FDA-label URLs from `drugEvidenceMap.ts`, or a manual public override). The patient justification body still stays off-chain — only its `keccak256` `justificationHash` is committed. Diff-wide PHI-token scan (`\b\d{3}-\d{2}-\d{4}\b`, `social security`, `date of birth`, `\bmrn\b`, `medical record`, `patient [A-Z][a-z]+ [A-Z]`) over **added** code lines (`*.ts/*.tsx/*.sol/*.mjs/*.js`) returned only two hits, both benign: (a) the synthetic negative-test probe `"Is semaglutide necessary for patient John S with T2DM?"` — an input the contract is asserted to **reject** (`revertedWith("evidence: hint required")`), never stored; and (b) a PHI-*absence* comment. R21 fixtures are synthetic public URLs (`https://medlineplus.gov/druginfo/meds/a603010.html`, `...DEAD_SYNTHETIC_ENTRY.html`); `urlLiveness.test.ts` ships an explicit NO-PHI regression test (SSN/DOB/phone/email regex over the fixtures, all negative). |
+| No secrets | PASS | 64-hex / `private[_ ]?key` / `api[_ ]?key` / `mnemonic` / `bearer` / `BEGIN…PRIVATE` scan over **added** code lines returned only: a `VITE_PRIVATE_KEY` *comment* in `verify-deploy.ts` documenting that the key is used solely to derive the operator address, and the obviously-synthetic test hash `0xdeadbeef…0001`. Neither is a secret. The probe sends no credentials — `executeProbe` issues `fetch(url, { method: "GET", headers: { Range: "bytes=0-0" }, signal, redirect: "follow" })`, a single `Range` header only. Branch-wide the diff is a net secret-surface *reduction*: it deletes the banned self-host path (`scripts/orchestrator-real.ts`, `contracts/scripts/setup-selfhosted-2026-05-30.ts`; no live `@anthropic-ai/sdk`/`ANTHROPIC_API_KEY` import remains in code). `.env`/`.env.*`/`.tmp/`/`coverage/` are gitignored; no env file in the diff; `.gitignore` changes only ADD ignores. |
+| Signing-key hygiene | PASS | R21 performs no signing and touches no key material — it is a read-only liveness probe with no wallet/signer construction. Branch-wide: `scripts/verify-deploy.ts` reads `VITE_PRIVATE_KEY` only to derive `wallet.address` and logs **only the public operator address** (`console.log(operator: ${operatorAddr})`) — never the key, never a signed/sent tx. No key is logged, embedded, or persisted by this unit. |
+
+### SSRF surface assessment (documented, not a finding — re-verified)
+
+The `GET /__probe?url=<encoded>` middleware performs a **server-side fetch of a
+caller-supplied URL** — a textbook SSRF shape. It is **not a finding** under this gate,
+for reasons re-verified in source this run:
+
+- **Dev-server-only, never shipped.** `urlProbePlugin` registers exclusively inside
+  `configureServer(server)` (`vite.config.ts:129`), the Vite dev-server hook. It is
+  absent from the production `vite build` bundle and from `vite preview` (only
+  `allowedHosts` appears under `preview`). No production HTTP surface exposes it. This
+  mirrors the pre-existing, already-accepted `/__log/tx` dev sink.
+- **Single-developer local trust boundary.** The dev server binds locally; the only
+  external exposure is the opt-in quick-tunnel (`allowedHosts: [".trycloudflare.com",
+  ".ts.net"]`) — an explicit, ephemeral developer action, not a deployed service.
+- **Bounded blast radius — body never returned.** `executeProbe` downloads ≤ 1 byte
+  (`Range: bytes=0-0`), runs under a 10 s `AbortController` timeout, and returns **only**
+  `{ ok: boolean, status: number, error?: string }`. The response *body is never read or
+  forwarded to the browser*, so the endpoint cannot exfiltrate internal-service content;
+  it leaks at most a boolean + numeric status of the attacker-known URL. `redirect:
+  "follow"` + `status < 400` is intentional (a followed-3xx reads ok:true) and does not
+  change the body-confidentiality property.
+
+Tracked so the surface is visible: if `/__probe` is ever promoted to a production/edge
+function it MUST gain an allowlist (or a deny-list of RFC-1918 / link-local /
+metadata-endpoint targets) before shipping. No action required for the dev-only R21 unit.
+
+### Deliberate deviation from the unit wording (not a finding)
+
+The unit task describes a HEAD-first probe with a bare-GET fallback. The shipped
+`executeProbe` issues a single `Range: bytes=0-0` GET directly and omits HEAD entirely,
+documented as deliberate in both `probeHandler.ts` and `vite.config.ts`: the probe runs
+server-side (no CORS), so the CORS-workaround motivation for HEAD disappears, and a
+Range-GET is universally supported while avoiding a two-round-trip cost. This is a
+behavioral simplification with no security impact (it strictly downloads *less* data than
+a full GET and still respects the 10 s timeout).
+
+### XSS / web review
+
+- No new HTML sink: `dangerouslySetInnerHTML` / `innerHTML` / `eval(` / `new Function` /
+  `document.write` scan over **added** `web/**` lines returned nothing. The
+  `url-liveness-error` banner renders the status/error via auto-escaping JSX text
+  interpolation only; the interpolated `error` originates from the dev-server probe
+  (a server-side fetch error message), not from a stored on-chain value.
+- Sim-mode bypass + submit gate re-verified in `Create.tsx`: in sim mode (`!IS_REAL`) the
+  effect returns early (never probes) and the `create-submit` disable clause skips the
+  liveness check; in real mode the button stays disabled until
+  `urlLivenessResult?.ok === true`.
+
+### Verification (this gate)
+
+- `node --import tsx --test web/src/urlLiveness.test.ts web/src/probeHandler.test.ts` →
+  **30/30 pass** for urlLiveness (cache hit, clean-cache + TTL-expiry re-fetch, sim
+  bypass ×2, non-2xx 404/403/500 → ok:false, network error + AbortError/timeout →
+  ok:false, negative caching, URL-specific keys, result-shape, banner-interpolation ×2,
+  NO-PHI invariant) plus the probeHandler suite.
+- `node --import tsx --test "web/src/**/*.test.ts"` → **55/55 pass** (no regression in the
+  drugEvidenceMap suite).
+- `npx tsc -p tsconfig.json --noEmit` → clean (exit 0).
+
+> Note vs refresh-9: the refresh-9 entry's test counts ("13/13", "38/38") are stale — the
+> urlLiveness suite has since grown to 30 tests and the `web/src/**` suite to 55, and the
+> probe fetch logic was refactored into `web/src/probeHandler.ts` (`executeProbe`) with
+> `vite.config.ts` reduced to the HTTP wrapper. The substantive PASS verdict is unchanged;
+> this refresh re-derives it against the current tree.
+
+### Verdict: PASS (zero findings)
+
+---
+
+## 2026-06-03 (refresh 9) — SPEC-0006 R21 pre-submit evidence-URL liveness check (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-derivation from source
+**Base:** `origin/main`
+**Branch:** `spec-6-implementation`
+**Unit under review:** SPEC-0006 R21 — pre-submit evidence-URL liveness check:
+`probeUrlLiveness()` helper (`web/src/urlLiveness.ts`), the `GET /__probe` Vite
+dev-server middleware (`vite.config.ts` L107-165, `urlProbePlugin`), the debounced
+`useEffect` + `url-liveness-error` banner + `create-submit` gate in
+`web/src/views/Create.tsx` (L56-94, L399-404, L417-430), and the unit tests
+(`web/src/urlLiveness.test.ts`).
+**Verdict:** PASS (zero findings)
+
+### Hard gate results
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | R21 adds **no on-chain field** — it is a pre-submit client-side gate that runs *before* `createContract` and stores nothing. `probeUrlLiveness` handles only the public `agentEvidenceUrl` (curated MedlinePlus / FDA-label URLs from `drugEvidenceMap.ts`, or a manual public override). No patient justification text touches the probe path — the justification still stays off-chain and only its `keccak256` `justificationHash` is committed (`Create.tsx:187-204`). Test fixtures are synthetic public URLs (`https://medlineplus.gov/druginfo/meds/a603010.html`, `...DEAD_SYNTHETIC_ENTRY.html`); `urlLiveness.test.ts:343-355` ships an explicit NO-PHI regression test (SSN/DOB/phone/email regex over the fixtures, all negative). Diff-wide PHI-token scan (SSN `\d{3}-\d{2}-\d{4}`, phone, DOB, MRN, `patient name`, email) over added lines returned only the PHI-*absence* guard regexes in tests — no identifier value anywhere. The contract's `_containsNamePattern` defense-in-depth PHI guard on `agentPromptHint` (`CoverageNegotiation.sol:405-408,1009`) is retained. |
+| No secrets | PASS | 64-hex / `private_key` / `api_key` / `mnemonic` / `bearer` / `password` scan over the R21 added lines returned nothing. The probe middleware sends no credentials — `fetch(rawUrl, { method: "GET", headers: { Range: "bytes=0-0" }, signal })` carries only a `Range` header. Branch-wide, the only 64-hex is the synthetic `0xdeadbeef…0001` test hash; the diff *removes* the secret-consuming self-host path (`@anthropic-ai/sdk` + `ANTHROPIC_API_KEY` + `scripts/orchestrator-real.ts` deleted). `.env`/`.env.*`/`.tmp/` are gitignored; no env file in the diff. |
+| Signing-key hygiene | PASS | R21 performs no signing and touches no key material — it is a read-only liveness probe. Branch-wide: `scripts/verify-deploy.ts` reads `VITE_PRIVATE_KEY` only to derive `wallet.address` and logs only the public operator address (never the key); `scripts/real-backend-localnode.mjs` added lines use a mock signer with synthetic decision tokens. No key is logged, embedded, or persisted. |
+
+### SSRF surface assessment (documented, not a finding)
+
+The `GET /__probe?url=<encoded>` middleware performs a **server-side fetch of a
+caller-supplied URL** — a textbook SSRF shape. It is **not a finding** under this
+gate for these reasons, all verified in source:
+
+- **Dev-server-only, never shipped.** `urlProbePlugin` registers exclusively inside
+  `configureServer(server)` (`vite.config.ts:122`), the Vite dev-server hook. It is
+  absent from the production `vite build` bundle and from `vite preview`. There is no
+  production HTTP surface that exposes it. This mirrors the pre-existing `/__log/tx`
+  dev sink already accepted in-tree.
+- **Single-developer local trust boundary.** The dev server binds locally; the only
+  external exposure is the opt-in quick-tunnel (`allowedHosts: [".trycloudflare.com",
+  ".ts.net"]`), which is an explicit, ephemeral developer action, not a deployed
+  service.
+- **Bounded blast radius.** The fetch is `Range: bytes=0-0` (downloads ≤ 1 byte),
+  under a 10 s `AbortController` timeout, and returns only `{ ok, status }` — the
+  response *body is never returned to the browser*, so it cannot be used to exfiltrate
+  internal-service contents; it leaks at most a boolean + numeric status of the
+  attacker-known URL.
+
+This is recorded so the surface is tracked. If `/__probe` is ever promoted to a
+production/edge function, it MUST gain an allowlist (or deny-list of RFC-1918 /
+link-local / metadata-endpoint targets) before shipping. No action required for the
+dev-only R21 unit.
+
+### Verification
+
+- `node --import tsx --test "web/src/urlLiveness.test.ts"` → **13/13 pass**
+  (cache hit, cache miss, sim bypass, non-2xx → false, network error → false,
+  negative caching, URL-specific keys, NO-PHI invariant).
+- `node --import tsx --test "web/src/**/*.test.ts"` → **38/38 pass** (no regression
+  in the drug-evidence-map suite).
+- No XSS sink introduced: `dangerouslySetInnerHTML` / `innerHTML` / `eval` /
+  `new Function` scan over added `web/**` lines returned nothing; the
+  `url-liveness-error` banner renders a static string and `RulingRationaleCard`
+  uses auto-escaping JSX text interpolation only.
+
+---
+
+## 2026-06-03 (refresh 8) — `commitRationale` keeper-path wiring + R25 rationale card (security-review, TOTAL-STICKLER re-run)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-derivation from source
+**Base:** `origin/main`
+**Branch:** `spec-6-implementation` + uncommitted working tree
+**Scope:** Re-ran the full hard gate on the keeper-gated `commitRationale` off-chain wiring
+(`abi.ts` L24, `src/contract/types.ts` L166, `src/contract/real.ts` L364-375,
+`src/contract/simulated.ts` L560-591) + the R25 `data-testid="ruling-rationale"` card
+(`web/src/views/Detail.tsx` L1062-1110) + the new `commitRationale` lib tests in
+`simulated.transitions.test.ts`. Every gate result re-derived line-by-line from source;
+`typecheck` clean; `npm run test:lib` → **266/266 pass** including the eight `commitRationale`
+tests (test #65–72).
+**Verdict:** PASS (zero findings)
+
+### Hard gate — independently re-derived (this run)
+
+| Gate | Status | Evidence (re-verified) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | The unit adds no identifier-bearing field. Off-chain `commitRationale` forwards three free-text strings straight to the on-chain `onlyOwner` function (`CoverageNegotiation.sol:756-774`), which **hashes** `clauseReference`/`standardReference` to `bytes32` for storage (R4) and emits the plaintext only in the `RulingRationale` event. PHI-token scan (`ssn`/`[0-9]{3}-[0-9]{2}-[0-9]{4}`/`dob`/`date of birth`/`mrn`/`medical record`/`patient [A-Z]`) over the unit's added lines returned ONLY CSS class-name / JSX-label false positives (`rationale-ref-label`, `Standard:`) — no SSN, DOB, MRN, or patient-name VALUE. Test fixtures are synthetic + non-identifying (`"Drug is FDA-approved and medically necessary per clinical criteria"`, `"FDA-LABEL-2024-adalimumab"`, `"PartD-formulary-clause-3"`, `"A".repeat(4500)`). The R25 card renders only these synthetic event fields. |
+| No secrets | PASS | 64-hex / `private_key` / `api_key` / `mnemonic` / `bearer` / `BEGIN…PRIVATE` scan over the unit's added lines returned nothing. Branch-wide (non-docs) 64-hex scan surfaced only the synthetic `0xdeadbeef…0001` test hash — not in this unit. `.gitignore` changes only ADD ignores (`.codesign/`, `*.bak.*`, `coverage/`). |
+| Signing-key hygiene | PASS | `RealBackend.commitRationale` (real.ts L364-375) is a thin `_send("commitRationale", 0n, …)` write — same owner-signer path as `postFeedback`/`withdraw`, no new key handling, `0n` value. The on-chain function is `onlyOwner` (Sol L761) — the keeper IS the owner in v0 — so authorization lives at the contract boundary, not client-side. `SimulatedBackend.commitRationale` (sim.ts L560-591) skips the owner check (no wallet concept) but keeps the `hasRuling` guard, so it weakens no real authorization surface. Branch-wide scan for newly added wallet/signer/`privateKey`/`SigningKey` constructions: NONE NEW (the two Anvil keys in `real-backend-localnode.mjs` are pre-existing public test vectors, not in this diff's added lines). |
+
+### UI / web review (`Detail.tsx` — R25 rationale card, L1062-1110)
+
+- `RulingRationaleCard` renders `ev.rationale`, `ev.clauseReference`, `ev.standardReference`,
+  and `decisionLabel(ev.decision)` as **JSX text children** — React auto-escapes. No
+  `dangerouslySetInnerHTML` / `innerHTML` anywhere in `web/src` (grep: NONE). No stored/DOM XSS
+  path even though the fields originate from an on-chain event.
+- The explorer deep-link is `txUrl(SOMNIA_TESTNET, ev.txHash)` where `explorerUrl` is a
+  hardcoded trusted constant (`src/config/networks.ts:34`) and only the on-chain `txHash`
+  (not user free-text) is interpolated — no open-redirect / URL-injection vector. Anchor
+  carries `rel="noreferrer"` + `target="_blank"` (no reverse-tabnabbing / referrer leak).
+- `data-testid="ruling-rationale"` + `data-testid="rationale-explorer-link"` present;
+  entries stacked oldest-first in an `<ol>` per round (R25).
+
+### Lib-layer review
+
+- `SimulatedBackend.commitRationale` enforces `must(reqId)` + `hasRuling` (mirrors the
+  Solidity `require(n.hasRuling, "rationale: no ruling yet")`), keccak-hashes the three
+  strings for parity, truncates the rationale at 4096 bytes (R26 parity), and emits
+  `RulingRationale`. It cannot force a ruling, move escrow, or alter `coveredAmount` — it
+  only transcribes onto an already-finalized ruling.
+- New lib tests (#65–72) assert the event shape **verbatim** (field-presence:
+  `rationale`/`decision`/`reqId`/`clauseReference`/`standardReference`), per-reqId isolation,
+  the pre-ruling + post-`NeedMoreEvidence` `"rationale: no ruling yet"` revert parity, R26
+  truncation, the ABI-entry presence, and per-round chronological stacking. Test-only; no
+  production attack surface.
+
+### Accuracy corrections to the prior refresh-7 write-up (NOT gate findings)
+
+The two below are documentation-accuracy fixes to the earlier entry; neither changes the
+PASS verdict, and neither is a security defect:
+
+1. **Test count.** The prior entry cited `264/264` lib tests; the suite is now **266** (it
+   grew with the drug-evidence-map `promptHint`/NO-PHI tests). Verified this run.
+2. **No-PHI assertion claim.** The prior entry stated the new lib test asserts the no-PHI
+   invariant via a `[A-Z][a-z]+ [A-Z]` patient-name regex over the rationale fields. The
+   commitRationale tests in `simulated.transitions.test.ts` do NOT contain such a regex —
+   they assert **field-presence** verbatim and rely on synthetic-only fixtures for the
+   no-PHI property (the `[A-Z][a-z]+ [A-Z]` regex assertion lives in the *contract* test
+   `_containsNamePattern` path and the `drugEvidenceMap.test.ts` NO-PHI test, not here).
+   The hard gate is still PASS because the gate measures whether the **diff** introduces PHI
+   (it does not — fixtures are synthetic), not whether the test harness re-asserts it. A
+   belt-and-suspenders no-PHI regex over the three rationale fields in this test file would
+   be a reasonable (non-blocking) hardening for the build loop.
+
+### Verdict: PASS (zero findings)
+
+---
+
+## 2026-06-03 (refresh 7) — `commitRationale` keeper-path wiring + R25 rationale card (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-derivation
+**Base:** `origin/main` (`d7b5190`)
+**Branch:** `spec-6-implementation` + uncommitted working tree
+**Scope:** Security review of the diff in `.` vs `origin/main`, with the unit under
+review being the off-chain wiring of the keeper-gated `commitRationale` path
+(`abi.ts`, `src/contract/types.ts`, `src/contract/real.ts`, `src/contract/simulated.ts`)
+plus the R25 `data-testid="ruling-rationale"` card in `web/src/views/Detail.tsx`, and a
+new `simulated.transitions.test.ts` lib test asserting the `RulingRationale` emission.
+Re-derived every hard-gate result from source; compiled (`typecheck` clean) and ran the
+lib suite (`264/264` pass, including the new commitRationale tests).
+**Verdict:** PASS (zero findings)
+
+### Hard gate — independently re-derived
+
+| Gate | Status | Evidence (re-verified this run) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | The unit adds no new identifier-bearing field. The off-chain `commitRationale` forwards three free-text strings (`rationale`, `clauseReference`, `standardReference`) straight to the on-chain function, which the authoritative Solidity (`CoverageNegotiation.sol:756`) truncates + **hashes** `clauseReference`/`standardReference` to `bytes32` for storage (R4); only the event carries the plaintext. PHI-token scan over added lines (`patient [A-Z]`, `ssn`/`\d{3}-\d{2}-\d{4}`, `dob`, `mrn`, `medical record`) returned only synthetic, non-identifying test fixtures: `"Drug is FDA-approved and medically necessary per clinical criteria"`, `"FDA-LABEL-2024-adalimumab"`, `"Drug not listed under formulary for this indication"`, and the existing PHI-*absence* assertions (a `namePattern` regex asserting NO `[A-Z][a-z]+ [A-Z]` patient-name match). No patient identifier, SSN, DOB, MRN, or date-of-service in any added line. The UI card renders only these synthetic event fields. |
+| No secrets | PASS | 64-hex / `private_key` / `api_key` / `mnemonic` / `bearer` scan over the unit's added lines (`abi.ts`, `types.ts`, `real.ts`, `simulated.ts`, `Detail.tsx`, test) returned nothing. No credentials, tokens, or key material introduced. The branch-wide scan surfaced only doc references to the *removed* `@anthropic-ai/sdk`/`ANTHROPIC_API_KEY` (assertions that the banned path stays gone) and the pre-existing synthetic `0xdeadbeef…0001` test hash — neither in this unit's diff. |
+| Signing-key hygiene | PASS | `RealBackend.commitRationale` introduces no new key handling: it routes through the existing `_send` helper (the same owner-signer path used by `postFeedback`/`withdraw`/`onRulingTimeout`), passing `0n` value. The on-chain function is `onlyOwner` — the keeper IS the owner in v0 (`CoverageNegotiation.sol:760`), so authorization is enforced at the contract boundary, not client-side. `SimulatedBackend.commitRationale` deliberately skips the owner check (no wallet concept in simulation) but keeps the `hasRuling` guard, so it does not weaken any real authorization surface. No new signer, wallet, or privilege mutation. |
+
+### UI / web review (`Detail.tsx` — R25 rationale card)
+
+- `RulingRationaleCard` renders `ev.rationale`, `ev.clauseReference`, `ev.standardReference`,
+  and the decision label as **JSX text children** — React auto-escapes; no
+  `dangerouslySetInnerHTML`, no `innerHTML`, no raw HTML sink. No stored/DOM XSS path
+  even though the fields originate from an on-chain event.
+- The Somnia explorer deep-link is built by `txUrl(SOMNIA_TESTNET, ev.txHash)` —
+  `explorerUrl` is a hardcoded trusted constant (`src/config/networks.ts`) and `txHash`
+  is an on-chain transaction hash, not user free-text, so there is no open-redirect or
+  URL-injection vector. The anchor carries `rel="noreferrer"` with `target="_blank"`
+  (no reverse-tabnabbing / referrer leak).
+- The card is rendered with `data-testid="ruling-rationale"` and the link with
+  `data-testid="rationale-explorer-link"` per R25; entries are stacked chronologically
+  (oldest-first `<ol>`), matching the spec.
+
+### Lib-layer review (`simulated.ts` / `real.ts` / `abi.ts` / `types.ts`)
+
+- `SimulatedBackend.commitRationale` enforces `must(reqId)` (existence) + `hasRuling`
+  (mirrors the Solidity `require(n.hasRuling, "rationale: no ruling yet")`), keccak-hashes
+  the three strings into stored hashes for parity, and emits `RulingRationale`. No
+  state-machine bypass: it cannot be used to force a ruling, move escrow, or change
+  `coveredAmount` — it only transcribes onto an already-finalized ruling.
+- `RealBackend.commitRationale` is a thin owner-only write via `_send`; the on-chain
+  `onlyOwner` modifier is the real authorization boundary (client-side TS is untrusted
+  by design — the contract gates it).
+- ABI/interface additions (`abi.ts`, `types.ts`) are pure type/signature surface — no
+  executable behavior, no security impact.
+- New lib test asserts the `RulingRationale` event shape (field-presence + verbatim
+  values), the no-PHI invariant (`[A-Z][a-z]+ [A-Z]` patient-name pattern absent from
+  all three string fields), the pre-ruling `"rationale: no ruling yet"` revert parity,
+  the ABI-entry presence, and per-round chronological stacking. Test-only file; no
+  production attack surface.
+
+### Conclusion
+
+PASS — zero findings. The unit adds a keeper-gated, owner-authorized transcription path
+whose only authority boundary (the Solidity `onlyOwner` + `hasRuling` guards) is intact
+and correctly mirrored in simulation; it introduces no PHI, no secrets, no new
+key-handling, and no XSS/redirect sink in the UI. Hard gate satisfied on all three axes
+(PHI, secrets, signing-key hygiene). `typecheck` clean; `264/264` lib tests green.
+
+---
+
+## 2026-06-03 (refresh 6) — Amendment 0008 escrow: independent gate re-run (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-verification
+**Base:** `origin/main`
+**Branch:** `spec-6-implementation` + uncommitted working tree
+**Scope:** Re-ran the full security gate on the Amendment 0008 real-escrow unit (the
+`payable insurerEngage` + `escrowAmount` struct field + `settle`/terminal escrow
+release-or-refund + `withdrawFunds` escrow ring-fence) against the diff in `.` vs
+`origin/main`, re-deriving every gate result from the source rather than trusting the
+refresh-5 write-up. Compiled, ran both suites, and audited every value-moving path
+line-by-line.
+**Verdict:** PASS (zero findings)
+
+### Hard gate — independently re-derived
+
+| Gate | Status | Evidence (re-verified this run) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | A0008 adds only value plumbing — `escrowAmount` (uint256) on the struct + the `_totalEscrowHeld` accumulator; no new free-text/content field. R4 invariant intact. Diff-wide PHI-token scan (`ssn`/`social security`/`dob`/`mrn`/`medical record`/`patient name`/`\d{3}-\d{2}-\d{4}`/date shapes) over added lines returned ONLY: (a) `_containsNamePattern` guard comments, (b) PHI-*absence* assertions, (c) the synthetic negative-test probe `"…patient John S…"` that `createContract` is asserted to **reject** (never stored — T11e), and (d) synthetic prompt-hint fixtures (`"Is this drug medically necessary for the patient's condition?"`) carrying no identifier. Test fixtures use synthetic amounts (`REQUESTED`, `2000n`) + synthetic tokens (`TOKEN_APPROVE`/`TOKEN_DENY`/`"synthetic-scrape-evidence"`); evidence URLs are public (`medlineplus.gov`, `accessdata.fda.gov`). |
+| No secrets | PASS | No private keys, mnemonics, API keys, tokens, or credentials in added lines. 64-hex scan over added `.ts`/`.tsx`/`.mjs`/`.sol`/`.js` lines returned exactly one match — `0xdeadbeef…0001`, an obvious synthetic test hash, not a key. The two deterministic Anvil keys in `scripts/real-backend-localnode.mjs` are pre-existing (not in this diff's added lines), public test vectors, env-overridable. `.gitignore` changes only ADD ignores (`.codesign/`, `contracts/package-lock.json.bak.*`, `coverage/`) — never un-ignore a secret. |
+| Signing-key hygiene | PASS | No new wallet/signer/key-handling code. `real.ts insurerEngage` forwards `depositAmount ?? requestedAmount` as `{ value }` through the existing `_send` helper — no key material touched. No new owner-mutable privilege surface: `withdrawFunds` stays `onlyOwner` and is now MORE restricted (bounded by `balance − _totalEscrowHeld`). Platform-callback gate `require(msg.sender == address(platform))` intact; the new escrow refund in the `PolicyInvalidated` callback branch is CEI-protected (state + `escrowAmount = 0` + `_totalEscrowHeld -=` committed before the external `.call`). |
+
+### Value-safety — line-by-line audit (CEI + reentrancy on every ETH path)
+
+Re-read `CoverageNegotiation.sol` end-to-end. Every ETH-moving function carries
+`nonReentrant` (or is the platform-gated callback) and commits state + `escrowAmount = 0`
++ `_totalEscrowHeld -= escrow` BEFORE any `.call{value}`, with a checked return:
+
+| Path | Guard | Effects-before-interaction | Checked return |
+| --- | --- | --- | --- |
+| `insurerEngage` surplus refund (L443) | `payable nonReentrant`, `state==Open` | escrow/state/`_totalEscrowHeld+=` L454–458 before refund L465 | `require(ok,"escrow: refund failed")` |
+| `settle` Approved/Denied (L613) | `nonReentrant`, `state∈{Approved,Denied}` + both-accepted | L625–628 before L636/L642 | both `require(okP/okI,…)` |
+| `refuse` (L652) | `nonReentrant`, `_refusable` | L661–664 before L669 | `require(ok,…)` |
+| `withdraw` (L679) | `nonReentrant`, `!_terminal` | L688–691 before L696 | `require(ok,…)` |
+| `submitEvidence` deadlock (L502) | `nonReentrant`, `state==EvidenceRequested` | L507–509 before L514/L518 | both `require(ok/ok2,…)` |
+| `appeal` deadlock (L559) | `nonReentrant`, `state==Denied` | L564–566 before L571/L575 | both `require(ok/ok2,…)` |
+| `PolicyInvalidated` (decide callback L903) | `msg.sender==platform`, `state==UnderReview` | L909–912 before L919 | `require(ok,…)` |
+| `withdrawFunds` (L356) | `onlyOwner nonReentrant` | `drainable = balance − _totalEscrowHeld` L358 | `require(ok,…)` |
+
+- **Conservation.** Approved settle: `covered = requestedAmount = escrow` ⇒ remainder 0; `covered + remainder == escrow` always. Denied/terminal: full `escrow → insurer`. No path mints or forwards ETH the contract did not receive.
+- **`_totalEscrowHeld` cannot underflow or double-release.** `+= escrow` happens once, guarded by `state==Open` (engage flips to `Ready`). Every `-= escrow` is paired with a terminal/state transition that makes the path unreachable again, and reads the captured `n.escrowAmount` (already 0 after first execution). Solidity 0.8 checked arithmetic backstops it. `withdraw` from `Open` (escrow 0) subtracts 0 and skips transfer (`if (escrow > 0)`) — tested.
+- **Escrow ring-fenced from the agent-fee float.** Agent fees flow through `platform.createRequest{value}` in `_fireScrape`/`_fireDecide`; `withdrawFunds` is bounded by `_totalEscrowHeld`, so the owner can never drain live escrow (A0008-S4a). The owner *can* still reclaim the agent-fee/parked-decide-fee float — that is `withdrawFunds`'s documented purpose and a pre-existing trusted-owner surface (Amendment 0007), unchanged by and out of scope for this escrow unit; not a finding.
+
+### Off-chain mirror — re-checked field-by-field
+
+`real.ts` `RawNegotiation` (38 elements, indices 0–37) and `_decodeNegotiation` were
+re-verified against the `abi.ts getNegotiation` tuple and the Solidity struct by
+enumerating all 38 fields: `escrowAmount` at index 13, `lastRequestId` 20, `hasRuling`
+21, `agentEvidenceUrl`/`agentPromptHint` 22/23, `round` 24, trailing
+`agentPhase`/`pendingDecideFee`/`pendingFeePayer` 35–37 — all aligned. No mis-decode
+that could misattribute or leak `escrowAmount`. The simulated backend mirrors the
+payable `insurerEngage(…, depositAmount?)` signature, the `escrow: underfunded`
+rejection, sets `escrowAmount = requestedAmount` on engage, and zeroes it on every
+settle/terminal path (the refresh-5 fidelity gap is closed — verified in
+`simulated.transitions.test.ts` A0008-SIM-BEH cases). Implementation note (safe
+divergence): the amendment-doc snippet sets `escrowAmount = msg.value`; the shipped
+contract conservatively sets `escrowAmount = requestedAmount` and refunds the surplus —
+stricter, matches the unit task.
+
+### Verification run (this gate)
+
+- `npx hardhat compile` → clean (8 Solidity files, 42 typings).
+- `npx hardhat test` → **166 passing**, including A0008-S1a..S4c (engage underfund
+  revert, overpay refund, settle-approve/deny transfers, all four terminal-non-settle
+  escrow refunds, `contract balance == 0` after every settled/terminal path,
+  `withdrawFunds` cannot drain escrow) and every `RevertingReceiver` `require`-fail
+  branch (settle/refuse/withdraw/deadlock/policy_invalid/engage-refund).
+- `npm run test:lib` → **258 passing**, including simulated/real escrow-mirror parity
+  and the `DRUG_EVIDENCE_MAP` NO-PHI invariant.
+
+### Verdict: PASS (zero findings)
+
+---
+
+## 2026-06-03 (refresh 5) — Amendment 0008: real escrow settlement (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode)
+**Base:** `origin/main`
+**Branch:** `spec-6-implementation` + uncommitted working tree
+**Scope of change (Amendment 0008 / SPEC-0001 R8 unit):** Make settlement move
+real ETH. `insurerEngage` becomes `payable` and requires `msg.value >=
+requestedAmount`, sets `n.escrowAmount = requestedAmount`, refunds any surplus to
+the insurer. New `escrowAmount` field on the `Negotiation` struct + a contract-wide
+`_totalEscrowHeld` accumulator. `settle` now transfers `coveredAmount → provider`
+and refunds `escrowAmount − coveredAmount → insurer` on the Approved path, and
+refunds the full `escrowAmount → insurer` on the Denied path. Every terminal-non-
+settle outcome (`Deadlocked` via the `submitEvidence`/`appeal` round-cap short-
+circuits, `ProviderRefused`, `PolicyInvalidated` via the decide callback,
+`Withdrawn`) refunds the full `escrowAmount → insurer`. `withdrawFunds` is bounded
+to `address(this).balance − _totalEscrowHeld` so the owner can never drain escrow.
+Off-chain mirrors (`abi.ts`, `real.ts` decoder + payable `insurerEngage`,
+`types.ts`, `coverage.types.ts`, `simulated.ts`) updated to the new struct/signature.
+Hardhat tests A0008-S1a..S4c added (engage underfund/overpay, settle-approve/deny,
+each terminal-non-settle path, balance==0 invariants, reverting-recipient `require`
+branches).
+**Verdict:** PASS (zero findings)
+
+### Hard gate
+
+| Gate | Status | Evidence |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | A0008 adds only value-flow plumbing: the new `escrowAmount` / `_totalEscrowHeld` are `uint256` amounts; no new free-text or content field is stored. R4 invariant intact. Diff-wide PHI scan (SSN/DOB/MRN/`patient name`/`\d{3}-\d{2}-\d{4}`/date shapes) over added `.sol`/`.ts` lines returned only PHI-*absence* assertions and the existing `_containsNamePattern` `[A-Z][a-z]+ [A-Z]` guard on `agentPromptHint`. Test fixtures use synthetic amounts (`REQUESTED`, `1500n`) and synthetic decision tokens (`"synthetic-scrape-evidence"`, `TOKEN_APPROVE`/`TOKEN_DENY`); evidence URLs are public (`medlineplus.gov`, `accessdata.fda.gov`). `drugEvidenceMap.{ts,test.ts}` carry only public drug-class criteria + a NO-PHI regression test. |
+| No secrets | PASS | No private keys, mnemonics, API keys, tokens, or credentials added. Full-diff 64-hex key scan returned only the two well-known deterministic Hardhat/Anvil accounts (#0 `0xac0974be…`, #1 `0x59c6995e…`) in `scripts/real-backend-localnode.mjs` — public test vectors, env-overridable (`LOCAL_KEY`/`LOCAL_INSURER_KEY`), pre-existing (not in this diff's added lines). `.gitignore` changes only ADD ignores (`.codesign/`, `*.bak.*`, `coverage/`); they never un-ignore a secret. |
+| Signing-key hygiene | PASS | No new wallet construction, signer, or key-handling code. `real.ts insurerEngage` forwards `depositAmount` as `{ value }` via the existing `_send` helper; no key material is touched. No new owner-mutable privilege surface — `withdrawFunds` stays `onlyOwner` and is now MORE restricted (bounded by `balance − _totalEscrowHeld`). The platform-callback gate `require(msg.sender == address(platform))` is intact; the new escrow refund inside the `PolicyInvalidated` callback branch is CEI-protected (state + `escrowAmount = 0` committed before the external `.call`). |
+
+### Value-safety review (CEI + reentrancy on every value-moving path)
+
+Every ETH-moving function follows checks-effects-interactions and carries
+`nonReentrant`, verified line-by-line in `CoverageNegotiation.sol`:
+
+| Path | `nonReentrant` | State + `escrowAmount=0` + `_totalEscrowHeld-=` before `.call` | Checked return |
+| --- | --- | --- | --- |
+| `insurerEngage` (surplus refund) | yes (L441) | escrow/state committed L452–456 before refund L463 | `require(ok,"escrow: refund failed")` |
+| `settle` Approved/Denied | yes (L611) | L625–627 before transfers L633/L639 | `require(okP/okI,…)` both |
+| `refuse` | yes (L649) | L659–661 before L666 | `require(ok,…)` |
+| `withdraw` | yes (L676) | L686–688 before L693 | `require(ok,…)` |
+| `submitEvidence` deadlock | yes (L490) | L505–507 before L516 | `require(ok2,…)` |
+| `appeal` deadlock | yes (L545) | L562–564 before L573 | `require(ok2,…)` |
+| `PolicyInvalidated` (decide callback) | callback gated to `platform`; CEI | L907–909 before L916 | `require(ok,…)` |
+| `withdrawFunds` (owner) | yes (L354) | drainable = `balance − _totalEscrowHeld` (L356) | `require(ok,…)` |
+
+- **No fund-stranding path.** The five terminal states (`Settled`, `Deadlocked`,
+  `PolicyInvalidated`, `ProviderRefused`, `Withdrawn`) each zero `escrowAmount` and
+  release/refund it. `withdraw` is reachable from every pre-terminal state by either
+  party, so escrow is always recoverable; nothing can wedge funds in a live
+  negotiation. Verified by tests asserting `contract balance == 0` after every
+  settled and every terminal-non-settle path (A0008-S2a/S2c/S3a–d/S4b/S4c).
+- **Escrow vs agent-fee float never commingle.** Agent fees are forwarded in full
+  to the platform (or refunded to the caller) in `_fireScrape`/`_fireDecide`/
+  timeout paths; escrow is tracked separately by `_totalEscrowHeld` and is
+  ring-fenced from `withdrawFunds` (A0008-S4a).
+- **`_totalEscrowHeld` cannot underflow.** Incremented by exactly `requestedAmount`
+  once at engage; decremented by exactly the stored `n.escrowAmount` on the first
+  (state-guarded) terminal transition; Solidity 0.8 checked arithmetic backstops it.
+
+### Accepted design tradeoff (NOT a finding)
+
+Amendment 0008 §4 sanctions a **push** model for v0 (`payable(addr).call{value}`
+with checked return + `nonReentrant`), noting pull-over-push is *preferred* and that
+"the security-auditor gate decides." A contract recipient whose `receive()` reverts
+can cause the whole settling/terminal tx to revert — an availability concern (a party
+could temporarily block its own refund/release), **not** a fund-loss concern: CEI
+means a reverted tx commits no state, so escrow stays held and is retriable (and
+`withdraw` remains available). For the demo, both parties are EOAs, so this cannot
+trigger. The `require(ok,…)`-fail branches are explicitly tested via
+`RevertingReceiver` (settle/refuse/withdraw/deadlock/policy_invalid/engage-refund).
+This is the documented, in-scope v0 shape; if a hostile contract counterparty ever
+becomes in-scope, migrate refunds/releases to a pull `owed[addr] += amount` +
+`withdraw()` ledger (already flagged in the amendment).
+
+### Off-chain mirror correctness (no security impact; verified for completeness)
+
+The `real.ts` `RawNegotiation` tuple + `_decodeNegotiation` index map was checked
+field-by-field against the Solidity struct and the `abi.ts getNegotiation` tuple:
+`escrowAmount` at index 13, `agentEvidenceUrl`/`agentPromptHint` at 22/23, trailing
+`agentPhase`/`pendingDecideFee`/`pendingFeePayer` at 35–37 — all aligned. The
+simulated backend mirrors the payable `insurerEngage(…, depositAmount?)` signature
+and the `escrow: underfunded` rejection, and stores `escrowAmount` on engage. (Note,
+non-security: the simulated backend does not zero `escrowAmount` on its terminal
+paths, since it holds no real ETH; this is a fidelity gap, not a vulnerability.)
+
+### Verification run
+
+`npx hardhat compile` clean; `npx hardhat test` → **169 passing**, including all
+A0008-S1a..S4c escrow tests and every `RevertingReceiver` `require`-fail branch.
+Off-chain `npm run test:lib` → **256 passing** (simulated/real escrow-mirror parity
++ drug-evidence-map NO-PHI invariant). Re-verified independently by the gate on
+2026-06-03.
+
+### Verdict: PASS (zero findings)
+
+---
+
+## 2026-06-03 (refresh 4) — Amendment 0007 phase 1: two-agent scrape→decide pipeline (security-review)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode)
+**Base:** `origin/main`
+**Branch:** `feat/amendment-0007-two-agent-pipeline` + uncommitted working tree
+**Scope of change:** Split the single `_fireAgent` adjudication into a two-agent
+sequential pipeline (Amendment 0007 phase 1). Add `AgentPhase` enum
+(`None`/`Scraping`/`Deciding`) + `pendingDecideFee`/`pendingFeePayer` fields on the
+`Negotiation` struct; `LLM_PARSE_WEBSITE_AGENT_ID` constant (`12875401142070969085`)
++ minimal `ILLMParseWebsiteAgent.ExtractString` interface (selector `0xc2dd1a7a`).
+`requestAdjudication`/`submitEvidence`/`appeal` now fund BOTH calls in one `msg.value`
+(`2×(getRequestDeposit()+agentReward)`), fire LLM Parse Website against
+`n.agentEvidenceUrl`, and park the decide fee. `handleResponse` branches on
+`agentPhase`: Scraping-success decodes the extracted string and fires LLM Inference
+(`_fireDecide`) from the parked fee; Deciding-success runs the existing token decode +
+state transition; a non-Success callback in either phase refunds the parked decide fee
+to the stored payer and routes to `EvidenceRequested`. `scripts/check-ruling-abi.ts`
+extended to pin the `ExtractString` selector alongside `inferString`. Hardhat tests:
+two-call mock keyed by agentId, updated fee math, full scrape→decide→Approve/Deny +
+failure paths.
+**Verdict:** PASS (zero findings)
+
+### Hard gate
+
+| Gate | Status | Evidence |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | R4 invariant preserved — only hashes/refs/amounts/codes/state/ids/addresses/timestamps + the two caller/curated public strings (`agentEvidenceUrl`, `agentPromptHint`) are stored. The new `_fireScrape` payload is built from `n.agentEvidenceUrl` + static framing; `_fireDecide`'s `inferString` prompt is `n.agentPromptHint` + `n.agentEvidenceUrl` + the scraped `evidence` string + static framing — no patient data is concatenated. The `_containsNamePattern` `[A-Z][a-z]+ [A-Z]` PHI guard on `agentPromptHint` at `createContract` is retained. Diff-wide PHI scan (SSN/DOB/MRN/`patient name`/`[0-9]{3}-[0-9]{2}-[0-9]{4}`/date shapes) over added `.sol`/`.ts` lines returned only (a) guard-name comments, (b) PHI-*absence* assertions in tests, and (c) the synthetic negative-test probe `"John S"` (`CoverageNegotiation.test.ts:2321`, an input the contract is asserted to **reject** — never stored). Evidence-URL fixtures are public (`medlineplus.gov/druginfo/meds/*`, `accessdata.fda.gov` FDA label PDF). |
+| No secrets | PASS | No private keys, mnemonics, API keys, tokens, or credentials in the diff. The two 64-hex keys in `scripts/real-backend-localnode.mjs` are the well-known deterministic Anvil/Hardhat accounts #0/#1 (public test vectors, env-overridable via `LOCAL_KEY`/`LOCAL_INSURER_KEY`) and are pre-existing — not part of this diff's added lines. `verify-deploy.ts` reads `VITE_PRIVATE_KEY` from `.env` only to derive an address (`ethers.Wallet(...).address`); no transaction is signed/sent and the key is not logged. Tests assert the banned `@anthropic-ai/sdk` / `ANTHROPIC_API_KEY` path stays removed (G3). |
+| Signing-key hygiene | PASS | No new key-handling, wallet-construction, or signer code. The two new constants + interface add **no** setters (no new owner-mutable / privilege surface). All admin mutators (`setPlatform`/`setAgentId`/`setAgentReward`/`setRulingTimeout`/`setMaxRounds`/`withdrawFunds`) and the keeper `commitRationale` remain `onlyOwner`. The platform-callback gate `require(msg.sender == address(platform), "callback: not platform")` is intact and now governs both pipeline phases. |
+
+### Threat walk-through (Amendment 0007 two-agent pipeline)
+
+**T1 — Fee theft / ETH double-spend across the two calls.** PASS. `_fireScrape`
+(`CoverageNegotiation.sol:935`) requires `msg.value >= 2×perCallFee`, forwards exactly
+`perCallFee` to the scrape `createRequest`, parks the second `perCallFee` in the
+contract balance (recorded in `n.pendingDecideFee`), and refunds any excess to the
+caller. On scrape-success `_handleScrapeResponse` zeroes `pendingDecideFee` and forwards
+that exact parked amount to `_fireDecide`'s `createRequest{value: decideFee}`. On
+scrape-failure the parked amount is refunded to `n.pendingFeePayer`. Every branch
+conserves value: forwarded + parked + refunded == `msg.value`. No path mints ETH or
+forwards an amount the contract did not receive. `totalFees` (scrape += in `_fireScrape`,
+decide += in `_fireDecide`) is a settlement **event marker only** (no token transfer per
+R8), so even an accounting skew on a failure path moves no funds.
+
+**T2 — Reentrancy via the callback's untrusted-payer refund.** PASS.
+`handleResponse` is gated to `msg.sender == address(platform)` (owner-set, trusted) and
+requires `_requestToNegotiation[requestId] != 0` **and** `n.state == UnderReview`. The
+only external call to an *untrusted* address inside the callback is the scrape-failure
+refund `payable(payer).call{value: refund}` in `_handleScrapeResponse:719`. By that
+point CEI is complete: `_clearRequest` has deleted the request→negotiation mapping,
+`pendingDecideFee`/`pendingFeePayer` are zeroed, `agentPhase=None`, and `state` is set to
+`EvidenceRequested`. A reentrant `handleResponse` therefore fails the `reqId != 0`
+(mapping deleted) and/or `state == UnderReview` checks and cannot re-trigger a refund or
+mutate the negotiation. The scrape-success external call (`_fireDecide` →
+`platform.createRequest`) targets the trusted platform only. (The three payable entry
+points `requestAdjudication`/`submitEvidence`/`appeal` retain `nonReentrant`.)
+
+**T3 — Stale `pendingFeePayer` enabling a double-refund / drain.** PASS. A payer-funded
+refund occurs **only** in the scrape-failure branch, which sets `refund =
+n.pendingDecideFee` and zeroes both `pendingDecideFee` and `pendingFeePayer` *before* the
+`.call`, guarded by `if (refund > 0)`. On scrape-**success**, `pendingDecideFee` is
+zeroed (forwarded to the decide call) while `pendingFeePayer` is intentionally left set —
+but no later code path refunds based on `pendingFeePayer` without first reading a non-zero
+`pendingDecideFee`, and the decide-failure branch performs no payer refund at all
+(`pendingDecideFee` is already 0 there). A subsequent `_fireScrape` (retry via
+`submitEvidence`/`appeal`) overwrites both fields fresh. No stale-payer drain vector.
+
+**T4 — Malformed/garbage agent payload (deserialization).** PASS. Both
+`abi.decode(responses[0].result, (string))` calls consume data delivered by the trusted,
+gated platform. A malformed payload reverts the decode (Solidity ABI decode is
+memory-safe — no buffer/overflow class exists), which merely stalls the in-flight ruling;
+recovery is the existing keeper `onRulingTimeout` → `EvidenceRequested`. An out-of-vocab
+decision **token** falls through `_tokenToDecision` defensively to non-terminal
+`NeedMoreEvidence` (never advances to a terminal state on garbage input). No injection,
+no unsafe transition.
+
+**T5 — Selector / agent-id drift.** PASS (hardening preserved). `check-ruling-abi.ts`
+now computes and pins **both** selectors — `inferString` (`0xfe7ca098`) and the new
+`ExtractString` (`0xc2dd1a7a`) — from their canonical signatures, asserts
+`_fireScrape` body uses `ILLMParseWebsiteAgent.ExtractString.selector` and
+`_fireDecide`/legacy `_fireAgent` uses `ILLMInferenceAgent.inferString.selector`, and
+self-checks that both selector literals appear in the script. The two agent ids are
+`public constant`s. A silent selector/id swap is caught by the gate.
+
+### Standard categories examined
+
+- **Injection** (SQL / command / path / template / XXE / NoSQL): none. No new
+  untrusted-input → shell/fs/DB/template path. `check-ruling-abi.ts` reads only a fixed
+  `.sol` path and its own source (`import.meta.url`); no user-controlled paths.
+- **Auth / authz**: callback gate + all `onlyOwner` mutators + party gates on the payable
+  entry points unchanged. The two new constants + interface add no callable surface.
+- **Crypto / randomness**: none added. `_tokenToDecision` is constant-set keccak
+  membership (standard).
+- **Data exposure**: nothing sensitive logged/emitted; events carry ids/amounts/decision
+  codes only. The scraped `evidence` string is passed into the inference prompt but never
+  stored on-chain.
+- **XSS / web**: no `web/src` changes in this unit; the contract changes have no DOM sink.
+
+### Files reviewed
+
+`contracts/contracts/CoverageNegotiation.sol`,
+`contracts/contracts/mocks/MockAgentPlatform.sol`,
+`contracts/contracts/mocks/RevertingReceiver.sol`,
+`contracts/test/CoverageNegotiation.test.ts`, `scripts/check-ruling-abi.ts`,
+`scripts/verify-deploy.ts`, `scripts/real-backend-localnode.mjs`,
+`web/src/drugEvidenceMap.ts`, `docs/progress/*`.
+
+### Verdict
+
+**PASS — zero findings.** The two-agent split conserves caller ETH on every branch
+(forward + park + refund == `msg.value`), preserves CEI on the un-guarded `handleResponse`
+callback (the untrusted-payer refund runs only after the request mapping is deleted and
+state has left `UnderReview`), introduces no new owner/privilege surface, and keeps the
+PHI guard + synthetic-only fixtures intact. Selector-drift hardening was extended to the
+new `ExtractString` selector. Net: new attack surface is bounded to the trusted
+platform-callback path, which retains its `msg.sender == platform` gate.
+
+---
+
+## 2026-06-03 (refresh 3) — drug-evidence map + Create.tsx auto-fill (security-review)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode)
+**Base:** `origin/main`
+**Branch:** `feat/drug-evidence-map` (working tree)
+**Scope of change:** Add `web/src/drugEvidenceMap.ts` — a curated `{drugName → {evidenceUrl,
+promptHint}}` map covering the six SPEC-0006 R18 examples (Adalimumab, Semaglutide,
+Ustekinumab, Lecanemab, Tirzepatide, Dupilumab) plus brand aliases — and its unit test
+`web/src/drugEvidenceMap.test.ts`. Wire `evidenceForDrug()` into `Create.tsx` via
+`applyDrugLookup(rawDrug)` so drug-name entry auto-fills `agentEvidenceUrl` +
+`agentPromptHint`; both fields stay manually overridable; `create-submit` is disabled when
+either is empty; `onSubmit` now sends the two fields **from state** (`.trim()`) instead of any
+hardcoded fallback. `package.json` `test:lib` glob extended to `web/src/**/*.test.ts`.
+**Verdict:** PASS (zero findings)
+
+### Hard gate
+
+| Gate | Status | Evidence |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | The curated map contains only **public** drug-evidence URLs (`medlineplus.gov/druginfo/meds/*`, one `accessdata.fda.gov` FDA label PDF) and generic clinical-question prompt hints that reference the public drug name + indication only — no patient names, MRNs, DOBs, SSNs, phones, or emails. Verified programmatically: every one of the six hints clears the contract's own `_containsNamePattern` `[A-Z][a-z]+ [A-Z]` PHI guard (zero hits), every `evidenceUrl` ≤ 512 bytes and every `promptHint` ≤ 1024 bytes — so the curated values are accepted on-chain *and* are name-pattern-clean. The module ships a PHI-free invariant test (SSN/DOB/phone/email regex over `JSON.stringify(DRUG_EVIDENCE_MAP)`, all negative). In `Create.tsx`, the patient justification body still stays off-chain (only its `keccak256` `justificationHash` is committed); the two new on-chain strings are caller/curated values, structurally separate from any patient data. Diff-wide PHI-token scan over added code/fixtures returned only guard-name comments and the **synthetic negative-test probe** `"John S"` (the T11e input the contract is asserted to *reject* — never stored). |
+| No secrets | PASS | No private keys, mnemonics, API keys, tokens, or credentials in the added files. `drugEvidenceMap.ts`/`.test.ts` are pure data + a normaliser + a lookup function — no I/O, network, fs, env-var reads, `eval`, or dynamic code. Full-diff 64-hex private-key scan (excluding the findings prose) returned zero. `.gitignore` changes only *add* ignores (`.codesign/`, `*.bak.*`, `coverage/`) — they never un-ignore a secret. |
+| Signing-key hygiene | PASS | This unit touches no key-handling, wallet-construction, or signer code. `Create.tsx`'s new fields flow only into a React-escaped controlled `<input value={…}>` and into the existing `createContract({…})` call as `.trim()`ed strings; they are never rendered as an `href`, never passed to `dangerouslySetInnerHTML` (zero occurrences in `web/src`), and never logged. The broader branch diff is a net attack-surface *reduction*: the banned Anthropic/self-hosted secret-consuming path (`@anthropic-ai/sdk`, `scripts/orchestrator-real.ts`, `orchestrator:real`) is removed. |
+
+### Integrity / correctness checks (non-gate, verified clean)
+
+- **Map tests pass.** `node --import tsx --test web/src/drugEvidenceMap.test.ts` → 25/25 pass
+  (six R18 keys present, non-empty url+hint, case-insensitive + brand-alias + parenthetical
+  RxNorm/NDC-suffix strip, unknown/empty/whitespace → `null`, PHI-free invariant).
+- **Typecheck clean.** `npm run typecheck` (tsc `--noEmit`) succeeds with the wiring.
+- **Spec behaviour confirmed in `Create.tsx`.** `applyDrugLookup` only overwrites the two
+  fields on a non-null match, so manual override survives (the per-field `onChange` setters are
+  retained); `create-submit` `disabled` now also gates on `agentEvidenceUrl.trim() === "" ||
+  agentPromptHint.trim() === ""`; the old hardcoded MedlinePlus fallback + generic hint are
+  gone from `onSubmit` (the only remaining `medlineplus`/generic-hint literals are the
+  `DEFAULT_AGENT_*` **Hardhat test fixtures** in `contracts/test/CoverageNegotiation.test.ts`,
+  synthetic and appropriate).
+
+### Non-security observations (recorded for the build loop, not gate findings)
+
+- An unknown drug returns `null`, leaving both fields empty → `create-submit` stays disabled
+  until the user supplies a manual override. Intended (no on-chain drug whitelist; R20). Not a
+  security issue.
+
+---
+
+## 2026-06-03 (refresh 2) — SPEC-0006 R14/R15/R17 per-negotiation agent fields (security-review)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode)
+**Base:** `origin/main` (d7b5190)
+**Branch:** `spec-6-implementation` + uncommitted working tree
+**Scope of change:** Add per-negotiation `agentEvidenceUrl` + `agentPromptHint` to the
+`Negotiation` struct and `createContract` signature (R14/R15/R17); remove the
+contract-level `agentEvidenceUrl` global and its `setAgentEvidenceUrl` owner-setter;
+rewire `_fireAgent` to read `n.agentEvidenceUrl` and embed `n.agentPromptHint` instead of
+the hardcoded `"rheumatoid arthritis"` global; propagate the two trailing string params
+through `CreateContractParams`, `simulated.ts`, and `real.ts`; add Hardhat T9/T10/T11.
+**Verdict:** PASS (zero findings)
+
+### Hard gate
+
+| Gate | Status | Evidence |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | The two new on-chain strings are caller-supplied and structurally separate from the patient justification body, which stays off-chain — only its opaque `keccak256` `justificationHash` is on-chain. `_fireAgent` (`CoverageNegotiation.sol:806-816`) builds the `inferString` prompt from exactly `n.agentPromptHint` + `n.agentEvidenceUrl` + static framing; no patient data is concatenated. Every fixture in the diff is public, non-PHI: evidence URLs `https://medlineplus.gov/druginfo/meds/a603010.html` and `https://www.fda.gov/media/119435/download` (public drug-info / FDA pages); prompt hints are generic clinical *questions* (drug + indication only) with no names, MRNs, DOB, or SSNs. The hardcoded `"rheumatoid arthritis"` prompt is deleted from the contract (the only remaining occurrence in-tree is a synthetic *policy* description in `src/data/policies.ts`, pre-existing, outside this diff). Diff-wide scan for `private key`/64-hex/`mnemonic`/`secret`/`password`/`api key`/`ssn`/`mrn`/`dob`/`date of birth`/`patient name` returned zero matches. |
+| No secrets | PASS | No private keys, mnemonics, API keys, tokens, or credentials anywhere in the diff. The new fields carry only public URLs and clinical-question strings. |
+| Signing-key hygiene | PASS | Diff touches no key-handling, wallet-construction, or signer code (`src/wallet/*` unchanged). Net attack-surface *reduction*: removing `setAgentEvidenceUrl(string) onlyOwner` eliminates a piece of owner-mutable on-chain state; evidence URL/hint are now fixed per negotiation at `createContract` time by the provider (the `msg.sender == providerAddr` gate is retained). |
+
+### Integrity checks (non-gate, verified clean)
+
+- **Struct ↔ ABI ↔ decode ordering.** New fields inserted at the same position (after
+  `lastRequestId`/`hasRuling`, before `round`) in all three representations: the Solidity
+  struct (`CoverageNegotiation.sol:117-118`), the `getNegotiation` tuple in
+  `src/contract/abi.ts`, and the `RawNegotiation` index map + decode in
+  `src/contract/real.ts` (`raw[21]`→`agentEvidenceUrl`, `raw[22]`→`agentPromptHint`, all
+  later indices shifted +2). No tuple mis-decode that could misattribute or leak a field.
+- **Defense-in-depth guard parity.** `createContract` reverts `evidence: url required` /
+  `evidence: hint required` on empty input (`CoverageNegotiation.sol:355-356`), mirrored
+  in `SimulatedBackend.createContract` (`src/contract/simulated.ts:290-291`); T11a/b assert
+  both revert strings.
+- **Clean compile.** `npx hardhat compile --force` succeeds (8 Solidity files, 40
+  typings) — the struct/ABI changes are valid and self-consistent.
+
+### Non-security observations (recorded for the build loop, not gate findings)
+
+- SPEC-0006 R14/R15 upper length caps (URL ≤ 512 bytes, hint ≤ 1024 bytes): **enforced**
+  at `CoverageNegotiation.sol:355-365` (`bytes(url).length > 0 && <= 512`;
+  `bytes(hint).length > 0 && <= 1024`). Covered by passing tests T11c and T11d.
+- SPEC-0006 R15's `[A-Z][a-z]+ [A-Z]` PHI-name pattern reject: **enforced** on-chain by
+  `_containsNamePattern` (`CoverageNegotiation.sol:766-792`), mirrored in
+  `simulated.ts`. Covered by passing test T11e.
+
+---
+
+## 2026-06-03 — SPEC-0006 `inferString` cascade (security-review)
+
+**Date:** 2026-06-03
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode)
+**Base:** `origin/main` (d7b5190)
+**Branch:** `spec-6-implementation` + uncommitted working tree (the `inferString` cascade)
+**Scope:** diff in `.` vs `origin/main`, including the uncommitted contract/scripts changes.
+**Verdict:** PASS (zero findings)
+
+### Result
+
+No high- or medium-confidence security vulnerabilities identified. The change set is
+primarily a *removal* of attack surface (self-hosted orchestrator path, secret-consuming
+SDK) plus a payload/decoder swap. Net security improvement.
+
+### Hard gate
+
+| Gate | Status | Evidence |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | PASS | R4 hard invariant preserved — only `bytes32` hashes/refs, amounts, codes, addresses, ids on-chain. The `inferString` prompt references only the public MedlinePlus drug-info URL (`agentEvidenceUrl`), no patient data. `commitRationale` stores `keccak256` of clause/standard references; the free-text `rationale` is keeper-supplied with no patient-data path and is byte-truncated at `MAX_RATIONALE_BYTES` (4096). Hardhat tests use synthetic decision tokens (`TOKEN_APPROVE`/`TOKEN_DENY`/`TOKEN_NEEDS_MORE_INFO`/`TOKEN_POLICY_INVALID`) only. PHI marker scan (patient/DOB/SSN/MRN/name/medical-record) over added `.sol`/`.ts`/`.json` lines: no matches. |
+| No secrets | PASS | No hardcoded keys/tokens/private keys added. The diff *deletes* the secret-consuming surface: `@anthropic-ai/sdk` removed from `package.json`; `scripts/orchestrator-real.ts` deleted (it read `ANTHROPIC_API_KEY` / `VITE_PRIVATE_KEY` from env); `orchestrator:real` npm script removed. `scripts/verify-deploy.ts` reads `VITE_PRIVATE_KEY` from `.env` only to derive an address (`ethers.Wallet(...).address`), no transactions signed/sent. Only public 40-hex wallet addresses appear in deleted code/docs — no 64-hex private keys. |
+| Signing-key hygiene | PASS | The Amendment-0006 self-hosted EOA-as-platform path is fully removed (`selfHosted` bool, `setPlatformSelfHosted`, `_fireAgentSelfHosted`, `_selfHostedNonce`, `IParseWebsiteAgent`). That path forwarded native value via plain `.call{value}` to a trusted EOA and minted synthetic requestIds; removing it shrinks the trusted-key surface. The platform callback gate `require(msg.sender == address(platform), "callback: not platform")` (CoverageNegotiation.sol:628) is intact. All admin mutators (`setPlatform`, `setAgentId`, `setAgentReward`, `setRulingTimeout`, `setAgentEvidenceUrl`, `setMaxRounds`, `withdrawFunds`, and the new keeper `commitRationale`) remain `onlyOwner`. |
+
+### Standard categories examined
+
+- **Injection** (SQL / command / path / template / XXE / NoSQL): no new untrusted-input →
+  shell / filesystem / DB / template paths. The TS scripts read only a fixed `.sol` path
+  and their own source (`readFileSync` on `import.meta.url`) — no user-controlled paths.
+- **Auth / authz**: callback gate preserved; all setters + the new `commitRationale`
+  keeper entry are `onlyOwner`. No new privilege boundary crossed.
+- **Crypto / randomness**: the keccak-seeded synthetic-requestId path is *removed*, not
+  added; no weak crypto, no new randomness dependency. `_tokenToDecision` compares
+  `keccak256` token hashes (constant-set membership) — standard.
+- **Code execution / deserialization**: `handleResponse` now `abi.decode(..., (string))`
+  a single token; unknown/malformed tokens fall through *defensively* to non-terminal
+  `NeedMoreEvidence` (fail-safe — never advances to a terminal state on garbage input).
+- **Data exposure**: no sensitive data logged; `verify-deploy` prints only RPC URL,
+  contract address, and a derived operator address (public).
+- **`vite.config.ts` `allowedHosts` += `.ts.net`**: dev/preview-server only (not the
+  production build), Tailscale-controlled domain resolvable only on the tailnet or via
+  Funnel ACLs, extending an existing `.trycloudflare.com` wildcard. Not an exploitable
+  production surface; excluded as a dev-only convenience.
+
+### Files reviewed
+
+`contracts/contracts/CoverageNegotiation.sol`, `MockAgentPlatform.sol`,
+`RevertingReceiver.sol`, `contracts/test/CoverageNegotiation.test.ts`,
+`scripts/check-ruling-abi.ts`, `scripts/lib/ruling-abi.ts`,
+`scripts/identify-inference-agent.ts`, `scripts/verify-deploy.ts`,
+`contracts/scripts/probe-agent-abi.ts`, `package.json`, `.gitignore`, `vite.config.ts`;
+deletions `scripts/orchestrator-real.ts`,
+`contracts/scripts/setup-selfhosted-2026-05-30.ts`.
+
+---
+
 ## Tick 119 — R25 Tick B (self-hosted _fireAgent) security review
 
 **Date:** 2026-05-30

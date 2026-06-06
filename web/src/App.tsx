@@ -57,7 +57,7 @@ export function App() {
     const seen = new Set<string>();
     const keyOf = (e: CoverageEvent): string | null =>
       e.txHash ? `${e.txHash}:${e.name}:${e.reqId.toString()}` : null;
-    const add = (incoming: readonly CoverageEvent[], front: boolean): void => {
+    const add = (incoming: readonly CoverageEvent[]): void => {
       setEvents((prev) => {
         const fresh = incoming.filter((e) => {
           const k = keyOf(e);
@@ -67,11 +67,23 @@ export function App() {
           return true;
         });
         if (fresh.length === 0) return prev;
-        return front ? [...fresh, ...prev] : [...prev, ...fresh];
+        // Keep the merged log chronological by block. getEvents now streams
+        // batches NEWEST-first (so recent activity paints first), and live
+        // subscribe events arrive out of band — a stable sort by blockNumber
+        // restores chronological order so Detail's `lastRuled`/`settled`
+        // (which take the newest entry via reverse()) stay correct. Simulated
+        // events carry no blockNumber → all compare equal → insertion order
+        // preserved (the stable in-memory log order).
+        const merged = [...prev, ...fresh];
+        merged.sort((a, b) => (a.blockNumber ?? 0) - (b.blockNumber ?? 0));
+        return merged;
       });
     };
-    const unsubscribe = client.negotiation.subscribe((e) => add([e], false));
-    void client.negotiation.getEvents().then((history) => add(history, true));
+    const unsubscribe = client.negotiation.subscribe((e) => add([e]));
+    // Progressive hydration: each newest-first page-batch paints as it lands,
+    // so the most recent events show within ~1s instead of after the full
+    // ~25s historical sweep over ~900 getLogs pages.
+    void client.negotiation.getEvents({}, (batch) => add(batch));
     return unsubscribe;
   }, []);
 

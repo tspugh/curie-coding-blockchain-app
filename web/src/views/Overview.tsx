@@ -113,11 +113,27 @@ export function Overview({ events, onOpen, onCreate }: OverviewProps) {
     let cancelled = false;
     (async () => {
       const count = await client.negotiation.count();
-      const views: NegotiationView[] = [];
-      for (let id = 1n; id <= count; id++) {
-        views.push(await client.negotiation.getNegotiationView(id));
+      // Newest-first: render the most recently created negotiation at the TOP
+      // of the table (reqId is monotonic, so descending reqId == most-recent
+      // first). Build the id list high→low, then fetch views in bounded-parallel
+      // batches instead of one-await-per-id. Each getNegotiationView is its own
+      // RPC round-trip (~300ms on Somnia), so a sequential loop cost count×RTT;
+      // batching collapses that to ceil(count / VIEW_CONCURRENCY) round-trips
+      // and fills the table top-down as each batch lands (progressive paint).
+      const ids: bigint[] = [];
+      for (let id = count; id >= 1n; id--) ids.push(id);
+      const VIEW_CONCURRENCY = 12;
+      const acc: NegotiationView[] = [];
+      for (let i = 0; i < ids.length; i += VIEW_CONCURRENCY) {
+        const views = await Promise.all(
+          ids.slice(i, i + VIEW_CONCURRENCY).map((id) =>
+            client.negotiation.getNegotiationView(id),
+          ),
+        );
+        if (cancelled) return;
+        acc.push(...views);
+        setRows([...acc]);
       }
-      if (!cancelled) setRows(views);
     })();
     return () => { cancelled = true; };
   }, [events]);

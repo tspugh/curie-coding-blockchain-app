@@ -23,6 +23,9 @@ interface IFiringProbe {
 /// @notice Test double for the Somnia agent platform. Records the last
 ///         createRequest args and can call back into a target contract as if it
 ///         were the real platform, driving the full dispute -> ruling flow locally.
+///         Under SPEC-0006 R24–R26 the contract decodes a single ABI-encoded
+///         `string` decision token from `responses[0].result`; `triggerRuling`
+///         encodes that token accordingly.
 contract MockAgentPlatform is IAgentRequester {
     uint256 public deposit = 0.001 ether;
     uint256 public nextRequestId = 1;
@@ -76,38 +79,21 @@ contract MockAgentPlatform is IAgentRequester {
         observedStateDuringCreate = IFiringProbe(callbackAddress).stateOf(reqId);
     }
 
-    /// @dev The arbiter ruling fields the contract decodes from `responses[0].result`.
-    ///      Passed as one calldata struct to keep `triggerRuling` off the stack limit.
-    struct Ruling {
-        uint8 decision; // 0=approve,1=deny,2=need_more_evidence,3=policy_invalid
-        uint256 costPlusUnitPrice; // Mark Cuban Cost Plus per-unit; contract caps at × quantity
-        uint256 nadacUnitPrice; // NADAC per-unit acquisition-cost floor reference
-        bytes32 rationaleHash;
-        bytes32 clauseRef; // policy clause the agent relied on
-        bytes32 standardRef; // public standard cited for a policy flag (R6b)
-        uint256 receiptId; // off-chain receipt pointer to surface
-        uint16[] policyVoidedClauseIndices; // SPEC-0004 §3.5 R23: clause indices voided on policy-void path
-        uint16[] usedReferenceIndices; // SPEC-0004 §3.5 R11: packet entry indices the ruling relied on
-        bytes32[] usedLeafHashes; // SPEC-0004 §3.5 R11: leaf hashes for cited references (replay-verification anchor)
-    }
-
     /// @notice Drive a successful necessity ruling back into the target as the
-    ///         platform would, encoding the arbiter tuple the contract decodes:
-    ///         `(decision, costPlusUnitPrice, nadacUnitPrice, rationaleHash, clauseRef,
-    ///         standardRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices,
-    ///         usedLeafHashes)`.
+    ///         platform would, encoding a single ABI-encoded string decision token
+    ///         (SPEC-0006 R24–R26). The contract's `handleResponse` decodes
+    ///         `responses[0].result` as `abi.decode(..., (string))` and maps the
+    ///         token to a Decision.
     /// @param target The CoverageNegotiation contract (implements handleResponse).
     /// @param requestId The request to resolve.
-    /// @param r The ruling fields (see {@link Ruling}).
-    function triggerRuling(address target, uint256 requestId, Ruling calldata r) external {
+    /// @param decisionToken One of "approve", "deny", "needs_more_info", "policy_invalid".
+    function triggerRuling(address target, uint256 requestId, string calldata decisionToken) external {
         Response[] memory responses = new Response[](1);
         responses[0] = Response({
             validator: address(this),
-            result: abi.encode(
-                r.decision, r.costPlusUnitPrice, r.nadacUnitPrice, r.rationaleHash, r.clauseRef, r.standardRef, r.receiptId, r.policyVoidedClauseIndices, r.usedReferenceIndices, r.usedLeafHashes
-            ),
+            result: abi.encode(decisionToken),
             status: ResponseStatus.Success,
-            receipt: r.receiptId,
+            receipt: 0,
             timestamp: block.timestamp,
             executionCost: deposit
         });

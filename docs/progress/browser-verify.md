@@ -1,9 +1,468 @@
 # Browser-verify
 
-Last run: tick 138 — 2026-05-30 — **sim-mode harness 99/99 PASS** across
-21 scenarios. No regressions since tick 113. Commits since then (ticks
-114–138) touched contracts/ branch coverage, test tooling, and docs/
-only — no web/ or src/ changes that affected the compiled sim bundle.
+Last run: Extract-Create `runLivenessDebounce` unit — 2026-06-04 —
+**sim-mode harness 109/109 PASS** across 23 scenarios. Unit tests 331/331 PASS.
+F4' (strict-review gate FAIL) resolved: `runLivenessDebounce` extracted from
+`Create.tsx`'s `useEffect` into `web/src/livenessDebounce.ts` (pure, injectable,
+no React dependency); 9 new unit tests in `web/src/livenessDebounce.test.ts`
+covering debounce firing, stale-response cancellation, and empty-URL short-circuit.
+Gate turns from FAIL to PASS.
+
+## Extract-Create `runLivenessDebounce` unit — 2026-06-04
+
+Branch: `spec-6-implementation`
+
+### Unit tests — 331/331 PASS
+
+Run: `npm run test:lib`
+
+```
+# tests 331
+# suites 0
+# pass 331
+# fail 0
+# duration_ms 10098
+```
+
+New tests in `web/src/livenessDebounce.test.ts` (9 tests):
+- debounce fires after PROBE_DEBOUNCE_MS: onResult NOT called before delay, IS called once after
+- cleanup cancels in-flight probe — stale-response guard discards result
+- empty URL returns immediately without scheduling timer or calling probe/onResult
+- whitespace-only URL treated as empty — same short-circuit
+- cleanup before debounce fires: cancels timer so probe is never called
+- sim mode (isReal=false): helper still schedules and delivers result
+- PROBE_DEBOUNCE_MS exported and equals 600
+- module has no React import (pure function contract)
+- R1 NO-PHI: no SSN/DOB/phone/email patterns in test fixtures
+
+### E2E harness — 109/109 PASS
+
+Build: `VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run build && VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run web:build`
+Run: `SKIP_SERVE=1 SKIP_BUILD=1 CHROME_PATH=$HOME/.cache/ms-playwright/chromium-1223/chrome-linux/chrome bash web/tests/agent-browser/run.sh`
+
+```
+Scenario A   happy-path lifecycle            7/7
+Scenario B   no PHI on-chain                 3/3
+Scenario C   adjudication gating             1/1
+Scenario C2  policy invalidated              4/4
+Scenario D   profile switching               4/4
+Scenario E   sample case prefill             7/7
+Scenario F   note verify                     2/2
+Scenario G   observer / non-party            3/3
+Scenario H   CDS Hooks prefill               4/4
+Scenario I   persisted users                 4/4
+Scenario J   demo-mode toggle                8/8
+Scenario K   key-paste derives address       6/6
+Scenario L3  provider refuse                 5/5
+Scenario L1  evidence resubmit               5/5
+Scenario L2  appeal                          5/5
+Scenario L4  withdraw                        4/4
+Scenario L10 payer-line round-trip           2/2
+Scenario L7  custom-policy composer          4/4
+Scenario L5  provider feedback note          3/3
+Scenario M1  denial happy-path               6/6
+Scenario M2  NeedMoreEvidence -> Denied      5/5
+Scenario M3  appeal -> Denied                5/5
+Scenario R25 commitRationale + rationale card 12/12
+──────────────────────────────────────────
+Total: 109 passed, 0 failed
+```
+
+### F4' resolution summary
+
+The only remaining strict-review FAIL finding (F4') was: the `useEffect` debounce +
+stale-response cancellation in `Create.tsx` had no executing test. Fixed by extracting
+the logic into `runLivenessDebounce` (`web/src/livenessDebounce.ts`), a pure, injectable
+helper with no React dependency, and adding `web/src/livenessDebounce.test.ts` with 9
+unit tests. `Create.tsx` delegates its `useEffect` body to the new helper. Gate: PASS.
+
+## SPEC-0006 R21 browser-verify re-run — 2026-06-04
+
+Branch: `spec-6-implementation`
+
+### Unit tests — 322/322 PASS
+
+Run: `npm run test:lib`
+
+```
+# tests 322
+# suites 0
+# pass 322
+# fail 0
+# duration_ms 6867
+```
+
+urlLiveness.test.ts: cache hit, miss, TTL-expiry, sim-mode bypass, non-2xx, network
+error, AbortError, negative caching, URL-keying, formatLivenessError banner text,
+PHI-free invariant — all green.
+Create.liveness.test.ts: real-mode dead URL (submit blocked + banner shown), real-mode
+live URL (submit unblocked + banner hidden), sim-mode bypass (not blocked regardless),
+stale-response guard (latest result drives gate), pending-null gate, network-error gate,
+PHI-free invariant — all green.
+probeHandler.test.ts: executeProbe Range-GET happy path, 4xx/5xx → ok:false, AbortError
+timeout, non-HTTP error — all green.
+
+### E2E harness — 109/109 PASS
+
+Build: `VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run build && VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run web:build`
+Run: `SKIP_SERVE=1 SKIP_BUILD=1 CHROME_PATH=$HOME/.cache/ms-playwright/chromium-1223/chrome-linux/chrome bash web/tests/agent-browser/run.sh`
+
+```
+Scenario A   happy-path lifecycle            7/7
+Scenario B   no PHI on-chain                 3/3
+Scenario C   adjudication gating             1/1
+Scenario C2  policy invalidated              4/4
+Scenario D   profile switching               4/4
+Scenario E   sample case prefill             7/7
+Scenario F   note verify                     2/2
+Scenario G   observer / non-party            3/3
+Scenario H   CDS Hooks prefill               4/4
+Scenario I   persisted users                 4/4
+Scenario J   demo-mode toggle                8/8
+Scenario K   key-paste derives address       6/6
+Scenario L3  provider refuse                 5/5
+Scenario L1  evidence resubmit               5/5
+Scenario L2  appeal                          5/5
+Scenario L4  withdraw                        4/4
+Scenario L10 payer-line round-trip           2/2
+Scenario L7  custom-policy composer          4/4
+Scenario L5  provider feedback note          3/3
+Scenario M1  denial happy-path               6/6
+Scenario M2  NeedMoreEvidence -> Denied      5/5
+Scenario M3  appeal -> Denied                5/5
+Scenario R25 commitRationale + rationale card 12/12
+──────────────────────────────────────────
+Total: 109 passed, 0 failed
+```
+
+All scenarios pass with SPEC-0006 R21 implementation:
+- Sim mode: liveness gate bypassed (`IS_REAL=false`); `create-submit` unblocked.
+- Drug-map auto-fill populates `agentEvidenceUrl` + `agentPromptHint` for all recognised drug names.
+- `url-liveness-error` banner renders only in real mode when `urlLivenessResult.ok === false`.
+
+### R21 implementation summary (complete as of this run)
+
+- **`web/src/urlLiveness.ts`** — `probeUrlLiveness(url, sim)` with 24 h per-URL memo
+  cache (`Map<string, {result: LivenessResult; ts: number}>`), sim-mode bypass resolves
+  `{ok:true}` immediately, `clearLivenessCache()` + `seedLivenessCacheEntry()` for tests,
+  `formatLivenessError()` spec-mandated banner text interpolation.
+- **`web/src/urlLiveness.test.ts`** — 16 unit tests covering all required cases.
+- **`web/src/livenessGate.ts`** — `isSubmitBlockedByLiveness` + `shouldShowLivenessBanner`
+  pure gate predicates extracted for independent unit testing.
+- **`web/src/views/Create.liveness.test.ts`** — 7 unit tests for the Create.tsx R21
+  gate state machine (dead URL blocks + shows banner, live URL unblocks, sim bypasses,
+  stale-response guard, pending-null, network error, PHI-free).
+- **`web/src/probeHandler.ts`** — `executeProbe(url, timeout)` server-side fetch logic
+  with Range-GET, 10 s AbortSignal, and structured ProbeResult return.
+- **`web/src/probeHandler.test.ts`** — unit tests for executeProbe.
+- **`web/src/views/Create.tsx`** — `useEffect` fires `probeUrlLiveness` on every
+  `agentEvidenceUrl` change (600 ms debounce), stale-response cancellation via
+  `cancelled` flag; stores `urlLivenessResult: LivenessResult | null`; renders
+  `data-testid="url-liveness-error"` banner via `shouldShowLivenessBanner`; keeps
+  `create-submit` disabled via `isSubmitBlockedByLiveness` until `ok===true` in real mode.
+- **`vite.config.ts`** — `urlProbePlugin()` registers `GET /__probe?url=<encoded>`
+  middleware delegating to `executeProbe`; returns `{ok, status, error?}` JSON.
+
+## SPEC-0006 R21 — pre-submit evidence-URL liveness check re-verify
+
+Branch: `spec-6-implementation`
+
+### Unit tests — 280/280 PASS
+
+Run: `npm run test:lib`
+
+```
+# tests 280
+# pass 280
+# fail 0
+```
+
+urlLiveness.test.ts covers: cache hit (second call within 24 h returns cached result
+without re-fetching), cache miss (expired or absent entry triggers fetch), sim-mode
+bypass (resolves true immediately, no network I/O), non-2xx probe response (`ok:false`
+in payload → `false`), network error (fetch throws → `false`), negative caching,
+URL-specific cache keys, PHI-free invariant.
+
+### E2E harness — 109/109 PASS
+
+Build: `VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run build && npm run web:build`
+Run: `SKIP_SERVE=1 SKIP_BUILD=1 CHROME_PATH=$HOME/.cache/ms-playwright/chromium-1223/chrome-linux/chrome bash web/tests/agent-browser/run.sh`
+
+All 23 scenarios green. In sim mode the liveness check is bypassed (`IS_REAL=false`),
+so the submit button's `(IS_REAL && urlLivenessOk !== true)` gate does not apply — the
+existing drug-map auto-fill populates `agentEvidenceUrl` + `agentPromptHint` for all
+scenarios that fill a recognised drug name, and the `create-submit` disabled condition
+is satisfied in all cases.
+
+```
+Scenario A   happy-path lifecycle            7/7
+Scenario B   no PHI on-chain                 3/3
+Scenario C   adjudication gating             1/1
+Scenario C2  policy invalidated              4/4
+Scenario D   profile switching               4/4
+Scenario E   sample case prefill             7/7
+Scenario F   note verify                     2/2
+Scenario G   observer / non-party            3/3
+Scenario H   CDS Hooks prefill               4/4
+Scenario I   persisted users                 4/4
+Scenario J   demo-mode toggle                8/8
+Scenario K   key-paste derives address       6/6
+Scenario L3  provider refuse                 5/5
+Scenario L1  evidence resubmit               5/5
+Scenario L2  appeal                          5/5
+Scenario L4  withdraw                        4/4
+Scenario L10 payer-line round-trip           2/2
+Scenario L7  custom-policy composer          4/4
+Scenario L5  provider feedback note          3/3
+Scenario M1  denial happy-path               6/6
+Scenario M2  NeedMoreEvidence -> Denied      5/5
+Scenario M3  appeal -> Denied                5/5
+Scenario R25 commitRationale + rationale card 12/12
+──────────────────────────────────────────
+Total: 109 passed, 0 failed
+```
+
+### R21 implementation summary
+
+- **`web/src/urlLiveness.ts`** — `probeUrlLiveness(url, sim)` with 24 h per-URL memo
+  cache (`Map<string, {ok:boolean; ts:number}>`), sim-mode bypass, and
+  `clearLivenessCache()` export for tests.
+- **`web/src/urlLiveness.test.ts`** — 12 unit tests (cache hit, miss, stale,
+  sim-mode, non-2xx, network error, negative caching, URL-keying, PHI-free invariant).
+- **`web/src/views/Create.tsx`** — `useEffect` fires `probeUrlLiveness` on every
+  `agentEvidenceUrl` change (600 ms debounce); sets `urlLivenessOk: boolean | null`
+  state; renders `data-testid="url-liveness-error"` banner when `false`; keeps
+  `create-submit` disabled until `urlLivenessOk === true` in real mode.
+- **`vite.config.ts`** — `urlProbePlugin()` registers `GET /__probe?url=<encoded>`
+  middleware: server-side fetch with `Range: bytes=0-0` header, 10 s AbortSignal
+  timeout, returns `{ok, status, error?}` JSON.
+
+## SPEC-0006 R25 — commitRationale keeper path + ruling-rationale card
+
+## SPEC-0006 R25 — commitRationale keeper path + ruling-rationale card
+
+Branch: `spec-6-implementation`
+
+### What was verified
+
+The `commitRationale` off-chain backend path is fully wired:
+
+- **`src/contract/abi.ts`** — `commitRationale` function signature already present.
+- **`src/contract/types.ts`** — `CoverageNegotiationClient.commitRationale` interface method already present.
+- **`src/contract/real.ts`** — `commitRationale` implementation using `_send` helper already present.
+- **`src/contract/simulated.ts`** — `commitRationale` stub emits `RulingRationale` event and updates stored hashes already present.
+- **`web/src/views/Detail.tsx`** — `RulingRationaleCard` (`data-testid="ruling-rationale"`) renders `RulingRationale` events chronologically, showing decision label, rationale text, clauseReference, standardReference, and Somnia explorer deep-link (simulated: "no tx" chip) already present.
+- **`web/tests/agent-browser/run.sh`** — Scenario R25 added (12 assertions).
+- **`src/contract/simulated.transitions.test.ts`** — 6 `commitRationale` lib tests already passing.
+
+### Lib tests (commitRationale) — 30/30 PASS
+
+Run: `npx tsx --test src/contract/simulated.transitions.test.ts`
+
+```
+# tests 30
+# pass 30
+# fail 0
+```
+
+Covers: interface completeness (method exists), RulingRationale event emission with
+correct fields (reqId, decision, rationale, clauseReference, standardReference), no-PHI
+field-presence assertions, pre-ruling revert guard, ABI entry check, multi-round
+chronological ordering.
+
+### E2E harness — 109/109 PASS
+
+Build: `VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run build && npm run web:build`
+Run: `SKIP_SERVE=1 SKIP_BUILD=1 CHROME_PATH=$HOME/.cache/ms-playwright/chromium-1223/chrome-linux/chrome bash web/tests/agent-browser/run.sh`
+
+```
+Scenario A   happy-path lifecycle            7/7
+Scenario B   no PHI on-chain                 3/3
+Scenario C   adjudication gating             1/1
+Scenario C2  policy invalidated              4/4
+Scenario D   profile switching               4/4
+Scenario E   sample case prefill             7/7
+Scenario F   note verify                     2/2
+Scenario G   observer / non-party            3/3
+Scenario H   CDS Hooks prefill               4/4
+Scenario I   persisted users                 4/4
+Scenario J   demo-mode toggle                8/8
+Scenario K   key-paste derives address       6/6
+Scenario L3  provider refuse                 5/5
+Scenario L1  evidence resubmit               5/5
+Scenario L2  appeal                          5/5
+Scenario L4  withdraw                        4/4
+Scenario L10 payer-line round-trip           2/2
+Scenario L7  custom-policy composer          4/4
+Scenario L5  provider feedback note          3/3
+Scenario M1  denial happy-path               6/6
+Scenario M2  NeedMoreEvidence -> Denied      5/5
+Scenario M3  appeal -> Denied                5/5
+Scenario R25 commitRationale + rationale card 12/12
+──────────────────────────────────────────
+Total: 109 passed, 0 failed
+```
+
+#### Scenario R25 assertion breakdown
+
+| # | Assertion | Pass |
+|---|---|---|
+| 1 | R25: filed in Open | ✓ |
+| 2 | R25: insurer engaged -> Ready | ✓ |
+| 3 | R25: approve ruling routes to Approved | ✓ |
+| 4 | R25: ruling-rationale card absent before commitRationale | ✓ |
+| 5 | R25: ruling-rationale card present after commitRationale | ✓ |
+| 6 | R25: decision label shows Approved | ✓ |
+| 7 | R25: rationale text rendered | ✓ |
+| 8 | R25: clauseReference rendered | ✓ |
+| 9 | R25: standardReference rendered | ✓ |
+| 10 | R25: PHI sentinel absent from rationale card (R4) | ✓ |
+| 11 | R25: SSN-pattern absent from rationale card (R4) | ✓ |
+| 12 | R25: request still Approved after commitRationale | ✓ |
+
+#### How the scenario drives the unit under test
+
+1. Files a request (provider), engages compliant policy (insurer), adjudicates with
+   Decision.Approve → state=4 (Approved), `hasRuling=true`.
+2. Verifies the `ruling-rationale` card is NOT present before `commitRationale` is called
+   (confirms the card is event-driven, not state-driven).
+3. Calls `window.__curie.negotiation.commitRationale(1n, rationale, clauseRef, stdRef)`
+   via the test API (the keeper-only path; no UI button exists — this is an operator
+   action, not a party action).
+4. Waits 500ms for the React subscription to deliver the `RulingRationale` event into
+   the Detail timeline and re-render.
+5. Asserts the card is now present with the expected decision label, rationale text,
+   clauseReference, and standardReference.
+6. Asserts two independent R4 PHI-absence checks: no known PHI sentinel token,
+   no SSN pattern (`\d{3}-\d{2}-\d{4}`).
+
+## SPEC-0006 R18 re-verify — drugEvidenceMap unit test update + E2E confirmation
+
+Branch: `feat/drug-evidence-map` — unstaged change to `web/src/drugEvidenceMap.test.ts`:
+tightened the AC4 "no generic prompt" assertion from a minimum-length check to requiring
+the lowercase INN key appear in the promptHint string. All 25 unit tests PASS. All 97
+E2E assertions PASS.
+
+### Unit tests — 25/25 PASS
+
+Run: `node --import tsx --test "web/src/drugEvidenceMap.test.ts"`
+
+```
+# tests 25
+# pass 25
+# fail 0
+```
+
+Covers: AC1 (map structure + 6 R18 entries), AC2 (brand-name aliases, case-insensitive,
+RxNorm/NDC suffix strip), AC3 (null for unknown/empty/whitespace → submit disabled),
+AC4 (each promptHint contains its canonical INN key, not a generic template), PHI-free
+invariant (no SSN/DOB/phone/email patterns).
+
+### E2E harness — 97/97 PASS
+
+Build: `VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run web:build`
+Run: `SKIP_SERVE=1 SKIP_BUILD=1 CHROME_PATH=/usr/bin/chromium-browser bash web/tests/agent-browser/run.sh`
+
+```
+Scenario A  happy-path lifecycle           7/7
+Scenario B  no PHI on-chain                3/3
+Scenario C  adjudication gating            1/1
+Scenario C2 policy invalidated             4/4
+Scenario D  profile switching              4/4
+Scenario E  sample case prefill            7/7
+Scenario F  note verify                    2/2
+Scenario G  observer / non-party           3/3
+Scenario H  CDS Hooks prefill              4/4
+Scenario I  persisted users                4/4
+Scenario J  demo-mode toggle               8/8
+Scenario K  key-paste derives address      6/6
+Scenario L3 provider refuse                5/5
+Scenario L1 evidence resubmit              5/5
+Scenario L2 appeal                         5/5
+Scenario L4 withdraw                       4/4
+Scenario L10 payer-line round-trip         2/2
+Scenario L7  custom-policy composer        4/4
+Scenario L5  provider feedback note        3/3
+Scenario M1  denial happy-path             6/6
+Scenario M2  NeedMoreEvidence -> Denied    5/5
+Scenario M3  appeal -> Denied              5/5
+──────────────────────────────────────────
+Total: 97 passed, 0 failed
+```
+
+## SPEC-0006 R18 unit — drugEvidenceMap + Create.tsx
+
+HEAD commit: `feat/drug-evidence-map` branch — SPEC-0006 R18 unit (drugEvidenceMap.ts,
+Create.tsx auto-fill, form-validation gate).
+
+Changes relative to tick 138 (`e28ec81` / pre-SPEC-0006):
+
+### What shipped in this unit (SPEC-0006 R18)
+
+- `web/src/drugEvidenceMap.ts` — curated drug→evidence map for the six R18 examples
+  (Adalimumab, Semaglutide, Ustekinumab, Lecanemab, Tirzepatide, Dupilumab) with
+  brand-name aliases and RxNorm-suffix normalisation. `evidenceForDrug()` exported.
+- `Create.tsx` — drug-name `onChange` now calls `applyDrugLookup()` which auto-fills
+  `agentEvidenceUrl` + `agentPromptHint` from the map. Submit button disabled when
+  either field is empty (form-validation gate). Manual override of both fields allowed.
+
+### SPEC-0006 compatibility fixes also landed (regression debt from ac142c1)
+
+Three regressions introduced by the `ac142c1` inferString migration (SPEC-0006 R24
+simplified the 4-arg Ruled event, removing rationaleHash/clauseRef/receiptId/
+usedReferenceIndices/policyVoidedClauseIndices and the PolicyFlagged event type):
+
+1. **`web/src/shared.ts`** — `describeEvent` case "Ruled" called `shortHex(e.clauseRef)`
+   where `clauseRef` no longer exists → runtime TypeError crashing the Detail timeline.
+   Fixed: simplified Ruled description; added RulingRationale case; removed PolicyFlagged
+   cases from describeEvent, eventTone, eventAttribution.
+
+2. **`web/src/views/Detail.tsx`** — `VerifyOnChain` component accessed `event.rationaleHash`,
+   `event.clauseRef`, `event.receiptId` for Ruled events → runtime crash. Fixed: removed
+   stale accesses; VerifyOnChain now only shows hashes for PolicyInvalidated.
+   Also: `ruling-meta` block removed `lastRuled.usedReferenceIndices` and
+   `lastRuled.policyVoidedClauseIndices` access (fields no longer in RuledEvent);
+   `policyFlagged` find-in-timeline no longer includes "PolicyFlagged" (removed from schema).
+
+3. **`run.sh` Scenario A** — `covered = min(requested, costPlus×qty)` assertion updated
+   to `covered = requestedAmount` per SPEC-0006 R24 (no AI price cap).
+   **Scenario C2** — `ruling-meta surfaces R23 voided clauses` and `R11 cited references`
+   assertions removed (those testids no longer render, per simplified Ruled event).
+
+### Assertion count delta
+
+- Tick 138: 99 assertions across 21 scenarios
+- SPEC-0006 R18 unit: 97 assertions across 22 scenarios
+  - Removed: 2 assertions (C2 ruling-meta voided-clauses + cited-refs rows, per SPEC-0006)
+  - Added: 0 new assertions for the drugEvidenceMap unit (unit is tested via unit tests)
+  - Note: the 22nd scenario was already present in run.sh (L10/L7/L5/M1/M2/M3 added in ticks 101-113)
+
+```
+Scenario A  happy-path lifecycle           7/7   (coverage: R6a updated to SPEC-0006 R24)
+Scenario B  no PHI on-chain                3/3
+Scenario C  adjudication gating            1/1
+Scenario C2 policy invalidated             4/4   (was 6/6; -2 ruling-meta rows removed)
+Scenario D  profile switching              4/4
+Scenario E  sample case prefill            7/7
+Scenario F  note verify                    2/2
+Scenario G  observer / non-party           3/3
+Scenario H  CDS Hooks prefill              4/4
+Scenario I  persisted users                4/4
+Scenario J  demo-mode toggle               8/8
+Scenario K  key-paste derives address      6/6
+Scenario L3 provider refuse                5/5
+Scenario L1 evidence resubmit              5/5
+Scenario L2 appeal                         5/5
+Scenario L4 withdraw                       4/4
+Scenario L10 payer-line round-trip         2/2
+Scenario L7  custom-policy composer        4/4
+Scenario L5  provider feedback note        3/3
+Scenario M1  denial happy-path             6/6
+Scenario M2  NeedMoreEvidence -> Denied    5/5
+Scenario M3  appeal -> Denied              5/5
+──────────────────────────────────────────
+Total: 97 passed, 0 failed
+```
 
 ## Tick 138 — routine refresh re-run
 

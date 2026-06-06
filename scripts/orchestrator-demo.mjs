@@ -63,6 +63,8 @@ const baseScript = {
   quantity: 6n, // 6 dispensed units; drives the deterministic cap (R2/R6a)
   daysSupply: 28n, // clinical context only — never enters the price math (R2)
   payerLine: 0, // PayerLine.PartD — SPEC-0004 R13
+  agentEvidenceUrl: "https://www.fda.gov/media/119435/download",
+  agentPromptHint: "Is this drug medically necessary for the patient's condition?",
 };
 
 async function main() {

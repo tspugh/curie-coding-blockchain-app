@@ -17,6 +17,7 @@ import { mkdir, appendFile, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import { executeProbe } from "./web/src/probeHandler.js";
 
 const repoRoot = dirname(fileURLToPath(import.meta.url));
 
@@ -104,10 +105,58 @@ function txLogSinkPlugin(): Plugin {
   };
 }
 
+/**
+ * SPEC-0006 R21. Dev-server-only GET /__probe?url=<encoded> middleware that
+ * server-side fetches the target URL (avoiding browser CORS restrictions) and
+ * returns { ok: boolean, status: number, error?: string }.
+ *
+ * The fetch logic lives in `web/src/probeHandler.ts` (`executeProbe`) so it
+ * can be unit-tested independently of the Vite server.  This middleware is
+ * the HTTP wrapper only: it parses the `url` query-param, delegates to
+ * `executeProbe`, and serialises the result as JSON.
+ *
+ * Strategy (deliberate HEAD-drop, documented in probeHandler.ts and here):
+ *   Spec §3.9 and the unit wording describe HEAD-first with a Range-GET
+ *   fallback, but this implementation issues a single Range-GET directly —
+ *   HEAD is omitted entirely.  Rationale: the probe runs server-side (no
+ *   CORS restriction), so the CORS-workaround motivation for HEAD disappears.
+ *   A Range-GET is universally supported and avoids the two-round-trip cost.
+ *   Deliberate simplification, not an oversight.
+ */
+function urlProbePlugin(): Plugin {
+  return {
+    name: "curie-url-probe",
+    configureServer(server) {
+      server.middlewares.use("/__probe", (req, res) => {
+        if (req.method !== "GET") {
+          res.statusCode = 405;
+          res.end();
+          return;
+        }
+        const rawUrl = new URL(
+          req.url ?? "",
+          "http://localhost",
+        ).searchParams.get("url");
+        if (!rawUrl) {
+          res.statusCode = 400;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ ok: false, status: 0, error: "missing url parameter" }));
+          return;
+        }
+        void executeProbe(rawUrl).then((result) => {
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify(result));
+        });
+      });
+    },
+  };
+}
+
 export default defineConfig({
   root: "web",
   envDir: repoRoot,
-  plugins: [react(), txLogSinkPlugin()],
+  plugins: [react(), txLogSinkPlugin(), urlProbePlugin()],
   resolve: {
     alias: {
       "@lib": resolve(repoRoot, "dist/index.js"),
@@ -121,11 +170,13 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
-    allowedHosts: [".trycloudflare.com"],
+    allowedHosts: [".trycloudflare.com", ".ts.net"],
   },
   preview: {
     // Allow any *.trycloudflare.com quick-tunnel host so the dev tunnel works
     // without per-session config edits. Leading-dot = subdomain wildcard.
-    allowedHosts: [".trycloudflare.com"],
+    // `.ts.net` covers Tailscale MagicDNS / Funnel hosts (resolves only on the
+    // tailnet or via Funnel ACLs); needed on the Pi where cloudflared isn't running.
+    allowedHosts: [".trycloudflare.com", ".ts.net"],
   },
 });

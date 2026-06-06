@@ -36,9 +36,32 @@ function attribute(method: string, valueWei: bigint): string {
   return "Burned (gas)";
 }
 
+const OPEN_KEY = "curie:txMonitorOpen";
+
 export function TxMonitor(): JSX.Element | null {
   const [snap, setSnap] = useState<TxLogState>(() => getTxLogSnapshot());
-  const [open, setOpen] = useState(true);
+  // Persist the open/minimized choice so the panel stays where the user left it
+  // across reloads and route changes. Default MINIMIZED so the floating panel
+  // doesn't cover page content (e.g. the policy-attach cards) on first visit;
+  // the user expands it on demand and that choice sticks.
+  const [open, setOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(OPEN_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleOpen = (): void =>
+    setOpen((o) => {
+      const next = !o;
+      try {
+        localStorage.setItem(OPEN_KEY, next ? "1" : "0");
+      } catch {
+        /* storage unavailable (private mode) — fall back to in-memory only */
+      }
+      return next;
+    });
 
   useEffect(() => {
     void hydrateTxLogFromSink();
@@ -50,7 +73,7 @@ export function TxMonitor(): JSX.Element | null {
     // monitor is active and waiting on the first confirmed tx.
     return (
       <aside className="tx-monitor empty" data-testid="tx-monitor">
-        <header onClick={() => setOpen((o) => !o)}>
+        <header onClick={toggleOpen}>
           <span>Tx monitor</span>
           <span className="muted">waiting for first confirmed tx</span>
         </header>
@@ -60,15 +83,21 @@ export function TxMonitor(): JSX.Element | null {
 
   return (
     <aside className={`tx-monitor ${open ? "open" : "closed"}`} data-testid="tx-monitor">
-      <header onClick={() => setOpen((o) => !o)}>
-        <span>Tx monitor</span>
+      <header onClick={toggleOpen}>
+        <span>Tx monitor {open ? "▾" : "▸"}</span>
         <span className="totals">
-          <span data-testid="tx-monitor-total-gas">
-            gas {formatStt(snap.totalGasCostWei)} STT
-          </span>
-          <span data-testid="tx-monitor-total-value">
-            value {formatStt(snap.totalValueWei, 4)} STT
-          </span>
+          {/* Collapsed → compact chip (just the count) so the minimized panel
+              is a small corner pill, not a full-width bar over the content. */}
+          {open && (
+            <>
+              <span data-testid="tx-monitor-total-gas">
+                gas {formatStt(snap.totalGasCostWei)} STT
+              </span>
+              <span data-testid="tx-monitor-total-value">
+                value {formatStt(snap.totalValueWei, 4)} STT
+              </span>
+            </>
+          )}
           <span className="count" data-testid="tx-monitor-count">
             {snap.entries.length} tx
           </span>

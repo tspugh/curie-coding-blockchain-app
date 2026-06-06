@@ -54,6 +54,16 @@ export interface CreateContractParams {
   readonly justificationHash: string;
   /** Opaque 0x-bytes32 ref to the public-evidence doc (use ZERO_HASH if none). */
   readonly evidenceUri: string;
+  /**
+   * Per-negotiation public evidence URL embedded in the `inferString` prompt (SPEC-0006 R14).
+   * Must be a non-empty string — the contract reverts with `"evidence: url required"` if empty.
+   */
+  readonly agentEvidenceUrl: string;
+  /**
+   * Per-negotiation prompt hint embedded in the `inferString` prompt (SPEC-0006 R15).
+   * Must be a non-empty string — the contract reverts with `"evidence: hint required"` if empty.
+   */
+  readonly agentPromptHint: string;
 }
 
 /** Filter for {@link CoverageNegotiationClient.getEvents} (historical reconstruction). */
@@ -107,8 +117,14 @@ export interface CoverageNegotiationClient {
   /** Provider files a coverage-exception request → `Open`; returns the new `reqId` (R2). */
   createContract(params: CreateContractParams): Promise<bigint>;
 
-  /** Insurer attaches its governing policy (hash + ref) → `Ready` (R5). */
-  insurerEngage(reqId: bigint, policyHash: string, policyUri: string): Promise<void>;
+  /**
+   * Insurer attaches its governing policy (hash + ref) and deposits escrow → `Ready` (R5).
+   * A0008: `depositAmount` is the ETH value forwarded as escrow (msg.value). Must be >=
+   * `requestedAmount`; any surplus is refunded. Defaults to `requestedAmount` (the exact
+   * required escrow) on both the real and simulated backends when omitted, so old callers
+   * that omit this argument continue to work and will escrow exactly the requested amount.
+   */
+  insurerEngage(reqId: bigint, policyHash: string, policyUri: string, depositAmount?: bigint): Promise<void>;
 
   /** Fire the necessity arbiter from `Ready` → `UnderReview` (payable, R6/R9). */
   requestAdjudication(reqId: bigint): Promise<void>;
@@ -139,6 +155,15 @@ export interface CoverageNegotiationClient {
 
   /** Post off-chain feedback; no state change (R4 — only the hash + ref cross). */
   postFeedback(reqId: bigint, msgHash: string, uri: string): Promise<void>;
+
+  /**
+   * Keeper commits the receipt-sourced rationale for a finalized ruling
+   * (SPEC-0006 R25/R26). Owner-only on-chain; emits `RulingRationale` with the
+   * rationale text, policy-clause reference, and public-standard reference.
+   * Called after `handleResponse` lands a ruling so the off-chain keeper can
+   * transcribe the agent's chain-of-thought onto the record without PHI (R4).
+   */
+  commitRationale(reqId: bigint, rationale: string, clauseReference: string, standardReference: string): Promise<void>;
 
   // --- Reads (mirror the contract's views) ---
 
@@ -173,8 +198,17 @@ export interface CoverageNegotiationClient {
    * it from `eth_getLogs` (`queryFilter`); the simulated backend returns its
    * recorded in-memory log. Events are returned in chronological order and may
    * be narrowed by {@link EventFilter} (e.g. a single `reqId`).
+   *
+   * `onBatch`, when supplied, is invoked with each page-batch of events as it is
+   * fetched — newest activity first — so a consumer can paint the most recent
+   * events within ~1s instead of waiting for a full multi-minute log sweep to
+   * resolve. Each batch is chronologically sorted within itself; the final
+   * resolved array remains the complete chronological timeline.
    */
-  getEvents(filter?: EventFilter): Promise<CoverageEvent[]>;
+  getEvents(
+    filter?: EventFilter,
+    onBatch?: (batch: CoverageEvent[]) => void,
+  ): Promise<CoverageEvent[]>;
 
   /**
    * Subscribe to negotiation events. Returns an unsubscribe handle. The listener

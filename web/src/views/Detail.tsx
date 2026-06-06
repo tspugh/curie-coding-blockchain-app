@@ -11,6 +11,7 @@ import {
   PayerLine,
   stageNameFor,
   policiesForLine,
+  getCuratedPolicy,
   type CoverageEvent,
   type CuratedPolicy,
   type NegotiationView,
@@ -241,6 +242,10 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   // extractRevertReason (which requires an object — string messages would lose the
   // mapping). Validation errors below pass plain strings (already user-facing).
   const [error, setError] = useState<unknown>(null);
+  // Bumped after every `run()` action to force an immediate view re-fetch
+  // (see run()), so status transitions like submitEvidence → UnderReview show
+  // without waiting on the event subscription.
+  const [refreshTick, setRefreshTick] = useState(0);
 
   const [policyText, setPolicyText] = useState("");
   // SPEC-0005 R14: the policy choice is the curated policy's id, or the
@@ -293,7 +298,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
       }
     })();
     return () => { cancelled = true; };
-  }, [reqId, events]);
+  }, [reqId, events, refreshTick]);
 
   // Forward the raw error to ErrorCard, which runs the SPEC-0003 R16
   // revert-reason mapping itself. (Pre-formatting the message here would
@@ -304,6 +309,13 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
       await action();
     } catch (err) {
       setError(err);
+    } finally {
+      // Force an immediate view re-fetch after every action. submitEvidence /
+      // appeal re-fire the agent in the same tx, so by the time the tx resolves
+      // the on-chain state is already UnderReview — refreshing here flips the
+      // status tag to "AI reviewing…" right away instead of waiting on the
+      // subscribe event round-trip (which can lag seconds on Somnia).
+      setRefreshTick((t) => t + 1);
     }
   }
 
@@ -323,6 +335,16 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   }
 
   const { negotiation: n, state } = view;
+  // Policies offered at engage: this line's curated policies PLUS the demo
+  // non-compliant policy (the R23 PolicyInvalidated trigger). The bad policy is
+  // curated only on the Part D line, so Commercial/Medicaid requests would
+  // otherwise have no way to demo a policy rejection — always offer it.
+  const policyOptions = (() => {
+    const base = policiesForLine(n.payerLine);
+    if (base.some((pol) => pol.clauses.some((c) => c.voids))) return base;
+    const bad = getCuratedPolicy("demo-bad-adalimumab-noncompliant");
+    return bad ? [...base, bad] : base;
+  })();
   const partyId = activeProfile.partyId;
   const isProvider = partyId === n.providerId;
   const isInsurer = partyId === n.insurerId;
@@ -332,7 +354,11 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   const canAdjudicate = view.adjudicable && isParty;
   const ruled = view.ruled;
   const canAccept = ruled && isParty;
-  const canAppeal = ruled && isParty;
+  // Appeals advance the payer-line ladder, which only a DENIAL justifies
+  // (SPEC-0004 R14a; contract reverts "appeal: prior ruling not Deny" otherwise).
+  // Gating on `ruled` alone wrongly offered Appeal on an Approved ruling, which
+  // then reverted on click — match the contract precondition: Denied-only.
+  const canAppeal = state === State.Denied && isParty;
   const canSubmitEvidence = state === State.EvidenceRequested && isProvider;
   const canSettle = ruled && view.bothAccepted && isParty;
   const canRefuse = isProvider && state !== State.Open && !view.terminal;
@@ -340,9 +366,10 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   const canFeedback = !view.terminal && isParty;
 
   const lastRuled = [...timeline].reverse().find((e) => e.name === "Ruled");
+  // SPEC-0006: "PolicyFlagged" removed; only "PolicyInvalidated" remains.
   const policyFlagged = [...timeline]
     .reverse()
-    .find((e) => e.name === "PolicyFlagged" || e.name === "PolicyInvalidated");
+    .find((e) => e.name === "PolicyInvalidated");
   const settled = [...timeline].reverse().find((e) => e.name === "Settled");
   const isVoided = state === State.PolicyInvalidated;
 
@@ -413,6 +440,26 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
               {n.coveredAmount > 0n
                 ? <strong className="ok-text">{fmtAmount(n.coveredAmount)}</strong>
                 : "—"}
+            </dd>
+            <dt>AI Decision</dt>
+            <dd data-testid="ruling-panel">
+              {/* UnderReview takes priority over any prior ruling: after a
+                  re-fire (submitEvidence / appeal) the negotiation is being
+                  re-adjudicated, so the tag must read "AI reviewing…" live
+                  rather than show the stale previous verdict. Order:
+                  reviewing → settled verdict → awaiting-evidence → undecided. */}
+              {state === State.UnderReview ? (
+                <span className="muted">🤖 AI reviewing…</span>
+              ) : lastRuled ? (
+                <span className={lastRuled.decision === Decision.Approve ? "ok-text" : lastRuled.decision === Decision.Deny ? "bad" : ""}>
+                  {decisionLabel(lastRuled.decision)}
+                  {lastRuled.decision === Decision.Approve && <> · {fmtAmount(lastRuled.coveredAmount)} covered</>}
+                </span>
+              ) : state === State.EvidenceRequested ? (
+                <span className="muted">⏳ Awaiting more evidence</span>
+              ) : (
+                "Not yet decided"
+              )}
             </dd>
             <dt>Healthcare Provider</dt>
             <dd>
@@ -492,135 +539,6 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
           )}
         </div>
 
-        {/* AI Decision */}
-        <div className="card ruling" data-testid="ruling-panel">
-          <h2>AI Decision</h2>
-          {lastRuled ? (
-            <div className="ruling-hero">
-              {lastRuled.decision === Decision.Approve && (
-                <div className="ruling-result approved">
-                  <span className="ruling-icon">✓</span>
-                  <div>
-                    <strong>Approved</strong>
-                    <p>{fmtAmount(lastRuled.coveredAmount)} covered</p>
-                  </div>
-                </div>
-              )}
-              {lastRuled.decision === Decision.Deny && (
-                <div className="ruling-result denied">
-                  <span className="ruling-icon">✗</span>
-                  <div>
-                    <strong>Denied</strong>
-                    <p>Coverage request was not approved</p>
-                  </div>
-                </div>
-              )}
-              {lastRuled.decision === Decision.NeedMoreEvidence && (
-                <div className="ruling-result evidence">
-                  <span className="ruling-icon">?</span>
-                  <div>
-                    <strong>More Evidence Needed</strong>
-                    <p>Submit additional clinical documentation</p>
-                  </div>
-                </div>
-              )}
-              {lastRuled.decision === Decision.PolicyInvalid && (
-                <div className="ruling-result voided">
-                  <span className="ruling-icon">⚠</span>
-                  <div>
-                    <strong>Policy Voided</strong>
-                    <p>AI detected a non-compliant clause</p>
-                  </div>
-                </div>
-              )}
-              <dl className="ruling-meta">
-                <dt>Covered amount</dt>
-                <dd data-testid="ruling-covered">{fmtAmount(lastRuled.coveredAmount)}</dd>
-                <dt>Round</dt>
-                <dd data-testid="ruling-decision">{n.round.toString()}</dd>
-                {/* SPEC-0004 §3.5 R11: replay-anchor (cited packet entries). */}
-                {lastRuled.usedReferenceIndices.length > 0 && (
-                  <>
-                    <dt>Cited references</dt>
-                    <dd data-testid="ruling-used-refs">
-                      [{lastRuled.usedReferenceIndices.join(", ")}]
-                    </dd>
-                  </>
-                )}
-                {/* SPEC-0004 §3.5 R23: voided clauses (Approve-via-policy-void). */}
-                {lastRuled.policyVoidedClauseIndices.length > 0 && (
-                  <>
-                    <dt>Voided clauses</dt>
-                    <dd data-testid="ruling-voided-clauses">
-                      [{lastRuled.policyVoidedClauseIndices.join(", ")}]
-                    </dd>
-                  </>
-                )}
-              </dl>
-              {(lastRuled || settled) && (
-                <VerifyOnChain event={settled ?? lastRuled!} />
-              )}
-            </div>
-          ) : (
-            <p className="hint">
-              {state === State.UnderReview
-                ? "🤖 AI is reviewing this request…"
-                : "No decision yet — request AI arbitration to begin."}
-            </p>
-          )}
-        </div>
-      </div>
-
-      <PriceGauge requested={n.requestedAmount} basis={priceBasis} covered={n.coveredAmount} />
-
-      {/* Policy voided explanation */}
-      {isVoided && policyFlagged && (
-        <div className="card gotcha" data-testid="gotcha-panel">
-          <h2>⚠ Policy Voided — AI Detected a Non-Compliant Clause</h2>
-          <p className="gotcha-explain">
-            The insurance policy contained a clause that directly contradicts the
-            FDA-approved indication for this medication. The AI refused to apply it
-            and invalidated the policy — protecting the patient from unlawful coverage
-            denials.
-          </p>
-          <div className="gotcha-cols">
-            <div className="gotcha-col">
-              <h3>Offending Policy Clause</h3>
-              <p className="gotcha-clause" data-testid="gotcha-clause">
-                {SAMPLE_CASE.nonCompliantPolicyText}
-              </p>
-            </div>
-            <div className="gotcha-col">
-              <h3>FDA-Approved Indication — {FDA_DRUG_LABEL}</h3>
-              <p className="gotcha-fda" data-testid="gotcha-fda-citation">
-                {FDA_INDICATION_TEXT}
-              </p>
-              <p className="hint">
-                Source:{" "}
-                <a href={FDA_LABEL_URL} target="_blank" rel="noreferrer">
-                  openFDA HUMIRA label
-                </a>{" "}
-                (demo fixture)
-              </p>
-            </div>
-          </div>
-          <p className="hint gotcha-refs">
-            On-chain evidence:{" "}
-            <code title={policyFlagged.clauseRef}>{shortHex(policyFlagged.clauseRef)}</code>
-            {policyFlagged.clauseRef === CLAUSE_REF ? " (clause PD-ADA-09)" : ""}
-            {" · "}
-            <code title={policyFlagged.standardRef}>{shortHex(policyFlagged.standardRef)}</code>
-            {policyFlagged.standardRef === STANDARD_REF ? " (FDA HUMIRA indication)" : ""}
-          </p>
-        </div>
-      )}
-
-      <AppealLadder
-        payerLine={n.payerLine}
-        appealRound={n.appealRound}
-      />
-
-      <div className={`detail-grid${isInsurer ? " is-insurer" : ""}`}>
         <div className="card actions">
           {nextStep && isParty && (
             <div className="next-step" data-testid="next-step-banner">
@@ -635,7 +553,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
             <div className="action">
               <p className="action-label">Choose a policy to attach:</p>
               <div className="policy-cards">
-                {policiesForLine(n.payerLine).map((policy) => {
+                {policyOptions.map((policy) => {
                   // SPEC-0005 R14: render one card per curated policy that
                   // targets this negotiation's payer line. Preserve the legacy
                   // testids on the corresponding canonical entries (the
@@ -664,6 +582,13 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                         const body = renderCuratedPolicyText(policy);
                         setPolicyText(body);
                         setPolicyChoice(policy.id);
+                        // Reveal the policy's actual text in the composer boxes
+                        // (one clause per line) so the insurer can SEE — and
+                        // tweak — what they're attaching, instead of an opaque
+                        // hash. Editing a box switches the body to the custom
+                        // build (buildCustomPolicyText via the box onChange).
+                        setCustomName(policy.name);
+                        setCustomClauses(policy.clauses.map((c) => c.text).join("\n"));
                         if (isBad) {
                           // Pre-steer the simulated AI: bad policy → AI
                           // asks for more evidence (R23 surfaces the
@@ -697,10 +622,13 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                   <p>Compose your own policy: name + 1..N clauses, hashed and committed off-chain.</p>
                 </button>
               </div>
-              {/* SPEC-0005 R15: composer is visible when "custom" is selected;
-                  edits stay in sync with policyText (and therefore the R16
-                  hash preview below). */}
-              {policyChoice === "custom" && (
+              {/* SPEC-0005 R15: composer is visible for ANY selected policy —
+                  for a curated pick it's pre-populated with that policy's name +
+                  clauses so the insurer can read/tweak the exact text being
+                  attached (not just an opaque hash); for "custom" it starts from
+                  whatever the user types. Edits stay in sync with policyText
+                  (and therefore the R16 hash preview below). */}
+              {policyChoice !== null && (
                 <div className="custom-policy-composer" data-testid="custom-policy-composer">
                   <label>
                     Policy name
@@ -749,7 +677,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                     : `Custom composition with ${lines.length} clause${lines.length === 1 ? "" : "s"}.`;
                   clauseCount = lines.length;
                 } else {
-                  const chosen = policiesForLine(n.payerLine).find(
+                  const chosen = policyOptions.find(
                     (p) => p.id === policyChoice,
                   );
                   if (!chosen) return null;
@@ -887,11 +815,13 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                 type="button"
                 data-testid="appeal-submit"
                 onClick={() => {
-                  if (!appealEvidence.trim()) { setError("New evidence is required to appeal."); return; }
+                  if (!appealEvidence.trim()) { setError("New evidence URL is required to appeal."); return; }
+                  // A0009: pass the raw public URL — the contract re-scrapes it.
+                  // The reason ref stays a hash (free text, may be PHI-adjacent).
                   void run(() =>
                     client.negotiation.appeal(
                       reqId, partyId,
-                      hashContent(appealEvidence),
+                      appealEvidence.trim(),
                       hashContent(`reason:${appealEvidence}`),
                     ),
                   );
@@ -936,9 +866,11 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                 className="primary"
                 data-testid="evidence-submit"
                 onClick={() => {
-                  if (!evidenceText.trim()) { setError("Evidence reference is required."); return; }
+                  if (!evidenceText.trim()) { setError("A public evidence URL is required."); return; }
+                  // A0009: pass the raw public URL — the contract re-scrapes it
+                  // (replacing the original evidence source for the next ruling).
                   void run(() =>
-                    client.negotiation.submitEvidence(reqId, hashContent(evidenceText)),
+                    client.negotiation.submitEvidence(reqId, evidenceText.trim()),
                   );
                   setEvidenceText("");
                 }}
@@ -1012,57 +944,119 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
             </p>
           )}
         </div>
+      </div>
 
-        <div className="card timeline" data-testid="timeline-card">
-          <h2>Timeline (live)</h2>
-          <ol data-testid="timeline">
-            {timeline.length === 0 ? (
-              <li className="empty">No events yet.</li>
-            ) : (
-              // Newest-first per prototype EventLog (screens.jsx:391).
-              [...timeline].reverse().map((e, i) => (
-                <li
-                  key={`${e.txHash ?? "noTx"}-${e.name}-${i}`}
-                  className={`ev-row tone-${eventTone(e.name)}`}
-                >
-                  <div className="ev-row-head">
-                    <span className="ev-name">
-                      {FRIENDLY_EVENT[e.name] ?? e.name}
-                    </span>
-                  </div>
-                  <div className="ev-desc">{describeEvent(e)}</div>
-                  <div className="ev-row-foot">
-                    {e.txHash ? (
-                      <a
-                        className="ev-tx-chip"
-                        href={txUrl(SOMNIA_TESTNET, e.txHash)}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        {shortHex(e.txHash)}
-                      </a>
-                    ) : (
-                      <span className="ev-tx-chip is-empty">no tx</span>
-                    )}
-                    <span className="ev-attr">{eventAttribution(e)}</span>
-                  </div>
-                </li>
-              ))
-            )}
-          </ol>
+
+      <PriceGauge requested={n.requestedAmount} basis={priceBasis} covered={n.coveredAmount} />
+
+      {/* Policy voided explanation */}
+      {isVoided && policyFlagged && (
+        <div className="card gotcha" data-testid="gotcha-panel">
+          <h2>⚠ Policy Voided — AI Detected a Non-Compliant Clause</h2>
+          <p className="gotcha-explain">
+            The insurance policy contained a clause that directly contradicts the
+            FDA-approved indication for this medication. The AI refused to apply it
+            and invalidated the policy — protecting the patient from unlawful coverage
+            denials.
+          </p>
+          <div className="gotcha-cols">
+            <div className="gotcha-col">
+              <h3>Offending Policy Clause</h3>
+              <p className="gotcha-clause" data-testid="gotcha-clause">
+                {SAMPLE_CASE.nonCompliantPolicyText}
+              </p>
+            </div>
+            <div className="gotcha-col">
+              <h3>FDA-Approved Indication — {FDA_DRUG_LABEL}</h3>
+              <p className="gotcha-fda" data-testid="gotcha-fda-citation">
+                {FDA_INDICATION_TEXT}
+              </p>
+              <p className="hint">
+                Source:{" "}
+                <a href={FDA_LABEL_URL} target="_blank" rel="noreferrer">
+                  openFDA HUMIRA label
+                </a>{" "}
+                (demo fixture)
+              </p>
+            </div>
+          </div>
+          <p className="hint gotcha-refs">
+            On-chain evidence:{" "}
+            <code title={policyFlagged.clauseRef}>{shortHex(policyFlagged.clauseRef)}</code>
+            {policyFlagged.clauseRef === CLAUSE_REF ? " (clause PD-ADA-09)" : ""}
+            {" · "}
+            <code title={policyFlagged.standardRef}>{shortHex(policyFlagged.standardRef)}</code>
+            {policyFlagged.standardRef === STANDARD_REF ? " (FDA HUMIRA indication)" : ""}
+          </p>
         </div>
+      )}
+
+      <AppealLadder
+        payerLine={n.payerLine}
+        appealRound={n.appealRound}
+      />
+
+      <div className="card timeline" data-testid="timeline-card">
+        <h2>Timeline (live)</h2>
+        <ol data-testid="timeline">
+          {timeline.length === 0 ? (
+            <li className="empty">No events yet.</li>
+          ) : (
+            // Newest-first per prototype EventLog (screens.jsx:391).
+            [...timeline].reverse().map((e, i) => (
+              <li
+                key={`${e.txHash ?? "noTx"}-${e.name}-${i}`}
+                className={`ev-row tone-${eventTone(e.name)}`}
+              >
+                <div className="ev-row-head">
+                  <span className="ev-name">
+                    {FRIENDLY_EVENT[e.name] ?? e.name}
+                  </span>
+                </div>
+                <div className="ev-desc">{describeEvent(e)}</div>
+                <div className="ev-row-foot">
+                  {e.txHash ? (
+                    <a
+                      className="ev-tx-chip"
+                      href={txUrl(SOMNIA_TESTNET, e.txHash)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {shortHex(e.txHash)}
+                    </a>
+                  ) : (
+                    <span className="ev-tx-chip is-empty">no tx</span>
+                  )}
+                  <span className="ev-attr">{eventAttribution(e)}</span>
+                </div>
+              </li>
+            ))
+          )}
+        </ol>
       </div>
     </section>
   );
 }
 
+/** Human-readable label for a {@link Decision} value (used in the rationale card). */
+function decisionLabel(d: Decision): string {
+  switch (d) {
+    case Decision.Approve: return "Approved";
+    case Decision.Deny: return "Denied";
+    case Decision.NeedMoreEvidence: return "More Evidence Needed";
+    case Decision.PolicyInvalid: return "Policy Voided";
+    default: return "Unknown";
+  }
+}
+
 function VerifyOnChain({ event }: { readonly event: CoverageEvent }) {
   const hashes: { readonly label: string; readonly value: string }[] = [];
-  let receiptId: bigint | null = null;
-  if (event.name === "Ruled") {
-    hashes.push({ label: "rationale", value: event.rationaleHash });
+  // SPEC-0006 R24: Ruled event no longer carries rationaleHash / clauseRef /
+  // receiptId — those are now in RulingRationale (separate event). Only show
+  // hashes for events that still carry them.
+  if (event.name === "PolicyInvalidated") {
     hashes.push({ label: "clause", value: event.clauseRef });
-    receiptId = event.receiptId;
+    hashes.push({ label: "standard", value: event.standardRef });
   }
   return (
     <div className="verify-onchain" data-testid="verify-onchain">
@@ -1071,7 +1065,6 @@ function VerifyOnChain({ event }: { readonly event: CoverageEvent }) {
           <a href={txUrl(SOMNIA_TESTNET, event.txHash)} target="_blank" rel="noreferrer" data-testid="verify-onchain-link">
             View on Somnia Explorer ↗
           </a>
-          {receiptId !== null && <span className="hint"> · receipt #{receiptId.toString()}</span>}
         </>
       ) : (
         <div className="sim-verify">
@@ -1080,7 +1073,6 @@ function VerifyOnChain({ event }: { readonly event: CoverageEvent }) {
               {h.label}: <code title={h.value}>{shortHex(h.value)}</code>
             </span>
           ))}
-          {receiptId !== null && <span className="hint">receipt #{receiptId.toString()}</span>}
           <span className="hint sim-note">(simulated — no live transaction)</span>
         </div>
       )}

@@ -30,9 +30,11 @@ export function describeEvent(e: CoverageEvent): string {
     case "PacketSubmitted":
       return `Evidence packet pinned — round ${e.round}, root ${shortHex(e.packetRoot)} (${e.packetUrl})`;
     case "Ruled":
-      return `Arbiter ruled "${DECISION_NAMES[e.decision]}" — covered ${e.coveredAmount}, clause ${shortHex(e.clauseRef)}, receipt ${e.receiptId}`;
-    case "PolicyFlagged":
-      return `Policy clause flagged non-compliant — clause ${shortHex(e.clauseRef)} vs standard ${shortHex(e.standardRef)}`;
+      // SPEC-0006 R24: Ruled event carries only (requestId, decision, coveredAmount).
+      // clauseRef / receiptId were removed; rationale is now in RulingRationale.
+      return `Arbiter ruled "${DECISION_NAMES[e.decision]}" — covered ${e.coveredAmount}`;
+    case "RulingRationale":
+      return `Ruling rationale committed — decision ${DECISION_NAMES[e.decision]}`;
     case "PolicyInvalidated":
       return `Contract voided — clause ${shortHex(e.clauseRef)} contradicts standard ${shortHex(e.standardRef)} (R6b)`;
     case "EvidenceRequested":
@@ -44,7 +46,8 @@ export function describeEvent(e: CoverageEvent): string {
     case "Accepted":
       return `Ruling accepted by party ${e.partyId}`;
     case "Settled":
-      return `Settled — covered ${e.coveredAmount}, fee per party ${e.feePerParty} (50/50 marker)`;
+      // A0008 §2: refundedToInsurer is the real released amount, not a fee marker.
+      return `Settled — covered ${e.coveredAmount}, refunded to insurer ${e.refundedToInsurer}`;
     case "Deadlocked":
       return `Deadlocked after ${e.rounds} round(s) — no mutual acceptance`;
     case "ProviderRefused":
@@ -94,7 +97,6 @@ export function eventTone(name: CoverageEvent["name"]): "ok" | "warn" | "danger"
     case "EvidenceSubmitted":
       return "warn";
     case "Deadlocked":
-    case "PolicyFlagged":
     case "PolicyInvalidated":
     case "ProviderRefused":
     case "Withdrawn":
@@ -109,6 +111,7 @@ export function eventTone(name: CoverageEvent["name"]): "ok" | "warn" | "danger"
     case "AdjudicationRequested":
     case "RulingRequested":
     case "Ruled":
+    case "RulingRationale":
     case "RulingTimedOut":
     case "FeedbackPosted":
       return "accent";
@@ -147,7 +150,7 @@ export function eventAttribution(e: CoverageEvent): string {
     case "AdjudicationRequested":
     case "RulingRequested":
     case "Ruled":
-    case "PolicyFlagged":
+    case "RulingRationale":
     case "PolicyInvalidated":
     case "EvidenceRequested":
     case "PacketSubmitted":

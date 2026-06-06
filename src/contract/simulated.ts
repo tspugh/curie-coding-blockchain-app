@@ -152,6 +152,8 @@ interface SimNegotiation {
   policyHash: string;
   policyUri: string;
   coveredAmount: bigint;
+  /** ETH locked at insurerEngage; released/refunded at settle or terminal (A0008). */
+  escrowAmount: bigint;
   costPlusUnitPrice: bigint;
   nadacUnitPrice: bigint;
   rationaleHash: string;
@@ -170,6 +172,11 @@ interface SimNegotiation {
   createdAt: bigint;
   rulingDeadline: bigint;
   exists: boolean;
+  agentEvidenceUrl: string; // per-neg evidence URL (SPEC-0006 R14)
+  agentPromptHint: string;  // per-neg prompt hint (SPEC-0006 R15)
+  agentPhase: number;       // two-agent phase tracker (0=None/1=Scraping/2=Deciding — Amendment 0007)
+  pendingDecideFee: bigint; // parked LLM Inference fee for pending Decide-phase call (Amendment 0007)
+  pendingFeePayer: string;  // address of the fee payer for the parked decide fee (Amendment 0007)
 }
 
 /**
@@ -224,6 +231,15 @@ let _nextUsedLeafHashes: `0x${string}`[] = [];
  */
 export function setNextUsedLeafHashes(arr: `0x${string}`[]): void {
   _nextUsedLeafHashes = arr;
+}
+
+/**
+ * Returns true when `s` contains the patient-name pattern [A-Z][a-z]+ [A-Z]
+ * (uppercase letter, one-or-more lowercase letters, a space, uppercase letter).
+ * Mirrors the Solidity `_containsNamePattern` defense-in-depth PHI guard (SPEC-0006 R15).
+ */
+function _containsNamePattern(s: string): boolean {
+  return /[A-Z][a-z]+ [A-Z]/.test(s);
 }
 
 /** In-memory backend behind the shared client interface. */
@@ -285,6 +301,18 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     if (params.providerAddr.toLowerCase() === params.insurerAddr.toLowerCase()) {
       throw new Error("create: self-contract");
     }
+    // SPEC-0006 R14: URL must be 1..512 bytes.
+    if (!params.agentEvidenceUrl || new TextEncoder().encode(params.agentEvidenceUrl).length > 512) {
+      throw new Error("evidence: url required");
+    }
+    // SPEC-0006 R15: hint must be 1..1024 bytes and must not contain a patient-name pattern.
+    if (
+      !params.agentPromptHint ||
+      new TextEncoder().encode(params.agentPromptHint).length > 1024 ||
+      _containsNamePattern(params.agentPromptHint)
+    ) {
+      throw new Error("evidence: hint required");
+    }
 
     const reqId = this.nextId++;
     const now = BigInt(Math.floor(Date.now() / 1000));
@@ -302,6 +330,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       policyHash: ZERO_HASH,
       policyUri: ZERO_HASH,
       coveredAmount: 0n,
+      escrowAmount: 0n,
       costPlusUnitPrice: 0n,
       nadacUnitPrice: 0n,
       rationaleHash: ZERO_HASH,
@@ -320,6 +349,11 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       createdAt: now,
       rulingDeadline: 0n,
       exists: true,
+      agentEvidenceUrl: params.agentEvidenceUrl,
+      agentPromptHint: params.agentPromptHint,
+      agentPhase: 0,
+      pendingDecideFee: 0n,
+      pendingFeePayer: ethers.ZeroAddress,
     });
 
     this.emit({
@@ -345,14 +379,27 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     return reqId;
   }
 
-  async insurerEngage(reqId: bigint, policyHash: string, policyUri: string): Promise<void> {
+  /**
+   * A0008 §1: `depositAmount` mirrors the on-chain `msg.value` — must be >= `requestedAmount`
+   * ("escrow: underfunded" if not). Any surplus above `requestedAmount` is silently discarded
+   * in the simulation (the contract refunds it; in-memory mode there is no ETH to refund).
+   * `escrowAmount` is set to `requestedAmount`.
+   *
+   * Default: `requestedAmount` (exact required amount). Pass a lower value explicitly to
+   * test the "escrow: underfunded" rejection path. Old callers that omit this parameter
+   * are backward-compatible — they implicitly deposit exactly the required amount.
+   */
+  async insurerEngage(reqId: bigint, policyHash: string, policyUri: string, depositAmount?: bigint): Promise<void> {
     const n = this.must(reqId);
     if (n.state !== State.Open) throw new Error("engage: not Open");
     this.onlyInsurer(n); // R11: insurer-only
     if (policyHash === ZERO_HASH) throw new Error("policy: empty");
+    const effectiveDeposit = depositAmount ?? n.requestedAmount;
+    if (effectiveDeposit < n.requestedAmount) throw new Error("escrow: underfunded");
 
     n.policyHash = policyHash;
     n.policyUri = policyUri;
+    n.escrowAmount = n.requestedAmount;
     n.state = State.Ready;
 
     this.emit({ name: "InsurerEngaged", reqId, policyHash, policyUri });
@@ -368,21 +415,37 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     this.fireAgent(reqId, n);
   }
 
-  async submitEvidence(reqId: bigint, evidenceUri: string): Promise<void> {
+  async submitEvidence(reqId: bigint, newEvidenceUrl: string): Promise<void> {
     const n = this.must(reqId);
     if (n.state !== State.EvidenceRequested) throw new Error("evidence: wrong state");
     this.onlyProvider(n); // R11: provider-only
-    if (evidenceUri === ZERO_HASH) throw new Error("evidence: empty");
-    n.evidenceUri = evidenceUri;
+    // A0009: a new public evidence URL the re-scrape targets (1..512 bytes).
+    if (newEvidenceUrl.length === 0 || newEvidenceUrl.length > 512)
+      throw new Error("evidence: url required");
+
+    // A0008 §3 / contract parity: at the round cap the submission deadlocks instead of
+    // re-firing (mirrors CoverageNegotiation.sol L502-521). CEI order: state + escrow
+    // zeroed before emitting, matching the Solidity commit-before-transfer pattern.
+    if (n.round >= this.maxRounds) {
+      this.clearRequest(n);
+      n.state = State.Deadlocked;
+      n.escrowAmount = 0n;
+      this.emit({ name: "Deadlocked", reqId, rounds: n.round });
+      return;
+    }
+
+    // A0009: repoint the scrape target at the new URL (parity with the contract).
+    n.agentEvidenceUrl = newEvidenceUrl;
+    n.evidenceUri = newEvidenceUrl;
     n.round += 1n;
-    this.emit({ name: "EvidenceSubmitted", reqId, evidenceUri });
+    this.emit({ name: "EvidenceSubmitted", reqId, evidenceUri: newEvidenceUrl });
     this.fireAgent(reqId, n);
   }
 
   async appeal(
     reqId: bigint,
     partyId: bigint,
-    evidenceUri: string,
+    newEvidenceUrl: string,
     reasonHash: string,
   ): Promise<void> {
     const n = this.must(reqId);
@@ -394,21 +457,26 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     if (partyId !== n.providerId && partyId !== n.insurerId) {
       throw new Error("appeal: unknown party");
     }
-    if (evidenceUri === ZERO_HASH) throw new Error("appeal: needs evidence");
+    // A0009: an appeal supplies a new public evidence URL to re-scrape.
+    if (newEvidenceUrl.length === 0 || newEvidenceUrl.length > 512)
+      throw new Error("appeal: needs evidence");
 
     // Bounded to N rounds: at the cap an appeal deadlocks instead of re-firing (R6c).
     if (n.round >= this.maxRounds) {
       this.clearRequest(n);
       n.state = State.Deadlocked;
+      n.escrowAmount = 0n; // A0008 §3: full escrow refunded to insurer (in-memory: just zero it)
       this.emit({ name: "Deadlocked", reqId, rounds: n.round });
       return;
     }
 
-    n.evidenceUri = evidenceUri;
+    // A0009: re-scrape the new URL (parity with the contract).
+    n.agentEvidenceUrl = newEvidenceUrl;
+    n.evidenceUri = newEvidenceUrl;
     n.rationaleHash = reasonHash;
     n.round += 1n;
     n.appealRound += 1;
-    this.emit({ name: "Appealed", reqId, partyId, evidenceUri, round: n.round });
+    this.emit({ name: "Appealed", reqId, partyId, evidenceUri: newEvidenceUrl, round: n.round });
     this.fireAgent(reqId, n);
   }
 
@@ -436,10 +504,17 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     this.onlyParty(n); // R11: either party may settle
     if (!n.providerAccepted || !n.insurerAccepted) throw new Error("settle: not both accepted");
 
-    const feePerParty = n.totalFees / 2n;
+    // A0008 §2: compute the refund to insurer = escrow − coveredAmount.
+    const escrow = n.escrowAmount;
+    const covered = n.coveredAmount;
+    const refundedToInsurer = escrow - covered;
+
+    // CEI parity: zero escrowAmount before emitting (mirrors on-chain commit-before-transfer).
     this.clearRequest(n);
     n.state = State.Settled;
-    this.emit({ name: "Settled", reqId, coveredAmount: n.coveredAmount, feePerParty });
+    n.escrowAmount = 0n;
+
+    this.emit({ name: "Settled", reqId, coveredAmount: covered, refundedToInsurer });
   }
 
   async refuse(reqId: bigint, reasonHash: string): Promise<void> {
@@ -448,6 +523,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     if (!this.refusable(n.state)) throw new Error("refuse: not refusable");
     this.clearRequest(n);
     n.state = State.ProviderRefused;
+    n.escrowAmount = 0n; // A0008 §3: full escrow refunded to insurer (in-memory: just zero it)
     this.emit({ name: "ProviderRefused", reqId, reasonHash });
   }
 
@@ -457,6 +533,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     if (TERMINAL_STATES.has(n.state)) throw new Error("withdraw: terminal");
     this.clearRequest(n);
     n.state = State.Withdrawn;
+    n.escrowAmount = 0n; // A0008 §3: full escrow refunded to insurer (in-memory: just zero it)
     this.emit({ name: "Withdrawn", reqId });
   }
 
@@ -480,6 +557,101 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     this.onlyParty(n); // R11: either party may post feedback
     if (TERMINAL_STATES.has(n.state)) throw new Error("feedback: terminal");
     this.emit({ name: "FeedbackPosted", reqId, msgHash, uri });
+  }
+
+  /**
+   * Keeper commits the receipt-sourced rationale for a finalized ruling
+   * (SPEC-0006 R25/R26). Mirrors `CoverageNegotiation.sol:commitRationale`:
+   * - Requires `hasRuling` (reverts on NeedMoreEvidence outcomes, matching chain).
+   * - Truncates rationale to MAX_RATIONALE_BYTES (4096) bytes + "…" U+2026 sentinel
+   *   when longer (mirrors `_truncateRationale` in Solidity L1053-1067, R26).
+   * - Stores keccak256 of the TRUNCATED string (not the raw input) so the hash
+   *   matches the on-chain value for inputs > 4096 bytes.
+   * - Emits `RulingRationale` with the truncated rationale.
+   * In simulation mode the owner check is skipped (no wallet concept), but the
+   * `hasRuling` guard is enforced so simulated tests catch the pre-ruling misuse.
+   */
+  async commitRationale(
+    reqId: bigint,
+    rationale: string,
+    clauseReference: string,
+    standardReference: string,
+  ): Promise<void> {
+    const n = this.must(reqId);
+    if (!n.hasRuling) throw new Error("rationale: no ruling yet");
+
+    // Truncate rationale to MAX_RATIONALE_BYTES (4096) bytes + "…" sentinel (R26).
+    // Mirrors CoverageNegotiation.sol:_truncateRationale (L1053-1067). We work in
+    // RAW BYTES, not a re-encoded string: the contract hashes over the truncated
+    // byte array, and for an input whose 4096-byte boundary splits a multi-byte
+    // codepoint, decoding-then-re-encoding would corrupt the boundary byte to
+    // U+FFFD and diverge the hash. So hash over the bytes; decode only for display.
+    const truncatedBytes = SimulatedBackend.truncateRationaleBytes(rationale);
+    const truncated = new TextDecoder().decode(truncatedBytes);
+
+    // Store keccak256 of the TRUNCATED BYTES (byte-identical to on-chain
+    // keccak256(bytes(_truncateRationale(rationale))) for any input length).
+    n.rationaleHash = ethers.keccak256(truncatedBytes);
+    n.clauseRef = ethers.keccak256(ethers.toUtf8Bytes(clauseReference));
+    n.standardRef = ethers.keccak256(ethers.toUtf8Bytes(standardReference));
+
+    // pendingRequestId is always 0 here: clearRequest zeros it before any ruling
+    // delivery, and commitRationale is only callable after hasRuling is set (which
+    // requires a ruling, which requires clearRequest to have run). Recover the
+    // requestId from the most recent Ruled event instead.
+    this.emit({
+      name: "RulingRationale",
+      reqId,
+      requestId: this.lastRulingRequestId(reqId),
+      decision: n.lastDecision,
+      rationale: truncated,
+      clauseReference,
+      standardReference,
+    });
+  }
+
+  /**
+   * Byte-level mirror of `CoverageNegotiation.sol:_truncateRationale` (L1053-1067).
+   * Returns the RAW truncated bytes: the first MAX_RATIONALE_BYTES (4096) UTF-8
+   * bytes of `s`, plus the 3-byte ellipsis sentinel (U+2026 = E2 80 A6) when
+   * truncation occurs. This is the authoritative form — `keccak256` over these
+   * bytes equals the on-chain `rationaleHash` even when the 4096-byte boundary
+   * splits a multi-byte codepoint (where a decode→re-encode round-trip would
+   * corrupt the boundary to U+FFFD and diverge the hash).
+   */
+  static truncateRationaleBytes(s: string): Uint8Array {
+    const MAX_BYTES = 4096;
+    const encoded = new TextEncoder().encode(s);
+    if (encoded.length <= MAX_BYTES) return encoded;
+    const result = new Uint8Array(MAX_BYTES + 3);
+    result.set(encoded.subarray(0, MAX_BYTES));
+    result.set([0xe2, 0x80, 0xa6], MAX_BYTES); // U+2026 HORIZONTAL ELLIPSIS
+    return result;
+  }
+
+  /**
+   * Display form of {@link truncateRationaleBytes}: decodes the truncated bytes
+   * to a string (a split trailing codepoint renders as U+FFFD — identical to how
+   * any UTF-8 consumer renders the contract's raw-byte `RulingRationale.rationale`
+   * field). Use {@link truncateRationaleBytes} for hashing, this for display.
+   */
+  static truncateRationale(s: string): string {
+    return new TextDecoder().decode(SimulatedBackend.truncateRationaleBytes(s));
+  }
+
+  /**
+   * Recover the requestId from the most recent `Ruled` event for `reqId`.
+   * Used by `commitRationale` after `pendingRequestId` has been cleared
+   * (clearRequest zeros it at ruling delivery).
+   */
+  private lastRulingRequestId(reqId: bigint): bigint {
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      const e = this.history[i];
+      if (e && e.reqId === reqId && e.name === "Ruled") {
+        return (e as { name: "Ruled"; requestId: bigint }).requestId;
+      }
+    }
+    return 0n;
   }
 
   // ---------------------------------------------------------------------
@@ -530,13 +702,20 @@ export class SimulatedBackend implements CoverageNegotiationClient {
   // Events
   // ---------------------------------------------------------------------
 
-  async getEvents(filter: EventFilter = {}): Promise<CoverageEvent[]> {
+  async getEvents(
+    filter: EventFilter = {},
+    onBatch?: (batch: CoverageEvent[]) => void,
+  ): Promise<CoverageEvent[]> {
     // The recorded log IS the simulated chain history (no blocks to scan).
     const all =
       filter.reqId === undefined
         ? this.history
         : this.history.filter((e) => e.reqId === filter.reqId);
-    return all.map((e) => ({ ...e }));
+    const copy = all.map((e) => ({ ...e }));
+    // No paging in memory: deliver the whole history as a single batch so the
+    // progressive-consumer code path behaves identically against either backend.
+    if (onBatch && copy.length > 0) onBatch(copy);
+    return copy;
   }
 
   subscribe(listener: CoverageEventListener): Unsubscribe {
@@ -637,7 +816,11 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     const receiptId = this.agent.receiptId ?? requestId;
 
     n.lastDecision = decision;
-    n.hasRuling = true;
+    // hasRuling is set ONLY for terminal/ruled decisions (mirrors Solidity
+    // _handleDecideResponse L894-903: NeedMoreEvidence returns before setting hasRuling).
+    // commitRationale guards on hasRuling, so after a NeedMoreEvidence outcome the
+    // sim must REJECT commitRationale, matching the chain behaviour.
+    n.hasRuling = decision !== Decision.NeedMoreEvidence;
     n.rationaleHash = rationaleHash;
     n.clauseRef = clauseRef;
     n.standardRef = standardRef;
@@ -681,30 +864,28 @@ export class SimulatedBackend implements CoverageNegotiationClient {
 
     if (decision === Decision.PolicyInvalid) {
       // R6b: a relied-on clause contradicts a public standard — void the contract.
+      // SPEC-0006 R24: emit 4-arg Ruled (no PolicyFlagged — removed from contract).
       n.coveredAmount = 0n;
       n.state = State.PolicyInvalidated;
-      this.emit({ name: "PolicyFlagged", reqId, clauseRef, standardRef });
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes });
+      n.escrowAmount = 0n; // A0008 §3: full escrow refunded to insurer (in-memory: just zero it)
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n });
       this.emit({ name: "PolicyInvalidated", reqId, clauseRef, standardRef });
       return;
     }
 
     if (decision === Decision.Approve) {
-      // R6a: deterministic covered amount = min(requested, costPlusUnitPrice * quantity)
-      // — never AI-chosen. Mirrors the contract exactly (NADAC is a floor ref only).
-      const cap = n.costPlusUnitPrice * n.quantity;
-      const covered = n.requestedAmount < cap ? n.requestedAmount : cap;
+      // SPEC-0006 R24: on approve, coveredAmount = requestedAmount (no AI price cap).
+      const covered = n.requestedAmount;
       n.coveredAmount = covered;
       n.state = State.Approved;
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: covered, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes });
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: covered });
     } else if (decision === Decision.Deny) {
       n.coveredAmount = 0n;
       n.state = State.Denied;
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes });
+      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n });
     } else {
       // NeedMoreEvidence
       n.state = State.EvidenceRequested;
-      this.emit({ name: "Ruled", reqId, requestId, decision, coveredAmount: 0n, rationaleHash, clauseRef, receiptId, policyVoidedClauseIndices, usedReferenceIndices, usedLeafHashes });
       this.emit({ name: "EvidenceRequested", reqId });
     }
   }
@@ -766,6 +947,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       policyHash: n.policyHash,
       policyUri: n.policyUri,
       coveredAmount: n.coveredAmount,
+      escrowAmount: n.escrowAmount,
       costPlusUnitPrice: n.costPlusUnitPrice,
       nadacUnitPrice: n.nadacUnitPrice,
       rationaleHash: n.rationaleHash,
@@ -784,6 +966,11 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       createdAt: n.createdAt,
       rulingDeadline: n.rulingDeadline,
       exists: n.exists,
+      agentEvidenceUrl: n.agentEvidenceUrl,
+      agentPromptHint: n.agentPromptHint,
+      agentPhase: n.agentPhase,
+      pendingDecideFee: n.pendingDecideFee,
+      pendingFeePayer: n.pendingFeePayer,
     };
   }
 

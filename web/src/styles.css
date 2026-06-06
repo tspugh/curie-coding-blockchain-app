@@ -1270,6 +1270,13 @@ tr.row-link:hover td:first-child {
   text-align: left;
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
   font: inherit;
+  /* The card inherits `white-space: nowrap` from an ancestor; without this
+     reset the long policy summary can't wrap and spills out both sides of the
+     card (the reported "overlapping text"). Force normal wrapping + keep all
+     content inside the card box. */
+  white-space: normal;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .policy-card:hover {
@@ -1374,16 +1381,18 @@ tr.row-link:hover td:first-child {
 .ruling-hero {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
+/* SPEC-0006 R30a: the AI Decision verdict is rendered modestly/compactly — a
+   status row, not an oversized hero banner. */
 .ruling-result {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 16px 20px;
+  gap: 12px;
+  padding: 10px 14px;
   border-radius: var(--radius);
-  border: 2px solid var(--border);
+  border: 1px solid var(--border);
 }
 
 .ruling-result.approved {
@@ -1407,7 +1416,7 @@ tr.row-link:hover td:first-child {
 }
 
 .ruling-icon {
-  font-size: 32px;
+  font-size: 22px;
   line-height: 1;
   flex-shrink: 0;
   font-style: normal;
@@ -1419,7 +1428,7 @@ tr.row-link:hover td:first-child {
 .ruling-result.voided .ruling-icon   { color: var(--warn); }
 
 .ruling-result strong {
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 700;
   display: block;
 }
@@ -1517,6 +1526,11 @@ tr.row-link:hover td:first-child {
   right: 16px;
   bottom: 16px;
   width: min(420px, calc(100vw - 32px));
+}
+/* Minimized → shrink to the header content so it's a small corner pill that
+   doesn't float over page content (e.g. the policy-attach cards). */
+.tx-monitor.closed {
+  width: auto;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
