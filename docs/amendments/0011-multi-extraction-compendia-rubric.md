@@ -32,11 +32,15 @@ Replace the single generic scrape with **targeted, parameterized extraction**:
 - The decide rubric broadens to **FDA-approved OR recognized-compendia/guideline support**
   (SPEC-0007 R4) so legitimate off-label use, evidenced on appeal (A0009), can pass.
 - Architecture: **Option B chosen (SPEC-0007 §3.2, OQ1 resolved 2026-06-06)** — one
-  *verbatim*-section scrape (`indications_and_usage` + `dosage_and_administration`, no
-  summarization) + one decide evaluating all public clauses. Keeps the 2-call cost; the
-  fix is verbatim-not-summary, which is what dropped plaque psoriasis. The scrape prompt
-  changes from "extract … evidence" (which invited summarization) to "extract the
-  following sections **verbatim, do not summarize**".
+  *verbatim* scrape + one decide evaluating all public clauses. Keeps the 2-call cost; the
+  fix is verbatim-not-summary, which is what dropped plaque psoriasis.
+- **Source-agnostic, diagnosis-targeted scrape goal (not FDA-section-specific).** The
+  prompt extracts *verbatim* the passage(s) bearing on whether `<drug>` is FDA-approved
+  **or compendia/guideline-supported for `<diagnosis>`**, plus dosing limits — "do not
+  summarize". Keying on the *diagnosis* (not on label section names) means the **same**
+  goal works on an FDA label and on a prose compendia page, so an **appeal needs only a
+  new URL** (A0009) to pull backup off-label evidence — no second prompt. A section-name
+  prompt is explicitly rejected (it would whiff on the non-FDA appeal source).
 
 ## Consequences
 

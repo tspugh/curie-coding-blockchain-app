@@ -56,10 +56,13 @@ decision can flip.
 - **R7 (MUST) Ruling = conjunction of clauses.** Approve **iff** every public clause is
   satisfied by its evidence **and** every attested clause has an affirmative attestation.
   Otherwise the ruling is deny / needs-more-info, attributed to the failing clause(s).
-- **R8 (MUST) Appeal re-extracts new evidence.** `appeal` / `submitEvidence` with a new
-  source URL re-runs the public-clause extractions against it (A0009 already repoints the
-  scrape). An off-label denial can flip to approve when the new source establishes
-  compendia support.
+- **R8 (MUST) Appeal re-extracts new evidence with the *same source-agnostic goal*.**
+  `appeal` / `submitEvidence` with a new source URL re-runs the same diagnosis-targeted
+  extraction (§3.2) against it (A0009 already repoints the scrape). No separate appeal
+  prompt: because the goal asks "is `<drug>` approved **or supported** for `<diagnosis>`",
+  a compendia/guideline URL on appeal yields the backup evidence that flips an off-label
+  denial to approve. The extraction goal MUST NOT be FDA-section-specific (it must work on
+  prose compendia sources too).
 - **R9 (SHOULD) Synthesis call produces a rationale.** A final inference call combines
   the per-clause verdicts + attestations + policy into the decision and a short,
   PHI-free rationale string for the timeline.
@@ -109,10 +112,18 @@ interface Attestation {
 **Chosen 2026-06-06 (resolves OQ1):** the root cause of the openFDA denial was
 **summary vs verbatim**, not extraction *count*. So:
 
-One `ExtractString` pulls the **verbatim** `indications_and_usage` +
-`dosage_and_administration` sections (explicitly: *extract verbatim, do not summarize*) →
-one `inferString` decide evaluates **all** public clauses + the de-identified attestations
-against that verbatim text → approve / deny / needs-more-info + rationale (R9).
+One `ExtractString` pulls, **verbatim (do not summarize)**, the passage(s) in the source
+bearing on **whether `<drug>` is FDA-approved or compendia/guideline-supported for
+`<diagnosis>`, plus any dosing limits** → one `inferString` decide evaluates **all** public
+clauses + the de-identified attestations against that verbatim text → approve / deny /
+needs-more-info + rationale (R9).
+
+The extraction goal is keyed to the requested **diagnosis**, **not** to FDA-label section
+names — so the *same* goal works on an FDA label (answer lives in `indications_and_usage`)
+**and** on a compendia/guideline page on appeal (answer lives in prose). This is why an
+**appeal needs only a new URL, not a new extraction goal**: the goal is source-agnostic,
+and a compendia URL automatically yields "backup evidence" for the off-label use (§3.7).
+(Avoid section-name-specific prompts — they'd whiff on the non-FDA appeal source.)
 
 - Cost: **1 scrape + 1 decide** (unchanged from today) — no per-clause fee multiplication.
 - Fixes the lossiness because the requested indication is *present in the verbatim text*
