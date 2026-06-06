@@ -65,8 +65,9 @@ type View =
 const forcePrompt = import.meta.env.VITE_FORCE_WALLET_PROMPT === "1";
 
 export function App() {
-  // SPEC-0008 R1/R5/R6 — gate: show the onboarding modal when no usable
-  // provider key is loaded, or when forcePrompt forces it for testing.
+  // SPEC-0008 R1/R5/R6 — gate: show the onboarding modal when no usable provider
+  // key is loaded (in either mode — loading a key is harmless in sim and lets the
+  // keyless demo/e2e exercise the load flow), or when forcePrompt forces it.
   const [needsWallet] = useState<boolean>(
     () => !hasUsableProviderKey(),
   );
