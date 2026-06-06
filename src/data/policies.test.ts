@@ -1,5 +1,5 @@
 /**
- * Tests for `web/src/data/policies.ts` — the curated policy library.
+ * Tests for `src/data/policies.ts` — the curated policy library.
  *
  * Pins SPEC-0005 R14's structural + content requirements:
  *  - ≥ 4 curated policies in the library.
@@ -25,15 +25,12 @@ import { test } from "node:test";
 import { PayerLine } from "../protocol/ladders.js";
 import {
   POLICY_LIBRARY,
+  OPENFDA_WELLBUTRIN_URL,
   type CuratedPolicy,
   type Attestation,
   getCuratedPolicy,
   policiesForLine,
 } from "./policies.js";
-
-// openFDA source URL constants from SPEC-0007 §3.7 (bupropion×ADHD deny path)
-const OPENFDA_WELLBUTRIN_URL =
-  "https://api.fda.gov/drug/label.json?search=openfda.brand_name:WELLBUTRIN&limit=1";
 
 // ---------------------------------------------------------------------------
 // Library shape
@@ -275,7 +272,7 @@ test("SPEC-0007 R10: plaque-psoriasis Commercial PA policy exists in the library
   );
 });
 
-test("SPEC-0007 R10: plaque-psoriasis Commercial PA policy has ≥2 public clauses", () => {
+test("SPEC-0007 R10: plaque-psoriasis Commercial PA policy has ≥2 public clauses including one dosing clause", () => {
   // §3.6: clauses 1 (indication) and 2 (dosing) are public.
   // Find the commercial PA policy that covers plaque psoriasis.
   const psorPolicy = POLICY_LIBRARY.find(
@@ -296,6 +293,12 @@ test("SPEC-0007 R10: plaque-psoriasis Commercial PA policy has ≥2 public claus
   assert.ok(
     publicClauses.length >= 2,
     `plaque-psoriasis policy needs ≥2 public clauses, got ${publicClauses.length}`,
+  );
+  // §3.6 requires both indication AND dosing public clauses — assert dosing exists.
+  const dosingClause = publicClauses.find((c) => c.check?.kind === "dosing");
+  assert.ok(
+    dosingClause != null,
+    "plaque-psoriasis policy must have a public clause with check.kind === 'dosing' (§3.6/R10)",
   );
 });
 
