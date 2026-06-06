@@ -1517,6 +1517,16 @@ tr.row-link:hover td:first-child {
   gap: 6px;
 }
 .wallet-balance .label { color: var(--text-2); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+
+/* Small helper caption under a form field / action (e.g. the wei/escrow note). */
+.field-hint {
+  display: block;
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-2);
+}
+.field-hint.bad { color: var(--danger); font-weight: 600; }
 .wallet-balance code   { font-variant-numeric: tabular-nums; font-size: 12.5px; color: var(--text); }
 
 /* ─── 34. TxMonitor floating panel (SPEC-0003 §2.1 R3 + §2.2 R8) ──────── */

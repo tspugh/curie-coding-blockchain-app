@@ -34,6 +34,8 @@ import {
   FDA_LABEL_URL,
 } from "../fdaIndication.js";
 import { describeEvent, eventAttribution, eventTone, fmtAmount, shortHex } from "../shared.js";
+import { useWalletBalance } from "../hooks/useWalletBalance.js";
+import { GAS_RESERVE_WEI, AGENT_FEE_RESERVE_WEI } from "../config.js";
 
 interface DetailProps {
   readonly reqId: bigint;
@@ -246,6 +248,10 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   // (see run()), so status transitions like submitEvidence → UnderReview show
   // without waiting on the event subscription.
   const [refreshTick, setRefreshTick] = useState(0);
+  // Live balance of the ACTIVE wallet — at engage that's the insurer (who
+  // escrows). null in simulated mode (no chain to fund). Used to block an
+  // insurerEngage the insurer can't actually afford (escrow + gas).
+  const { wei: walletBalanceWei } = useWalletBalance();
 
   const [policyText, setPolicyText] = useState("");
   // SPEC-0005 R14: the policy choice is the curated policy's id, or the
@@ -351,7 +357,20 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   const isParty = isProvider || isInsurer;
 
   const canEngage = state === State.Open && isInsurer;
+  // Escrow affordability (the insurer locks `requestedAmount` wei + gas at
+  // engage). In simulated mode (balance null) there's no chain to fund, so it's
+  // always affordable. The shortfall, when positive, is surfaced on the button.
+  const escrowWei = n.requestedAmount;
+  const escrowShortfallWei =
+    walletBalanceWei === null ? 0n : escrowWei + GAS_RESERVE_WEI - walletBalanceWei;
+  const canAffordEscrow = escrowShortfallWei <= 0n;
   const canAdjudicate = view.adjudicable && isParty;
+  // Adjudication fires the two-agent flow funded by the CALLER (agent fee + gas).
+  // The local run() helper skips useAction's preflight, so guard here — otherwise
+  // an underfunded wallet (e.g. the insurer) reverts opaquely on estimateGas.
+  const adjudicationCostWei = AGENT_FEE_RESERVE_WEI + GAS_RESERVE_WEI;
+  const canAffordAdjudication =
+    walletBalanceWei === null || walletBalanceWei >= adjudicationCostWei;
   const ruled = view.ruled;
   const canAccept = ruled && isParty;
   // Appeals advance the payer-line ladder, which only a DENIAL justifies
@@ -707,24 +726,44 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                 );
               })()}
               {policyChoice && (
-                <button
-                  type="button"
-                  className="primary"
-                  data-testid="engage-submit"
-                  onClick={() => {
-                    if (!policyText.trim()) { setError("Select a policy first."); return; }
-                    const stored = client.content.put(policyText);
-                    void run(() =>
-                      client.negotiation.insurerEngage(
-                        reqId,
-                        stored.hash,
-                        hashContent(SAMPLE_CASE.policyRef),
-                      ),
-                    );
-                  }}
-                >
-                  Attach Policy &amp; Engage →
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="primary"
+                    data-testid="engage-submit"
+                    disabled={!canAffordEscrow}
+                    onClick={() => {
+                      if (!policyText.trim()) { setError("Select a policy first."); return; }
+                      // Insurer-wallet escrow guard: block an engage the insurer
+                      // can't fund (escrow + gas). The contract would otherwise
+                      // revert opaquely (estimateGas failure → require(false)).
+                      if (!canAffordEscrow) {
+                        setError(
+                          `Insufficient balance to escrow ${fmtAmount(escrowWei)} (+ gas). ` +
+                          `Wallet holds ${walletBalanceWei === null ? "?" : fmtAmount(walletBalanceWei)}; ` +
+                          `short by ${fmtAmount(escrowShortfallWei)}. Fund the insurer wallet or lower the amount.`,
+                        );
+                        return;
+                      }
+                      const stored = client.content.put(policyText);
+                      void run(() =>
+                        client.negotiation.insurerEngage(
+                          reqId,
+                          stored.hash,
+                          hashContent(SAMPLE_CASE.policyRef),
+                        ),
+                      );
+                    }}
+                  >
+                    Attach Policy &amp; Engage → (escrow {fmtAmount(escrowWei)})
+                  </button>
+                  {!canAffordEscrow && (
+                    <p className="field-hint bad" data-testid="engage-escrow-warning">
+                      Insurer wallet can't cover the {fmtAmount(escrowWei)} escrow + gas
+                      (short by {fmtAmount(escrowShortfallWei)}).
+                    </p>
+                  )}
+                </>
               )}
               <textarea
                 data-testid="engage-policy-text"
@@ -763,13 +802,28 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                 type="button"
                 className="primary"
                 data-testid="adjudicate-submit"
+                disabled={!canAffordAdjudication}
                 onClick={() => {
+                  if (!canAffordAdjudication) {
+                    setError(
+                      `Insufficient balance for the agent fee (${fmtAmount(AGENT_FEE_RESERVE_WEI)} + gas). ` +
+                      `Wallet holds ${walletBalanceWei === null ? "?" : fmtAmount(walletBalanceWei)}. ` +
+                      `Switch to the provider wallet (it pays the agent fee) or fund this one.`,
+                    );
+                    return;
+                  }
                   setNextDecision(decision);
                   void run(() => client.negotiation.requestAdjudication(reqId));
                 }}
               >
                 Request AI Decision →
               </button>
+              {!canAffordAdjudication && (
+                <p className="field-hint bad" data-testid="adjudicate-fee-warning">
+                  This wallet can't cover the agent fee ({fmtAmount(AGENT_FEE_RESERVE_WEI)} + gas) —
+                  the provider wallet pays it.
+                </p>
+              )}
             </div>
           )}
 

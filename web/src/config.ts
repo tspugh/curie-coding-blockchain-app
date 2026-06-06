@@ -16,3 +16,13 @@
 export const AGENT_FEE_RESERVE_WEI: bigint = BigInt(
   import.meta.env.VITE_AGENT_FEE_WEI ?? "330000000000000000",
 );
+
+/**
+ * Headroom kept aside for transaction gas when validating that a wallet can
+ * afford a value-bearing call (e.g. the insurer's escrow at `insurerEngage`).
+ * Somnia testnet gas is cheap (a few mSTT per call); 0.02 STT is generous
+ * headroom so the balance check never lets a tx fail for gas after passing.
+ */
+export const GAS_RESERVE_WEI: bigint = BigInt(
+  import.meta.env.VITE_GAS_RESERVE_WEI ?? "20000000000000000",
+);
