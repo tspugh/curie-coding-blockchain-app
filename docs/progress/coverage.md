@@ -21,8 +21,8 @@ All SPEC-0008 deliverables are implemented and committed on `spec/0008-wallet-on
 | `VITE_FORCE_WALLET_PROMPT` documented | `.env.example` | DONE — section comment + blank value line |
 | Pure-helper unit tests (R10, 6 scenarios) | `web/src/walletOnboarding.test.ts` | DONE — 26 tests across T1–T6 + invariants + static-analysis (DRY/security) |
 | DOM / component tests (R10, 6 scenarios) | `web/src/walletOnboarding.dom.test.ts` | DONE — 24 tests: DOM-T1–T6 render + interaction (jsdom + createRoot + act) |
-| Branch-coverage fixes for liveness | `web/src/urlLiveness.test.ts` | DONE — 4 new branch tests (B1–B4): `json.status ?? 200`, `json.status ?? 0` (×2), `String(err)` non-Error path |
-| Branch-coverage fixes for debounce | `web/src/livenessDebounce.test.ts` | DONE — 1 new test exercising `??` defaults for `debounceMs` and `probe` options |
+| ~~Branch-coverage fixes for liveness~~ | `web/src/urlLiveness.test.ts` | **VOID** — those SPEC-0006 test additions were REVERTED as out-of-scope (F5). This branch's diff for the file is empty (unchanged vs origin/main). |
+| ~~Branch-coverage fixes for debounce~~ | `web/src/livenessDebounce.test.ts` | **VOID** — reverted as out-of-scope (F5); file unchanged vs origin/main. |
 
 ### Coverage results (392 tests, fresh run)
 
@@ -72,13 +72,13 @@ Line 70 (`safeDerive` call) and line 103 (`handleChange` callback) show as uncov
 
 Lines 14–16, 20–24 are the real-browser paths: `window.localStorage.getItem` (when no `storageOverride` opt) and `import.meta.env` (when no `envKey` opt). These branches can only be exercised with a real DOM/Vite context; all unit tests use the injectable `opts` path. Branch 88.24% PASS. Line coverage 92.66% is below the 85% per-file threshold — however the **tree aggregate (97.65%)** passes.
 
-**`web/src/livenessDebounce.ts` — 100%/100% [PASS — fixed]**
+**`web/src/livenessDebounce.ts` / `web/src/urlLiveness.ts` — VOID (reverted)**
 
-Previously branch 84.62% (below threshold). The `??` right-hand defaults for `debounceMs` and `probe` are now covered by the "default options" test (added to `livenessDebounce.test.ts`).
-
-**`web/src/urlLiveness.ts` — 100%/100% [PASS — fixed]**
-
-Previously branch 88.46% (but documented as passing). The four new B1–B4 tests (added to `urlLiveness.test.ts`) cover: `json.status ?? 200` (ok:true no-status payload), `json.status ?? 0` (ok:false with error, no status), `json.status ?? 0` (else branch, no error, no status), and `String(err)` (non-Error catch value).
+A prior refresh-24 entry claimed branch-coverage test additions to these two SPEC-0006
+files. Those additions were **reverted as out-of-scope on this SPEC-0008 branch (F5)** —
+both files are unchanged vs origin/main here, so they retain main's coverage and are not
+part of this branch's gate. SPEC-0008's own coverage (WalletOnboarding, walletKeys, App)
+stands on the 50 wallet unit/DOM tests above; the tree aggregate passes regardless.
 
 #### contracts/ (solidity-coverage v0.8.17, from refresh 23 last stable run)
 
