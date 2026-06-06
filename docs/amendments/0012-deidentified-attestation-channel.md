@@ -32,8 +32,11 @@ Add a **de-identified attestation channel** to the negotiation:
 - The agent **records and trusts** attestations; it does **not** independently verify
   them. The UI must label attested clauses as *provider-asserted, not agent-verified* so
   the trust model is honest.
-- Storage shape — on-chain structured booleans vs off-chain committed hash + reveal — is
-  SPEC-0007 OQ2, resolved before build.
+- Storage shape — **on-chain structured booleans (SPEC-0007 OQ2 resolved 2026-06-06).**
+  Each attestation is stored on the negotiation as `{bytes32 clauseId, bool attested}`
+  (e.g. a fixed-size array or a `clauseId → bool` mapping). No hash/reveal indirection: a
+  clause id + a boolean is self-evidently non-PHI, cheap to store, and read directly by the
+  decide synthesis. The guard rejects anything but this closed shape.
 
 ## Consequences
 

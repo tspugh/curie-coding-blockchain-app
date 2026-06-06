@@ -282,9 +282,10 @@ evidence trail:
 - **OQ1 (HIGH) — RESOLVED 2026-06-06 → Option B (verbatim scrape + one decide).** The
   failure was summary-vs-verbatim, not extraction count; B fixes it at the current 2-call
   cost. See §3.2. Option A deferred.
-- **OQ2 (MED) Attestation location:** on-chain structured booleans (simplest, clearly
-  non-PHI) vs off-chain committed hash + reveal. Affects A0012's storage shape. *Still
-  open* — leaning on-chain booleans for the demo (smallest, obviously non-PHI).
+- **OQ2 (MED) — RESOLVED 2026-06-06 → on-chain structured booleans.** Attestations are
+  stored on-chain as `{clauseId, bool}` (no hash/reveal indirection). They are obviously
+  non-PHI (a clause id + a boolean), cheap, and directly readable by the decide synthesis.
+  See §3.3 / A0012.
 - **OQ3 (MED) — RESOLVED 2026-06-06 → bupropion × ADHD, StatPearls source.** Off-label
   example + public compendia stand-in chosen; see §3.7. (openFDA WELLBUTRIN has no ADHD →
   deny; NCBI StatPearls supports off-label ADHD → approve on appeal.)
