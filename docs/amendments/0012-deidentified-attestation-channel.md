@@ -44,6 +44,11 @@ Add a **de-identified attestation channel** to the negotiation:
 - De-identification assurance rests on attestations staying **structured booleans**; any
   future free-text attestation would require Expert-Determination review rather than Safe
   Harbor (SPEC-0007 OQ4) — so the schema deliberately forbids free text.
+- **PHI routing (SPEC-0007 R11):** any clause that *cannot* be reduced to a public check
+  or a de-identified boolean is **flagged "requires direct off-chain communication"** and
+  handled provider↔payer out-of-band — it never enters the protocol. The demo build carries
+  **no PHI path at all**; this keeps the trust/safety story clean and sidesteps the
+  Expert-Determination question entirely.
 - Redeploy required (new negotiation field + guard).
 
 ## Test impact

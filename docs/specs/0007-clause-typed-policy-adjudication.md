@@ -67,6 +67,15 @@ decision can flip.
   plaque-psoriasis case runs through the new flow with: the source URL (§3.5), two public
   clauses (indication + dosing), two attestations (step-therapy + safety), and the
   example policy (§3.6).
+- **R11 (MUST) PHI is routed off-protocol, never carried.** If a clause genuinely cannot
+  be reduced to a public check or a de-identified boolean attestation — i.e. it would
+  require actual PHI to adjudicate — the protocol **flags it as "requires direct off-chain
+  communication"** (handled provider↔payer out-of-band) and **does not** put the PHI on
+  any path. The demo version carries **no PHI at all**: every attested clause is a
+  de-identified boolean; no PHI-bearing clause type is built.
+- **R12 (MUST) Off-label worked example ships end-to-end.** The bupropion × ADHD case
+  (§3.7) demonstrates the off-label→compendia appeal: on-label FDA source → deny; appeal
+  with a public compendia/guideline source → approve.
 
 ## 3. Technical documentation
 
@@ -95,20 +104,22 @@ interface Attestation {
 }
 ```
 
-### 3.2 Flow (two candidate architectures — see Open Questions)
+### 3.2 Flow — **DECISION: Option B (verbatim sections + one decide)**
 
-**Option A — one targeted extraction per public clause (max fidelity):**
-`requestAdjudication` → for each public clause, fire a targeted `ExtractString`
-(constrained `allowedValues` where possible) against `clause.check.sourceUrl` → collect
-per-clause verdicts → fire one `inferString` synthesis with {policy, per-clause verdicts,
-attestations} → approve / deny / needs-more-info + rationale (R9).
-Cost: N public clauses ⇒ N scrape calls + 1 decide call.
+**Chosen 2026-06-06 (resolves OQ1):** the root cause of the openFDA denial was
+**summary vs verbatim**, not extraction *count*. So:
 
-**Option B — one verbatim-section scrape + one decide (cheaper):**
-One `ExtractString` pulls the **verbatim** `indications_and_usage` + `dosage_and_administration`
-sections (no summarization) → one `inferString` decide evaluates all public clauses +
-attestations against that verbatim text. Cost: 1 scrape + 1 decide, but relies on the
-single scrape capturing both sections.
+One `ExtractString` pulls the **verbatim** `indications_and_usage` +
+`dosage_and_administration` sections (explicitly: *extract verbatim, do not summarize*) →
+one `inferString` decide evaluates **all** public clauses + the de-identified attestations
+against that verbatim text → approve / deny / needs-more-info + rationale (R9).
+
+- Cost: **1 scrape + 1 decide** (unchanged from today) — no per-clause fee multiplication.
+- Fixes the lossiness because the requested indication is *present in the verbatim text*
+  and cannot be summarized away.
+- Rejected **Option A** (one targeted extraction per public clause) for now: max per-clause
+  precision but N× the scrape fee, and B already fixes the observed failure. A stays
+  available if a future clause needs precision the verbatim text can't supply.
 
 Both keep PHI off-chain: the scrape sees only the public URL; the decide sees only public
 text + de-identified attestation booleans.
@@ -170,13 +181,41 @@ This spec needs **two amendments** to the SPEC-0006 / A0007 / A0009 contract:
 Clauses 1–2 the agent adjudicates from the public source; 3–4 are de-identified provider
 attestations the agent records but cannot independently verify.
 
+### 3.7 Off-label worked example — bupropion × ADHD (the appeal demo)
+
+Demonstrates R4/R8 (FDA-approved **OR** compendia-supported) with a fully **public**
+evidence trail:
+
+- **Initial source (deny path):** openFDA `WELLBUTRIN` label —
+  `https://api.fda.gov/drug/label.json?search=openfda.brand_name:WELLBUTRIN&limit=1`.
+  Its `indications_and_usage` lists **only major depressive disorder + seasonal affective
+  disorder — not ADHD** (verified 2026-06-06). So the indication clause for ADHD **fails
+  on the FDA label → Deny** (correct: ADHD is off-label for bupropion).
+- **Appeal source (approve path):** the provider appeals (A0009) with a public
+  compendia-style reference supporting bupropion for ADHD —
+  **StatPearls (NCBI Bookshelf)** `https://www.ncbi.nlm.nih.gov/books/NBK470212/`, which
+  lists ADHD among bupropion's off-label uses with a stated evidence base; a corroborating
+  review is PMC `https://pmc.ncbi.nlm.nih.gov/articles/PMC6485546/` ("Bupropion for ADHD
+  in adults"). Under the broadened rubric (R4), compendia/guideline support satisfies the
+  indication clause → **Approve** on appeal.
+- Both NCBI sources are **free, public, and HTML** — they stand in for the payer-recognized
+  but paywalled compendia (NCNN/AHFS/DrugDex), keeping the whole demo PHI-free and
+  scrapeable. (Resolves OQ3.)
+
+> **"Non-stimulant for ADHD (Commercial PA)"** — example policy
+> 1. *(public · indication)* The drug is FDA-approved **or compendia-supported** for ADHD.
+> 2. *(public · dosing)* Requested quantity is within labeled dosing.
+> 3. *(attested)* Trial-and-failure or contraindication to a **preferred stimulant** —
+>    provider attests.
+
 ## 4. Deliverables
 
 - This spec (`docs/specs/0007-clause-typed-policy-adjudication.md`).
 - Amendments `docs/amendments/0011-multi-extraction-compendia-rubric.md` and
   `0012-deidentified-attestation-channel.md` (ADRs accompanying this spec).
 - Off-chain clause/attestation types (`PolicyClause.type`, `Attestation`) + the
-  plaque-psoriasis example policy + source-URL constant in `src/data/`.
+  plaque-psoriasis (§3.6) **and** bupropion×ADHD (§3.7) example policies + their source-URL
+  constants (openFDA HUMIRA/WELLBUTRIN, NCBI StatPearls `NBK470212`) in `src/data/`.
 - Contract: targeted multi-extraction + compendia rubric (A0011); attestation field
   (A0012).
 - Tests per §5.
@@ -190,8 +229,9 @@ attestations the agent records but cannot independently verify.
   summary).
 - **T3 (R5/R7) Missing attestation.** Step-therapy attestation absent/false → ruling is
   needs-more-info/deny attributed to clause 3 (not Approve).
-- **T4 (R4/R8) Off-label appeal.** Off-label diagnosis with an FDA-only source → deny;
-  `appeal` with a compendia/guideline source → approve.
+- **T4 (R4/R8/R12) Off-label appeal (bupropion × ADHD).** With the openFDA WELLBUTRIN
+  source (no ADHD) → **Deny**; `appeal` with the NCBI StatPearls source (off-label ADHD
+  support) → **Approve**.
 - **T5 (R2) Dosing over limit.** Quantity above the labeled dose → deny on the dosing
   clause even if the indication passes.
 - **T6 (R6) No-PHI.** Attestations + extraction inputs/outputs contain none of the 18
@@ -228,14 +268,16 @@ attestations the agent records but cannot independently verify.
 
 ## 8. Open questions
 
-- **OQ1 (HIGH) Architecture: Option A (N targeted scrapes) vs Option B (one verbatim
-  scrape + one decide)?** A is most robust per-clause but costs N scrape fees; B is
-  cheaper but leans on one scrape capturing all needed sections. Decide before A0011.
+- **OQ1 (HIGH) — RESOLVED 2026-06-06 → Option B (verbatim scrape + one decide).** The
+  failure was summary-vs-verbatim, not extraction count; B fixes it at the current 2-call
+  cost. See §3.2. Option A deferred.
 - **OQ2 (MED) Attestation location:** on-chain structured booleans (simplest, clearly
-  non-PHI) vs off-chain committed hash + reveal. Affects A0012's storage shape.
-- **OQ3 (MED) Off-label demo source:** which *public* compendia/guideline stands in for
-  the paywalled NCCN/DrugDex, and which off-label diagnosis demonstrates the appeal
-  (plaque psoriasis is on-label for adalimumab)?
-- **OQ4 (LOW) De-identification assurance:** structured booleans are clearly de-identified;
-  if any free-text ever enters an attestation, do we need Expert-Determination review
-  rather than Safe-Harbor? (Keep attestations structured to avoid this.)
+  non-PHI) vs off-chain committed hash + reveal. Affects A0012's storage shape. *Still
+  open* — leaning on-chain booleans for the demo (smallest, obviously non-PHI).
+- **OQ3 (MED) — RESOLVED 2026-06-06 → bupropion × ADHD, StatPearls source.** Off-label
+  example + public compendia stand-in chosen; see §3.7. (openFDA WELLBUTRIN has no ADHD →
+  deny; NCBI StatPearls supports off-label ADHD → approve on appeal.)
+- **OQ4 (LOW) — RESOLVED 2026-06-06 → PHI never on the protocol (R11).** Attestations stay
+  **structured booleans** (Safe-Harbor-clean by construction); any clause that would need
+  actual PHI is flagged "requires direct off-chain communication" and is **out of scope for
+  the demo** — no PHI path is built, so no Expert-Determination question arises.

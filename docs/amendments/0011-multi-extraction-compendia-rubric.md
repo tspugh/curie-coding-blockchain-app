@@ -31,8 +31,12 @@ Replace the single generic scrape with **targeted, parameterized extraction**:
   indication question (a clinical *term*, not a patient fact — PHI-free).
 - The decide rubric broadens to **FDA-approved OR recognized-compendia/guideline support**
   (SPEC-0007 R4) so legitimate off-label use, evidenced on appeal (A0009), can pass.
-- Architecture is **Option A** (one targeted extraction per public clause) or **Option B**
-  (one verbatim-section scrape + one decide) — resolved by SPEC-0007 OQ1 before build.
+- Architecture: **Option B chosen (SPEC-0007 §3.2, OQ1 resolved 2026-06-06)** — one
+  *verbatim*-section scrape (`indications_and_usage` + `dosage_and_administration`, no
+  summarization) + one decide evaluating all public clauses. Keeps the 2-call cost; the
+  fix is verbatim-not-summary, which is what dropped plaque psoriasis. The scrape prompt
+  changes from "extract … evidence" (which invited summarization) to "extract the
+  following sections **verbatim, do not summarize**".
 
 ## Consequences
 
