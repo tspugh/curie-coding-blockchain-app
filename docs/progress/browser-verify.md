@@ -1,12 +1,88 @@
 # Browser-verify
 
-Last run: Extract-Create `runLivenessDebounce` unit — 2026-06-04 —
-**sim-mode harness 109/109 PASS** across 23 scenarios. Unit tests 331/331 PASS.
-F4' (strict-review gate FAIL) resolved: `runLivenessDebounce` extracted from
-`Create.tsx`'s `useEffect` into `web/src/livenessDebounce.ts` (pure, injectable,
-no React dependency); 9 new unit tests in `web/src/livenessDebounce.test.ts`
-covering debounce firing, stale-response cancellation, and empty-URL short-circuit.
-Gate turns from FAIL to PASS.
+Last run: SPEC-0008 WalletOnboarding — 2026-06-06 —
+**sim-mode harness 111/111 PASS** across 27 scenarios. Unit tests 168/168 PASS.
+Four new SPEC-0008 scenarios (N1–N4, 14 assertions) added to `run.sh`; all green.
+
+## SPEC-0008 WalletOnboarding — 2026-06-06
+
+Branch: `spec/0008-wallet-onboarding`
+
+### Unit tests — 168/168 PASS
+
+Run: `npm run test`
+
+All pre-existing tests pass. New SPEC-0008 unit tests (21 tests in
+`web/src/walletOnboarding.test.ts`) covering T1–T6 gate scenarios are included in
+the 168 total (they were already passing on the branch).
+
+### E2E harness — 111/111 PASS
+
+Build: Standard harness bundle (`VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run web:build`) served on port 4173. No-key modal bundle (`VITE_PRIVATE_KEY="" VITE_EXPOSE_TEST_API=1 npx vite build --outDir dist-nokey`) served on port 4174.
+
+Run: `SKIP_SERVE=1 CHROME_PATH=/usr/bin/chromium-browser bash web/tests/agent-browser/run.sh`
+
+```
+Scenario A   happy-path lifecycle            7/7
+Scenario B   no PHI on-chain                 3/3
+Scenario C   adjudication gating             1/1
+Scenario C2  policy invalidated              4/4
+Scenario D   profile switching               4/4
+Scenario E   sample case prefill             7/7
+Scenario F   note verify                     2/2
+Scenario G   observer / non-party            3/3
+Scenario H   CDS Hooks prefill               4/4
+Scenario I   persisted users                 4/4
+Scenario J   demo-mode toggle                8/8
+Scenario K   key-paste derives address       6/6
+Scenario L3  provider refuse                 5/5
+Scenario L1  evidence resubmit               5/5
+Scenario L2  appeal                          5/5
+Scenario L4  withdraw                        4/4
+Scenario L10 payer-line round-trip           2/2
+Scenario L7  custom-policy composer          4/4
+Scenario L5  provider feedback note          3/3
+Scenario M1  denial happy-path               6/6
+Scenario M2  NeedMoreEvidence -> Denied      5/5
+Scenario M3  appeal -> Denied                5/5
+Scenario N1  SPEC-0008 no modal (env keys)   3/3
+Scenario N2  SPEC-0008 modal blocks (no key) 3/3
+Scenario N3  SPEC-0008 key validation        5/5
+Scenario N4  SPEC-0008 load + dismiss        3/3
+──────────────────────────────────────────
+Total: 111 passed, 0 failed
+```
+
+### SPEC-0008 scenario details
+
+Four new scenarios added to `web/tests/agent-browser/run.sh`:
+
+**N1 (T5/R5)** — Env keys present → no modal: the standard harness bundle embeds
+`VITE_PRIVATE_KEY` from `.env`; `hasUsableProviderKey()` returns true →
+`needsWallet=false` → no `modal-backdrop` in DOM; `nav-create` is interactive.
+3 assertions, all green.
+
+**N2 (T1/R1)** — No key → modal blocks: a separate "no-key" bundle built with
+`VITE_PRIVATE_KEY=""` serves on port 4174; localStorage is cleared before each
+assertion; the modal + backdrop ARE present; Load button is disabled.
+3 assertions, all green.
+
+**N3 (T2/R3)** — Key validation + live derivation: against the no-key bundle;
+pasting garbage → `provider-key-input-error` appears, Load stays disabled; pasting
+a valid key (Hardhat test vector #0) → error gone, derived address shown,
+Load enabled. 5 assertions, all green.
+
+**N4 (T3/R4)** — Provider key load, insurer empty → dismissed: pastes the provider
+key, clicks Load → `window.location.reload()` fires → after reload, localStorage
+has the key, insurer slot is absent, modal is gone.
+3 assertions, all green.
+
+### Harness build fix
+
+The no-key modal server (`start_modal_server` in `run.sh`) now always kills any
+process on port 4174 and rebuilds + re-serves the no-key bundle fresh. This prevents
+the race condition where a stale regular build (with env keys embedded) serves on
+the modal port, causing modal scenarios to spuriously fail.
 
 ## Extract-Create `runLivenessDebounce` unit — 2026-06-04
 
