@@ -27,22 +27,33 @@ This extends the existing key-paste/derive (SPEC-0005 R11, `Settings.tsx`,
 - **R2 (MUST) Provider + insurer fields.** The modal collects a **provider** wallet and an
   **insurer** wallet. Each is a secret key input; the key is **masked** (password dots)
   with an optional show toggle. The **address is derived and displayed** from the key.
-- **R3 (MUST) Real-time validation (reactive).** As the user types/pastes, validate the key
-  is a proper secp256k1 key (`isValidHexKey`), derive + show its address live, and show a
-  clear inline error on invalid input. The "Load wallets" action enables **only** when the
-  provider key is valid (and the insurer key is valid or empty).
+- **R3 (MUST) Real-time validation (reactive) — validity == successful derivation.** As the
+  user types/pastes, validate the key by **attempting address derivation** (`computeAddress`),
+  not regex shape alone: a shape-valid but **out-of-range** key (`0x00…00`, or ≥ curve order
+  `n`) must be treated as **invalid** (it throws on derivation and would brick the app at
+  `createClient` on reload). Show the derived address live on success, a clear inline error on
+  failure. "Load wallets" enables **only** when the provider key **derives** (and the insurer
+  key derives or is empty). The persisted/applied key path is gated the same way.
 - **R4 (MUST) Insurer defaults to provider.** The insurer field may be left empty or
   explicitly set to "same as provider"; when empty, the insurer wallet **is** the provider
   wallet (mirrors `client.ts`: `insurer = VITE_PRIVATE_KEY_INSURER ?? VITE_PRIVATE_KEY`).
 - **R5 (MUST) Env-provided wallets load + skip the modal.** When env keys
   (`VITE_PRIVATE_KEY` [+ `VITE_PRIVATE_KEY_INSURER`]) are present, they load normally and
   the modal does **not** appear (unless forced, R6).
-- **R6 (MUST) Force-prompt env var for testing.** `VITE_FORCE_WALLET_PROMPT=1` forces the
-  modal to appear **even when env keys exist**, **pre-filled/validated from the env values**,
-  so the onboarding flow is testable against known-good keys. Default (unset) = off.
-- **R7 (MUST) Persist via localStorage, never the bundle.** Loaded keys are written to
-  `curie:VITE_PRIVATE_KEY` / `curie:VITE_PRIVATE_KEY_INSURER` (existing `keyOverride` path),
-  so they persist across reloads and drive signing — with **no key in the deployed bundle**.
+- **R6 (MUST) Force-prompt env var for testing — pre-fills from env.**
+  `VITE_FORCE_WALLET_PROMPT=1` forces the modal even when env keys exist, **pre-filled from
+  `import.meta.env.VITE_PRIVATE_KEY` / `VITE_PRIVATE_KEY_INSURER`** (the env values, read the
+  same way `keyOverride` reads env), so the flow is testable against known-good keys.
+  Default (unset) = off. **This is a dev/test-only flag** — see R7 for why reading env here
+  does not leak into the public bundle.
+- **R7 (MUST) No key in the *deployed* bundle.** The reconciliation of R6 (read env) with
+  "no embedded key": the **public deploy build sets `VITE_PRIVATE_KEY=""` (empty)** and does
+  NOT set `VITE_FORCE_WALLET_PROMPT`, so Vite inlines `""` — there is no key value in the
+  shipped bundle (verified live: the current CloudFront bundle has none), and the
+  `deploy-static.sh` secret-guard aborts if one ever appears. Reading `import.meta.env.VITE_*`
+  for pre-fill is therefore safe: it yields the real key only in a **local** dev/test build
+  where the operator set it. Loaded keys persist to `curie:VITE_PRIVATE_KEY[_INSURER]`
+  (the `keyOverride` localStorage path) so they survive reloads and drive signing.
 - **R8 (SHOULD) Active-wallet verification.** After load, verify each wallet is usable
   (valid signer; optionally surface its live balance) and reflect "active" state in the UI.
 - **R9 (MUST) Reactive for both wallets.** Provider and insurer validation/derivation update
