@@ -343,7 +343,11 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   const canAdjudicate = view.adjudicable && isParty;
   const ruled = view.ruled;
   const canAccept = ruled && isParty;
-  const canAppeal = ruled && isParty;
+  // Appeals advance the payer-line ladder, which only a DENIAL justifies
+  // (SPEC-0004 R14a; contract reverts "appeal: prior ruling not Deny" otherwise).
+  // Gating on `ruled` alone wrongly offered Appeal on an Approved ruling, which
+  // then reverted on click — match the contract precondition: Denied-only.
+  const canAppeal = state === State.Denied && isParty;
   const canSubmitEvidence = state === State.EvidenceRequested && isProvider;
   const canSettle = ruled && view.bothAccepted && isParty;
   const canRefuse = isProvider && state !== State.Open && !view.terminal;
