@@ -1,3 +1,136 @@
+## 2026-06-06 (refresh 20) — SPEC-0007 clause-typing unit COMMITTED at HEAD `9acff2d` (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-06
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — fully
+independent re-derivation of the three hard gates over the *current* reviewable state, which
+has advanced since refresh-19: the SPEC-0007 clause-typing unit is now **committed** at HEAD
+`9acff2d` (`test(spec-0007): tighten R10/R12 pins + coverage refresh`) on top of `b65d77e`
+(`feat(spec-0007): clause-typing (R1/R2/R5) + §3.6/§3.7 worked-example policies (R10/R12)`).
+The only uncommitted working-tree edits are **docs-only** (`docs/progress/security-findings.md`,
+`docs/progress/strict-review-findings.md`) — re-verified `git diff --name-only` lists no
+non-`docs/` path. Gates were re-derived from source, not inherited from refresh-19.
+**Base:** `origin/main` (note: `origin/master` does **not** exist on this remote — the diff
+base is `origin/main`; the task's "vs origin/main" wording is honored verbatim).
+**Branch:** `spec/0007-clause-impl`
+**Scope:** SPEC-0007 unit = `src/data/policies.ts` + `src/data/policies.test.ts` (the
+`PolicyClause.type`/`PolicyClause.check` clause-typing, the `Attestation` interface, the §3.6
+plaque-psoriasis and §3.7 bupropion×ADHD worked-example policies, the openFDA HUMIRA/WELLBUTRIN
+source-URL constants, and the R1/R2/R5/R10/R12 structural tests), re-swept inside the full
+`git diff origin/main` (24 files). Mental model: `/security-review` (PHI/clinical-data-on-chain,
+secrets-in-repo, signing-key hygiene).
+
+### Hard gate 1 — NO PHI / clinical data on-chain or in fixtures (synthetic only)
+
+| Check | Result | Evidence (re-derived this run) |
+| --- | --- | --- |
+| New `POLICY_LIBRARY` fixtures carry no PHI | **PASS** | The two committed worked-example policies (`commercial-pa-adalimumab-plaque-psoriasis`, `commercial-pa-bupropion-adhd`) contain only synthetic clinical **terms** — drug names ("adalimumab", "bupropion"), indications ("plaque psoriasis", "ADHD"), generic dosing strings ("2 pens / 28 days", "450 mg / day"), and clause prose. A regex sweep over `policies.ts` for SSN `\d{3}-\d{2}-\d{4}`, `MRN`, `patient[_ -]?id`, `DOB`, email, and `(xxx)` phone shapes returned **only** two doc-comment lines (`"no patient identifiers, no provider names"` / `"NO patient identifiers, NO free clinical narrative, NO PHI"`) — i.e. negated guarantees, **zero value matches**. SPEC-0007 §3.3 explicitly permits a clinical *term* on-chain as a non-patient fact; these fixtures are exactly that. |
+| `Attestation` type is PHI-safe by construction | **PASS** | `interface Attestation { clauseId: string; attested: boolean; evidenceUrl?: string }` (`policies.ts:75-84`) — a clause id + boolean + optional URL. No free-text clinical narrative, none of the 18 HIPAA Safe-Harbor identifiers (R5/R6). On-chain (R13) stores `{bytes32 clauseId, bool attested, bytes32 evidenceUriHash}` — URL hashed, content never committed. No PHI-bearing clause type is built (R11). |
+| Existing repo-wide NO-PHI invariant intact | **PASS** | `policies.test.ts` keeps the SPEC-0004 R1 guard (SSN/DOB/phone/email/MRN/patient-id regex sweep over `JSON.stringify(POLICY_LIBRARY)` + per-clause text); the two new policies ride the same frozen array, so they are covered. **25/25** `policies.test.ts` pass; **259/259** `src/**/*.test.ts` pass. |
+
+### Hard gate 2 — No secrets
+
+| Check | Result | Evidence (re-derived this run) |
+| --- | --- | --- |
+| No secret in the SPEC-0007 unit | **PASS** | `policies.ts` / `policies.test.ts` contain only public openFDA endpoint URLs (`api.fda.gov/drug/label.json?...HUMIRA`, `...WELLBUTRIN`, `...ENBREL`, `...TRULICITY`) and a synthetic `https://example.test/redacted-lab-2026.pdf` evidence URL in a type-shape test. A `0x[a-fA-F0-9]{64}` / PEM / `sk-`/`AKIA`/`AIza`/`xox*` sweep over both files → **none**. |
+| No secret across the full diff | **PASS** | The only 64-hex values in any added line of `git diff origin/main...HEAD` are the two **public-domain Anvil/Hardhat dev vectors** — acct #0 `0xac0974…ff80` and acct #1 `0x59c699…690d` — present only in test/e2e files (`web/src/walletOnboarding{,.dom}.test.ts`, `web/tests/agent-browser/run.sh`), plus the secp256k1 curve-order constant `0xFFFF…0364141` labelled `// == n, out of range` (a deliberate invalid-key test vector, not a key). No PEM `-----BEGIN … PRIVATE KEY-----`, no `sk-[A-Za-z0-9]{20,}`, no `AKIA[0-9A-Z]{16}`, no `AIza…`, no `xox[bpas]-` token in any added line. |
+| `.env` hygiene | **PASS** | `.env` (real testnet keys) is `.gitignore`d (`git check-ignore .env` → ignored), untracked (`git ls-files .env` → empty), and never committed (`git log --all -- .env` → empty). `.env.example` carries empty `=` placeholders; the `VITE_PRIVATE_KEY_INSURER=` and `VITE_FORCE_WALLET_PROMPT=` lines are empty placeholders. |
+
+### Hard gate 3 — Signing-key hygiene
+
+| Check | Result | Evidence (re-derived this run) |
+| --- | --- | --- |
+| No new key surface in the SPEC-0007 unit | **PASS** | The clause-typing unit touches **off-chain policy data only**: a grep of `policies.ts`/`policies.test.ts` for `Wallet`, `privateKey`, `import.meta.env`, `signer`, `getSigner`, `PRIVATE_KEY` → **none**. It instantiates no signer and reads no key, so it adds zero signing-key surface and cannot regress bundle hygiene. |
+| Wider-diff key handling sound | **PASS** | The SPEC-0008 wallet code in the wider diff keeps testnet keys out of the shipped bundle (dynamic `import.meta.env[name]` access; deploy build blanks `VITE_PRIVATE_KEY`; `scripts/deploy-static.sh:46-52` aborts on a `.env`, a PEM block, or an inlined key/mnemonic value in `web/dist` — guard re-confirmed present this run). Keys go to `localStorage` only; only the derived **address** (public) reaches the DOM; key inputs are `type="password"`, `autoComplete="off"`. The residual whole-`import.meta.env` inline is a **pre-existing `client.ts` (`origin/main`) liability**, not introduced/widened by SPEC-0007 (which has no key access) — tracked for the build-lane owner, not a finding against this unit. |
+
+### Build / test verification (this run)
+
+- `npx tsc -p tsconfig.json --noEmit` → clean (exit 0).
+- `node --import tsx --test src/data/policies.test.ts` → **25/25 pass**.
+- `node --import tsx --test "src/**/*.test.ts"` → **259/259 pass, 0 fail**.
+- Structural re-check (independent of the test file): R1 every clause typed = true; R2 every public clause has `check.kind`+`sourceUrl` = true; R10 plaque-psoriasis policy present with 2 public (incl. a `dosing` clause) + 2 attested; R12 bupropion×ADHD present with the ADHD indication `sourceUrl === OPENFDA_WELLBUTRIN_URL`; both source-URL constants resolve to the correct openFDA endpoints.
+
+### Notes (non-security, not findings)
+
+- SPEC-0007 §4 mentions an NCBI StatPearls `NBK470212` constant for the §3.7 *appeal* path. The unit ships only `OPENFDA_WELLBUTRIN_URL` (the deny-path source R12 pins); the appeal source is supplied at appeal-time, not stored as a policy constant. A public bibliographic URL carries no PHI/secret regardless — **no security bearing**; noted for the spec-conformance gate only.
+
+### Verdict
+
+**ALL THREE HARD GATES: PASS. ZERO security findings.** No PHI/clinical patient data on-chain
+or in fixtures (the new fixtures are spec-permitted synthetic clinical terminology); no secret
+committed (only public Anvil test vectors + a labelled out-of-range vector; `.env`
+gitignored/untracked/never-committed); signing-key hygiene intact (the SPEC-0007 unit has no
+key/signer/env access, and the wider-diff bundle inline is a pre-existing `client.ts` liability
+mitigated by the deploy guard). The clause-typing unit introduces an off-chain-only,
+PHI-safe-by-construction `Attestation` type and PHI-free synthetic example policies.
+
+---
+
+## 2026-06-06 (refresh 19) — SPEC-0007 clause-typed `PolicyClause` + `Attestation` + worked-example policies at HEAD `b65d77e` + working-tree (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-06
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — fully
+independent re-derivation of the hard gate over the *current reviewable state*: committed
+HEAD `b65d77e` plus the uncommitted working-tree edits to `src/data/policies.ts` and
+`src/data/policies.test.ts` (the SPEC-0007 clause-typing unit: `PolicyClause.type` /
+`PolicyClause.check`, the `Attestation` interface, the §3.6 plaque-psoriasis and §3.7
+bupropion×ADHD example policies, and the structural tests R1/R2/R5/R10/R12).
+**Base:** `origin/main` (note: `origin/master` does **not** exist on this remote — the
+diff base is `origin/main`; the task's "vs origin/main" wording is honored verbatim).
+**Branch:** `spec/0007-clause-impl`
+**Scope reviewed:** full `git diff origin/main` (24 files) re-swept against the three hard
+gates, with focused depth on the SPEC-0007 unit. Mental model: `/security-review`
+(PHI/clinical-data-on-chain, secrets-in-repo, signing-key hygiene).
+
+### Hard gate 1 — NO PHI / clinical data on-chain or in fixtures (synthetic only)
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| New `POLICY_LIBRARY` fixtures carry no PHI | **PASS** | The two added worked-example policies (`commercial-pa-adalimumab-plaque-psoriasis`, `commercial-pa-bupropion-adhd`) contain only synthetic clinical **terms** — drug names ("adalimumab", "bupropion"), indications ("plaque psoriasis", "ADHD"), generic dosing strings ("2 pens / 28 days", "450 mg / day"), and clause prose. No patient identifier. A regex sweep over the added lines of `src/data/policies.ts` for SSN `\d{3}-\d{2}-\d{4}`, `MRN`, `patient[_ -]?id`, `DOB`, email, and `(xxx)` phone shapes returns only the doc-comment string "NO patient identifiers, NO free clinical narrative, NO PHI" — no value match. SPEC-0007 §3.3 explicitly permits a clinical *term* (e.g. "plaque psoriasis") on-chain as a non-patient fact; these fixtures are exactly that. |
+| `Attestation` type is PHI-safe by construction | **PASS** | The off-chain `Attestation` interface is `{ clauseId: string; attested: boolean; evidenceUrl?: string }` (`policies.ts:75-84`) — a clause id + boolean + an *optional URL*. It carries no free-text clinical narrative and none of the 18 HIPAA Safe-Harbor identifiers (R5/R6). The on-chain story (R13) stores `{bytes32 clauseId, bool attested, bytes32 evidenceUriHash}` — the URL is hashed, content never committed; the off-chain type holds the URL only (not content), consistent with "stores only the URL or its keccak hash, never content." No PHI path is introduced (R11: no PHI-bearing clause type is built). |
+| Existing repo-wide NO-PHI invariant intact | **PASS** | `policies.test.ts` keeps the SPEC-0004 R1 guard (SSN/DOB/phone/email/MRN/patient-id regex sweep over `JSON.stringify(POLICY_LIBRARY)` and per-clause text) — it now also covers the two new policies (they ride in the same frozen array). 55 tests pass (`policies.test.ts` + `walletOnboarding.test.ts`). The agent-browser Scenario B NO-PHI sentinel assertions (`run.sh`) are unchanged. |
+
+### Hard gate 2 — No secrets
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| No secret in the SPEC-0007 unit | **PASS** | `policies.ts` / `policies.test.ts` contain only public openFDA endpoint URLs (`api.fda.gov/drug/label.json?...HUMIRA`, `...WELLBUTRIN`) and a synthetic `https://example.test/redacted-lab-2026.pdf` evidence URL in a type-shape test. No key, token, mnemonic, or credential. |
+| No secret across the full diff | **PASS** | The only 64-hex key values in any added line of `git diff origin/main` are the two **public-domain Anvil/Hardhat dev vectors** — acct #0 `0xac0974…ff80` and acct #1 `0x59c699…690d` — present only in test files (`web/src/walletOnboarding{,.dom}.test.ts`, `web/tests/agent-browser/run.sh`) and the `strict-review-findings.md` review log, plus the secp256k1 curve-order constant `0xFFFF…0364141` explicitly labelled "== n, out of range" (a deliberate invalid-key test vector, not a key). No PEM `-----BEGIN … PRIVATE KEY-----` block, no `sk-[A-Za-z0-9]{32,}`, no `AKIA[0-9A-Z]{16}`, no `AIza…`, no `xox[bpas]-` token in any added line. |
+| `.env` hygiene | **PASS** | `.env` (holds real testnet keys) is `.gitignore`d (`git check-ignore .env` → ignored), untracked (`git ls-files .env` → empty), and never committed (`git log --all -- .env` → empty). `.env.example` carries empty `=` placeholders + the public contract address only; the new `VITE_PRIVATE_KEY_INSURER=` and `VITE_FORCE_WALLET_PROMPT=` lines are empty placeholders. |
+
+### Hard gate 3 — Signing-key hygiene
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| No new key material in the SPEC-0007 unit | **PASS** | The clause-typing unit touches off-chain policy data only — it instantiates no signer and reads no key. |
+| Wallet-key handling in the wider diff is sound | **PASS** | `walletKeys.ts` / `App.tsx` / `WalletOnboarding.tsx` keep testnet keys out of the shipped bundle: (a) `getDevPrefill` uses **dynamic** `import.meta.env[name]` bracket access so Vite does not inline a named `VITE_PRIVATE_KEY` literal; App.tsx documents (and avoids) the direct named access; (b) the public deploy build sets `VITE_PRIVATE_KEY=""` so the modal opens empty; (c) `scripts/deploy-static.sh:38-52` is a hard publish guard that aborts the deploy if a `.env` file, a PEM private-key block, or an inlined `PRIVATE_KEY/privateKey/MNEMONIC` value appears in `web/dist/`. Keys are written to `localStorage` only (the modal copy says so) and never echoed into the DOM beyond the derived **address** (public). Key inputs are `type="password"`, `autoComplete="off"`, `spellCheck={false}`. `client.ts` now validates env keys with `isValidHexKey` before use (tightened from a bare length check). |
+
+### Build / test verification
+
+- `npx tsc --noEmit` → clean (exit 0).
+- `node --import tsx --test src/data/policies.test.ts` → 25/25 pass.
+- `node --import tsx --test src/data/policies.test.ts web/src/walletOnboarding.test.ts` → 55/55 pass.
+
+### Notes (non-security, not findings)
+
+- SPEC-0007 §4 deliverables mention an NCBI StatPearls `NBK470212` source-URL constant for
+  the §3.7 appeal path. The unit added only `OPENFDA_WELLBUTRIN_URL` (the deny-path source
+  the R12 test pins); the appeal source is supplied at appeal-time, not stored as a policy
+  constant. This is a spec-completeness nuance with **no security bearing** (a public
+  bibliographic URL would carry no PHI/secret regardless) — noted only for the spec-conformance
+  gate, not this one.
+
+### Verdict
+
+**ALL THREE HARD GATES: PASS. ZERO security findings.** No PHI/clinical patient data on-chain
+or in fixtures (the new fixtures are synthetic clinical terminology, spec-permitted under
+§3.3); no secret committed (only public Anvil test vectors + a labelled out-of-range vector;
+`.env` gitignored/untracked/never-committed); signing-key hygiene intact (bundle-inlining
+avoided, deploy guard present, keys localStorage-only, address-only DOM exposure). The
+SPEC-0007 clause-typing unit introduces an off-chain-only, PHI-safe-by-construction
+`Attestation` type and PHI-free synthetic example policies.
+
+---
+
 ## 2026-06-06 (refresh 18) — SPEC-0008 WalletOnboarding independent confirmation pass at HEAD `88ca97d` + working-tree fixes (security-review, TOTAL-STICKLER)
 
 **Date:** 2026-06-06

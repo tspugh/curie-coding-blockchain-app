@@ -232,6 +232,22 @@ test("SPEC-0007 R2: every public clause has a check object with kind, param, and
   }
 });
 
+// SPEC-0007 R2 (reverse half) — the `check` presence is a BICONDITIONAL: a
+// `check` object appears *iff* the clause is public. Pin the reverse direction
+// (attested clause => NO check) so the "present iff type === public" invariant in
+// policies.ts:14 is fully defended (forward half above; F1 strict-review fix).
+test("SPEC-0007 R2: no attested clause carries a check object (iff invariant)", () => {
+  for (const p of POLICY_LIBRARY) {
+    for (const c of p.clauses) {
+      if (c.type !== "attested") continue;
+      assert.ok(
+        c.check == null,
+        `${p.id}/${c.id}: attested clause must NOT carry a check object`,
+      );
+    }
+  }
+});
+
 // ---------------------------------------------------------------------------
 // SPEC-0007 R5 — Attestation interface shape is exported and usable
 // ---------------------------------------------------------------------------
