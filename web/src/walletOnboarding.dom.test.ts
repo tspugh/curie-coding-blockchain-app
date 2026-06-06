@@ -132,6 +132,7 @@ function invokeOnChange(input: Element, value: string): void {
   const propsKey = Object.keys(input).find((k) => k.startsWith("__reactProps"));
   if (!propsKey) throw new Error(`No __reactProps on element: ${input.tagName}`);
   const props = (input as unknown as Record<string, Record<string, unknown>>)[propsKey];
+  if (!props) throw new Error(`No props object on element: ${input.tagName}`);
   if (typeof props["onChange"] !== "function") {
     throw new Error("onChange not found on element");
   }

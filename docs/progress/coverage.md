@@ -15,7 +15,7 @@ All SPEC-0008 deliverables are implemented and committed on `spec/0008-wallet-on
 | Deliverable | File | Status |
 |---|---|---|
 | `WalletOnboarding` modal component | `web/src/components/WalletOnboarding.tsx` | DONE — backdrop + card, two key slots (provider required, insurer optional), show/hide toggle, live address derivation, invalid-key error, uses shared `deriveAddress` from `walletKeys.ts` (SPEC-0008 §3 DRY) |
-| `needsWallet` gate in `App.tsx` | `web/src/App.tsx` | DONE — `!hasUsableProviderKey()` state init + `showModal = needsWallet || forcePrompt`; `prefillProvider`/`prefillInsurer` from localStorage (not env, avoids Vite bundle-inlining, SPEC-0008 §6) |
+| `needsWallet` gate in `App.tsx` | `web/src/App.tsx` | DONE — `!hasUsableProviderKey()` state init + `showModal = needsWallet || forcePrompt`; `prefillProvider`/`prefillInsurer` from env via `getDevPrefill` (in `walletKeys.ts`, dynamic bracket access) when `forcePrompt=true`; from localStorage when `forcePrompt=false` (SPEC-0008 §6 — deploy build sets `VITE_PRIVATE_KEY=""` so no real key is bundled) |
 | `hasUsableProviderKey()` + `deriveAddress()` | `web/src/walletKeys.ts` | DONE — reads localStorage then env; injectable `opts` for unit tests; `deriveAddress` uses `computeAddress` from ethers |
 | `.modal-backdrop` / `.modal-card` CSS | `web/src/styles.css` | DONE — fixed-position overlay z-index 900/901, blur backdrop |
 | `VITE_FORCE_WALLET_PROMPT` documented | `.env.example` | DONE — section comment + blank value line |

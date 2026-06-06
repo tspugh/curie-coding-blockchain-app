@@ -83,6 +83,7 @@ import {
   isValidHexKey,
   hasUsableProviderKey,
   deriveAddress,
+  getDevPrefill,
   KEY_STORAGE_PREFIX,
 } from "./walletKeys.js";
 
@@ -481,4 +482,58 @@ test("NO-PHI: no SSN/DOB/phone/email patterns in this test file's synthetic fixt
     false,
     "email pattern",
   );
+});
+
+// ---------------------------------------------------------------------------
+// F2 (R6) — getDevPrefill actually reads the ENV key (the real force-prompt
+// pre-fill path), via the injectable env override. This exercises the env-read
+// logic App.tsx uses under VITE_FORCE_WALLET_PROMPT=1 — not a prop tautology.
+// ---------------------------------------------------------------------------
+
+test("F2 (R6): getDevPrefill returns the env key when present + valid", () => {
+  assert.equal(
+    getDevPrefill("VITE_PRIVATE_KEY", { VITE_PRIVATE_KEY: PROVIDER_KEY }),
+    PROVIDER_KEY,
+    "force-prompt pre-fill must read the provider key from env",
+  );
+  assert.equal(
+    getDevPrefill("VITE_PRIVATE_KEY_INSURER", { VITE_PRIVATE_KEY_INSURER: INSURER_KEY }),
+    INSURER_KEY,
+    "force-prompt pre-fill must read the insurer key from env",
+  );
+});
+
+test("F2 (R6): getDevPrefill returns '' for absent / empty / invalid env value", () => {
+  assert.equal(getDevPrefill("VITE_PRIVATE_KEY", {}), "", "absent → empty");
+  assert.equal(getDevPrefill("VITE_PRIVATE_KEY", { VITE_PRIVATE_KEY: "" }), "", "empty → empty");
+  assert.equal(
+    getDevPrefill("VITE_PRIVATE_KEY", { VITE_PRIVATE_KEY: SHORT_KEY }),
+    "",
+    "shape-invalid → empty (no partial key leaks into the field)",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// F4 (R3) — validity must mean DERIVATION succeeds, not regex shape. A
+// shape-valid but out-of-range key passes isValidHexKey yet must NOT derive
+// (and so must NOT be loadable / persisted — it would brick the app on reload).
+// ---------------------------------------------------------------------------
+
+const ZERO_KEY = "0x" + "0".repeat(64); // value 0 — below the valid range 1..n-1
+const CURVE_ORDER_KEY =
+  "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141"; // == n, out of range
+
+test("F4 (R3): an out-of-range key passes isValidHexKey but FAILS derivation", () => {
+  for (const k of [ZERO_KEY, CURVE_ORDER_KEY]) {
+    assert.equal(isValidHexKey(k), true, `${k.slice(0, 10)}… is shape-valid (regex)`);
+    assert.throws(
+      () => deriveAddress(k),
+      "out-of-range key must throw on derivation — regex shape alone is insufficient (F4)",
+    );
+  }
+});
+
+test("F4 (R3): a well-formed in-range key DOES derive (control)", () => {
+  assert.equal(typeof deriveAddress(PROVIDER_KEY), "string");
+  assert.match(deriveAddress(PROVIDER_KEY), /^0x[0-9a-fA-F]{40}$/);
 });

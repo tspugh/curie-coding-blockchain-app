@@ -136,8 +136,12 @@ export function WalletOnboarding({
   const [insurerKey, setInsurerKey] = useState(prefillInsurer);
   const [error, setError] = useState<string | null>(null);
 
-  const providerValid = isValidHexKey(providerKey);
-  const insurerValid = insurerKey === "" || isValidHexKey(insurerKey);
+  // SPEC-0008 R3 (amended): validity == successful derivation (computeAddress),
+  // not regex shape alone. A shape-valid but out-of-range key (e.g. 0x00…00)
+  // passes isValidHexKey but throws in computeAddress — safeDerive catches that
+  // and returns null, so canLoad stays false for such keys.
+  const providerValid = safeDerive(providerKey) !== null;
+  const insurerValid = insurerKey === "" || safeDerive(insurerKey) !== null;
   const canLoad = providerValid && insurerValid;
 
   const handleLoad = useCallback(() => {

@@ -1,3 +1,85 @@
+## 2026-06-06 (refresh 18) — SPEC-0008 WalletOnboarding independent confirmation pass at HEAD `88ca97d` + working-tree fixes (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-06
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — fully
+independent re-run of the hard gate over the *current reviewable state*: committed HEAD
+`88ca97d` plus the uncommitted working-tree edits to `web/src/App.tsx`,
+`web/src/walletKeys.ts`, `web/src/components/WalletOnboarding.tsx`,
+`docs/progress/coverage.md`, and the untracked `web/src/spec0008-strict-gate.test.ts`.
+Re-derived every gate result from source rather than trusting refresh-17.
+**Base:** `origin/main` (note: `origin/master` does **not** exist on this remote — the
+diff base is `origin/main`).
+**Branch:** `spec/0008-wallet-onboarding`
+
+**Verdict: PASS (zero security findings).**
+
+### Hard gate results (re-derived this run)
+
+| Gate | Result | Evidence (verified this run) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | **PASS** | SPEC-0008 touches only wallet key material + UI plumbing; nothing is written on-chain. A PHI scan (SSN `\d{3}-\d{2}-\d{4}`, `DOB`, `\d{4}-\d{2}-\d{2}`, MRN, `patient name`, `medical record`, `diagnosis`) over the SPEC-0008 source + the three test files returned **zero** matches outside explicit NO-PHI guard comments and the NO-PHI regression tests themselves. |
+| No secrets (committed) | **PASS** | The only 64-hex key values in `git diff origin/main...HEAD` (added lines) and in the untracked gate test are the two **public-domain Anvil/Hardhat dev vectors** — acct #0 `0xac0974…ff80` and acct #1 `0x59c699…690d` — zero-funded, PHI-free, present only in test files. No PEM block (`BEGIN … PRIVATE KEY`), no `sk-[A-Za-z0-9]{32,}`, no `AKIA[0-9A-Z]{16}`, no `xox[bpas]-` token in any added line. `.env` (real testnet keys) is `.gitignore`d (line 17) and untracked (`git status` shows no `.env`; `git log --all -- .env` is empty). `.env.example` carries empty `=` placeholders only. |
+| Signing-key hygiene (no key in the built bundle) | **PASS** | `App.tsx` contains **no executable** `import.meta.env.VITE_PRIVATE_KEY` read — the only two occurrences of that string are inside comments (lines 54, 81); the F8-1 source-text test (which strips comments) passes. Prefill is delegated to `getDevPrefill(name)` in `walletKeys.ts`, which uses **dynamic bracket access** `import.meta.env[name]` (same inline footprint as the pre-existing `keyOverride` already on `origin/main`) and returns `""` for any non-valid-hex value. Deploy build sets `VITE_PRIVATE_KEY=""` ⇒ `getDevPrefill` returns `""` ⇒ no key value in the shipped bundle; `deploy-static.sh` secret-guard remains the backstop. |
+
+### Test substantiation (this run)
+
+- `node --import tsx --test web/src/spec0008-strict-gate.test.ts` → **9/9 PASS** (incl. `GATE NO-PHI`).
+- `node --import tsx --test "src/**/*.test.ts" "web/src/**/*.test.ts"` → **401/401 PASS, 0 fail**.
+- `npm run typecheck` → PASS.
+
+### Disposition
+
+Zero security findings. The whole-`import.meta.env`-inline liability remains **owned by
+`client.ts` on `origin/main`**, not introduced by SPEC-0008; `getDevPrefill` does not widen
+it. This confirmation pass reproduces refresh-17 independently. Same standing follow-up for
+the build-lane owner (provably key-free hosted artifact by construction) carries forward.
+
+---
+
+## 2026-06-06 (refresh 17) — SPEC-0008 WalletOnboarding re-derived at HEAD `88ca97d` + working-tree F1/F4 fixes (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-06
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent
+re-derivation of the hard gate over the *current* reviewable state: committed HEAD
+`88ca97d` plus the uncommitted working-tree changes to `web/src/App.tsx`,
+`web/src/walletKeys.ts`, `web/src/components/WalletOnboarding.tsx`, and the untracked
+`web/src/spec0008-strict-gate.test.ts`. Re-ran the scan from scratch rather than trusting
+refresh-16; the working-tree diff since `1b5d384` adds `getDevPrefill` (a new env-key read
+site), so signing-key hygiene was re-checked specifically for that new access.
+**Base:** `origin/main`
+**Branch:** `spec/0008-wallet-onboarding`
+
+**Verdict: PASS (zero security findings).**
+
+> Scope note: this is the **security** gate (PHI / secrets / signing-key hygiene). The
+> separate **strict** gate (`strict-review-findings.md`, Tick-5) is **FAIL** with three
+> open quality/scope findings (F3 lying App.tsx comment, F5 SPEC-0006 test scope creep,
+> F6 coverage.md overclaim). None of those three is a security defect — they do not put
+> PHI or a secret anywhere, and they do not change the bundle's key footprint. The
+> security gate and the strict gate are intentionally independent; this entry records the
+> security gate only.
+
+### Hard gate results (re-derived at working-tree HEAD)
+
+| Gate | Result | Evidence (verified this run) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | **PASS** | SPEC-0008 touches only wallet key material + UI plumbing and writes nothing on-chain. A PHI scan (SSN `\d{3}-\d{2}-\d{4}`, DOB, MRN, `patient (name\|dob\|ssn)`, phone, email) over **every added diff line** and the untracked `spec0008-strict-gate.test.ts` returned **zero** matches outside explicit NO-PHI guard comments/tests (`WalletOnboarding.tsx:14`, `walletKeys.ts:37`, the `NO-PHI` regression tests in all three test files). |
+| No secrets (committed) | **PASS** | The only 64-hex key *values* anywhere in the diff or untracked files are the two **public-domain Anvil/Hardhat dev vectors** — acct #0 `0xac0974…ff80` and acct #1 `0x59c699…690d` — in `walletOnboarding.test.ts`, `walletOnboarding.dom.test.ts`, `spec0008-strict-gate.test.ts`, and `web/tests/agent-browser/run.sh` (synthetic, zero-funded, PHI-free). No PEM block, `sk-`/`AKIA`/`xox*` token, or mnemonic in any added line. `.env` (holds real testnet keys) is `.gitignore`d and **untracked** (`git check-ignore .env` → ignored; `git ls-files .env` → empty). `.env.example` carries empty `=` placeholders only; the `VITE_FORCE_WALLET_PROMPT=` line is an empty placeholder. |
+| Signing-key hygiene (incl. no key in the built bundle) | **PASS** | The new `getDevPrefill(name)` in `walletKeys.ts` reads `import.meta.env[name]` via **dynamic bracket access** — the *same* inline footprint as the pre-existing `keyOverride` (`client.ts:259`, `const fromEnv = import.meta.env[envName]`) that already inlines the whole `import.meta.env` object on `origin/main`. **SPEC-0008 adds no new *static* `import.meta.env.VITE_PRIVATE_KEY` read site**: `App.tsx` deliberately delegates to `getDevPrefill` (lines 85–86) rather than referencing the named key directly, and only reads `VITE_FORCE_WALLET_PROMPT` statically (line 62). The public deploy build sets `VITE_PRIVATE_KEY=""`, so `getDevPrefill` returns `""` and no key value reaches the shipped bundle. The hosted lane is guarded: `scripts/deploy-static.sh` (lines 45–52) aborts on a `.env` in `dist`, a PEM block, or an inlined `(PRIVATE_KEY\|privateKey\|MNEMONIC\|mnemonic)…0x[a-fA-F0-9]{40,}` value. `web/dist` and `web/dist-nokey` are both `.gitignore`d, so a key-bearing local build cannot be committed. |
+
+### Disposition
+
+The whole-`import.meta.env`-inline liability is **owned by `client.ts` on `origin/main`,
+not by SPEC-0008** — both keys already inline there — and `getDevPrefill` does not widen it
+(dynamic bracket access, no new static named read). It remains mitigated by the
+`deploy-static.sh` guard + `.gitignore` rules. **Not a finding against this unit.** Standing
+follow-up (for the `client.ts`/build-lane owner, not SPEC-0008): build `web:build` with
+`VITE_PRIVATE_KEY*` explicitly blank (e.g. a committed `.env.production`) and/or replace the
+dynamic `import.meta.env[envName]` with two static reads, so the hosted artifact is provably
+key-free by construction rather than only behind the deploy grep.
+
+---
+
 ## 2026-06-06 (refresh 16) — SPEC-0008 WalletOnboarding startup modal (R1–R10), re-derived at HEAD `1b5d384` (security-review, TOTAL-STICKLER)
 
 **Date:** 2026-06-06
