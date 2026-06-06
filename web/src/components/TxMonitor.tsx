@@ -40,15 +40,15 @@ const OPEN_KEY = "curie:txMonitorOpen";
 
 export function TxMonitor(): JSX.Element | null {
   const [snap, setSnap] = useState<TxLogState>(() => getTxLogSnapshot());
-  // Persist the open/minimized choice so the panel stays where the user left
-  // it across reloads and route changes (it used to default open every mount,
-  // re-popping over the UI after the user minimized it). Default open on first
-  // visit; honor "closed" once chosen.
+  // Persist the open/minimized choice so the panel stays where the user left it
+  // across reloads and route changes. Default MINIMIZED so the floating panel
+  // doesn't cover page content (e.g. the policy-attach cards) on first visit;
+  // the user expands it on demand and that choice sticks.
   const [open, setOpen] = useState<boolean>(() => {
     try {
-      return localStorage.getItem(OPEN_KEY) !== "0";
+      return localStorage.getItem(OPEN_KEY) === "1";
     } catch {
-      return true;
+      return false;
     }
   });
 
@@ -84,14 +84,20 @@ export function TxMonitor(): JSX.Element | null {
   return (
     <aside className={`tx-monitor ${open ? "open" : "closed"}`} data-testid="tx-monitor">
       <header onClick={toggleOpen}>
-        <span>Tx monitor</span>
+        <span>Tx monitor {open ? "▾" : "▸"}</span>
         <span className="totals">
-          <span data-testid="tx-monitor-total-gas">
-            gas {formatStt(snap.totalGasCostWei)} STT
-          </span>
-          <span data-testid="tx-monitor-total-value">
-            value {formatStt(snap.totalValueWei, 4)} STT
-          </span>
+          {/* Collapsed → compact chip (just the count) so the minimized panel
+              is a small corner pill, not a full-width bar over the content. */}
+          {open && (
+            <>
+              <span data-testid="tx-monitor-total-gas">
+                gas {formatStt(snap.totalGasCostWei)} STT
+              </span>
+              <span data-testid="tx-monitor-total-value">
+                value {formatStt(snap.totalValueWei, 4)} STT
+              </span>
+            </>
+          )}
           <span className="count" data-testid="tx-monitor-count">
             {snap.entries.length} tx
           </span>

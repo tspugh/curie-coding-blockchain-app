@@ -11,6 +11,7 @@ import {
   PayerLine,
   stageNameFor,
   policiesForLine,
+  getCuratedPolicy,
   type CoverageEvent,
   type CuratedPolicy,
   type NegotiationView,
@@ -334,6 +335,16 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   }
 
   const { negotiation: n, state } = view;
+  // Policies offered at engage: this line's curated policies PLUS the demo
+  // non-compliant policy (the R23 PolicyInvalidated trigger). The bad policy is
+  // curated only on the Part D line, so Commercial/Medicaid requests would
+  // otherwise have no way to demo a policy rejection — always offer it.
+  const policyOptions = (() => {
+    const base = policiesForLine(n.payerLine);
+    if (base.some((pol) => pol.clauses.some((c) => c.voids))) return base;
+    const bad = getCuratedPolicy("demo-bad-adalimumab-noncompliant");
+    return bad ? [...base, bad] : base;
+  })();
   const partyId = activeProfile.partyId;
   const isProvider = partyId === n.providerId;
   const isInsurer = partyId === n.insurerId;
@@ -542,7 +553,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
             <div className="action">
               <p className="action-label">Choose a policy to attach:</p>
               <div className="policy-cards">
-                {policiesForLine(n.payerLine).map((policy) => {
+                {policyOptions.map((policy) => {
                   // SPEC-0005 R14: render one card per curated policy that
                   // targets this negotiation's payer line. Preserve the legacy
                   // testids on the corresponding canonical entries (the
@@ -571,6 +582,13 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                         const body = renderCuratedPolicyText(policy);
                         setPolicyText(body);
                         setPolicyChoice(policy.id);
+                        // Reveal the policy's actual text in the composer boxes
+                        // (one clause per line) so the insurer can SEE — and
+                        // tweak — what they're attaching, instead of an opaque
+                        // hash. Editing a box switches the body to the custom
+                        // build (buildCustomPolicyText via the box onChange).
+                        setCustomName(policy.name);
+                        setCustomClauses(policy.clauses.map((c) => c.text).join("\n"));
                         if (isBad) {
                           // Pre-steer the simulated AI: bad policy → AI
                           // asks for more evidence (R23 surfaces the
@@ -604,10 +622,13 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                   <p>Compose your own policy: name + 1..N clauses, hashed and committed off-chain.</p>
                 </button>
               </div>
-              {/* SPEC-0005 R15: composer is visible when "custom" is selected;
-                  edits stay in sync with policyText (and therefore the R16
-                  hash preview below). */}
-              {policyChoice === "custom" && (
+              {/* SPEC-0005 R15: composer is visible for ANY selected policy —
+                  for a curated pick it's pre-populated with that policy's name +
+                  clauses so the insurer can read/tweak the exact text being
+                  attached (not just an opaque hash); for "custom" it starts from
+                  whatever the user types. Edits stay in sync with policyText
+                  (and therefore the R16 hash preview below). */}
+              {policyChoice !== null && (
                 <div className="custom-policy-composer" data-testid="custom-policy-composer">
                   <label>
                     Policy name
@@ -656,7 +677,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                     : `Custom composition with ${lines.length} clause${lines.length === 1 ? "" : "s"}.`;
                   clauseCount = lines.length;
                 } else {
-                  const chosen = policiesForLine(n.payerLine).find(
+                  const chosen = policyOptions.find(
                     (p) => p.id === policyChoice,
                   );
                   if (!chosen) return null;

@@ -21,13 +21,15 @@ export interface EvidenceEntry {
  * Lecanemab, Tirzepatide, Dupilumab.
  */
 export const DRUG_EVIDENCE_MAP: Readonly<Record<string, EvidenceEntry>> = {
-  // Evidence URLs MUST be scraper-friendly static HTML for the Somnia LLM Parse
-  // Website agent (verified 2026-06-04). Wikipedia drug pages are used: every one
-  // returns static HTML with the drug's FDA-approval + indication content in the
-  // raw markup (free-probe verified), and the Adalimumab page is PROVEN to scrape
-  // successfully on-chain (testnet requestId 4435826 → Success). The prior
-  // MedlinePlus URLs were inconsistent (ustekinumab/dupilumab render the drug
-  // content via JS → empty scrape; the Lecanemab FDA PDF was a 404 + non-HTML).
+  // Evidence URLs are the AUTHORITATIVE FDA drug label, served by the openFDA API
+  // (api.fda.gov/drug/label.json). This is the right source for a coverage decision:
+  // it is the FDA's own structured label (not a tertiary source like Wikipedia), and
+  // it is scraper-friendly for the Somnia LLM Parse Website agent — a static
+  // `application/json` response with `indications_and_usage` (the FDA-approved
+  // indications) near the top of the body (all six free-probe verified 2026-06-06).
+  // `&limit=1` pins a single label. NOTE: the FDA URLs have NOT yet been re-verified
+  // on-chain (the prior Wikipedia set was; testnet requestId 4435826 → Success) — a
+  // scrape-verification run is owed before relying on them for a live demo.
   // promptHints state a concrete FDA-approved indication + an explicit decision
   // rubric so the medical-necessity arbiter (LLM Inference) can return a clean
   // verdict from the scraped evidence — `needs_more_info` is confined to "the
@@ -35,32 +37,32 @@ export const DRUG_EVIDENCE_MAP: Readonly<Record<string, EvidenceEntry>> = {
   // Title-Case words (the contract's PHI name-pattern guard `[A-Z][a-z]+ [A-Z]`)
   // and contains no patient identifiers (synthetic indication only).
   adalimumab: {
-    evidenceUrl: "https://en.wikipedia.org/wiki/Adalimumab",
+    evidenceUrl: "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA&limit=1",
     promptHint:
       "A patient with moderate-to-severe plaque psoriasis and inadequate response to topical therapy requests adalimumab (Humira). Based on the public drug evidence provided, reply approve if adalimumab is FDA-approved for this indication and the request is medically necessary; reply deny if it is not an approved use; reply needs_more_info only if the evidence does not establish FDA approval.",
   },
   semaglutide: {
-    evidenceUrl: "https://en.wikipedia.org/wiki/Semaglutide",
+    evidenceUrl: "https://api.fda.gov/drug/label.json?search=openfda.brand_name:OZEMPIC&limit=1",
     promptHint:
       "A patient with type 2 diabetes and established cardiovascular disease requests semaglutide (Ozempic). Based on the public drug evidence provided, reply approve if semaglutide is FDA-approved for this indication and the request is medically necessary; reply deny if it is not an approved use; reply needs_more_info only if the evidence does not establish FDA approval.",
   },
   ustekinumab: {
-    evidenceUrl: "https://en.wikipedia.org/wiki/Ustekinumab",
+    evidenceUrl: "https://api.fda.gov/drug/label.json?search=openfda.brand_name:STELARA&limit=1",
     promptHint:
       "A patient with moderately-to-severely active Crohn's disease after anti-tnf failure requests ustekinumab (Stelara). Based on the public drug evidence provided, reply approve if ustekinumab is FDA-approved for this indication and the request is medically necessary; reply deny if it is not an approved use; reply needs_more_info only if the evidence does not establish FDA approval.",
   },
   lecanemab: {
-    evidenceUrl: "https://en.wikipedia.org/wiki/Lecanemab",
+    evidenceUrl: "https://api.fda.gov/drug/label.json?search=openfda.brand_name:LEQEMBI&limit=1",
     promptHint:
       "A patient with early Alzheimer's disease and biomarker-confirmed amyloid pathology requests lecanemab (Leqembi). Based on the public drug evidence provided, reply approve if lecanemab is FDA-approved for this indication and the request is medically necessary; reply deny if it is not an approved use; reply needs_more_info only if the evidence does not establish FDA approval.",
   },
   tirzepatide: {
-    evidenceUrl: "https://en.wikipedia.org/wiki/Tirzepatide",
+    evidenceUrl: "https://api.fda.gov/drug/label.json?search=openfda.brand_name:MOUNJARO&limit=1",
     promptHint:
       "A patient with type 2 diabetes and inadequate glycaemic control on metformin requests tirzepatide (Mounjaro). Based on the public drug evidence provided, reply approve if tirzepatide is FDA-approved for this indication and the request is medically necessary; reply deny if it is not an approved use; reply needs_more_info only if the evidence does not establish FDA approval.",
   },
   dupilumab: {
-    evidenceUrl: "https://en.wikipedia.org/wiki/Dupilumab",
+    evidenceUrl: "https://api.fda.gov/drug/label.json?search=openfda.brand_name:DUPIXENT&limit=1",
     promptHint:
       "A patient with severe eosinophilic asthma uncontrolled on high-dose inhaled corticosteroids requests dupilumab (Dupixent). Based on the public drug evidence provided, reply approve if dupilumab is FDA-approved for this indication and the request is medically necessary; reply deny if it is not an approved use; reply needs_more_info only if the evidence does not establish FDA approval.",
   },
