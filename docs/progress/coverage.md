@@ -2,6 +2,185 @@
 
 ---
 
+## 2026-06-06 (refresh 27) — gate check: SPEC-0007 clause-typing unit confirmed complete; 402-test src+web/src + 168-test hardhat; OVERALL PASS
+
+**Date:** 2026-06-06 · **Branch:** `spec/0007-clause-impl`
+**Tool (src/ + web/src/):** `node --import tsx --test --experimental-test-coverage "src/**/*.test.ts" "web/src/**/*.test.ts"` (Node v22) — 402/402 PASS
+**Tool (contracts/):** `npx hardhat coverage` (solidity-coverage v0.8.17) — last stable run (168/168 PASS, from refresh 23)
+
+### Unit: SPEC-0007 clause-typing — gate-check summary
+
+All deliverables for SPEC-0007 R1/R2/R5/R10/R12 are implemented and confirmed on this run.
+
+| Deliverable | File | Status |
+|---|---|---|
+| `PolicyClause.type: ClauseType` (R1) | `src/data/policies.ts` | DONE — `"public" \| "attested"` on every clause; exported `ClauseType` alias |
+| `PolicyClause.check?: { kind, param, sourceUrl }` (R2) | `src/data/policies.ts` | DONE — present on all public clauses; exported `PublicCheckKind = "indication" \| "dosing"` |
+| `Attestation` interface (R5) | `src/data/policies.ts` | DONE — exported with `clauseId: string`, `attested: boolean`, `evidenceUrl?: string` |
+| Source-URL constants | `src/data/policies.ts` | DONE — `OPENFDA_HUMIRA_URL` (§3.5/§3.6) and `OPENFDA_WELLBUTRIN_URL` (§3.7) |
+| §3.6 plaque-psoriasis Commercial PA policy (R10) | `src/data/policies.ts` | DONE — id `commercial-pa-adalimumab-plaque-psoriasis`; 2 public (indication PP-COM-01 + dosing PP-COM-02) + 2 attested (step-therapy PP-COM-03 + TB PP-COM-04) |
+| §3.7 bupropion×ADHD off-label policy (R12) | `src/data/policies.ts` | DONE — id `commercial-pa-bupropion-adhd`; 2 public (ADHD-BUP-01 with OPENFDA_WELLBUTRIN_URL + ADHD-BUP-02 dosing) + 1 attested (ADHD-BUP-03) |
+| Test pins R1/R2/R5/R10/R12 | `src/data/policies.test.ts` | DONE — 14 SPEC-0007 tests pinning every structural requirement; all 25 policies tests pass |
+
+`POLICY_LIBRARY` holds 6 curated policies (4 original + 2 SPEC-0007 worked examples).
+
+### Coverage results (402 tests, fresh live run)
+
+#### src/ + web/src/ (Node built-in --experimental-test-coverage; tested files only)
+
+```
+# file                                               | line % | branch % | funcs % | uncovered lines
+# -------------------------------------------------------------------------------------------------------------------
+# src                                                |        |          |         |
+#  config                                            |        |          |         |
+#   networks.test.ts                                 | 100.00 |   100.00 |  100.00 |
+#   networks.ts                                      | 100.00 |   100.00 |  100.00 |
+#  content                                           |        |          |         |
+#   content.test.ts                                  | 100.00 |   100.00 |  100.00 |
+#   content.ts                                       | 100.00 |   100.00 |  100.00 |
+#  contract                                          |        |          |         |
+#   abi.ts                                           | 100.00 |   100.00 |  100.00 |
+#   real.ts                                          |  70.84 |    80.00 |   75.00 | 32-257
+#   simulated.agentphase.test.ts                     | 100.00 |   100.00 |  100.00 |
+#   simulated.auth.test.ts                           | 100.00 |   100.00 |  100.00 |
+#   simulated.coverage.test.ts                       | 100.00 |   100.00 |  100.00 |
+#   simulated.transitions.test.ts                    |  99.87 |    98.55 |  100.00 | 478
+#   simulated.ts                                     |  98.59 |    84.62 |   83.64 | 123-124 203-207 216-220 238 248
+#  data                                              |        |          |         |
+#   policies.test.ts                                 | 100.00 |    98.73 |  100.00 |
+#   policies.ts                                      | 100.00 |   100.00 |  100.00 |
+#  integrations                                      |        |          |         |
+#   cds-hooks                                        |        |          |         |
+#    fixture.test.ts                                 | 100.00 |    89.47 |  100.00 |
+#    fixture.ts                                      | 100.00 |   100.00 |  100.00 |
+#    index.ts                                        | 100.00 |   100.00 |  100.00 |
+#    mapper.test.ts                                  | 100.00 |   100.00 |  100.00 |
+#    mapper.ts                                       | 100.00 |    95.65 |  100.00 |
+#  profiles                                          |        |          |         |
+#   profileRegistry.test.ts                          | 100.00 |   100.00 |  100.00 |
+#   profiles.test.ts                                 | 100.00 |    87.50 |  100.00 |
+#   profiles.ts                                      | 100.00 |   100.00 |  100.00 |
+#  protocol                                          |        |          |         |
+#   ladders.test.ts                                  | 100.00 |   100.00 |  100.00 |
+#   ladders.ts                                       | 100.00 |   100.00 |  100.00 |
+#   packet.test.ts                                   | 100.00 |   100.00 |  100.00 |
+#   packet.ts                                        | 100.00 |   100.00 |  100.00 |
+#   revertReasonMap.test.ts                          | 100.00 |   100.00 |  100.00 |
+#   revertReasonMap.ts                               | 100.00 |   100.00 |  100.00 |
+#   scenarioFixtures.test-helpers.ts                 | 100.00 |    87.50 |  100.00 |
+#   scenarios.commercial-policy-void.test.ts         | 100.00 |    84.21 |  100.00 |
+#   scenarios.medicaid-denied-then-appealed.test.ts  | 100.00 |    84.21 |  100.00 |
+#   scenarios.partd-approvable.test.ts               | 100.00 |   100.00 |  100.00 |
+#   somniaInterfaceDrift.test.ts                     | 100.00 |   100.00 |  100.00 |
+#  types                                             |        |          |         |
+#   coverage.types.ts                                | 100.00 |   100.00 |  100.00 |
+#  users                                             |        |          |         |
+#   userStore.test.ts                                | 100.00 |   100.00 |  100.00 |
+#   userStore.ts                                     | 100.00 |    93.10 |   90.00 |
+#  wallet                                            |        |          |         |
+#   wallet.test.ts                                   | 100.00 |    96.67 |  100.00 |
+#   wallet.ts                                        |  89.04 |    84.00 |   77.78 | 12-19 30-36 52
+# web                                                |        |          |         |
+#  src                                               |        |          |         |
+#   components                                       |        |          |         |
+#    WalletOnboarding.tsx                            |  99.15 |    86.67 |  100.00 | 103-104
+#   drugEvidenceMap.test.ts                          | 100.00 |   100.00 |  100.00 |
+#   drugEvidenceMap.ts                               | 100.00 |   100.00 |  100.00 |
+#   livenessDebounce.test.ts                         |  99.69 |    90.91 |   78.38 | 77
+#   livenessDebounce.ts                              | 100.00 |    84.62 |  100.00 |
+#   livenessGate.test.ts                             | 100.00 |   100.00 |  100.00 |
+#   livenessGate.ts                                  | 100.00 |   100.00 |  100.00 |
+#   probeHandler.test.ts                             | 100.00 |    86.96 |  100.00 |
+#   probeHandler.ts                                  | 100.00 |    87.50 |   66.67 |
+#   urlLiveness.test.ts                              | 100.00 |    93.75 |   93.55 |
+#   urlLiveness.ts                                   | 100.00 |    88.46 |  100.00 |
+#   views                                            |        |          |         |
+#    Create.liveness.test.ts                         |  98.82 |    85.71 |   94.44 | 63-64 91 135
+#   walletKeys.ts                                    |  94.74 |    82.61 |  100.00 | 13-14 20-24 32
+#   walletOnboarding.dom.test.ts                     |  97.66 |    81.97 |   80.33 | 25 349-358 378-385 413-415
+#   walletOnboarding.test.ts                         | 100.00 |    97.22 |  100.00 |
+# -------------------------------------------------------------------------------------------------------------------
+# all files                                          |  97.71 |    93.40 |   95.49 |
+# -------------------------------------------------------------------------------------------------------------------
+```
+
+**Aggregate line: 97.71% PASS · Aggregate branch: 93.40% PASS** (threshold: >= 85% both)
+
+#### Per-file analysis
+
+**`src/contract/real.ts` — line 70.84%, branch 80.00% [below 85% on both metrics individually]**
+
+`RealBackend` class body (lines 32–257: constructor, all write/event methods) requires a live Somnia JSON-RPC endpoint. Only `decodeNegotiationRaw` is exercised by unit tests. Known-exempt; tree aggregate 93.40% PASS.
+
+**`src/contract/simulated.ts` — branch 84.62% [0.38 pp below threshold individually]**
+
+Uncovered branches at lines 123–124, 203–207, 216–220, 238, 248 are `??`-operator V8 artifact sides on optional fields and one-shot test-helper mutables (`setNext*` functions). No logic gaps. Tree aggregate 93.40% PASS.
+
+**`src/wallet/wallet.ts` — branch 84.00% [below 85% branch individually]**
+
+Lines 12–19, 30–36, 52 are `RealWallet` live-provider constructor paths requiring a live Somnia JSON-RPC endpoint. Known-exempt. Tree aggregate 93.40% PASS.
+
+**`web/src/components/WalletOnboarding.tsx` — branch 86.67% [PASS]**
+
+Lines 103–104 (`handleChange` useCallback) uncovered by Node V8 instrumentation of React hook bodies. All six SPEC-0008 R10 scenarios verified at component-output level. Branch 86.67% PASS.
+
+**`web/src/livenessDebounce.ts` — branch 84.62% [0.38 pp below threshold individually]**
+
+`??` right-hand defaults for `debounceMs` and `probe` options. All unit tests supply explicit values for determinism; defaults exercised only from `Create.tsx` (DOM-bound). Tree aggregate 93.40% PASS.
+
+**`web/src/walletKeys.ts` — line 94.74%, branch 82.61% [below 85% branch individually]**
+
+Lines 13–14, 20–24, 32 are real-browser paths (`window.localStorage.getItem`, `import.meta.env`). Exercisable only with a real DOM/Vite context; all unit tests use the injectable `opts` path. Tree aggregate 93.40% PASS.
+
+**`src/data/policies.ts` — line 100%, branch 100% [PASS]**
+
+All 6 policies and all clauses exercised. Both SPEC-0007 worked-example policies (`commercial-pa-adalimumab-plaque-psoriasis` §3.6 and `commercial-pa-bupropion-adhd` §3.7) and the `Attestation` interface are fully covered by the 14 SPEC-0007 test pins.
+
+#### contracts/ (solidity-coverage v0.8.17, from refresh 23 last stable run)
+
+```
+--------------------------|----------|----------|----------|----------|----------------|
+File                      |  % Stmts | % Branch |  % Funcs |  % Lines |Uncovered Lines |
+--------------------------|----------|----------|----------|----------|----------------|
+ contracts/               |      100 |    90.09 |      100 |      100 |                |
+  CoverageNegotiation.sol |      100 |    90.09 |      100 |      100 |                |
+  ISomniaAgent.sol        |      100 |      100 |      100 |      100 |                |
+ contracts/mocks/         |      100 |      100 |      100 |      100 |                |
+  MockAgentPlatform.sol   |      100 |      100 |      100 |      100 |                |
+  RevertingReceiver.sol   |      100 |      100 |      100 |      100 |                |
+--------------------------|----------|----------|----------|----------|----------------|
+All files                 |      100 |    90.17 |      100 |      100 |                |
+--------------------------|----------|----------|----------|----------|----------------|
+```
+
+**Line: 100% PASS · Branch: 90.17% PASS** (threshold: >= 85% both)
+
+Remaining ~9.83% uncovered branch sides are defensive `require(ok, ...)` false-sides on native ETH-transfer `.call{value}` return values for structurally unreachable paths. All critical transfer-failure paths exercised via `RevertingReceiver`.
+
+### Gate result
+
+| Tree | Line % | Branch % | Gate |
+|---|---|---|---|
+| `src/` + `web/src/` aggregate | 97.71% | 93.40% | PASS |
+| `contracts/` | 100.00% | 90.17% | PASS |
+| **Overall** | | | **PASS** |
+
+**Under-covered files (below 85% on either metric individually):**
+
+| File | Line % | Branch % | Reason |
+|---|---|---|---|
+| `src/contract/real.ts` | **70.84** | **80.00** | `RealBackend` class requires live chain; only `decodeNegotiationRaw` exercised by unit tests. Known-exempt; tree aggregate 93.40% PASS |
+| `src/contract/simulated.ts` | 98.59 | **84.62** | 0.38 pp below threshold; `??`-operator V8 artifact sides + one-shot test-helper mutables. Not logic gaps; tree aggregate 93.40% PASS |
+| `src/wallet/wallet.ts` | 89.04 | **84.00** | `RealWallet` live-provider constructor paths; known-exempt; tree aggregate 93.40% PASS |
+| `web/src/livenessDebounce.ts` | 100.00 | **84.62** | `??` right-hand defaults for `debounceMs` and `probe`; defensive infrastructure; tree aggregate 93.40% PASS |
+| `web/src/walletKeys.ts` | 94.74 | **82.61** | Real-browser paths (localStorage/import.meta.env) not exercisable in Node unit tests; injectable `opts` path fully covered; tree aggregate 93.40% PASS |
+
+All under-threshold files are below 85% on live-infra-gated, browser-only-accessible, or defensive-`??`-fallback paths only. No logic gaps. Tree aggregate (97.71% line, 93.40% branch) passes.
+
+**Unit gate: PASS** — 402 src+web/src tests pass. SPEC-0007 clause-typing unit fully confirmed: `PolicyClause.type` (R1), `PolicyClause.check` (R2), `Attestation` interface (R5), plaque-psoriasis §3.6 Commercial PA policy (R10), bupropion×ADHD §3.7 off-label policy (R12). `POLICY_LIBRARY` holds 6 curated policies.
+
+---
+
 ## 2026-06-06 (refresh 26) — SPEC-0007 policies.test.ts tightened (dosing-clause assertion + import cleanup); 402-test src+web/src + 168-test hardhat; OVERALL PASS
 
 **Date:** 2026-06-06 · **Branch:** `spec/0007-clause-impl`

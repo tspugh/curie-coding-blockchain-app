@@ -263,12 +263,10 @@ test("SPEC-0007 R5: Attestation type accepts optional evidenceUrl", () => {
 // ---------------------------------------------------------------------------
 
 test("SPEC-0007 R10: plaque-psoriasis Commercial PA policy exists in the library", () => {
-  // The §3.6 example policy targets Commercial payer line; we find it by payer
-  // line and verify at least one matches (the library may have multiple commercial).
-  const commercial = policiesForLine(PayerLine.Commercial);
+  // §3.6 specifies a policy with a known stable ID — pin it directly.
   assert.ok(
-    commercial.length >= 1,
-    "expected at least one Commercial policy for the plaque-psoriasis worked example",
+    POLICY_LIBRARY.some((p) => p.id === "commercial-pa-adalimumab-plaque-psoriasis"),
+    'expected POLICY_LIBRARY to contain the §3.6 worked-example policy "commercial-pa-adalimumab-plaque-psoriasis"',
   );
 });
 
