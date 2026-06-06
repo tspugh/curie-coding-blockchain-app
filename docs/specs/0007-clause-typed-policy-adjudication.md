@@ -1,0 +1,241 @@
+# SPEC-0007: Clause-typed policy adjudication (multi-extraction + de-identified attestation)
+
+Status: Draft · Owner: Curie team · Date: 2026-06-06
+
+## 1. Summary & user story
+
+Today the agent runs a single, vague "is this drug approved?" check that produces a
+**lossy free-text summary** — and that summary can silently drop the very indication
+being requested (the openFDA Humira/plaque-psoriasis denial: the source lists plaque
+psoriasis 43×, but the scrape's summary omitted it, so the judge denied a covered
+drug).
+
+This spec replaces that with a **clause-typed policy**. A policy is a list of clauses,
+each tagged **`public`** (the agent adjudicates it from an authoritative public source
+via a *targeted* extraction) or **`attested`** (the provider supplies a **de-identified,
+non-PHI** yes/no the agent records but cannot independently verify). The agent runs
+**multiple targeted extractions** — one per public clause (e.g. *approved-indication*,
+*dosing-within-label*) — and combines them with the attestations to rule. On appeal,
+new evidence (e.g. compendia support for an off-label use) is re-extracted and the
+decision can flip.
+
+> As an **insurer**, I want my prior-authorization criteria expressed as typed clauses,
+> so the agent rigorously checks the *public* ones against FDA/compendia sources and
+> records *de-identified attestations* for the patient-specific ones — with no PHI ever
+> on-chain.
+>
+> As a **provider**, I want an off-label denial to be re-decidable when I supply
+> recognized compendia/guideline evidence.
+
+## 2. Requirements
+
+- **R1 (MUST) Clause typing.** A policy is a list of clauses; every clause carries
+  `type ∈ {public, attested}`.
+- **R2 (MUST) Public clauses are agent-adjudicated from a named source.** A public
+  clause names a check `kind` (`indication` | `dosing`), the parameter it checks (the
+  claimed diagnosis; the requested quantity + days-supply), and an authoritative source
+  URL. The agent evaluates the clause from that source — not from a global summary.
+- **R3 (MUST) Targeted multi-extraction (no lossy summary).** The agent performs a
+  *targeted* extraction per public clause whose question names the parameter, e.g.:
+  *"Per this label, is `<diagnosis>` an FDA-approved or recognized-compendia indication
+  for `<drug>`?"* and *"Per this label, is `<quantity>` over `<days-supply>` within the
+  approved dosing for `<drug>`?"* Extractions return a constrained verdict
+  (`yes`/`no`/`uncertain`) **plus the supporting snippet**, not a freehand paraphrase.
+- **R4 (MUST) Indication = FDA-approved OR compendia-supported.** The indication clause
+  passes if the source establishes *either* an FDA-approved indication *or* recognized
+  compendia/guideline support (NCCN, AHFS DI, DrugDex, or a society guideline) for the
+  diagnosis. (This is how real payers cover legitimate off-label use.)
+- **R5 (MUST) De-identified attestation channel.** Attested clauses are satisfied by a
+  provider-supplied **de-identified** structured attestation `{clauseId, attested: bool}`
+  carrying **none of the 18 HIPAA Safe-Harbor identifiers** and **no free-text clinical
+  narrative**. The agent records and trusts the attestation; it does not independently
+  verify it.
+- **R6 (MUST) No PHI on-chain (inherited from the suite invariant).** Neither the
+  extractions nor the attestations may carry PHI — only de-identified structured
+  booleans and public source text/snippets.
+- **R7 (MUST) Ruling = conjunction of clauses.** Approve **iff** every public clause is
+  satisfied by its evidence **and** every attested clause has an affirmative attestation.
+  Otherwise the ruling is deny / needs-more-info, attributed to the failing clause(s).
+- **R8 (MUST) Appeal re-extracts new evidence.** `appeal` / `submitEvidence` with a new
+  source URL re-runs the public-clause extractions against it (A0009 already repoints the
+  scrape). An off-label denial can flip to approve when the new source establishes
+  compendia support.
+- **R9 (SHOULD) Synthesis call produces a rationale.** A final inference call combines
+  the per-clause verdicts + attestations + policy into the decision and a short,
+  PHI-free rationale string for the timeline.
+- **R10 (MUST) Plaque-psoriasis worked example ships end-to-end.** The adalimumab ×
+  plaque-psoriasis case runs through the new flow with: the source URL (§3.5), two public
+  clauses (indication + dosing), two attestations (step-therapy + safety), and the
+  example policy (§3.6).
+
+## 3. Technical documentation
+
+### 3.1 Clause & attestation model (off-chain types)
+
+```ts
+type ClauseType = "public" | "attested";
+type PublicCheckKind = "indication" | "dosing";
+
+interface PolicyClause {
+  id: string;
+  text: string;             // human-readable criterion (shown in UI)
+  type: ClauseType;
+  // present iff type === "public":
+  check?: {
+    kind: PublicCheckKind;
+    param: string;          // the diagnosis (indication) or "qty/days" (dosing)
+    sourceUrl: string;      // authoritative public source for THIS clause
+  };
+}
+
+// Provider-supplied, de-identified. NO patient identifiers, NO free narrative.
+interface Attestation {
+  clauseId: string;
+  attested: boolean;
+}
+```
+
+### 3.2 Flow (two candidate architectures — see Open Questions)
+
+**Option A — one targeted extraction per public clause (max fidelity):**
+`requestAdjudication` → for each public clause, fire a targeted `ExtractString`
+(constrained `allowedValues` where possible) against `clause.check.sourceUrl` → collect
+per-clause verdicts → fire one `inferString` synthesis with {policy, per-clause verdicts,
+attestations} → approve / deny / needs-more-info + rationale (R9).
+Cost: N public clauses ⇒ N scrape calls + 1 decide call.
+
+**Option B — one verbatim-section scrape + one decide (cheaper):**
+One `ExtractString` pulls the **verbatim** `indications_and_usage` + `dosage_and_administration`
+sections (no summarization) → one `inferString` decide evaluates all public clauses +
+attestations against that verbatim text. Cost: 1 scrape + 1 decide, but relies on the
+single scrape capturing both sections.
+
+Both keep PHI off-chain: the scrape sees only the public URL; the decide sees only public
+text + de-identified attestation booleans.
+
+### 3.3 On-chain / off-chain boundary
+
+- **Public, on-chain:** drug ref, claimed diagnosis (a clinical *term*, not a patient
+  fact — "plaque psoriasis"), quantity, days-supply, per-clause source URL(s).
+- **De-identified, agent-readable:** the attestation booleans. They may ride on-chain as
+  small structured data (PHI-guarded — booleans + clause ids only) or be committed as a
+  hash and revealed; see Open Questions.
+- **PHI, never on-chain:** the underlying chart facts behind an attestation. The provider
+  asserts "step therapy satisfied: true"; the *evidence* for that assertion stays in the
+  provider's system.
+
+### 3.4 Contract changes (amendments required)
+
+This spec needs **two amendments** to the SPEC-0006 / A0007 / A0009 contract:
+
+- **Amendment 0011 — multi-extraction + compendia rubric.** Replace the single generic
+  scrape prompt with targeted per-clause extraction (R3); broaden the decide rubric to
+  *FDA-approved OR compendia-supported* (R4); carry the claimed diagnosis as a field used
+  in the indication question; evaluate dosing against the label (R2). Choose Option A or B
+  (Open Question 1).
+- **Amendment 0012 — de-identified attestation channel.** Add a PHI-guarded attestation
+  input on the negotiation (clause-id → bool), surfaced to the decide synthesis (R5), with
+  the existing name-pattern PHI guard extended to reject narrative text.
+
+### 3.5 Source research (the plaque-psoriasis evidence URL)
+
+- **On-label (primary):** the FDA label. Two viable forms:
+  - **openFDA** `https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA&limit=1`
+    — verified scrapeable on Somnia (requestId 4986545 → Success); plaque psoriasis appears
+    43× in `indications_and_usage`. JSON is large (~350 KB) but the targeted extraction
+    (R3) reads the indication directly, avoiding the lossy-summary failure.
+  - **DailyMed** (FDA's official SPL repository) — prose HTML per drug, smaller and
+    indication-forward; needs a per-drug `setid`. A good **alternative/complement** to
+    openFDA for the on-label check; recommended to evaluate as the cleaner source.
+- **Off-label / compendia (for the appeal demo):** NCCN, AHFS DI, IBM Micromedex DrugDex
+  are the payer-recognized compendia but are **paywalled / not freely scrapeable** — for
+  the demo, a public **society guideline** (e.g. the AAD–NPF psoriasis guideline page) is
+  a workable stand-in to demonstrate the off-label→compendia appeal. (Plaque psoriasis is
+  *on*-label for adalimumab, so the off-label path is demonstrated with a different
+  diagnosis; see Open Question 3.)
+- **Dosing:** same FDA label, `dosage_and_administration` section.
+
+### 3.6 Plaque-psoriasis example policy (synthetic; no PHI)
+
+> **"Specialty biologic — moderate-to-severe plaque psoriasis (Commercial PA)"**
+> 1. *(public · indication)* The drug is **FDA-approved or compendia-supported** for
+>    plaque psoriasis. → checked against §3.5 source.
+> 2. *(public · dosing)* Requested quantity is **within FDA-labeled dosing** (≤ 2 pens /
+>    28 days). → checked against the label dosing section.
+> 3. *(attested)* Trial-and-failure or contraindication to **≥ 1 conventional systemic
+>    therapy** (e.g. methotrexate). → provider attests `true/false`.
+> 4. *(attested)* **TB screening performed** and no active serious infection (HUMIRA
+>    boxed-warning criterion). → provider attests `true/false`.
+
+Clauses 1–2 the agent adjudicates from the public source; 3–4 are de-identified provider
+attestations the agent records but cannot independently verify.
+
+## 4. Deliverables
+
+- This spec (`docs/specs/0007-clause-typed-policy-adjudication.md`).
+- Amendments `docs/amendments/0011-multi-extraction-compendia-rubric.md` and
+  `0012-deidentified-attestation-channel.md` (ADRs accompanying this spec).
+- Off-chain clause/attestation types (`PolicyClause.type`, `Attestation`) + the
+  plaque-psoriasis example policy + source-URL constant in `src/data/`.
+- Contract: targeted multi-extraction + compendia rubric (A0011); attestation field
+  (A0012).
+- Tests per §5.
+
+## 5. Test cases
+
+- **T1 (R3/R4/R7) Happy path.** Plaque-psoriasis: indication ✓ + dosing ✓ + both
+  attestations affirmative → **Approve**.
+- **T2 (R3, regression of the openFDA bug).** The indication extraction for plaque
+  psoriasis returns **yes** (the present indication is no longer dropped by a lossy
+  summary).
+- **T3 (R5/R7) Missing attestation.** Step-therapy attestation absent/false → ruling is
+  needs-more-info/deny attributed to clause 3 (not Approve).
+- **T4 (R4/R8) Off-label appeal.** Off-label diagnosis with an FDA-only source → deny;
+  `appeal` with a compendia/guideline source → approve.
+- **T5 (R2) Dosing over limit.** Quantity above the labeled dose → deny on the dosing
+  clause even if the indication passes.
+- **T6 (R6) No-PHI.** Attestations + extraction inputs/outputs contain none of the 18
+  HIPAA identifiers and no free clinical narrative; the contract guard rejects narrative.
+- **T7 (R7) Conjunction.** A single failing clause blocks Approve.
+
+## 6. Pass / fail criteria
+
+**PASS — all must hold:**
+- [ ] Policy clauses carry `type`; public clauses adjudicated from a named source, attested clauses from de-identified booleans (R1/R2/R5).
+- [ ] Targeted per-clause extraction returns a verdict + snippet; the plaque-psoriasis indication check returns "approved" — the lossy-summary regression is fixed (R3/T2).
+- [ ] Indication clause accepts FDA-approved **or** compendia-supported (R4).
+- [ ] Ruling is the conjunction of all clauses; one failure blocks approval (R7/T7).
+- [ ] Off-label appeal with compendia evidence can flip a denial (R8/T4).
+- [ ] No PHI on-chain; attestations are de-identified structured booleans; the guard rejects narrative (R6/T6).
+- [ ] The plaque-psoriasis worked example runs end-to-end (R10/T1).
+
+**FAIL — any triggers rejection:**
+- Any PHI or free clinical narrative committed on-chain.
+- The indication check still drops a present indication (lossy summary persists).
+- A failing clause does not block approval.
+- Attestation treated as independently verified (trust model misrepresented in UI/spec).
+
+## 7. Out of scope
+
+- **Multiple simultaneous source URLs per clause** — one source per clause for now.
+- **Independent verification of attestations** (cryptographic attestation / ZK proofs) —
+  the trust model is "provider asserts a de-identified boolean"; verification is deferred.
+- **Real compendia API integration** (NCCN/DrugDex are paywalled) — a public guideline
+  stand-in demonstrates the off-label appeal.
+- **Reauthorization / renewal criteria** (DAS28-at-6-months style clauses).
+- **Quantity unit reconciliation** (NDC pack size vs labeled dose math) beyond a simple
+  within-limit check.
+
+## 8. Open questions
+
+- **OQ1 (HIGH) Architecture: Option A (N targeted scrapes) vs Option B (one verbatim
+  scrape + one decide)?** A is most robust per-clause but costs N scrape fees; B is
+  cheaper but leans on one scrape capturing all needed sections. Decide before A0011.
+- **OQ2 (MED) Attestation location:** on-chain structured booleans (simplest, clearly
+  non-PHI) vs off-chain committed hash + reveal. Affects A0012's storage shape.
+- **OQ3 (MED) Off-label demo source:** which *public* compendia/guideline stands in for
+  the paywalled NCCN/DrugDex, and which off-label diagnosis demonstrates the appeal
+  (plaque psoriasis is on-label for adalimumab)?
+- **OQ4 (LOW) De-identification assurance:** structured booleans are clearly de-identified;
+  if any free-text ever enters an attestation, do we need Expert-Determination review
+  rather than Safe-Harbor? (Keep attestations structured to avoid this.)
