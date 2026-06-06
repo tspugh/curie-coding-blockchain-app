@@ -49,39 +49,39 @@ type View =
 /**
  * When true, the WalletOnboarding modal is forced even if env keys exist.
  * Set VITE_FORCE_WALLET_PROMPT=1 to test the onboarding flow against env keys.
+ *
+ * SECURITY: we deliberately do NOT read VITE_PRIVATE_KEY or
+ * VITE_PRIVATE_KEY_INSURER at module level here — Vite statically inlines
+ * every `import.meta.env.VITE_*` access into the bundle at build time,
+ * which would bake testnet private keys as plaintext string literals in the
+ * shipped JS (SPEC-0008 §6 hard-FAIL). The pre-fill values for the
+ * force-prompt path are read lazily inside the App component from localStorage
+ * (the keys are already there, having been loaded by a prior session or
+ * by the keyOverride path in client.ts) rather than from the env directly.
  */
 const forcePrompt = import.meta.env.VITE_FORCE_WALLET_PROMPT === "1";
 
-/**
- * Pre-fill values extracted from env when force-prompt is on, so the modal
- * appears with the env keys already populated (SPEC-0008 R6).
- */
-const envProviderKey =
-  forcePrompt &&
-  typeof import.meta.env.VITE_PRIVATE_KEY === "string" &&
-  import.meta.env.VITE_PRIVATE_KEY.length > 0
-    ? (import.meta.env.VITE_PRIVATE_KEY as string)
-    : "";
-const envInsurerKey =
-  forcePrompt &&
-  typeof import.meta.env.VITE_PRIVATE_KEY_INSURER === "string" &&
-  import.meta.env.VITE_PRIVATE_KEY_INSURER.length > 0
-    ? (import.meta.env.VITE_PRIVATE_KEY_INSURER as string)
-    : "";
-
 export function App() {
   // SPEC-0008 R1/R5/R6 — gate: show the onboarding modal when no usable
-  // provider key is loaded, or when forcePrompt overrides the skip-modal path.
+  // provider key is loaded. forcePrompt only activates the modal when there
+  // is no valid key already in localStorage — once the user loads a key,
+  // hasUsableProviderKey() returns true and the gate clears, preventing an
+  // inescapable modal loop (SPEC-0008 F5 fix).
   const [needsWallet, setNeedsWallet] = useState<boolean>(
-    () => !hasUsableProviderKey() || forcePrompt,
+    () => !hasUsableProviderKey(),
   );
+
+  // When forcePrompt=true and no key is stored yet, show the modal on the
+  // initial render. This is checked separately so that once a key is stored
+  // (hasUsableProviderKey() = true), the gate stays clear.
+  const showModal = needsWallet || (forcePrompt && !hasUsableProviderKey());
 
   const handleWalletLoaded = useCallback(() => {
     // Keys have been written to localStorage; reload the page so client.ts
     // re-reads keyOverride() with the new values and signs for real.
-    window.location.reload();
-    // Optimistically dismiss the gate before the reload completes.
+    // Clear the gate state first so the component unmounts before reload.
     setNeedsWallet(false);
+    window.location.reload();
   }, []);
 
   const [view, setView] = useState<View>({ kind: "overview" });
@@ -354,12 +354,16 @@ export function App() {
 
       <TxMonitor />
 
-      {/* SPEC-0008 R1 — startup wallet gate: blocking modal + backdrop */}
-      {needsWallet && (
+      {/* SPEC-0008 R1 — startup wallet gate: blocking modal + backdrop.
+          forcePrompt (VITE_FORCE_WALLET_PROMPT=1) shows the modal even when
+          env keys are present, but the gate clears once localStorage is written
+          (no modal loop). Pre-fill values come from localStorage (already
+          populated by client.ts keyOverride), NOT from import.meta.env.VITE_*
+          directly — reading VITE_PRIVATE_KEY at module level would bake the
+          key into the bundle (SPEC-0008 §6). */}
+      {showModal && (
         <WalletOnboarding
           onLoaded={handleWalletLoaded}
-          prefillProvider={envProviderKey}
-          prefillInsurer={envInsurerKey}
         />
       )}
     </div>

@@ -14,18 +14,21 @@
  * PHI — no patient data. Keys are testnet signing keys only.
  */
 import { useState, useCallback, ChangeEvent } from "react";
-import { Wallet } from "ethers";
-import { KEY_STORAGE_PREFIX, isValidHexKey } from "../walletKeys.js";
+import { KEY_STORAGE_PREFIX, isValidHexKey, deriveAddress } from "../walletKeys.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Derive the Ethereum address for a valid hex key, or null on failure. */
-function tryDeriveAddress(key: string): string | null {
+/**
+ * Wraps the shared `deriveAddress` from walletKeys.ts, returning null
+ * on invalid input rather than throwing. This is the single derivation path
+ * for the modal (SPEC-0008 §3 DRY — no direct ethers Wallet instantiation here).
+ */
+function safeDerive(key: string): string | null {
   if (!isValidHexKey(key)) return null;
   try {
-    return new Wallet(key).address;
+    return deriveAddress(key);
   } catch {
     return null;
   }
@@ -64,7 +67,7 @@ interface KeyFieldProps {
 
 function KeyField({ label, value, onChange, required, testId }: KeyFieldProps) {
   const [show, setShow] = useState(false);
-  const derived = value.length > 0 ? tryDeriveAddress(value) : null;
+  const derived = value.length > 0 ? safeDerive(value) : null;
   const isInvalid = value.length > 0 && !isValidHexKey(value);
 
   const handleChange = useCallback(

@@ -10,10 +10,20 @@
  *   T6 (R7)  — after writing to localStorage via the keyOverride path,
  *              hasUsableProviderKey() returns true → no modal.
  *
- * These tests exercise ONLY the pure gate / validation helpers that live in
- * `walletKeys.ts`. They do NOT exercise the React component (WalletOnboarding.tsx),
- * which requires a DOM environment. The component render test is in
- * `walletOnboarding.dom.test.tsx` (agent-browser / jsdom layer).
+ * This file tests the pure gate / validation helpers from `walletKeys.ts`.
+ * Component render tests live in `walletOnboarding.dom.test.ts` (jsdom layer,
+ * collected by the same `web/src/**\/*.test.ts` glob).
+ *
+ * DRY invariant (SPEC-0008 §3): `deriveAddress` from walletKeys.ts is the
+ * single derivation path used by both WalletOnboarding.tsx and Settings.tsx.
+ * A static-analysis test below asserts WalletOnboarding.tsx does NOT define a
+ * local `tryDeriveAddress` or call `new Wallet(` directly — it must use the
+ * shared `deriveAddress` export.
+ *
+ * Security invariant (SPEC-0008 §6): `App.tsx` must NOT read
+ * `import.meta.env.VITE_PRIVATE_KEY` or `import.meta.env.VITE_PRIVATE_KEY_INSURER`
+ * in module-level expressions, because Vite inlines accessed `import.meta.env.*`
+ * members at build time, baking live testnet keys into the bundle.
  *
  * Test isolation:
  *   - `import.meta.env` is not available in Node/tsx test runner, so the env-key
@@ -27,6 +37,7 @@
  * SSNs, DOBs, phone numbers, or email addresses.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 // ---------------------------------------------------------------------------
@@ -341,6 +352,118 @@ test("invariant: hasUsableProviderKey rejects all invalid key forms in both path
       `invalid key "${k.slice(0, 12)}…" via env must return false`,
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// Static-analysis invariants — DRY (F3) and security (F8-1)
+//
+// These tests read source files as text and assert structural properties that
+// cannot be checked by TypeScript's type system alone. They fail if the
+// production code violates SPEC-0008 §3 (DRY) or §6 (bundle security).
+//
+// F3 (DRY): WalletOnboarding.tsx MUST NOT define a local derivation helper
+//   (`tryDeriveAddress` or any `new Wallet(` call). All address derivation
+//   must go through the shared `deriveAddress` export from walletKeys.ts.
+//
+// F7 (consistency): `keyOverride` in client.ts validates localStorage keys
+//   via `isValidHexKey` but accepts ANY non-empty env string (length > 0).
+//   `hasUsableProviderKey` also runs isValidHexKey on the env path. The two
+//   must agree: client.ts env acceptance path should also validate shape.
+//
+// F8-1 (security): App.tsx MUST NOT read import.meta.env.VITE_PRIVATE_KEY
+//   or import.meta.env.VITE_PRIVATE_KEY_INSURER in module-level expressions
+//   (Vite inlines these, baking real testnet keys into the static bundle).
+// ---------------------------------------------------------------------------
+
+const WALLETONBOARDING_SRC = readFileSync(
+  new URL("./components/WalletOnboarding.tsx", import.meta.url),
+  "utf8",
+);
+
+const APP_SRC = readFileSync(
+  new URL("./App.tsx", import.meta.url),
+  "utf8",
+);
+
+const CLIENT_SRC = readFileSync(
+  new URL("./client.ts", import.meta.url),
+  "utf8",
+);
+
+test("F3 (DRY): WalletOnboarding.tsx must not define a local tryDeriveAddress helper", () => {
+  assert.equal(
+    WALLETONBOARDING_SRC.includes("tryDeriveAddress"),
+    false,
+    "WalletOnboarding.tsx must not define tryDeriveAddress — use shared deriveAddress from walletKeys.ts (SPEC-0008 §3)",
+  );
+});
+
+test("F3 (DRY): WalletOnboarding.tsx must not call new Wallet( directly for derivation", () => {
+  assert.equal(
+    WALLETONBOARDING_SRC.includes("new Wallet("),
+    false,
+    "WalletOnboarding.tsx must not instantiate ethers.Wallet directly for address derivation — use shared deriveAddress() from walletKeys.ts (SPEC-0008 §3)",
+  );
+});
+
+test("F3 (DRY): WalletOnboarding.tsx must import deriveAddress from walletKeys", () => {
+  assert.match(
+    WALLETONBOARDING_SRC,
+    /import[^;]*deriveAddress[^;]*walletKeys/,
+    "WalletOnboarding.tsx must import deriveAddress from walletKeys.ts (SPEC-0008 §3 DRY directive)",
+  );
+});
+
+test("F8-1 (security): App.tsx must not read import.meta.env.VITE_PRIVATE_KEY at module level", () => {
+  // Module-level reads of import.meta.env.VITE_PRIVATE_KEY cause Vite to inline
+  // the live testnet private key as a plaintext string literal in the built bundle
+  // (SPEC-0008 §6 hard-FAIL). The pre-fill for force-prompt must be sourced
+  // differently (e.g. through a non-VITE_ build-time define, or from localStorage
+  // after the user has already loaded the key).
+  const moduleBodyWithoutComments = APP_SRC
+    // Strip single-line comments
+    .replace(/\/\/[^\n]*/g, "")
+    // Strip block comments
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+
+  // Look for module-level (outside a function body) access to either private-key env var.
+  // The simplest check: the string "import.meta.env.VITE_PRIVATE_KEY" must not appear
+  // anywhere in App.tsx (function-level OR module-level access both cause inlining).
+  assert.equal(
+    moduleBodyWithoutComments.includes("import.meta.env.VITE_PRIVATE_KEY"),
+    false,
+    "App.tsx must not access import.meta.env.VITE_PRIVATE_KEY — Vite inlines it into the bundle, " +
+    "baking the testnet private key as a plaintext literal (SPEC-0008 §6 hard-FAIL)",
+  );
+  assert.equal(
+    moduleBodyWithoutComments.includes("import.meta.env.VITE_PRIVATE_KEY_INSURER"),
+    false,
+    "App.tsx must not access import.meta.env.VITE_PRIVATE_KEY_INSURER — same bundle-inlining risk (SPEC-0008 §6)",
+  );
+});
+
+test("F7 (consistency): keyOverride in client.ts validates env keys with isValidHexKey", () => {
+  // F7: keyOverride accepts any non-empty env string (only validates localStorage).
+  // hasUsableProviderKey validates BOTH. They must agree: a malformed env key
+  // should not pass keyOverride while making hasUsableProviderKey return false.
+  // Fix: keyOverride must also call isValidHexKey on the env branch.
+  //
+  // We inspect the return statement that handles the env value. It must include
+  // isValidHexKey — not just check `length > 0`.
+  // The env return in the current (broken) implementation is:
+  //   return typeof fromEnv === "string" && fromEnv.length > 0 ? fromEnv : undefined;
+  // The fixed version must also call isValidHexKey(fromEnv).
+  const envReturnMatch = CLIENT_SRC.match(
+    /const fromEnv = import\.meta\.env\[envName\];[\s\S]*?return[^;]+;/,
+  );
+  const envReturnStatement = envReturnMatch?.[0] ?? "";
+  assert.match(
+    envReturnStatement,
+    /isValidHexKey/,
+    "keyOverride() in client.ts: the env-key return path must call isValidHexKey — " +
+    "otherwise a malformed VITE_PRIVATE_KEY passes signing while the modal gate blocks (F7). " +
+    `Current env-return block: ${envReturnStatement.slice(0, 200)}`,
+  );
 });
 
 // ---------------------------------------------------------------------------

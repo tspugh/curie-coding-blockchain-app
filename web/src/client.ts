@@ -257,7 +257,7 @@ function keyOverride(envName: "VITE_PRIVATE_KEY" | "VITE_PRIVATE_KEY_INSURER"): 
     /* localStorage unavailable (private mode, SSR) — fall through to env. */
   }
   const fromEnv = import.meta.env[envName];
-  return typeof fromEnv === "string" && fromEnv.length > 0 ? fromEnv : undefined;
+  return typeof fromEnv === "string" && isValidHexKey(fromEnv) ? fromEnv : undefined;
 }
 
 const providerClient = makeClient(keyOverride("VITE_PRIVATE_KEY"));

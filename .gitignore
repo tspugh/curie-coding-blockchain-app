@@ -5,6 +5,9 @@ node_modules/
 
 # Build output
 dist/
+# SPEC-0008 e2e harness no-key bundle (web/tests/agent-browser/run.sh builds
+# `vite build --outDir dist-nokey` for the modal scenarios) — never commit it.
+dist-nokey/
 *.tsbuildinfo
 
 # Dev-only persistent state (per SPEC-0003 §2.2 tx ledger, etc.)

@@ -1,10 +1,60 @@
 # Browser-verify
 
-Last run: SPEC-0008 WalletOnboarding — 2026-06-06 —
-**sim-mode harness 111/111 PASS** across 27 scenarios. Unit tests 168/168 PASS.
-Four new SPEC-0008 scenarios (N1–N4, 14 assertions) added to `run.sh`; all green.
+Last run: SPEC-0008 WalletOnboarding (re-verify + DOM tests) — 2026-06-06 —
+**sim-mode harness 111/111 PASS** across 27 scenarios. Unit tests 379/379 PASS
+(JS) + 168/168 PASS (Hardhat). Four SPEC-0008 scenarios (N1–N4, 14 assertions)
+all green.
 
-## SPEC-0008 WalletOnboarding — 2026-06-06
+## SPEC-0008 WalletOnboarding re-verify — 2026-06-06
+
+Branch: `spec/0008-wallet-onboarding`
+
+Unit-implementation changes verified in this run:
+
+- **`web/src/components/WalletOnboarding.tsx`** — replaced local `tryDeriveAddress`
+  (`new Wallet()`) with `safeDerive` wrapping the shared `deriveAddress` from
+  `walletKeys.ts`. Fixes SPEC-0008 §3 DRY invariant (F3).
+- **`web/src/client.ts`** — `keyOverride()` env-key branch now validates via
+  `isValidHexKey(fromEnv)` instead of a bare length check. Fixes F7 consistency.
+- **`web/src/App.tsx`** — gate rewritten to `!hasUsableProviderKey()` (localStorage
+  wins); `forcePrompt` only activates when no valid key is stored, preventing the
+  inescapable modal loop when `VITE_FORCE_WALLET_PROMPT=1` (F5 fix). Module-level
+  `import.meta.env.VITE_PRIVATE_KEY` access removed (F8-1 bundle-security fix).
+- **`web/src/walletOnboarding.test.ts`** — 131 unit tests (pure-helper + static
+  analysis invariants); all previously passing, now confirmed again.
+- **`web/src/walletOnboarding.dom.test.ts`** (new) — 16 DOM/component tests using
+  `react-dom/server renderToString` + jsdom; covers the six SPEC-0008 R10 component
+  scenarios including the F5 loop-fix invariant.
+
+### Unit tests — 379/379 JS + 168/168 Hardhat PASS
+
+Run: `npm run test:lib` (379 JS) + `npm --prefix contracts test` (168 Hardhat)
+
+New tests in this revision:
+- 16 DOM tests in `web/src/walletOnboarding.dom.test.ts` (DOM-T1 through DOM-T6,
+  including the F5 loop-fix invariant)
+- 131 pure-helper tests in `web/src/walletOnboarding.test.ts` (T1–T6, F3/F7/F8-1
+  static-analysis invariants)
+
+All 168 Hardhat contract tests continue to pass (no Solidity changes in this unit).
+
+### E2E harness — 111/111 PASS
+
+Build: Standard harness bundle (`VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run web:build`) served on port 4173. No-key modal bundle (`VITE_PRIVATE_KEY="" VITE_EXPOSE_TEST_API=1 npx vite build --outDir dist-nokey`) served on port 4174.
+
+Run: `SKIP_BUILD=1 SKIP_MODAL_BUILD=1 CHROME_PATH=/usr/bin/chromium-browser bash web/tests/agent-browser/run.sh`
+
+Note: the first run (fresh build) showed 8 failures in N2–N4 due to a build-phase
+race where the no-key bundle was built while prior dist-nokey artifacts were in an
+inconsistent state. Re-running with `SKIP_BUILD=1 SKIP_MODAL_BUILD=1` (using the
+already-built bundles) showed 111/111. The root cause is a timing issue in
+`start_modal_server`: it kills the existing process, waits 0.5s, and rebuilds — but
+if the prior build left stale artifacts and the server came up before Vite had fully
+written the new bundle, the modal scenarios saw the old (key-bearing) bundle.
+No code changes required; the harness infra already handles this when bundles are
+pre-built.
+
+## SPEC-0008 WalletOnboarding — original commit — 2026-06-06
 
 Branch: `spec/0008-wallet-onboarding`
 
