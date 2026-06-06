@@ -28,12 +28,6 @@ const config: HardhatUserConfig = {
       viaIR: true,
     },
   },
-  // Increase Mocha timeout for coverage runs — solidity-coverage instruments
-  // every opcode, making multi-step tests (e.g. two-agent scrape→decide flow)
-  // significantly slower than the non-instrumented 40 s default.
-  mocha: {
-    timeout: 120_000,
-  },
   networks: {
     somniaTestnet: {
       url: process.env.SOMNIA_RPC_URL || SOMNIA_TESTNET_RPC,

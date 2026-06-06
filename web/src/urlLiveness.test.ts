@@ -435,6 +435,113 @@ test("formatLivenessError: ok:true result → empty string (no-op for callers th
 });
 
 // ---------------------------------------------------------------------------
+// Branch coverage: ?? fallbacks and non-Error throw path
+//
+// These tests exercise the four branches that were previously uncovered (c8
+// branch counts = 0) to bring livenessDebounce.ts and urlLiveness.ts above
+// the 85% branch threshold:
+//
+//   B1 (line 107): `json.status ?? 200` — payload has ok:true but no status field
+//   B2 (line 109): `json.status ?? 0`   — payload has ok:false, error, but no status
+//   B3 (line 111): `json.status ?? 0`   — payload has ok:false, no error, no status
+//   B4 (line 116): `String(err)`        — catch block receives a non-Error value
+//
+// All fixture values are synthetic; no patient data, SSNs, DOBs, or PHI.
+// ---------------------------------------------------------------------------
+
+test("B1 (line 107): ok:true with no status field in payload uses 200 default", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (_input: RequestInfo | URL, _init?: RequestInit) => {
+    // Omit the `status` field so `json.status` is undefined → triggers the `?? 200` branch.
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    clearLivenessCache();
+    const result = await probeUrlLiveness(SYNTHETIC_URL, /* sim= */ false);
+    assert.equal(result.ok, true, "B1: ok must be true");
+    // json.status is undefined → result.status = undefined ?? 200 = 200
+    assert.equal(result.status, 200, "B1: missing status field must default to 200 via ?? operator");
+  } finally {
+    global.fetch = originalFetch;
+    clearLivenessCache();
+  }
+});
+
+test("B2 (line 109): ok:false + error field, no status → status defaults to 0", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (_input: RequestInfo | URL, _init?: RequestInit) => {
+    // Provide error but omit status so `json.status` is undefined → triggers `?? 0` branch.
+    return new Response(JSON.stringify({ ok: false, error: "connection refused" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    clearLivenessCache();
+    const result = await probeUrlLiveness(DEAD_URL, /* sim= */ false);
+    assert.equal(result.ok, false, "B2: ok must be false");
+    assert.equal(result.status, 0, "B2: missing status with error must default to 0 via ?? operator");
+    assert.ok(!result.ok && result.error === "connection refused", "B2: error must be forwarded");
+  } finally {
+    global.fetch = originalFetch;
+    clearLivenessCache();
+  }
+});
+
+test("B3 (line 111): ok:false, no error, no status → status defaults to 0", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (_input: RequestInfo | URL, _init?: RequestInit) => {
+    // Omit both error and status — hits the else branch with `?? 0`.
+    return new Response(JSON.stringify({ ok: false }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  try {
+    clearLivenessCache();
+    const result = await probeUrlLiveness(DEAD_URL, /* sim= */ false);
+    assert.equal(result.ok, false, "B3: ok must be false");
+    assert.equal(result.status, 0, "B3: missing status in else branch must default to 0 via ?? operator");
+  } finally {
+    global.fetch = originalFetch;
+    clearLivenessCache();
+  }
+});
+
+test("B4 (line 116): catch receives a non-Error value → String(err) path", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (_input: RequestInfo | URL, _init?: RequestInit) => {
+    // Throw a plain string, not an Error instance, so `err instanceof Error` is false.
+    // eslint-disable-next-line @typescript-eslint/no-throw-literal
+    throw "connection reset by peer";
+  };
+
+  try {
+    clearLivenessCache();
+    const result = await probeUrlLiveness(DEAD_URL, /* sim= */ false);
+    assert.equal(result.ok, false, "B4: non-Error throw must resolve ok:false");
+    assert.ok(
+      !result.ok && typeof result.error === "string" && result.error.length > 0,
+      "B4: error field must be populated via String(err) when err is not an Error instance",
+    );
+    // String("connection reset by peer") === "connection reset by peer"
+    assert.ok(
+      !result.ok && result.error !== undefined && result.error.includes("connection reset by peer"),
+      `B4: String(err) must include the thrown string; got: ${!result.ok ? result.error : ""}`,
+    );
+  } finally {
+    global.fetch = originalFetch;
+    clearLivenessCache();
+  }
+});
+
+// ---------------------------------------------------------------------------
 // PHI-free invariant
 // ---------------------------------------------------------------------------
 
