@@ -45,11 +45,17 @@ decision can flip.
   passes if the source establishes *either* an FDA-approved indication *or* recognized
   compendia/guideline support (NCCN, AHFS DI, DrugDex, or a society guideline) for the
   diagnosis. (This is how real payers cover legitimate off-label use.)
-- **R5 (MUST) De-identified attestation channel.** Attested clauses are satisfied by a
-  provider-supplied **de-identified** structured attestation `{clauseId, attested: bool}`
-  carrying **none of the 18 HIPAA Safe-Harbor identifiers** and **no free-text clinical
-  narrative**. The agent records and trusts the attestation; it does not independently
-  verify it.
+- **R5 (MUST) De-identified attestation channel — boolean + optional de-identified
+  evidence URL.** Attested clauses are satisfied by a provider-supplied **de-identified**
+  attestation `{clauseId, attested: bool, evidenceUrl?}` carrying **none of the 18 HIPAA
+  Safe-Harbor identifiers** and **no free-text clinical narrative**. The optional
+  `evidenceUrl` is the **attested-side equivalent of a public clause's evidence URL**: a
+  link to **de-identified** supporting material (e.g. a redacted lab/record) the agent may
+  reference — exactly parallel to how the public clause / appeal source is a URL the scrape
+  reads. On-chain we store only the URL (or its keccak hash), never the content. The URL
+  MUST resolve to de-identified content; if it cannot be de-identified it is **not** used
+  here (R11 routes it off-protocol). The agent **records and trusts** the attestation; it
+  does not independently verify the patient facts behind it.
 - **R6 (MUST) No PHI on-chain (inherited from the suite invariant).** Neither the
   extractions nor the attestations may carry PHI — only de-identified structured
   booleans and public source text/snippets.
@@ -79,6 +85,13 @@ decision can flip.
 - **R12 (MUST) Off-label worked example ships end-to-end.** The bupropion × ADHD case
   (§3.7) demonstrates the off-label→compendia appeal: on-label FDA source → deny; appeal
   with a public compendia/guideline source → approve.
+- **R13 (MUST) Attestations submitted via `requestAdjudication`.** The provider passes the
+  `Attestation[]` (R5) into `requestAdjudication(reqId, attestations)` — provider-only,
+  Ready-state. By then the insurer's policy is attached, so the provider knows which clauses
+  to attest. The contract stores them on-chain `{bytes32 clauseId, bool attested, bytes32
+  evidenceUriHash}`; the decide synthesis (R7) reads them. The UI renders each attested
+  clause as a yes/no toggle (+ optional de-identified evidence URL field) the provider sets
+  before firing the AI decision.
 
 ## 3. Technical documentation
 
@@ -104,6 +117,10 @@ interface PolicyClause {
 interface Attestation {
   clauseId: string;
   attested: boolean;
+  // Optional link to DE-IDENTIFIED supporting evidence — the attested-side
+  // equivalent of a public clause's evidence URL. On-chain stores only the URL
+  // or its keccak hash, never content. Omit if the support can't be de-identified.
+  evidenceUrl?: string;
 }
 ```
 
