@@ -1,3 +1,81 @@
+## 2026-06-06 (refresh 16) — SPEC-0008 WalletOnboarding startup modal (R1–R10), re-derived at HEAD `1b5d384` (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-06
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-derivation from source over the *current* diff (`.` vs `origin/main`) at **HEAD `1b5d384`**, focused on the SPEC-0008 wallet-onboarding unit. Re-ran the full hard gate from scratch and **rebuilt both branches with the populated local `.env`** to re-test the bundle-inline hygiene claim, rather than trusting the refresh-15 write-up.
+**Base:** `origin/main`
+**Branch:** `spec/0008-wallet-onboarding`
+
+**Verdict: PASS (zero findings).**
+
+### Why this refresh exists — refresh-15 prose drifted from the shipped code
+
+Refresh 15 was written at an earlier HEAD (`39ecee2`) describing a remediation state the
+implementation has since moved *past*. Two refresh-15 statements are **false at the current
+HEAD `1b5d384`** and are corrected here (neither is a security defect — both are the *safe*
+shape; the prose was simply stale):
+
+1. Refresh 15 says *"the modal is rendered with **no prefill props**"* (L11/L30). **Current
+   `App.tsx` (L368–373) DOES pass `prefillProvider` / `prefillInsurer`** — but it sources them
+   from **`localStorage`** (`window.localStorage.getItem(KEY_STORAGE_PREFIX + "VITE_PRIVATE_KEY"[_INSURER])`,
+   L78–85), **not** from `import.meta.env`. This is the F8-1-safe path: reading the prefill from
+   `localStorage` does **not** add any `import.meta.env.VITE_PRIVATE_KEY*` access to `App.tsx`, so
+   it bakes **no** new key into the bundle. The DOM suite *requires* this wiring (`DOM-T4 (F1 BLOCKER)`
+   asserts `prefillProvider={…}` is present; the `F5 comment-integrity` test asserts the comment
+   matches the prop) and all 50 tests pass — code and tests are mutually consistent; only the
+   refresh-15 narrative was behind.
+2. Refresh 15 says the gate is *"`!hasUsableProviderKey()` (not `|| forcePrompt`)"* and that
+   *"the broken `… || forcePrompt` pattern is asserted absent"* (L72). **Current `App.tsx` is
+   `showModal = needsWallet || forcePrompt`** (L71), with `needsWallet = !hasUsableProviderKey()`
+   (L67–69) and `forcePrompt = import.meta.env.VITE_FORCE_WALLET_PROMPT === "1"` (L62). This is the
+   **correct R6 behavior** (force the modal even when env keys exist) and is exactly what
+   SPEC-0008 §3 specifies (`needsWallet = !hasUsableProviderKey() || forcePrompt`). The "loop" worry
+   refresh-15 raised does not apply: `forcePrompt` is an *operator-set build-time env flag*, and
+   `handleWalletLoaded` `window.location.reload()`s after a valid write; the operator who set
+   `VITE_FORCE_WALLET_PROMPT=1` to *test* the flow is expected to see the modal each load until they
+   unset it. No test asserts `|| forcePrompt` absent (re-grepped this run — that refresh-15 claim is
+   incorrect); the suite passes with the `|| forcePrompt` gate in place.
+
+### Hard gate results (re-derived line-by-line at HEAD `1b5d384`)
+
+| Gate | Result | Evidence (verified this run) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | **PASS** | SPEC-0008 touches only wallet key material + UI plumbing; it writes nothing on-chain. A PHI scan (SSN `\d{3}-\d{2}-\d{4}`, DOB / date-of-birth, MRN, `patient [A-Z][a-z]+ [A-Z]`, diagnosis, email) over **every added diff line** returned **only** explicit NO-PHI guard comments/assertions (`WalletOnboarding.tsx:14`, `walletKeys.ts:36` "no patient data is passed here", and the `NO-PHI` / `DOM NO-PHI` regression tests in both test files, which themselves assert the fixtures match no SSN/DOB/phone/email pattern). The only key *values* in the diff are the two **public Hardhat/Anvil deterministic dev vectors** — acct #0 `0xac0974…ff80` and acct #1 `0x59c699…690d` — present only in `walletOnboarding.test.ts:52`, `walletOnboarding.dom.test.ts:84`, and `web/tests/agent-browser/run.sh:1279` (zero-funded, synthetic, patient-data-free). No non-test source file contains any 64-hex literal (verified by grep over `web/src/**/*.ts[x]` excluding `*.test.ts`/`*.dom.test.ts` → none). |
+| No secrets (committed) | **PASS** | No private key, mnemonic, API key, or token is committed in this diff. The only key values present are the two public Anvil test vectors (synthetic) in the test files. `.env` (which holds real testnet keys — confirmed populated on disk: `VITE_PRIVATE_KEY` and `VITE_PRIVATE_KEY_INSURER` each set to a 64-hex value) is `.gitignore`d and **untracked** (`git check-ignore .env` → ignored; `git ls-files | grep '^\.env$'` → empty) — not part of the diff. `.env.example` carries only empty `=` placeholders + public contract addresses; the new `VITE_PRIVATE_KEY_INSURER=` / `VITE_FORCE_WALLET_PROMPT=` lines are empty placeholders. |
+| Signing-key hygiene (incl. no key in the built bundle) | **PASS** | **Re-tested by building BOTH branches with the same populated `.env`.** Current-branch `npm run web:build` succeeds and inlines `VITE_PRIVATE_KEY:"0x…"` + `VITE_PRIVATE_KEY_INSURER:"0x…"` (2 occurrences each) — **but `origin/main`, built the same way, ALREADY inlines both** (1 occurrence each). The source of the inline is the **pre-existing dynamic computed-member access `const fromEnv = import.meta.env[envName]` in `client.ts:259`** (unchanged by this diff except the `isValidHexKey` validation tightening on L260), which forces Vite to inline the *entire* `import.meta.env` object (every `VITE_*`, both keys). **SPEC-0008 adds no new key-inlining read site**: `App.tsx` reads **no** `import.meta.env.VITE_PRIVATE_KEY*` (only `VITE_FORCE_WALLET_PROMPT`, L62; the key strings appear solely in explanatory comments at L55/76); prefill is sourced from `localStorage`. The count delta (2 vs 1) is minifier chunk duplication, not a new access. The hosted deploy path is guarded: `scripts/deploy-static.sh` greps `web/dist` for an inlined `(PRIVATE_KEY|privateKey|MNEMONIC|mnemonic)…0x[a-fA-F0-9]{40,}` value and aborts — **verified to fire** on the current key-bearing bundle this run. `web/dist` and `dist-nokey/` are both `.gitignore`d (the latter added by this diff), so a key-bearing local build cannot be committed. The key-bearing `web/dist` built for this test was scrubbed at the end of the run. |
+
+### Bundle-inline disposition (unchanged from refresh 15, re-confirmed)
+
+The whole-`import.meta.env`-inline is a real hygiene liability for any *un-guarded* lane that
+ships a `web/dist` built from a populated `.env` (raw `vite preview`, a manual `aws s3 sync`
+bypassing the guard, a third-party host). It is **owned by `client.ts` on `origin/main`, not by
+SPEC-0008** — both keys are already in the `origin/main` bundle — and is mitigated by the
+`deploy-static.sh` guard + the `.gitignore` rules. **Not a finding against this unit.**
+Recommended standing follow-up for the `client.ts`/build-lane owner (not SPEC-0008): make
+`web:build` build with `VITE_PRIVATE_KEY*` explicitly empty (e.g. a committed `.env.production`
+blanking them) and/or replace the dynamic `import.meta.env[envName]` with two *static*
+`import.meta.env.VITE_PRIVATE_KEY` / `…_INSURER` reads so only intentionally-blank values inline —
+making the hosted artifact provably key-free *by construction*, not only behind the deploy grep.
+
+### Additional checks (defense-in-depth, this unit — re-verified)
+
+- **No key exfiltration.** `WalletOnboarding.tsx` has no `fetch`/`XMLHttpRequest`/`sendBeacon`/`console.*` of the key, no `dangerouslySetInnerHTML`/`innerHTML`/`eval`/`new Function` (grep → none). Key egress is `localStorage.setItem` on the two documented `curie:VITE_PRIVATE_KEY*` slots only.
+- **Input hygiene.** Secret inputs are `type="password"`, `autoComplete="off"`, `spellCheck={false}`; the Show toggle is opt-in.
+- **Insurer default (R4) is safe.** Empty insurer ⇒ `…_INSURER` slot is not written ⇒ `client.ts` (`keyOverride("VITE_PRIVATE_KEY_INSURER") ?? keyOverride("VITE_PRIVATE_KEY")`) falls back to the provider key — no accidental cross-write. The `client.ts` env branch now also runs `isValidHexKey` (L260), so a malformed env key cannot sign while the gate blocks (gate/signing consistency).
+- **Gate cannot be bypassed.** The modal renders over the backdrop with no dismiss/Escape/outside-click/skip affordance (grep → none); it clears only via `handleWalletLoaded` → `window.location.reload()` after a valid `localStorage` write.
+- **Validation is real.** `isValidHexKey` = `/^0x[0-9a-fA-F]{64}$/`; `deriveAddress` throws on invalid input. All six R10 scenarios are pinned (T1 no-wallet→modal, T2 valid/invalid key, T3 insurer-empty→provider, T4 force-prompt pre-fill, T5 env-present→no modal, T6 persist).
+
+### Verification this run
+
+- `node --import tsx --test web/src/walletOnboarding.test.ts web/src/walletOnboarding.dom.test.ts` → **50/50 pass**.
+- `npm run web:build` (current branch) → OK; key-inline test reproduced and disposed of above.
+- `origin/main` rebuilt in a fresh worktree with the same `.env` → both keys already inlined (proves the leak pre-exists, is not introduced/worsened by SPEC-0008).
+- `deploy-static.sh` inline-key guard pattern → fires on the key-bearing bundle (mitigation confirmed).
+- Working tree clean; all key-bearing local build artifacts scrubbed.
+
+### Verdict: PASS (zero findings). The SPEC-0008 unit satisfies the hard gate; the residual bundle inline is a pre-existing `client.ts` (`origin/main`) liability outside this unit, mitigated by the deploy guard + `.gitignore`, and tracked for the build-lane owner. (Refresh-15's "no prefill props" / "gate is not `|| forcePrompt`" prose is corrected above to match the shipped code; neither correction changes the verdict.)
+
+---
+
 ## 2026-06-06 (refresh 15) — SPEC-0008 WalletOnboarding startup modal (R1–R10), F8-1 re-verification (security-review, TOTAL-STICKLER)
 
 **Date:** 2026-06-06
