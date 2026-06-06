@@ -31,6 +31,8 @@ import { Network } from "./views/Network.js";
 import { Settings } from "./views/Settings.js";
 import { WalletBalance } from "./components/WalletBalance.js";
 import { TxMonitor } from "./components/TxMonitor.js";
+import { WalletOnboarding } from "./components/WalletOnboarding.js";
+import { hasUsableProviderKey } from "./walletKeys.js";
 
 type View =
   | { kind: "overview" }
@@ -39,7 +41,49 @@ type View =
   | { kind: "network" }
   | { kind: "settings" };
 
+// ---------------------------------------------------------------------------
+// SPEC-0008 — startup wallet gate constants (evaluated once at module load,
+// before any React render).
+// ---------------------------------------------------------------------------
+
+/**
+ * When true, the WalletOnboarding modal is forced even if env keys exist.
+ * Set VITE_FORCE_WALLET_PROMPT=1 to test the onboarding flow against env keys.
+ */
+const forcePrompt = import.meta.env.VITE_FORCE_WALLET_PROMPT === "1";
+
+/**
+ * Pre-fill values extracted from env when force-prompt is on, so the modal
+ * appears with the env keys already populated (SPEC-0008 R6).
+ */
+const envProviderKey =
+  forcePrompt &&
+  typeof import.meta.env.VITE_PRIVATE_KEY === "string" &&
+  import.meta.env.VITE_PRIVATE_KEY.length > 0
+    ? (import.meta.env.VITE_PRIVATE_KEY as string)
+    : "";
+const envInsurerKey =
+  forcePrompt &&
+  typeof import.meta.env.VITE_PRIVATE_KEY_INSURER === "string" &&
+  import.meta.env.VITE_PRIVATE_KEY_INSURER.length > 0
+    ? (import.meta.env.VITE_PRIVATE_KEY_INSURER as string)
+    : "";
+
 export function App() {
+  // SPEC-0008 R1/R5/R6 — gate: show the onboarding modal when no usable
+  // provider key is loaded, or when forcePrompt overrides the skip-modal path.
+  const [needsWallet, setNeedsWallet] = useState<boolean>(
+    () => !hasUsableProviderKey() || forcePrompt,
+  );
+
+  const handleWalletLoaded = useCallback(() => {
+    // Keys have been written to localStorage; reload the page so client.ts
+    // re-reads keyOverride() with the new values and signs for real.
+    window.location.reload();
+    // Optimistically dismiss the gate before the reload completes.
+    setNeedsWallet(false);
+  }, []);
+
   const [view, setView] = useState<View>({ kind: "overview" });
   const [events, setEvents] = useState<readonly CoverageEvent[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string>(
@@ -309,6 +353,15 @@ export function App() {
       </main>
 
       <TxMonitor />
+
+      {/* SPEC-0008 R1 — startup wallet gate: blocking modal + backdrop */}
+      {needsWallet && (
+        <WalletOnboarding
+          onLoaded={handleWalletLoaded}
+          prefillProvider={envProviderKey}
+          prefillInsurer={envInsurerKey}
+        />
+      )}
     </div>
   );
 }

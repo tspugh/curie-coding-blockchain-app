@@ -2438,3 +2438,36 @@ tr.row-link:hover td:first-child {
 .users-add button {
   grid-column: 1 / -1;
 }
+
+/* ─── 39. SPEC-0008 — WalletOnboarding modal backdrop + card ───────────── */
+
+/* Backdrop: full-screen dim overlay that blocks interaction with the app
+   behind it. z-index 900 puts it above the sticky header (z-index 200)
+   and below the modal card (z-index 901). */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(3px);
+  z-index: 900;
+}
+
+/* Modal card: centered floating panel above the backdrop. */
+.modal-card {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 901;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 32px 36px;
+  width: min(520px, calc(100vw - 40px));
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
