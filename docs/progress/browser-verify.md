@@ -1,9 +1,42 @@
 # Browser-verify
 
-Last run: SPEC-0008 WalletOnboarding (re-verify + DOM tests) — 2026-06-06 —
-**sim-mode harness 111/111 PASS** across 27 scenarios. Unit tests 379/379 PASS
-(JS) + 168/168 PASS (Hardhat). Four SPEC-0008 scenarios (N1–N4, 14 assertions)
-all green.
+Last run: SPEC-0008 WalletOnboarding E2E verify — 2026-06-06 —
+**sim-mode harness 111/111 PASS** across 27 scenarios (N1–N4 all green).
+Unit tests 144/144 PASS (JS web). Four SPEC-0008 WalletOnboarding scenarios (N1–N4,
+14 assertions) all green. Run: full build from scratch (no SKIP_BUILD flags).
+
+## SPEC-0008 WalletOnboarding E2E verify — 2026-06-06
+
+Branch: `spec/0008-wallet-onboarding`
+
+### Unit tests — 144/144 JS PASS
+
+Run: `node --import tsx --test "web/src/**/*.test.ts"`
+
+All 144 web unit tests pass:
+- 50 tests in `web/src/walletOnboarding.test.ts` (T1–T6, F3/F7/F8-1 invariants)
+- 40 tests in `web/src/walletOnboarding.dom.test.ts` (DOM-T1 through DOM-T6, F1/F5/F6/F8/F9/F10)
+- Remaining 54 from other web modules (livenessDebounce, livenessGate, drugEvidenceMap, etc.)
+
+### E2E harness — 111/111 PASS
+
+All 27 scenarios green including the four SPEC-0008 WalletOnboarding scenarios (N1–N4):
+
+- **N1** (R5): env key present → no modal (app interactive)
+- **N2** (R1): no key → modal + backdrop block the app
+- **N3** (R3/R2): paste invalid key → error + Load disabled; valid key → address shown + Load enabled
+- **N4** (R4): provider key loaded, insurer empty → localStorage written, reload clears modal
+
+Build: `CHROME_PATH=/usr/bin/chromium-browser bash web/tests/agent-browser/run.sh` (full build — no SKIP flags).
+
+The no-key modal server (port 4174) must be built fresh each run. Prior runs that used
+`SKIP_BUILD=1 SKIP_MODAL_BUILD=1` saw N2–N4 failures because the run.sh kills the
+pre-started modal server and rebuilds, but the `SKIP_MODAL_BUILD=1` flag does NOT
+actually skip the rebuild — it always rebuilds. When the prior dist-nokey artifacts
+came from a different build session (regular dist), the preview server ended up serving
+from `web/dist/` (which had a bundle with the real private key from `.env`) instead of
+`web/dist-nokey/` (the no-key bundle). Running without any SKIP flags lets the script
+control the full build lifecycle and avoids this race.
 
 ## SPEC-0008 WalletOnboarding re-verify — 2026-06-06
 
