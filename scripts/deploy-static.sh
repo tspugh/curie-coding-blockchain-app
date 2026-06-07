@@ -30,7 +30,14 @@ profile_arg=()
 echo ">>> install + build (library then web)"
 npm ci
 npm run build           # tsc -> dist/index.js  (consumed by the web app via @lib)
-npm run web:build       # vite build -> web/dist/
+# PUBLIC BUNDLE SAFETY: .env was sourced above (set -a) and carries the dev signing
+# keys. Vite inlines `import.meta.env.VITE_PRIVATE_KEY` as a BARE "0x..." literal —
+# erasing the variable name the secret-guard below greps for — so the guard CANNOT
+# catch a key leaked this way. The only robust defense is to never let a key reach the
+# build: force the wallet keys EMPTY for the public bundle. With no inlined key,
+# hasUsableProviderKey() is false and the SPEC-0008 onboarding modal prompts each
+# visitor for their own wallet (the intended public-demo trust model).
+VITE_PRIVATE_KEY="" VITE_PRIVATE_KEY_INSURER="" npm run web:build  # vite build -> web/dist/
 
 dist="web/dist"
 [ -d "$dist" ] || { echo "FATAL: $dist not found after build"; exit 1; }
@@ -51,7 +58,16 @@ fi
 if grep -rIoE -- '(PRIVATE_KEY|privateKey|MNEMONIC|mnemonic)["'"'"']?[[:space:]]*[:=][[:space:]]*["'"'"']?0x?[a-fA-F0-9]{40,}' "$dist" >/dev/null 2>&1; then
   echo "FATAL: a private-key/mnemonic VALUE appears inlined in $dist — aborting."; exit 1
 fi
-echo "guard OK (no .env, no PEM key, no inlined key/mnemonic value)"
+# Defense-in-depth: a vite-inlined key is a BARE "0x..." literal indistinguishable
+# from a content hash by pattern alone — so we check for the EXACT key VALUES that were
+# in scope at build time. Zero false positives: we look for these specific secrets only.
+for var in VITE_PRIVATE_KEY VITE_PRIVATE_KEY_INSURER PRIVATE_KEY; do
+  val="${!var:-}"
+  if [ -n "$val" ] && grep -rIqF -- "$val" "$dist"; then
+    echo "FATAL: the value of \$$var is inlined in $dist — a private key would be PUBLIC. Aborting."; exit 1
+  fi
+done
+echo "guard OK (no .env, no PEM key, no inlined key/mnemonic value, no in-scope key value)"
 
 echo ">>> sync $dist -> s3://$CURIE_DEPLOY_BUCKET"
 # Long-cache the hashed assets; never cache index.html (so deploys go live immediately).
