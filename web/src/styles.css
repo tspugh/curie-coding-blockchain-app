@@ -662,12 +662,9 @@ tr.row-link:hover td:first-child {
   margin-top: 20px;
 }
 
-/* SPEC-0005 R7: insurer Detail collapses to a single full-width column so
-   the action panel + timeline below it read naturally. The provider keeps
-   the 2-col facts/decision grid. */
-.detail-grid.is-insurer {
-  grid-template-columns: 1fr;
-}
+/* 2026-06-07: insurer + provider now share the SAME 2-column Detail layout (the former
+   `.detail-grid.is-insurer` single-column override was removed) so the page structure is
+   consistent across roles for demo clarity — only the action affordances differ. */
 
 .btn-row {
   display: flex;

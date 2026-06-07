@@ -18,7 +18,6 @@ import {
   type PolicyClause,
   type NegotiationView,
   type PolicyCommitment,
-  type PriceBasis,
   type Profile,
 } from "@lib";
 import {
@@ -232,7 +231,6 @@ function getNextStep(
 export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   const [view, setView] = useState<NegotiationView | null>(null);
   const [policy, setPolicy] = useState<PolicyCommitment | null>(null);
-  const [priceBasis, setPriceBasis] = useState<PriceBasis | null>(null);
   // Error state is `unknown` so the raw caught value (Error object, string, etc.)
   // can flow into ErrorCard, which runs its own R16 revert-reason mapping via
   // extractRevertReason (which requires an object — string messages would lose the
@@ -285,16 +283,16 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
     let cancelled = false;
     (async () => {
       try {
-        const v = await client.negotiation.getNegotiationView(reqId);
-        const p = await client.negotiation.policyOf(reqId);
-        const pb =
-          v.ruled || v.terminal
-            ? await client.negotiation.priceBasisOf(reqId)
-            : null;
+        // Fetch the reads CONCURRENTLY — on Somnia's HTTP RPC each round-trip is ~hundreds
+        // of ms, and these were previously sequential (multiplying the latency on every
+        // action / refresh).
+        const [v, p] = await Promise.all([
+          client.negotiation.getNegotiationView(reqId),
+          client.negotiation.policyOf(reqId),
+        ]);
         if (!cancelled) {
           setView(v);
           setPolicy(p);
-          setPriceBasis(pb);
         }
       } catch (err) {
         if (!cancelled) setError(err);
@@ -302,6 +300,18 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
     })();
     return () => { cancelled = true; };
   }, [reqId, events, refreshTick]);
+
+  // Poll-while-pending: Somnia's HTTP RPC makes contract.on event delivery unreliable (the
+  // eth_getLogs growing-range poll trips the 1000-block cap), so while a request is still
+  // live we re-fetch its state on a timer. The agent ruling (which lands seconds later via an
+  // off-chain callback) and the OTHER party's actions then appear WITHOUT a manual refresh.
+  // Stops once the request reaches a terminal state. Real mode only — sim resolves inline.
+  useEffect(() => {
+    if (client.wallet.mode !== "real") return;
+    if (!view || view.terminal) return;
+    const id = setInterval(() => setRefreshTick((t) => t + 1), 5000);
+    return () => clearInterval(id);
+  }, [view?.terminal, view?.state]);
 
   // Forward the raw error to ErrorCard, which runs the SPEC-0003 R16
   // revert-reason mapping itself. (Pre-formatting the message here would
@@ -446,7 +456,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
         <ErrorCard error={error} onDismiss={() => setError(null)} />
       )}
 
-      <div className={`detail-grid${isInsurer ? " is-insurer" : ""}`}>
+      <div className="detail-grid">
         {/* Request details */}
         <div className="card facts">
           <h2>Request Details</h2>
@@ -461,14 +471,12 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                 <dd data-testid="fact-days-supply">{n.daysSupply.toString()} days</dd>
               </>
             )}
-            <dt>Amount Requested</dt>
-            <dd>{fmtAmount(n.requestedAmount)}</dd>
-            <dt>Amount Covered</dt>
-            <dd data-testid="covered-amount">
-              {n.coveredAmount > 0n
-                ? <strong className="ok-text">{fmtAmount(n.coveredAmount)}</strong>
-                : "—"}
-            </dd>
+            {/* Single amount: the contract approves the full requested amount or denies it
+                (no partial price cap today — see F4), so a separate "covered" figure would
+                imply a capping decision that never happens. The approve/deny outcome is shown
+                by the AI Decision row + status below. */}
+            <dt>Amount</dt>
+            <dd data-testid="covered-amount">{fmtAmount(n.requestedAmount)}</dd>
             <dt>AI Decision</dt>
             <dd data-testid="ruling-panel">
               {/* UnderReview takes priority over any prior ruling: after a
@@ -1016,8 +1024,6 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
       </div>
 
 
-      <PriceGauge requested={n.requestedAmount} basis={priceBasis} covered={n.coveredAmount} />
-
       {/* Policy voided explanation */}
       {isVoided && policyFlagged && (
         <div className="card gotcha" data-testid="gotcha-panel">
@@ -1149,49 +1155,7 @@ function VerifyOnChain({ event }: { readonly event: CoverageEvent }) {
   );
 }
 
-function PriceGauge({
-  requested, basis, covered,
-}: {
-  readonly requested: bigint;
-  readonly basis: PriceBasis | null;
-  readonly covered: bigint;
-}) {
-  const bars: { readonly label: string; readonly value: bigint; readonly cls: string }[] =
-    basis
-      ? [
-          { label: "Requested", value: basis.requestedAmount, cls: "requested" },
-          { label: "NADAC Floor", value: basis.nadacFloorTotal, cls: "nadac" },
-          { label: "Cost Plus Cap", value: basis.costPlusTotal, cls: "costplus" },
-          { label: "AI Covered", value: basis.coveredAmount, cls: "covered" },
-        ]
-      : [{ label: "Requested", value: requested, cls: "requested" }];
-
-  const max = bars.reduce((m, b) => (b.value > m ? b.value : m), 1n);
-  const pct = (v: bigint): number => (max > 0n ? Number((v * 1000n) / max) / 10 : 0);
-  const coveredVal = basis ? basis.coveredAmount : covered;
-
-  return (
-    <div className="card price-gauge" data-testid="price-gauge">
-      <h2>Price Comparison</h2>
-      {bars.map((b) => (
-        <div key={b.label} className="gauge-row">
-          <span className="gauge-label">{b.label}</span>
-          <span className="gauge-track">
-            <span className={`gauge-bar ${b.cls}`} style={{ width: `${pct(b.value)}%` }} />
-          </span>
-          <span className="gauge-value">{fmtAmount(b.value)}</span>
-        </div>
-      ))}
-      {basis ? (
-        <p className="hint">
-          AI covered = min(requested, Cost Plus cap) = <strong>{fmtAmount(coveredVal)}</strong>.
-          NADAC is the acquisition-cost reference floor.
-        </p>
-      ) : (
-        <p className="hint">
-          Cost Plus cap and NADAC floor will appear after the AI issues its decision.
-        </p>
-      )}
-    </div>
-  );
-}
+// PriceGauge removed 2026-06-07 (F4): the contract never assigns costPlusUnitPrice /
+// nadacUnitPrice (always 0), so the "Price Comparison" gauge showed a NADAC/Cost-Plus cap
+// spectrum that doesn't exist on-chain — coveredAmount is always the full requested amount on
+// approve, 0 on deny. Real price capping is deferred to a future V1 feature.
