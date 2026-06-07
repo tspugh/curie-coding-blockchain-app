@@ -119,6 +119,18 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
     /// @dev Per-request record. Holds only hashes/refs/amounts/codes/state/ids/
     ///      addresses/timestamps — never raw content (R3/R4).
+    /// @notice De-identified provider attestation for a patient-specific policy clause
+    ///         (Amendment 0012 / SPEC-0007 R5/R13). The on-chain shape is CLOSED —
+    ///         `{bytes32, bool, bytes32}` — so free text and the 18 HIPAA Safe-Harbor
+    ///         identifiers are structurally unrepresentable: no PHI / narrative can enter
+    ///         this channel (R6). The agent RECORDS and TRUSTS these; it does not verify
+    ///         the patient facts behind them.
+    struct Attestation {
+        bytes32 clauseId; // opaque id of the attested clause (keccak of the clause label, set off-chain)
+        bool attested; // provider's de-identified yes/no for that clause
+        bytes32 evidenceUriHash; // optional keccak of a DE-IDENTIFIED supporting URL (0 if none)
+    }
+
     struct Negotiation {
         uint256 providerId; // app-level party id of the provider (initiator)
         uint256 insurerId; // app-level party id of the insurer (destination)
@@ -235,6 +247,15 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     uint256 private _totalEscrowHeld;
 
     mapping(uint256 => Negotiation) private _negotiations;
+
+    /// @dev De-identified attestations per negotiation (Amendment 0012 / SPEC-0007 R5/R13).
+    ///      Kept OUT of the Negotiation struct so the getNegotiation tuple shape is
+    ///      unchanged; read via getAttestations(reqId).
+    mapping(uint256 => Attestation[]) private _attestations;
+
+    /// @dev Upper bound on attestations per negotiation — a gas-griefing guard so the
+    ///      decide-time conjunction loop can never be made unbounded by the caller.
+    uint256 public constant MAX_ATTESTATIONS = 32;
 
     /// @dev Maps an in-flight agent requestId back to its negotiation id.
     mapping(uint256 => uint256) private _requestToNegotiation;
@@ -480,10 +501,61 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         Negotiation storage n = _get(reqId);
         require(n.state == State.Ready, "adjudicate: not Ready");
         _onlyParty(n);
+        // No attestations: a PUBLIC-ONLY policy (every clause adjudicable from a source).
+        _startAdjudication(reqId, n);
+    }
 
+    /// @notice Provider requests adjudication AND supplies the de-identified attestations
+    ///         for the policy's patient-specific (attested) clauses (Amendment 0012 /
+    ///         SPEC-0007 R5/R13). PROVIDER-ONLY: the provider is the party who holds the
+    ///         clinical facts to attest, so the insurer cannot supply them. The closed
+    ///         `{bytes32,bool,bytes32}` shape carries no PHI / narrative (R6). At decide
+    ///         time, Approve requires EVERY attestation to be affirmative (R7); a false
+    ///         attestation downgrades to needs-more-info (T3).
+    /// @dev Stored under `reqId` and read by `_handleDecideResponse` after the
+    ///      scrape→decide callbacks; survives the async round-trip in contract storage.
+    function requestAdjudication(uint256 reqId, Attestation[] calldata attestations)
+        external
+        payable
+        nonReentrant
+    {
+        Negotiation storage n = _get(reqId);
+        require(n.state == State.Ready, "adjudicate: not Ready");
+        require(msg.sender == n.providerAddr, "auth: not provider"); // R13: provider supplies attestations
+        require(attestations.length <= MAX_ATTESTATIONS, "attest: too many");
+
+        delete _attestations[reqId]; // overwrite any prior set for a clean record
+        for (uint256 i = 0; i < attestations.length; i++) {
+            _attestations[reqId].push(attestations[i]);
+        }
+
+        _startAdjudication(reqId, n);
+    }
+
+    /// @dev Shared adjudication kick-off for both `requestAdjudication` overloads.
+    ///      Internal, so `msg.sender` (the original caller) is preserved for `_fireScrape`.
+    function _startAdjudication(uint256 reqId, Negotiation storage n) internal {
         n.round = 1; // first adjudication round
         emit AdjudicationRequested(reqId);
         _fireScrape(reqId, n, msg.sender);
+    }
+
+    /// @notice Read the de-identified attestations recorded for a negotiation (R13 UI).
+    function getAttestations(uint256 reqId) external view returns (Attestation[] memory) {
+        _get(reqId); // revert on unknown reqId
+        return _attestations[reqId];
+    }
+
+    /// @dev R7 conjunction: true iff EVERY recorded attestation is affirmative. Vacuously
+    ///      true when there are none (a public-only policy). clauseId is opaque on-chain,
+    ///      so this boolean AND is enforced HERE deterministically — the LLM never
+    ///      evaluates attestations (you do not ask a model to compute an AND).
+    function _allAttestationsAffirmative(uint256 reqId) internal view returns (bool) {
+        Attestation[] storage atts = _attestations[reqId];
+        for (uint256 i = 0; i < atts.length; i++) {
+            if (!atts[i].attested) return false;
+        }
+        return true;
     }
 
     /// @notice Provider submits more public evidence of necessity from
@@ -905,6 +977,16 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         string memory token = abi.decode(responses[0].result, (string));
         Decision decision = _tokenToDecision(token);
 
+        // A0012 (SPEC-0007 R7): deterministic attestation conjunction. clauseId is opaque
+        // on-chain, so the agent cannot evaluate attestations per-clause — the boolean AND
+        // is enforced HERE. A false attestation downgrades Approve to needs-more-info so
+        // the provider can correct it (T3); a covered drug is never approved while a
+        // patient-specific criterion is unmet. Public-only policies have no attestations,
+        // so this is vacuously true and changes nothing.
+        if (decision == Decision.Approve && !_allAttestationsAffirmative(reqId)) {
+            decision = Decision.NeedMoreEvidence;
+        }
+
         // Route NeedMoreEvidence immediately (no further state to set).
         if (decision == Decision.NeedMoreEvidence) {
             n.state = State.EvidenceRequested;
@@ -1230,6 +1312,12 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
                 " Extracted evidence: ", evidence,
                 // A0011: broaden the rubric — legitimate off-label use is covered too.
                 " Treat the indication as covered (approve) if the extracted evidence shows the drug is FDA-approved OR supported by recognized clinical compendia/guidelines for this indication; otherwise deny, or reply needs_more_info if the evidence is insufficient.",
+                // A0012 (R7/R9): de-identified attestation context. The provider asserts the
+                // patient-specific criteria; these are recorded and trusted, not independently
+                // verified. The affirmative-conjunction is enforced deterministically on-chain.
+                " Provider de-identified attestations for patient-specific criteria are ",
+                _allAttestationsAffirmative(reqId) ? "all affirmative" : "NOT all affirmative",
+                ".",
                 " Reply with exactly one of the allowed values."
             )),
             "You are a medical necessity arbiter. Evaluate the drug coverage request and return exactly one decision token.",

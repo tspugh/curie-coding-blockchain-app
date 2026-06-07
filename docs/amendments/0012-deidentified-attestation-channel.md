@@ -26,17 +26,39 @@ Add a **de-identified attestation channel** to the negotiation:
   the 18 HIPAA identifiers.
 - The decide synthesis reads the attestations alongside the public-clause verdicts and
   approves **iff** every public clause is satisfied by evidence **and** every attested
-  clause has an affirmative attestation (SPEC-0007 R7).
-- The contract's existing name-pattern PHI guard is **extended to reject free-text /
-  narrative** in the attestation channel — only the closed `{id, bool}` shape is accepted.
+  clause has an affirmative attestation (SPEC-0007 R7). **Mechanism (decided 2026-06-07):**
+  `clauseId` is an opaque `bytes32` on-chain, so the agent literally cannot reason about
+  attestations per-clause. The "every attested clause affirmative" conjunction is therefore
+  enforced **deterministically in the contract** (`_handleDecideResponse`): a `false`
+  attestation downgrades an agent `approve` to `needs-more-info` (→ `EvidenceRequested`,
+  T3). You do not ask an LLM to compute a boolean AND. The decide prompt still *states*
+  whether attestations are "all affirmative" (R9 honest rationale), but the gate is the
+  contract's, not the model's.
+- **Entry point — function OVERLOAD, not a bare signature change (decided 2026-06-07).**
+  R13's `requestAdjudication(reqId, attestations)` is added as a SECOND overload alongside
+  the existing `requestAdjudication(reqId)`. The 1-arg form means "public-only policy, no
+  attestations" (vacuously affirmative); the 2-arg form is **provider-only** (the provider
+  holds the clinical facts) and carries the `Attestation[]`. This keeps the change purely
+  *additive*: the existing demo/A0011 path keeps working through 1-arg, and ~80 existing
+  call sites need no rewrite. (ethers v6 requires the full signature
+  `requestAdjudication(uint256)` / `requestAdjudication(uint256,(bytes32,bool,bytes32)[])`
+  to disambiguate overloaded names — a mechanical change at the ethers boundary only.)
+- **The closed `{bytes32, bool, bytes32}` shape IS the PHI guard.** Free text / narrative /
+  the 18 HIPAA identifiers are structurally unrepresentable in fixed-size words, so no
+  separate name-pattern check is needed on this channel — the type system rejects narrative
+  at the ABI boundary. A `MAX_ATTESTATIONS` (32) bound guards the decide-time loop against
+  gas griefing.
 - The agent **records and trusts** attestations; it does **not** independently verify
   them. The UI must label attested clauses as *provider-asserted, not agent-verified* so
   the trust model is honest.
 - Storage shape — **on-chain structured booleans (SPEC-0007 OQ2 resolved 2026-06-06).**
-  Each attestation is stored on the negotiation as `{bytes32 clauseId, bool attested}`
-  (e.g. a fixed-size array or a `clauseId → bool` mapping). No hash/reveal indirection: a
+  Each attestation is stored as `{bytes32 clauseId, bool attested, bytes32 evidenceUriHash}`
+  (R13) in a `mapping(uint256 reqId => Attestation[])` kept OUT of the `Negotiation` struct
+  (so the `getNegotiation` tuple shape is unchanged; read via `getAttestations(reqId)`). The
+  optional `evidenceUriHash` is the keccak of a **de-identified** supporting URL (R5),
+  `0x0` when none — no content on-chain. No hash/reveal indirection on the clause id+bool: a
   clause id + a boolean is self-evidently non-PHI, cheap to store, and read directly by the
-  decide synthesis. The guard rejects anything but this closed shape.
+  decide synthesis.
 
 ## Consequences
 
