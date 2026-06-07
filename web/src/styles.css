@@ -2510,3 +2510,14 @@ tr.row-link:hover td:first-child {
   background: var(--panel);
   color: var(--text);
 }
+
+/* Create-view demo-case dropdown (SPEC-0007/0008 demo UX). */
+.demo-select {
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.9rem;
+  max-width: 22rem;
+}
