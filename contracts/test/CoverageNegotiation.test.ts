@@ -132,7 +132,7 @@ async function createEngageAdjudicate(
   await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: requestedAmount });
   // Fund both calls: 2x deposit (the minimum for the two-agent pipeline).
   const deposit = await platform.deposit();
-  await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+  await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
   // Complete the scrape phase automatically with a synthetic evidence string.
   const scrapeRequestId = await platform.lastRequestId();
   await platform.triggerRuling(target, scrapeRequestId, "synthetic-scrape-evidence");
@@ -202,7 +202,7 @@ describe("CoverageNegotiation", () => {
 
     // T3: adjudication reverts before engage (still Open / not Ready).
     await expect(
-      contract.connect(provider).requestAdjudication(1n, { value: FEE })
+      contract.connect(provider)["requestAdjudication(uint256)"](1n, { value: FEE })
     ).to.be.revertedWith("adjudicate: not Ready");
 
     // policyHash must be non-zero.
@@ -285,7 +285,7 @@ describe("CoverageNegotiation", () => {
     // Amendment 0007: requestAdjudication fires the LLM Parse Website (scrape) agent
     // first, then the Scraping callback fires LLM Inference (decide). Fund both calls.
     const deposit = await platform.deposit();
-    await expect(contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n }))
+    await expect(contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n }))
       .to.emit(contract, "AdjudicationRequested")
       .withArgs(reqId)
       .and.to.emit(contract, "RulingRequested");
@@ -311,7 +311,7 @@ describe("CoverageNegotiation", () => {
     // Amendment 0007: each agent-firing entry point fires the scrape agent first.
     // PacketSubmitted is emitted on the scrape fire (round 1 for requestAdjudication).
     const deposit = await platform.deposit();
-    await expect(contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n }))
+    await expect(contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n }))
       .to.emit(contract, "PacketSubmitted")
       .withArgs(reqId, 1n, EVIDENCE_URI, EVIDENCE_URI);
     // Complete the scrape phase → fires decide agent (no PacketSubmitted for decide).
@@ -612,7 +612,7 @@ describe("CoverageNegotiation", () => {
 
     // attacker cannot adjudicate / refuse / withdraw / feedback.
     await expect(
-      contract.connect(attacker).requestAdjudication(reqId, { value: FEE })
+      contract.connect(attacker)["requestAdjudication(uint256)"](reqId, { value: FEE })
     ).to.be.revertedWith("auth: not a party");
     await expect(contract.connect(attacker).refuse(reqId, REASON_HASH)).to.be.revertedWith("auth: not provider");
     await expect(contract.connect(attacker).withdraw(reqId)).to.be.revertedWith("auth: not a party");
@@ -628,7 +628,7 @@ describe("CoverageNegotiation", () => {
 
     // Amendment 0007: requestAdjudication fires the scrape agent first; fund both calls.
     const deposit = await platform.deposit();
-    await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+    await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
     const scrapeRid1 = await platform.lastRequestId();
     // Complete the scrape phase → fires decide agent.
     await platform.triggerRuling(target, scrapeRid1, "evidence-string");
@@ -682,14 +682,14 @@ describe("CoverageNegotiation", () => {
 
     // --- Underfunded: msg.value < 2×fee reverts; no agent fires. ---
     await expect(
-      contract.connect(provider).requestAdjudication(reqId, { value: twoFees - 1n })
+      contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: twoFees - 1n })
     ).to.be.revertedWith("fee: underfunded");
     expect(await platform.createRequestCalls()).to.equal(0n);
     expect(await contract.stateOf(reqId)).to.equal(State.Ready); // unchanged
 
     // --- Exact two-fee: scrape fee forwarded now; decide fee parked in contract;
     //     after scrape callback fires decide, balance holds only escrow (REQUESTED). ---
-    await expect(contract.connect(provider).requestAdjudication(reqId, { value: twoFees }))
+    await expect(contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: twoFees }))
       .to.emit(contract, "RulingRequested");
     // The scrape call received exactly deposit (one fee).
     expect(await platform.lastValue()).to.equal(deposit);
@@ -706,7 +706,7 @@ describe("CoverageNegotiation", () => {
     await contract.connect(insurer).insurerEngage(reqId2, POLICY_HASH, POLICY_URI, { value: REQUESTED });
     const overpay = ethers.parseEther("0.05");
     const balBefore = await ethers.provider.getBalance(provider.address);
-    const tx = await contract.connect(provider).requestAdjudication(reqId2, { value: overpay });
+    const tx = await contract.connect(provider)["requestAdjudication(uint256)"](reqId2, { value: overpay });
     const rc = await tx.wait();
     const gas = rc!.gasUsed * rc!.gasPrice;
     const balAfter = await ethers.provider.getBalance(provider.address);
@@ -814,7 +814,7 @@ describe("CoverageNegotiation", () => {
     const reqId = await createAs(contract, provider, insurer.address);
 
     // From Open: ruling-dependent actions revert.
-    await expect(contract.connect(provider).requestAdjudication(reqId, { value: FEE })).to.be.revertedWith(
+    await expect(contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: FEE })).to.be.revertedWith(
       "adjudicate: not Ready"
     );
     await expect(contract.connect(provider).settle(reqId)).to.be.revertedWith("settle: not ruled");
@@ -1175,7 +1175,7 @@ describe("CoverageNegotiation", () => {
       const reqId = await createAs(contract, provider, insurer.address);
       expect(await contract.stateOf(reqId)).to.equal(State.Open);
       await expect(
-        contract.connect(provider).requestAdjudication(reqId)
+        contract.connect(provider)["requestAdjudication(uint256)"](reqId)
       ).to.be.revertedWith("adjudicate: not Ready");
     });
 
@@ -1232,7 +1232,7 @@ describe("CoverageNegotiation", () => {
       // Amendment 0007: fund both scrape and decide. The decide payload is the
       // inferString call; complete the scrape phase to capture it in lastPayload.
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       const scrapeRid = await platform.lastRequestId();
       // Trigger the scrape callback — this fires _fireDecide (inferString).
       await platform.triggerRuling(target, scrapeRid, "scrape-evidence");
@@ -1273,7 +1273,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
       // Amendment 0007: complete the scrape phase to get the decide payload in lastPayload.
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       const scrapeRid = await platform.lastRequestId();
       await platform.triggerRuling(target, scrapeRid, "scrape-evidence");
 
@@ -1312,7 +1312,7 @@ describe("CoverageNegotiation", () => {
       const reqId = await createAs(contract, provider, insurer.address);
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       // complete the scrape phase → fires _fireDecide → decide payload in lastPayload.
       await platform.triggerRuling(target, await platform.lastRequestId(), "scrape-evidence");
 
@@ -1325,6 +1325,37 @@ describe("CoverageNegotiation", () => {
       expect(prompt).to.contain("PartD review ladder, stage 0");
     });
 
+    it("A0011: scrape prompt is VERBATIM + diagnosis-targeted; decide rubric broadened to compendia", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      await contract.setAgentId(LLM_INFERENCE_AGENT_ID);
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
+      const deposit = await platform.deposit();
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
+
+      // SCRAPE payload (ExtractString) — captured right after requestAdjudication.
+      const scrapePayload: string = await platform.lastPayload();
+      const sd = ethers.AbiCoder.defaultAbiCoder().decode(
+        ["string", "string", "string[]", "string", "string", "bool", "uint8", "uint8"],
+        "0x" + scrapePayload.slice(10),
+      );
+      const scrapePrompt: string = sd[3];
+      expect(scrapePrompt.toUpperCase()).to.contain("VERBATIM"); // R3: not a lossy summary
+      expect(scrapePrompt.toLowerCase()).to.contain("do not summarize");
+      expect(scrapePrompt).to.contain("indication in this request"); // diagnosis-targeted via promptHint
+
+      // DECIDE payload (inferString) — after the scrape completes.
+      await platform.triggerRuling(target, await platform.lastRequestId(), "scrape-evidence");
+      const decidePayload: string = await platform.lastPayload();
+      const [decidePrompt] = ethers.AbiCoder.defaultAbiCoder().decode(
+        ["string", "string", "bool", "string[]"],
+        "0x" + decidePayload.slice(10),
+      );
+      expect(decidePrompt.toLowerCase()).to.contain("compendia"); // R4: FDA-approved OR compendia-supported
+    });
+
     it("A0009: submitEvidence repoints agentEvidenceUrl so the re-scrape targets the NEW url", async () => {
       const { platform, contract } = await deploy();
       const [provider, insurer] = await ethers.getSigners();
@@ -1334,7 +1365,7 @@ describe("CoverageNegotiation", () => {
       const reqId = await createAs(contract, provider, insurer.address);
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       // scrape → decide needs_more_info → EvidenceRequested
       await platform.triggerRuling(target, await platform.lastRequestId(), "scrape-evidence");
       await platform.triggerRuling(target, await platform.lastRequestId(), TOKEN_NEEDS_MORE_INFO);
@@ -1347,6 +1378,143 @@ describe("CoverageNegotiation", () => {
       expect(n.agentEvidenceUrl).to.equal(NEW_URL); // re-scrape now reads the new url
       expect(n.evidenceUri).to.equal(ethers.id(NEW_URL)); // keccak audit hash matches
       expect(await contract.stateOf(reqId)).to.equal(State.UnderReview); // re-fired
+    });
+  });
+
+  describe("Amendment 0012 — de-identified attestation channel (SPEC-0007 R5/R7/R13)", () => {
+    const LLM_INFERENCE_AGENT_ID = 12847293847561029384n;
+    const CLAUSE_STEP = ethers.id("step-therapy");
+    const CLAUSE_SAFETY = ethers.id("tb-screening");
+    const URI_HASH = ethers.id("https://example.org/deidentified-lab");
+    const att = (clauseId: string, attested: boolean, evidenceUriHash = ethers.ZeroHash) => ({
+      clauseId,
+      attested,
+      evidenceUriHash,
+    });
+
+    // Create → engage → adjudicate WITH attestations → drive through the scrape phase.
+    // Mirrors createEngageAdjudicate but uses the 2-arg (attestation) overload.
+    async function adjudicateWithAtt(
+      contract: CoverageNegotiation,
+      platform: MockAgentPlatform,
+      provider: HardhatEthersSigner,
+      insurer: HardhatEthersSigner,
+      attestations: ReturnType<typeof att>[],
+    ) {
+      const target = await contract.getAddress();
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
+      const deposit = await platform.deposit();
+      await contract
+        .connect(provider)
+        ["requestAdjudication(uint256,(bytes32,bool,bytes32)[])"](reqId, attestations, { value: deposit * 2n });
+      // Complete the scrape phase; return the decide requestId.
+      await platform.triggerRuling(target, await platform.lastRequestId(), "scrape-evidence");
+      return { reqId, target, decideRequestId: await platform.lastRequestId() };
+    }
+
+    it("R13: the attestation overload is PROVIDER-ONLY (insurer cannot supply attestations)", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
+      const deposit = await platform.deposit();
+      await expect(
+        contract
+          .connect(insurer)
+          ["requestAdjudication(uint256,(bytes32,bool,bytes32)[])"](reqId, [att(CLAUSE_STEP, true)], {
+            value: deposit * 2n,
+          }),
+      ).to.be.revertedWith("auth: not provider");
+    });
+
+    it("R5/R13: attestations are stored on-chain and read back via getAttestations", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const { reqId } = await adjudicateWithAtt(contract, platform, provider, insurer, [
+        att(CLAUSE_STEP, true, URI_HASH),
+        att(CLAUSE_SAFETY, false),
+      ]);
+      const stored = await contract.getAttestations(reqId);
+      expect(stored.length).to.equal(2);
+      expect(stored[0].clauseId).to.equal(CLAUSE_STEP);
+      expect(stored[0].attested).to.equal(true);
+      expect(stored[0].evidenceUriHash).to.equal(URI_HASH);
+      expect(stored[1].clauseId).to.equal(CLAUSE_SAFETY);
+      expect(stored[1].attested).to.equal(false);
+      expect(stored[1].evidenceUriHash).to.equal(ethers.ZeroHash);
+    });
+
+    it("T1/R7: all attestations affirmative + agent approve → Approved", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      await contract.setAgentId(LLM_INFERENCE_AGENT_ID);
+      const { reqId, target, decideRequestId } = await adjudicateWithAtt(
+        contract, platform, provider, insurer,
+        [att(CLAUSE_STEP, true), att(CLAUSE_SAFETY, true)],
+      );
+      await platform.triggerRuling(target, decideRequestId, TOKEN_APPROVE);
+      expect(await contract.stateOf(reqId)).to.equal(State.Approved);
+    });
+
+    it("T3/R7: a FALSE attestation downgrades agent-approve to needs-more-info (NOT Approved)", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      await contract.setAgentId(LLM_INFERENCE_AGENT_ID);
+      const { reqId, target, decideRequestId } = await adjudicateWithAtt(
+        contract, platform, provider, insurer,
+        [att(CLAUSE_STEP, true), att(CLAUSE_SAFETY, false)], // safety attestation FALSE
+      );
+      // Agent says approve, but the deterministic conjunction blocks it.
+      await platform.triggerRuling(target, decideRequestId, TOKEN_APPROVE);
+      expect(await contract.stateOf(reqId)).to.equal(State.EvidenceRequested);
+      const n = await contract.getNegotiation(reqId);
+      expect(n.state).to.equal(State.EvidenceRequested);
+      expect(n.hasRuling).to.equal(false); // not a final ruling
+    });
+
+    it("R7 (vacuous): public-only policy (no attestations, 1-arg) approves normally", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      await contract.setAgentId(LLM_INFERENCE_AGENT_ID);
+      const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+      await platform.triggerRuling(await contract.getAddress(), requestId, TOKEN_APPROVE);
+      expect(await contract.stateOf(reqId)).to.equal(State.Approved);
+      expect((await contract.getAttestations(reqId)).length).to.equal(0);
+    });
+
+    it("R7/R9: the decide prompt reflects whether attestations are all affirmative", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      await contract.setAgentId(LLM_INFERENCE_AGENT_ID);
+      const decode = (payload: string) =>
+        ethers.AbiCoder.defaultAbiCoder().decode(
+          ["string", "string", "bool", "string[]"],
+          "0x" + payload.slice(10),
+        )[0] as string;
+
+      // All affirmative.
+      await adjudicateWithAtt(contract, platform, provider, insurer, [att(CLAUSE_STEP, true)]);
+      expect(decode(await platform.lastPayload()).toLowerCase()).to.contain("all affirmative");
+
+      // One false → "NOT all affirmative".
+      await adjudicateWithAtt(contract, platform, provider, insurer, [att(CLAUSE_STEP, false)]);
+      expect(decode(await platform.lastPayload())).to.contain("NOT all affirmative");
+    });
+
+    it("R5 guard: attestations are bounded by MAX_ATTESTATIONS (gas-griefing guard)", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
+      const deposit = await platform.deposit();
+      const max = Number(await contract.MAX_ATTESTATIONS());
+      const tooMany = Array.from({ length: max + 1 }, (_, i) => att(ethers.id(`c${i}`), true));
+      await expect(
+        contract
+          .connect(provider)
+          ["requestAdjudication(uint256,(bytes32,bool,bytes32)[])"](reqId, tooMany, { value: deposit * 2n }),
+      ).to.be.revertedWith("attest: too many");
     });
   });
 
@@ -1535,7 +1703,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
       // Amendment 0007: complete both phases to get the decide payload (inferString) in lastPayload.
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       const scrapeRid = await platform.lastRequestId();
       await platform.triggerRuling(target, scrapeRid, "scrape-evidence");
 
@@ -1957,7 +2125,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
       // Amendment 0007: complete the scrape phase to get the decide (inferString) payload.
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       const scrapeRid = await platform.lastRequestId();
       await platform.triggerRuling(target, scrapeRid, "scrape-evidence");
 
@@ -2459,7 +2627,7 @@ describe("CoverageNegotiation", () => {
       );
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
       // FEE (0.01 ether) > 2×deposit (0.002 ether) — satisfies the two-agent fund requirement.
-      await contract.connect(provider).requestAdjudication(reqId, { value: FEE });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: FEE });
 
       // lastPayload after requestAdjudication is the ExtractString scrape payload
       // (phase 1 — _fireScrape). The URL must appear verbatim inside it.
@@ -2491,7 +2659,7 @@ describe("CoverageNegotiation", () => {
       // Amendment 0007: agentPromptHint is embedded in the inferString (decide) payload
       // built by _fireDecide. Complete the scrape phase to get the decide payload in lastPayload.
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       const scrapeRid = await platform.lastRequestId();
       await platform.triggerRuling(target, scrapeRid, "scrape-evidence");
 
@@ -2799,7 +2967,7 @@ describe("CoverageNegotiation", () => {
       const deposit = await platform.deposit();
       const twoFees = deposit * 2n;
 
-      await contract.connect(provider).requestAdjudication(reqId, { value: twoFees });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: twoFees });
 
       const n = await contract.getNegotiation(reqId);
       // agentPhase must be Scraping (1) — the scrape agent was fired.
@@ -2835,7 +3003,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
 
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
 
       const payload: string = await platform.lastPayload();
       // First 4 bytes of payload (after "0x") must be the ExtractString selector.
@@ -2868,7 +3036,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
 
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
 
       // The scrape agent returns an ABI-encoded string (the extracted evidence).
       const scrapeRequestId = await platform.lastRequestId();
@@ -2913,7 +3081,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
 
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
 
       // Phase 1: scrape callback.
       const scrapeRequestId = await platform.lastRequestId();
@@ -2946,7 +3114,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
 
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
 
       const scrapeRequestId = await platform.lastRequestId();
       await platform.triggerRuling(target, scrapeRequestId, SCRAPED_EVIDENCE);
@@ -2982,7 +3150,7 @@ describe("CoverageNegotiation", () => {
 
       // Record provider balance before funding adjudication.
       const balBefore = await ethers.provider.getBalance(provider.address);
-      const tx = await contract.connect(provider).requestAdjudication(reqId, { value: twoFees });
+      const tx = await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: twoFees });
       const rc = await tx.wait();
       const gasSpentOnAdj = rc!.gasUsed * rc!.gasPrice;
 
@@ -3023,7 +3191,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
 
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
 
       // Scrape succeeds.
       const scrapeRequestId = await platform.lastRequestId();
@@ -3060,7 +3228,7 @@ describe("CoverageNegotiation", () => {
       const reqId = await createAs(contract, provider, insurer.address);
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
       await expect(
-        contract.connect(provider).requestAdjudication(reqId, { value: deposit })
+        contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit })
       ).to.be.revertedWith("fee: underfunded",
         "A0007-S13: requestAdjudication must revert with 'fee: underfunded' when msg.value < 2×deposit"
       );
@@ -3068,7 +3236,7 @@ describe("CoverageNegotiation", () => {
       // 2×deposit succeeds.
       const reqId2 = await createAs(contract, provider, insurer.address);
       await contract.connect(insurer).insurerEngage(reqId2, POLICY_HASH, POLICY_URI, { value: REQUESTED });
-      await contract.connect(provider).requestAdjudication(reqId2, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId2, { value: deposit * 2n });
 
       // Complete the full path to verify totalFees accumulation.
       const scrapeRequestId = await platform.lastRequestId();
@@ -3179,7 +3347,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
 
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
 
       // After requestAdjudication: scrape agent was fired — agentId must be LLM_PARSE_WEBSITE_AGENT_ID.
       const agentIdAfterScrape = await platform.lastAgentId();
@@ -3250,7 +3418,7 @@ describe("CoverageNegotiation", () => {
       const twoFees = deposit * 2n;
 
       // Fire requestAdjudication — scrape agent is now in flight, pendingDecideFee parked.
-      await contract.connect(provider).requestAdjudication(reqId, { value: twoFees });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: twoFees });
       // Contract holds escrow (REQUESTED) + pendingDecideFee (deposit) while the scrape is pending.
       expect(await ethers.provider.getBalance(target)).to.equal(deposit + REQUESTED,
         "HIGH-1 setup: contract must hold pendingDecideFee (one deposit) after requestAdjudication"
@@ -3304,7 +3472,7 @@ describe("CoverageNegotiation", () => {
 
       const deposit = await platform.deposit();
       // Fund and fire the scrape agent.
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
 
       // Complete the scrape phase — decide agent is now in flight, pendingDecideFee == 0.
       const scrapeRid = await platform.lastRequestId();
@@ -3358,7 +3526,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
 
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
 
       // Contract holds escrow (REQUESTED) + pendingDecideFee.
       expect(await ethers.provider.getBalance(target)).to.equal(deposit + REQUESTED,
@@ -3403,7 +3571,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
 
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
 
       // Complete the scrape phase normally.
       const scrapeRid = await platform.lastRequestId();
@@ -3440,7 +3608,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
 
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
 
       // Verify pendingFeePayer is set (non-zero) before the scrape callback.
       const nBefore = await contract.getNegotiation(reqId);
@@ -3857,7 +4025,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
       const deposit = await platform.deposit();
       // Exact 2×deposit: no overpayment → refund == 0 → `if (refund > 0)` is false (branch 79[1]).
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       // No revert expected.
       expect(await contract.stateOf(reqId)).to.equal(State.UnderReview);
     });
@@ -3985,7 +4153,7 @@ describe("CoverageNegotiation", () => {
 
       // Run the two-agent pipeline to Approved.
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       const scrapeRid = await platform.lastRequestId();
       await platform.triggerRuling(target, scrapeRid, "synthetic-scrape-evidence");
       const decideRid = await platform.lastRequestId();
@@ -4050,7 +4218,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: requestedAmount });
 
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       const scrapeRid = await platform.lastRequestId();
       await platform.triggerRuling(target, scrapeRid, "evidence");
       const decideRid = await platform.lastRequestId();
@@ -4078,7 +4246,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
 
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       const scrapeRid = await platform.lastRequestId();
       await platform.triggerRuling(target, scrapeRid, "evidence");
       const decideRid = await platform.lastRequestId();
@@ -4131,7 +4299,7 @@ describe("CoverageNegotiation", () => {
 
       // Drive to Denied at round == maxRounds == 1.
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       const scrapeRid = await platform.lastRequestId();
       await platform.triggerRuling(target, scrapeRid, "evidence");
       const decideRid = await platform.lastRequestId();
@@ -4191,7 +4359,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
 
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       const scrapeRid = await platform.lastRequestId();
       await platform.triggerRuling(target, scrapeRid, "evidence");
       const decideRid = await platform.lastRequestId();
@@ -4273,7 +4441,7 @@ describe("CoverageNegotiation", () => {
         const reqId = await createAs(contract, provider, insurer.address, REQUESTED);
         await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
         const deposit = await platform.deposit();
-        await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+        await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
         const s1 = await platform.lastRequestId();
         await platform.triggerRuling(target, s1, "evidence");
         const d1 = await platform.lastRequestId();
@@ -4289,7 +4457,7 @@ describe("CoverageNegotiation", () => {
         const reqId2 = await createAs(contract, provider, insurer.address, REQUESTED);
         await contract.connect(insurer).insurerEngage(reqId2, POLICY_HASH, POLICY_URI, { value: REQUESTED });
         const deposit = await platform.deposit();
-        await contract.connect(provider).requestAdjudication(reqId2, { value: deposit * 2n });
+        await contract.connect(provider)["requestAdjudication(uint256)"](reqId2, { value: deposit * 2n });
         const s2 = await platform.lastRequestId();
         await platform.triggerRuling(target, s2, "evidence");
         const d2 = await platform.lastRequestId();
@@ -4313,7 +4481,7 @@ describe("CoverageNegotiation", () => {
         const reqId = await createAs(contract, provider, insurer.address, REQUESTED);
         await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
         const deposit = await platform.deposit();
-        await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+        await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
         const s = await platform.lastRequestId();
         await platform.triggerRuling(target, s, "evidence");
         const d = await platform.lastRequestId();
@@ -4337,7 +4505,7 @@ describe("CoverageNegotiation", () => {
         const reqId = await createAs(contract, provider, insurer.address, REQUESTED);
         await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
         const deposit = await platform.deposit();
-        await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+        await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
         const s = await platform.lastRequestId();
         await platform.triggerRuling(target, s, "evidence");
         const d = await platform.lastRequestId();
@@ -4426,7 +4594,7 @@ describe("CoverageNegotiation", () => {
 
       // Drive to Approved.
       const deposit = await platform.deposit();
-      await contract.connect(reverterSigner).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(reverterSigner)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       const scrapeRid = await platform.lastRequestId();
       await platform.triggerRuling(target, scrapeRid, "evidence");
       const decideRid = await platform.lastRequestId();
@@ -4470,7 +4638,7 @@ describe("CoverageNegotiation", () => {
 
       // Drive to Denied.
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       const scrapeRid = await platform.lastRequestId();
       await platform.triggerRuling(target, scrapeRid, "evidence");
       const decideRid = await platform.lastRequestId();
@@ -4504,7 +4672,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
 
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       const scrapeRid = await platform.lastRequestId();
       await platform.triggerRuling(target, scrapeRid, "evidence");
       const decideRid = await platform.lastRequestId();
@@ -4667,7 +4835,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(reverterSigner).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
 
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       const scrapeRid = await platform.lastRequestId();
       await platform.triggerRuling(target, scrapeRid, "evidence");
       const decideRid = await platform.lastRequestId();
@@ -4860,7 +5028,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
       const deposit = await platform.deposit();
       // Fire adjudication — contract parks pendingDecideFee in Scraping phase.
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
 
       // Verify pendingDecideFee is set (Scraping phase).
       const n = await contract.getNegotiation(reqId);
@@ -4967,7 +5135,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(reverterSigner).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
 
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       const scrapeRid = await platform.lastRequestId();
       await platform.triggerRuling(target, scrapeRid, "evidence");
       const decideRid = await platform.lastRequestId();
@@ -5001,7 +5169,7 @@ describe("CoverageNegotiation", () => {
       await contract.connect(reverterSigner).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
 
       const deposit = await platform.deposit();
-      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+      await contract.connect(provider)["requestAdjudication(uint256)"](reqId, { value: deposit * 2n });
       const scrapeRid = await platform.lastRequestId();
       await platform.triggerRuling(target, scrapeRid, "evidence");
       const decideRid = await platform.lastRequestId();
@@ -5048,7 +5216,7 @@ describe("CoverageNegotiation", () => {
       const deposit = await platform.deposit();
       const overpay = deposit * 3n; // 3x to ensure > 2x (surplus = 1x)
       await expect(
-        contract.connect(reverterSigner).requestAdjudication(reqId, { value: overpay })
+        contract.connect(reverterSigner)["requestAdjudication(uint256)"](reqId, { value: overpay })
       ).to.be.revertedWith("fee: refund failed");
 
       await ethers.provider.send("hardhat_stopImpersonatingAccount", [reverterAddr]);

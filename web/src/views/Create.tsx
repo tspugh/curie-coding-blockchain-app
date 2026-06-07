@@ -18,6 +18,7 @@ import { useWalletBalance } from "../hooks/useWalletBalance.js";
 import { ErrorCard } from "../components/ErrorCard.js";
 import { AGENT_FEE_RESERVE_WEI } from "../config.js";
 import { evidenceForDrug } from "../drugEvidenceMap.js";
+import { DEMO_CASES, getDemoCase } from "../demoCases.js";
 import { formatLivenessError, type LivenessResult } from "../urlLiveness.js";
 import { isSubmitBlockedByLiveness, shouldShowLivenessBanner } from "../livenessGate.js";
 import { runLivenessDebounce } from "../livenessDebounce.js";
@@ -49,6 +50,8 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
   const [quantity, setQuantity] = useState("");
   const [daysSupply, setDaysSupply] = useState("");
   const [payerLine, setPayerLine] = useState<PayerLine>(PayerLine.PartD);
+  // Selected demo case for the "Try a demo" dropdown (default = first/canonical case).
+  const [selectedDemo, setSelectedDemo] = useState<string>(DEMO_CASES[0]!.id);
   const [committedHash, setCommittedHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -129,13 +132,17 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
     );
   }, [activeProfile]);
 
-  function loadDemo() {
-    setJustification(SAMPLE_CASE.justification);
-    applyDrugLookup(SAMPLE_CASE.drug);
+  /** Load a curated demo case (the dropdown options) into the form. */
+  function loadDemoCase(id: string) {
+    const c = getDemoCase(id);
+    if (!c) return;
+    setJustification(c.justification);
+    applyDrugLookup(c.drug);
     setEvidence(SAMPLE_CASE.evidenceRef);
-    setAmount(SAMPLE_CASE.requestedAmount);
-    setQuantity(SAMPLE_CASE.quantity);
-    setDaysSupply(SAMPLE_CASE.daysSupply);
+    setAmount(c.requestedAmount);
+    setQuantity(c.quantity);
+    setDaysSupply(c.daysSupply);
+    setPayerLine(c.payerLine);
     setCdsProvenance(null);
     setError(null);
   }
@@ -225,18 +232,31 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
       {/* Demo shortcut */}
       <div className="demo-hero">
         <div className="demo-hero-text">
-          <strong>Try the demo case</strong>
+          <strong>Try a demo case</strong>
           <span>
-            Pre-filled with a realistic Humira (adalimumab) coverage scenario
+            Pick a pre-filled drug × indication scenario, then Load
           </span>
         </div>
+        <select
+          data-testid="demo-select"
+          aria-label="Demo case"
+          className="demo-select"
+          value={selectedDemo}
+          onChange={(e) => setSelectedDemo(e.target.value)}
+        >
+          {DEMO_CASES.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.label}
+            </option>
+          ))}
+        </select>
         <button
           type="button"
           className="primary"
           data-testid="load-sample"
-          onClick={loadDemo}
+          onClick={() => loadDemoCase(selectedDemo)}
         >
-          Load Demo Case →
+          Load demo →
         </button>
         <button
           type="button"

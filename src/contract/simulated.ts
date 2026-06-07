@@ -38,6 +38,7 @@
 import { ethers } from "ethers";
 
 import {
+  type Attestation,
   type CoverageEvent,
   type CoverageEventListener,
   Decision,
@@ -177,6 +178,7 @@ interface SimNegotiation {
   agentPhase: number;       // two-agent phase tracker (0=None/1=Scraping/2=Deciding — Amendment 0007)
   pendingDecideFee: bigint; // parked LLM Inference fee for pending Decide-phase call (Amendment 0007)
   pendingFeePayer: string;  // address of the fee payer for the parked decide fee (Amendment 0007)
+  attestations: Attestation[]; // de-identified provider attestations (A0012 / SPEC-0007 R5/R13)
 }
 
 /**
@@ -185,6 +187,9 @@ interface SimNegotiation {
  * Use {@link setNextPolicyVoidedClauseIndices} to prime a one-shot populated value.
  */
 let _nextPolicyVoidedClauseIndices: number[] = [];
+
+/** A0012 parity with the contract's MAX_ATTESTATIONS gas-griefing bound. */
+const SIM_MAX_ATTESTATIONS = 32;
 
 /**
  * Set the `policyVoidedClauseIndices` array that will be emitted in the NEXT
@@ -354,6 +359,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       agentPhase: 0,
       pendingDecideFee: 0n,
       pendingFeePayer: ethers.ZeroAddress,
+      attestations: [],
     });
 
     this.emit({
@@ -406,13 +412,24 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     this.emit({ name: "ContractReady", reqId });
   }
 
-  async requestAdjudication(reqId: bigint): Promise<void> {
+  async requestAdjudication(reqId: bigint, attestations: Attestation[] = []): Promise<void> {
     const n = this.must(reqId);
     if (n.state !== State.Ready) throw new Error("adjudicate: not Ready");
-    this.onlyParty(n); // R11: either party may adjudicate
+    if (attestations.length > 0) {
+      // A0012 / SPEC-0007 R13: attestations are PROVIDER-supplied (provider-only path).
+      this.onlyProvider(n);
+      if (attestations.length > SIM_MAX_ATTESTATIONS) throw new Error("attest: too many");
+      n.attestations = attestations.map((a) => ({ ...a }));
+    } else {
+      this.onlyParty(n); // R11: either party may adjudicate a public-only policy
+    }
     n.round = 1n;
     this.emit({ name: "AdjudicationRequested", reqId });
     this.fireAgent(reqId, n);
+  }
+
+  async getAttestations(reqId: bigint): Promise<Attestation[]> {
+    return this.must(reqId).attestations.map((a) => ({ ...a }));
   }
 
   async submitEvidence(reqId: bigint, newEvidenceUrl: string): Promise<void> {
@@ -809,6 +826,15 @@ export class SimulatedBackend implements CoverageNegotiationClient {
   private deliverRuling(reqId: bigint, n: SimNegotiation, decision: Decision): void {
     const requestId = n.pendingRequestId;
     this.clearRequest(n);
+
+    // A0012 / SPEC-0007 R7 (contract parity with _handleDecideResponse): a false
+    // de-identified attestation downgrades Approve to NeedMoreEvidence. clauseId is opaque,
+    // so this is a deterministic boolean AND applied AFTER the agent's decision — exactly
+    // where the contract applies it (T3). Sits in deliverRuling, the single chokepoint both
+    // the auto-resolve and explicit-resolve paths pass through.
+    if (decision === Decision.Approve && n.attestations.some((a) => !a.attested)) {
+      decision = Decision.NeedMoreEvidence;
+    }
 
     const rationaleHash = this.agent.rationaleHash ?? ethers.id("rationale");
     const clauseRef = this.agent.clauseRef ?? ethers.id("clause");

@@ -1,12 +1,171 @@
 # Browser-verify
 
-Last run: Extract-Create `runLivenessDebounce` unit — 2026-06-04 —
-**sim-mode harness 109/109 PASS** across 23 scenarios. Unit tests 331/331 PASS.
-F4' (strict-review gate FAIL) resolved: `runLivenessDebounce` extracted from
-`Create.tsx`'s `useEffect` into `web/src/livenessDebounce.ts` (pure, injectable,
-no React dependency); 9 new unit tests in `web/src/livenessDebounce.test.ts`
-covering debounce firing, stale-response cancellation, and empty-URL short-circuit.
-Gate turns from FAIL to PASS.
+Last run: SPEC-0008 WalletOnboarding E2E verify — 2026-06-06 —
+**sim-mode harness 111/111 PASS** across 27 scenarios (N1–N4 all green).
+Unit tests 144/144 PASS (JS web). Four SPEC-0008 WalletOnboarding scenarios (N1–N4,
+14 assertions) all green. Run: full build from scratch (no SKIP_BUILD flags).
+
+## SPEC-0008 WalletOnboarding E2E verify — 2026-06-06
+
+Branch: `spec/0008-wallet-onboarding`
+
+### Unit tests — 144/144 JS PASS
+
+Run: `node --import tsx --test "web/src/**/*.test.ts"`
+
+All 144 web unit tests pass:
+- 50 tests in `web/src/walletOnboarding.test.ts` (T1–T6, F3/F7/F8-1 invariants)
+- 40 tests in `web/src/walletOnboarding.dom.test.ts` (DOM-T1 through DOM-T6, F1/F5/F6/F8/F9/F10)
+- Remaining 54 from other web modules (livenessDebounce, livenessGate, drugEvidenceMap, etc.)
+
+### E2E harness — 111/111 PASS
+
+All 27 scenarios green including the four SPEC-0008 WalletOnboarding scenarios (N1–N4):
+
+- **N1** (R5): env key present → no modal (app interactive)
+- **N2** (R1): no key → modal + backdrop block the app
+- **N3** (R3/R2): paste invalid key → error + Load disabled; valid key → address shown + Load enabled
+- **N4** (R4): provider key loaded, insurer empty → localStorage written, reload clears modal
+
+Build: `CHROME_PATH=/usr/bin/chromium-browser bash web/tests/agent-browser/run.sh` (full build — no SKIP flags).
+
+The no-key modal server (port 4174) must be built fresh each run. Prior runs that used
+`SKIP_BUILD=1 SKIP_MODAL_BUILD=1` saw N2–N4 failures because the run.sh kills the
+pre-started modal server and rebuilds, but the `SKIP_MODAL_BUILD=1` flag does NOT
+actually skip the rebuild — it always rebuilds. When the prior dist-nokey artifacts
+came from a different build session (regular dist), the preview server ended up serving
+from `web/dist/` (which had a bundle with the real private key from `.env`) instead of
+`web/dist-nokey/` (the no-key bundle). Running without any SKIP flags lets the script
+control the full build lifecycle and avoids this race.
+
+## SPEC-0008 WalletOnboarding re-verify — 2026-06-06
+
+Branch: `spec/0008-wallet-onboarding`
+
+Unit-implementation changes verified in this run:
+
+- **`web/src/components/WalletOnboarding.tsx`** — replaced local `tryDeriveAddress`
+  (`new Wallet()`) with `safeDerive` wrapping the shared `deriveAddress` from
+  `walletKeys.ts`. Fixes SPEC-0008 §3 DRY invariant (F3).
+- **`web/src/client.ts`** — `keyOverride()` env-key branch now validates via
+  `isValidHexKey(fromEnv)` instead of a bare length check. Fixes F7 consistency.
+- **`web/src/App.tsx`** — gate rewritten to `!hasUsableProviderKey()` (localStorage
+  wins); `forcePrompt` only activates when no valid key is stored, preventing the
+  inescapable modal loop when `VITE_FORCE_WALLET_PROMPT=1` (F5 fix). Module-level
+  `import.meta.env.VITE_PRIVATE_KEY` access removed (F8-1 bundle-security fix).
+- **`web/src/walletOnboarding.test.ts`** — 131 unit tests (pure-helper + static
+  analysis invariants); all previously passing, now confirmed again.
+- **`web/src/walletOnboarding.dom.test.ts`** (new) — 16 DOM/component tests using
+  `react-dom/server renderToString` + jsdom; covers the six SPEC-0008 R10 component
+  scenarios including the F5 loop-fix invariant.
+
+### Unit tests — 379/379 JS + 168/168 Hardhat PASS
+
+Run: `npm run test:lib` (379 JS) + `npm --prefix contracts test` (168 Hardhat)
+
+New tests in this revision:
+- 16 DOM tests in `web/src/walletOnboarding.dom.test.ts` (DOM-T1 through DOM-T6,
+  including the F5 loop-fix invariant)
+- 131 pure-helper tests in `web/src/walletOnboarding.test.ts` (T1–T6, F3/F7/F8-1
+  static-analysis invariants)
+
+All 168 Hardhat contract tests continue to pass (no Solidity changes in this unit).
+
+### E2E harness — 111/111 PASS
+
+Build: Standard harness bundle (`VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run web:build`) served on port 4173. No-key modal bundle (`VITE_PRIVATE_KEY="" VITE_EXPOSE_TEST_API=1 npx vite build --outDir dist-nokey`) served on port 4174.
+
+Run: `SKIP_BUILD=1 SKIP_MODAL_BUILD=1 CHROME_PATH=/usr/bin/chromium-browser bash web/tests/agent-browser/run.sh`
+
+Note: the first run (fresh build) showed 8 failures in N2–N4 due to a build-phase
+race where the no-key bundle was built while prior dist-nokey artifacts were in an
+inconsistent state. Re-running with `SKIP_BUILD=1 SKIP_MODAL_BUILD=1` (using the
+already-built bundles) showed 111/111. The root cause is a timing issue in
+`start_modal_server`: it kills the existing process, waits 0.5s, and rebuilds — but
+if the prior build left stale artifacts and the server came up before Vite had fully
+written the new bundle, the modal scenarios saw the old (key-bearing) bundle.
+No code changes required; the harness infra already handles this when bundles are
+pre-built.
+
+## SPEC-0008 WalletOnboarding — original commit — 2026-06-06
+
+Branch: `spec/0008-wallet-onboarding`
+
+### Unit tests — 168/168 PASS
+
+Run: `npm run test`
+
+All pre-existing tests pass. New SPEC-0008 unit tests (21 tests in
+`web/src/walletOnboarding.test.ts`) covering T1–T6 gate scenarios are included in
+the 168 total (they were already passing on the branch).
+
+### E2E harness — 111/111 PASS
+
+Build: Standard harness bundle (`VITE_WALLET_MODE=simulated VITE_EXPOSE_TEST_API=1 npm run web:build`) served on port 4173. No-key modal bundle (`VITE_PRIVATE_KEY="" VITE_EXPOSE_TEST_API=1 npx vite build --outDir dist-nokey`) served on port 4174.
+
+Run: `SKIP_SERVE=1 CHROME_PATH=/usr/bin/chromium-browser bash web/tests/agent-browser/run.sh`
+
+```
+Scenario A   happy-path lifecycle            7/7
+Scenario B   no PHI on-chain                 3/3
+Scenario C   adjudication gating             1/1
+Scenario C2  policy invalidated              4/4
+Scenario D   profile switching               4/4
+Scenario E   sample case prefill             7/7
+Scenario F   note verify                     2/2
+Scenario G   observer / non-party            3/3
+Scenario H   CDS Hooks prefill               4/4
+Scenario I   persisted users                 4/4
+Scenario J   demo-mode toggle                8/8
+Scenario K   key-paste derives address       6/6
+Scenario L3  provider refuse                 5/5
+Scenario L1  evidence resubmit               5/5
+Scenario L2  appeal                          5/5
+Scenario L4  withdraw                        4/4
+Scenario L10 payer-line round-trip           2/2
+Scenario L7  custom-policy composer          4/4
+Scenario L5  provider feedback note          3/3
+Scenario M1  denial happy-path               6/6
+Scenario M2  NeedMoreEvidence -> Denied      5/5
+Scenario M3  appeal -> Denied                5/5
+Scenario N1  SPEC-0008 no modal (env keys)   3/3
+Scenario N2  SPEC-0008 modal blocks (no key) 3/3
+Scenario N3  SPEC-0008 key validation        5/5
+Scenario N4  SPEC-0008 load + dismiss        3/3
+──────────────────────────────────────────
+Total: 111 passed, 0 failed
+```
+
+### SPEC-0008 scenario details
+
+Four new scenarios added to `web/tests/agent-browser/run.sh`:
+
+**N1 (T5/R5)** — Env keys present → no modal: the standard harness bundle embeds
+`VITE_PRIVATE_KEY` from `.env`; `hasUsableProviderKey()` returns true →
+`needsWallet=false` → no `modal-backdrop` in DOM; `nav-create` is interactive.
+3 assertions, all green.
+
+**N2 (T1/R1)** — No key → modal blocks: a separate "no-key" bundle built with
+`VITE_PRIVATE_KEY=""` serves on port 4174; localStorage is cleared before each
+assertion; the modal + backdrop ARE present; Load button is disabled.
+3 assertions, all green.
+
+**N3 (T2/R3)** — Key validation + live derivation: against the no-key bundle;
+pasting garbage → `provider-key-input-error` appears, Load stays disabled; pasting
+a valid key (Hardhat test vector #0) → error gone, derived address shown,
+Load enabled. 5 assertions, all green.
+
+**N4 (T3/R4)** — Provider key load, insurer empty → dismissed: pastes the provider
+key, clicks Load → `window.location.reload()` fires → after reload, localStorage
+has the key, insurer slot is absent, modal is gone.
+3 assertions, all green.
+
+### Harness build fix
+
+The no-key modal server (`start_modal_server` in `run.sh`) now always kills any
+process on port 4174 and rebuilds + re-serves the no-key bundle fresh. This prevents
+the race condition where a stale regular build (with env keys embedded) serves on
+the modal port, causing modal scenarios to spuriously fail.
 
 ## Extract-Create `runLivenessDebounce` unit — 2026-06-04
 

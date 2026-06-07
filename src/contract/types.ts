@@ -12,6 +12,7 @@
  * ref, amount, id, address, or decision code — never raw content / PHI.
  */
 import type {
+  Attestation,
   CoverageEvent,
   CoverageEventListener,
   Negotiation,
@@ -126,8 +127,16 @@ export interface CoverageNegotiationClient {
    */
   insurerEngage(reqId: bigint, policyHash: string, policyUri: string, depositAmount?: bigint): Promise<void>;
 
-  /** Fire the necessity arbiter from `Ready` → `UnderReview` (payable, R6/R9). */
-  requestAdjudication(reqId: bigint): Promise<void>;
+  /**
+   * Fire the necessity arbiter from `Ready` → `UnderReview` (payable, R6/R9).
+   *
+   * A0012 / SPEC-0007 R5/R13: the provider may pass de-identified `attestations` for the
+   * policy's patient-specific (attested) clauses. Omit (or pass `[]`) for a public-only
+   * policy. With attestations, Approve requires EVERY attestation affirmative (R7) — a
+   * false one downgrades to needs-more-info. Attestations carry NO PHI (closed
+   * `{clauseId, attested, evidenceUriHash}` shape).
+   */
+  requestAdjudication(reqId: bigint, attestations?: Attestation[]): Promise<void>;
 
   /** Provider submits more public evidence from `EvidenceRequested`; re-fires the agent (R6c). */
   submitEvidence(reqId: bigint, evidenceUri: string): Promise<void>;
@@ -169,6 +178,9 @@ export interface CoverageNegotiationClient {
 
   /** Full on-chain record for a contract. */
   getNegotiation(reqId: bigint): Promise<Negotiation>;
+
+  /** De-identified attestations recorded for a contract (A0012 / SPEC-0007 R13). */
+  getAttestations(reqId: bigint): Promise<Attestation[]>;
 
   /** UI projection of a contract (state, flags, names). */
   getNegotiationView(reqId: bigint): Promise<NegotiationView>;

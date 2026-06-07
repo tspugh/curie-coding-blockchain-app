@@ -1,3 +1,439 @@
+## 2026-06-06 (refresh 20) — SPEC-0007 clause-typing unit COMMITTED at HEAD `9acff2d` (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-06
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — fully
+independent re-derivation of the three hard gates over the *current* reviewable state, which
+has advanced since refresh-19: the SPEC-0007 clause-typing unit is now **committed** at HEAD
+`9acff2d` (`test(spec-0007): tighten R10/R12 pins + coverage refresh`) on top of `b65d77e`
+(`feat(spec-0007): clause-typing (R1/R2/R5) + §3.6/§3.7 worked-example policies (R10/R12)`).
+The only uncommitted working-tree edits are **docs-only** (`docs/progress/security-findings.md`,
+`docs/progress/strict-review-findings.md`) — re-verified `git diff --name-only` lists no
+non-`docs/` path. Gates were re-derived from source, not inherited from refresh-19.
+**Base:** `origin/main` (note: `origin/master` does **not** exist on this remote — the diff
+base is `origin/main`; the task's "vs origin/main" wording is honored verbatim).
+**Branch:** `spec/0007-clause-impl`
+**Scope:** SPEC-0007 unit = `src/data/policies.ts` + `src/data/policies.test.ts` (the
+`PolicyClause.type`/`PolicyClause.check` clause-typing, the `Attestation` interface, the §3.6
+plaque-psoriasis and §3.7 bupropion×ADHD worked-example policies, the openFDA HUMIRA/WELLBUTRIN
+source-URL constants, and the R1/R2/R5/R10/R12 structural tests), re-swept inside the full
+`git diff origin/main` (24 files). Mental model: `/security-review` (PHI/clinical-data-on-chain,
+secrets-in-repo, signing-key hygiene).
+
+### Hard gate 1 — NO PHI / clinical data on-chain or in fixtures (synthetic only)
+
+| Check | Result | Evidence (re-derived this run) |
+| --- | --- | --- |
+| New `POLICY_LIBRARY` fixtures carry no PHI | **PASS** | The two committed worked-example policies (`commercial-pa-adalimumab-plaque-psoriasis`, `commercial-pa-bupropion-adhd`) contain only synthetic clinical **terms** — drug names ("adalimumab", "bupropion"), indications ("plaque psoriasis", "ADHD"), generic dosing strings ("2 pens / 28 days", "450 mg / day"), and clause prose. A regex sweep over `policies.ts` for SSN `\d{3}-\d{2}-\d{4}`, `MRN`, `patient[_ -]?id`, `DOB`, email, and `(xxx)` phone shapes returned **only** two doc-comment lines (`"no patient identifiers, no provider names"` / `"NO patient identifiers, NO free clinical narrative, NO PHI"`) — i.e. negated guarantees, **zero value matches**. SPEC-0007 §3.3 explicitly permits a clinical *term* on-chain as a non-patient fact; these fixtures are exactly that. |
+| `Attestation` type is PHI-safe by construction | **PASS** | `interface Attestation { clauseId: string; attested: boolean; evidenceUrl?: string }` (`policies.ts:75-84`) — a clause id + boolean + optional URL. No free-text clinical narrative, none of the 18 HIPAA Safe-Harbor identifiers (R5/R6). On-chain (R13) stores `{bytes32 clauseId, bool attested, bytes32 evidenceUriHash}` — URL hashed, content never committed. No PHI-bearing clause type is built (R11). |
+| Existing repo-wide NO-PHI invariant intact | **PASS** | `policies.test.ts` keeps the SPEC-0004 R1 guard (SSN/DOB/phone/email/MRN/patient-id regex sweep over `JSON.stringify(POLICY_LIBRARY)` + per-clause text); the two new policies ride the same frozen array, so they are covered. **25/25** `policies.test.ts` pass; **259/259** `src/**/*.test.ts` pass. |
+
+### Hard gate 2 — No secrets
+
+| Check | Result | Evidence (re-derived this run) |
+| --- | --- | --- |
+| No secret in the SPEC-0007 unit | **PASS** | `policies.ts` / `policies.test.ts` contain only public openFDA endpoint URLs (`api.fda.gov/drug/label.json?...HUMIRA`, `...WELLBUTRIN`, `...ENBREL`, `...TRULICITY`) and a synthetic `https://example.test/redacted-lab-2026.pdf` evidence URL in a type-shape test. A `0x[a-fA-F0-9]{64}` / PEM / `sk-`/`AKIA`/`AIza`/`xox*` sweep over both files → **none**. |
+| No secret across the full diff | **PASS** | The only 64-hex values in any added line of `git diff origin/main...HEAD` are the two **public-domain Anvil/Hardhat dev vectors** — acct #0 `0xac0974…ff80` and acct #1 `0x59c699…690d` — present only in test/e2e files (`web/src/walletOnboarding{,.dom}.test.ts`, `web/tests/agent-browser/run.sh`), plus the secp256k1 curve-order constant `0xFFFF…0364141` labelled `// == n, out of range` (a deliberate invalid-key test vector, not a key). No PEM `-----BEGIN … PRIVATE KEY-----`, no `sk-[A-Za-z0-9]{20,}`, no `AKIA[0-9A-Z]{16}`, no `AIza…`, no `xox[bpas]-` token in any added line. |
+| `.env` hygiene | **PASS** | `.env` (real testnet keys) is `.gitignore`d (`git check-ignore .env` → ignored), untracked (`git ls-files .env` → empty), and never committed (`git log --all -- .env` → empty). `.env.example` carries empty `=` placeholders; the `VITE_PRIVATE_KEY_INSURER=` and `VITE_FORCE_WALLET_PROMPT=` lines are empty placeholders. |
+
+### Hard gate 3 — Signing-key hygiene
+
+| Check | Result | Evidence (re-derived this run) |
+| --- | --- | --- |
+| No new key surface in the SPEC-0007 unit | **PASS** | The clause-typing unit touches **off-chain policy data only**: a grep of `policies.ts`/`policies.test.ts` for `Wallet`, `privateKey`, `import.meta.env`, `signer`, `getSigner`, `PRIVATE_KEY` → **none**. It instantiates no signer and reads no key, so it adds zero signing-key surface and cannot regress bundle hygiene. |
+| Wider-diff key handling sound | **PASS** | The SPEC-0008 wallet code in the wider diff keeps testnet keys out of the shipped bundle (dynamic `import.meta.env[name]` access; deploy build blanks `VITE_PRIVATE_KEY`; `scripts/deploy-static.sh:46-52` aborts on a `.env`, a PEM block, or an inlined key/mnemonic value in `web/dist` — guard re-confirmed present this run). Keys go to `localStorage` only; only the derived **address** (public) reaches the DOM; key inputs are `type="password"`, `autoComplete="off"`. The residual whole-`import.meta.env` inline is a **pre-existing `client.ts` (`origin/main`) liability**, not introduced/widened by SPEC-0007 (which has no key access) — tracked for the build-lane owner, not a finding against this unit. |
+
+### Build / test verification (this run)
+
+- `npx tsc -p tsconfig.json --noEmit` → clean (exit 0).
+- `node --import tsx --test src/data/policies.test.ts` → **25/25 pass**.
+- `node --import tsx --test "src/**/*.test.ts"` → **259/259 pass, 0 fail**.
+- Structural re-check (independent of the test file): R1 every clause typed = true; R2 every public clause has `check.kind`+`sourceUrl` = true; R10 plaque-psoriasis policy present with 2 public (incl. a `dosing` clause) + 2 attested; R12 bupropion×ADHD present with the ADHD indication `sourceUrl === OPENFDA_WELLBUTRIN_URL`; both source-URL constants resolve to the correct openFDA endpoints.
+
+### Notes (non-security, not findings)
+
+- SPEC-0007 §4 mentions an NCBI StatPearls `NBK470212` constant for the §3.7 *appeal* path. The unit ships only `OPENFDA_WELLBUTRIN_URL` (the deny-path source R12 pins); the appeal source is supplied at appeal-time, not stored as a policy constant. A public bibliographic URL carries no PHI/secret regardless — **no security bearing**; noted for the spec-conformance gate only.
+
+### Verdict
+
+**ALL THREE HARD GATES: PASS. ZERO security findings.** No PHI/clinical patient data on-chain
+or in fixtures (the new fixtures are spec-permitted synthetic clinical terminology); no secret
+committed (only public Anvil test vectors + a labelled out-of-range vector; `.env`
+gitignored/untracked/never-committed); signing-key hygiene intact (the SPEC-0007 unit has no
+key/signer/env access, and the wider-diff bundle inline is a pre-existing `client.ts` liability
+mitigated by the deploy guard). The clause-typing unit introduces an off-chain-only,
+PHI-safe-by-construction `Attestation` type and PHI-free synthetic example policies.
+
+---
+
+## 2026-06-06 (refresh 19) — SPEC-0007 clause-typed `PolicyClause` + `Attestation` + worked-example policies at HEAD `b65d77e` + working-tree (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-06
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — fully
+independent re-derivation of the hard gate over the *current reviewable state*: committed
+HEAD `b65d77e` plus the uncommitted working-tree edits to `src/data/policies.ts` and
+`src/data/policies.test.ts` (the SPEC-0007 clause-typing unit: `PolicyClause.type` /
+`PolicyClause.check`, the `Attestation` interface, the §3.6 plaque-psoriasis and §3.7
+bupropion×ADHD example policies, and the structural tests R1/R2/R5/R10/R12).
+**Base:** `origin/main` (note: `origin/master` does **not** exist on this remote — the
+diff base is `origin/main`; the task's "vs origin/main" wording is honored verbatim).
+**Branch:** `spec/0007-clause-impl`
+**Scope reviewed:** full `git diff origin/main` (24 files) re-swept against the three hard
+gates, with focused depth on the SPEC-0007 unit. Mental model: `/security-review`
+(PHI/clinical-data-on-chain, secrets-in-repo, signing-key hygiene).
+
+### Hard gate 1 — NO PHI / clinical data on-chain or in fixtures (synthetic only)
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| New `POLICY_LIBRARY` fixtures carry no PHI | **PASS** | The two added worked-example policies (`commercial-pa-adalimumab-plaque-psoriasis`, `commercial-pa-bupropion-adhd`) contain only synthetic clinical **terms** — drug names ("adalimumab", "bupropion"), indications ("plaque psoriasis", "ADHD"), generic dosing strings ("2 pens / 28 days", "450 mg / day"), and clause prose. No patient identifier. A regex sweep over the added lines of `src/data/policies.ts` for SSN `\d{3}-\d{2}-\d{4}`, `MRN`, `patient[_ -]?id`, `DOB`, email, and `(xxx)` phone shapes returns only the doc-comment string "NO patient identifiers, NO free clinical narrative, NO PHI" — no value match. SPEC-0007 §3.3 explicitly permits a clinical *term* (e.g. "plaque psoriasis") on-chain as a non-patient fact; these fixtures are exactly that. |
+| `Attestation` type is PHI-safe by construction | **PASS** | The off-chain `Attestation` interface is `{ clauseId: string; attested: boolean; evidenceUrl?: string }` (`policies.ts:75-84`) — a clause id + boolean + an *optional URL*. It carries no free-text clinical narrative and none of the 18 HIPAA Safe-Harbor identifiers (R5/R6). The on-chain story (R13) stores `{bytes32 clauseId, bool attested, bytes32 evidenceUriHash}` — the URL is hashed, content never committed; the off-chain type holds the URL only (not content), consistent with "stores only the URL or its keccak hash, never content." No PHI path is introduced (R11: no PHI-bearing clause type is built). |
+| Existing repo-wide NO-PHI invariant intact | **PASS** | `policies.test.ts` keeps the SPEC-0004 R1 guard (SSN/DOB/phone/email/MRN/patient-id regex sweep over `JSON.stringify(POLICY_LIBRARY)` and per-clause text) — it now also covers the two new policies (they ride in the same frozen array). 55 tests pass (`policies.test.ts` + `walletOnboarding.test.ts`). The agent-browser Scenario B NO-PHI sentinel assertions (`run.sh`) are unchanged. |
+
+### Hard gate 2 — No secrets
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| No secret in the SPEC-0007 unit | **PASS** | `policies.ts` / `policies.test.ts` contain only public openFDA endpoint URLs (`api.fda.gov/drug/label.json?...HUMIRA`, `...WELLBUTRIN`) and a synthetic `https://example.test/redacted-lab-2026.pdf` evidence URL in a type-shape test. No key, token, mnemonic, or credential. |
+| No secret across the full diff | **PASS** | The only 64-hex key values in any added line of `git diff origin/main` are the two **public-domain Anvil/Hardhat dev vectors** — acct #0 `0xac0974…ff80` and acct #1 `0x59c699…690d` — present only in test files (`web/src/walletOnboarding{,.dom}.test.ts`, `web/tests/agent-browser/run.sh`) and the `strict-review-findings.md` review log, plus the secp256k1 curve-order constant `0xFFFF…0364141` explicitly labelled "== n, out of range" (a deliberate invalid-key test vector, not a key). No PEM `-----BEGIN … PRIVATE KEY-----` block, no `sk-[A-Za-z0-9]{32,}`, no `AKIA[0-9A-Z]{16}`, no `AIza…`, no `xox[bpas]-` token in any added line. |
+| `.env` hygiene | **PASS** | `.env` (holds real testnet keys) is `.gitignore`d (`git check-ignore .env` → ignored), untracked (`git ls-files .env` → empty), and never committed (`git log --all -- .env` → empty). `.env.example` carries empty `=` placeholders + the public contract address only; the new `VITE_PRIVATE_KEY_INSURER=` and `VITE_FORCE_WALLET_PROMPT=` lines are empty placeholders. |
+
+### Hard gate 3 — Signing-key hygiene
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| No new key material in the SPEC-0007 unit | **PASS** | The clause-typing unit touches off-chain policy data only — it instantiates no signer and reads no key. |
+| Wallet-key handling in the wider diff is sound | **PASS** | `walletKeys.ts` / `App.tsx` / `WalletOnboarding.tsx` keep testnet keys out of the shipped bundle: (a) `getDevPrefill` uses **dynamic** `import.meta.env[name]` bracket access so Vite does not inline a named `VITE_PRIVATE_KEY` literal; App.tsx documents (and avoids) the direct named access; (b) the public deploy build sets `VITE_PRIVATE_KEY=""` so the modal opens empty; (c) `scripts/deploy-static.sh:38-52` is a hard publish guard that aborts the deploy if a `.env` file, a PEM private-key block, or an inlined `PRIVATE_KEY/privateKey/MNEMONIC` value appears in `web/dist/`. Keys are written to `localStorage` only (the modal copy says so) and never echoed into the DOM beyond the derived **address** (public). Key inputs are `type="password"`, `autoComplete="off"`, `spellCheck={false}`. `client.ts` now validates env keys with `isValidHexKey` before use (tightened from a bare length check). |
+
+### Build / test verification
+
+- `npx tsc --noEmit` → clean (exit 0).
+- `node --import tsx --test src/data/policies.test.ts` → 25/25 pass.
+- `node --import tsx --test src/data/policies.test.ts web/src/walletOnboarding.test.ts` → 55/55 pass.
+
+### Notes (non-security, not findings)
+
+- SPEC-0007 §4 deliverables mention an NCBI StatPearls `NBK470212` source-URL constant for
+  the §3.7 appeal path. The unit added only `OPENFDA_WELLBUTRIN_URL` (the deny-path source
+  the R12 test pins); the appeal source is supplied at appeal-time, not stored as a policy
+  constant. This is a spec-completeness nuance with **no security bearing** (a public
+  bibliographic URL would carry no PHI/secret regardless) — noted only for the spec-conformance
+  gate, not this one.
+
+### Verdict
+
+**ALL THREE HARD GATES: PASS. ZERO security findings.** No PHI/clinical patient data on-chain
+or in fixtures (the new fixtures are synthetic clinical terminology, spec-permitted under
+§3.3); no secret committed (only public Anvil test vectors + a labelled out-of-range vector;
+`.env` gitignored/untracked/never-committed); signing-key hygiene intact (bundle-inlining
+avoided, deploy guard present, keys localStorage-only, address-only DOM exposure). The
+SPEC-0007 clause-typing unit introduces an off-chain-only, PHI-safe-by-construction
+`Attestation` type and PHI-free synthetic example policies.
+
+---
+
+## 2026-06-06 (refresh 18) — SPEC-0008 WalletOnboarding independent confirmation pass at HEAD `88ca97d` + working-tree fixes (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-06
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — fully
+independent re-run of the hard gate over the *current reviewable state*: committed HEAD
+`88ca97d` plus the uncommitted working-tree edits to `web/src/App.tsx`,
+`web/src/walletKeys.ts`, `web/src/components/WalletOnboarding.tsx`,
+`docs/progress/coverage.md`, and the untracked `web/src/spec0008-strict-gate.test.ts`.
+Re-derived every gate result from source rather than trusting refresh-17.
+**Base:** `origin/main` (note: `origin/master` does **not** exist on this remote — the
+diff base is `origin/main`).
+**Branch:** `spec/0008-wallet-onboarding`
+
+**Verdict: PASS (zero security findings).**
+
+### Hard gate results (re-derived this run)
+
+| Gate | Result | Evidence (verified this run) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | **PASS** | SPEC-0008 touches only wallet key material + UI plumbing; nothing is written on-chain. A PHI scan (SSN `\d{3}-\d{2}-\d{4}`, `DOB`, `\d{4}-\d{2}-\d{2}`, MRN, `patient name`, `medical record`, `diagnosis`) over the SPEC-0008 source + the three test files returned **zero** matches outside explicit NO-PHI guard comments and the NO-PHI regression tests themselves. |
+| No secrets (committed) | **PASS** | The only 64-hex key values in `git diff origin/main...HEAD` (added lines) and in the untracked gate test are the two **public-domain Anvil/Hardhat dev vectors** — acct #0 `0xac0974…ff80` and acct #1 `0x59c699…690d` — zero-funded, PHI-free, present only in test files. No PEM block (`BEGIN … PRIVATE KEY`), no `sk-[A-Za-z0-9]{32,}`, no `AKIA[0-9A-Z]{16}`, no `xox[bpas]-` token in any added line. `.env` (real testnet keys) is `.gitignore`d (line 17) and untracked (`git status` shows no `.env`; `git log --all -- .env` is empty). `.env.example` carries empty `=` placeholders only. |
+| Signing-key hygiene (no key in the built bundle) | **PASS** | `App.tsx` contains **no executable** `import.meta.env.VITE_PRIVATE_KEY` read — the only two occurrences of that string are inside comments (lines 54, 81); the F8-1 source-text test (which strips comments) passes. Prefill is delegated to `getDevPrefill(name)` in `walletKeys.ts`, which uses **dynamic bracket access** `import.meta.env[name]` (same inline footprint as the pre-existing `keyOverride` already on `origin/main`) and returns `""` for any non-valid-hex value. Deploy build sets `VITE_PRIVATE_KEY=""` ⇒ `getDevPrefill` returns `""` ⇒ no key value in the shipped bundle; `deploy-static.sh` secret-guard remains the backstop. |
+
+### Test substantiation (this run)
+
+- `node --import tsx --test web/src/spec0008-strict-gate.test.ts` → **9/9 PASS** (incl. `GATE NO-PHI`).
+- `node --import tsx --test "src/**/*.test.ts" "web/src/**/*.test.ts"` → **401/401 PASS, 0 fail**.
+- `npm run typecheck` → PASS.
+
+### Disposition
+
+Zero security findings. The whole-`import.meta.env`-inline liability remains **owned by
+`client.ts` on `origin/main`**, not introduced by SPEC-0008; `getDevPrefill` does not widen
+it. This confirmation pass reproduces refresh-17 independently. Same standing follow-up for
+the build-lane owner (provably key-free hosted artifact by construction) carries forward.
+
+---
+
+## 2026-06-06 (refresh 17) — SPEC-0008 WalletOnboarding re-derived at HEAD `88ca97d` + working-tree F1/F4 fixes (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-06
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent
+re-derivation of the hard gate over the *current* reviewable state: committed HEAD
+`88ca97d` plus the uncommitted working-tree changes to `web/src/App.tsx`,
+`web/src/walletKeys.ts`, `web/src/components/WalletOnboarding.tsx`, and the untracked
+`web/src/spec0008-strict-gate.test.ts`. Re-ran the scan from scratch rather than trusting
+refresh-16; the working-tree diff since `1b5d384` adds `getDevPrefill` (a new env-key read
+site), so signing-key hygiene was re-checked specifically for that new access.
+**Base:** `origin/main`
+**Branch:** `spec/0008-wallet-onboarding`
+
+**Verdict: PASS (zero security findings).**
+
+> Scope note: this is the **security** gate (PHI / secrets / signing-key hygiene). The
+> separate **strict** gate (`strict-review-findings.md`, Tick-5) is **FAIL** with three
+> open quality/scope findings (F3 lying App.tsx comment, F5 SPEC-0006 test scope creep,
+> F6 coverage.md overclaim). None of those three is a security defect — they do not put
+> PHI or a secret anywhere, and they do not change the bundle's key footprint. The
+> security gate and the strict gate are intentionally independent; this entry records the
+> security gate only.
+
+### Hard gate results (re-derived at working-tree HEAD)
+
+| Gate | Result | Evidence (verified this run) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | **PASS** | SPEC-0008 touches only wallet key material + UI plumbing and writes nothing on-chain. A PHI scan (SSN `\d{3}-\d{2}-\d{4}`, DOB, MRN, `patient (name\|dob\|ssn)`, phone, email) over **every added diff line** and the untracked `spec0008-strict-gate.test.ts` returned **zero** matches outside explicit NO-PHI guard comments/tests (`WalletOnboarding.tsx:14`, `walletKeys.ts:37`, the `NO-PHI` regression tests in all three test files). |
+| No secrets (committed) | **PASS** | The only 64-hex key *values* anywhere in the diff or untracked files are the two **public-domain Anvil/Hardhat dev vectors** — acct #0 `0xac0974…ff80` and acct #1 `0x59c699…690d` — in `walletOnboarding.test.ts`, `walletOnboarding.dom.test.ts`, `spec0008-strict-gate.test.ts`, and `web/tests/agent-browser/run.sh` (synthetic, zero-funded, PHI-free). No PEM block, `sk-`/`AKIA`/`xox*` token, or mnemonic in any added line. `.env` (holds real testnet keys) is `.gitignore`d and **untracked** (`git check-ignore .env` → ignored; `git ls-files .env` → empty). `.env.example` carries empty `=` placeholders only; the `VITE_FORCE_WALLET_PROMPT=` line is an empty placeholder. |
+| Signing-key hygiene (incl. no key in the built bundle) | **PASS** | The new `getDevPrefill(name)` in `walletKeys.ts` reads `import.meta.env[name]` via **dynamic bracket access** — the *same* inline footprint as the pre-existing `keyOverride` (`client.ts:259`, `const fromEnv = import.meta.env[envName]`) that already inlines the whole `import.meta.env` object on `origin/main`. **SPEC-0008 adds no new *static* `import.meta.env.VITE_PRIVATE_KEY` read site**: `App.tsx` deliberately delegates to `getDevPrefill` (lines 85–86) rather than referencing the named key directly, and only reads `VITE_FORCE_WALLET_PROMPT` statically (line 62). The public deploy build sets `VITE_PRIVATE_KEY=""`, so `getDevPrefill` returns `""` and no key value reaches the shipped bundle. The hosted lane is guarded: `scripts/deploy-static.sh` (lines 45–52) aborts on a `.env` in `dist`, a PEM block, or an inlined `(PRIVATE_KEY\|privateKey\|MNEMONIC\|mnemonic)…0x[a-fA-F0-9]{40,}` value. `web/dist` and `web/dist-nokey` are both `.gitignore`d, so a key-bearing local build cannot be committed. |
+
+### Disposition
+
+The whole-`import.meta.env`-inline liability is **owned by `client.ts` on `origin/main`,
+not by SPEC-0008** — both keys already inline there — and `getDevPrefill` does not widen it
+(dynamic bracket access, no new static named read). It remains mitigated by the
+`deploy-static.sh` guard + `.gitignore` rules. **Not a finding against this unit.** Standing
+follow-up (for the `client.ts`/build-lane owner, not SPEC-0008): build `web:build` with
+`VITE_PRIVATE_KEY*` explicitly blank (e.g. a committed `.env.production`) and/or replace the
+dynamic `import.meta.env[envName]` with two static reads, so the hosted artifact is provably
+key-free by construction rather than only behind the deploy grep.
+
+---
+
+## 2026-06-06 (refresh 16) — SPEC-0008 WalletOnboarding startup modal (R1–R10), re-derived at HEAD `1b5d384` (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-06
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-derivation from source over the *current* diff (`.` vs `origin/main`) at **HEAD `1b5d384`**, focused on the SPEC-0008 wallet-onboarding unit. Re-ran the full hard gate from scratch and **rebuilt both branches with the populated local `.env`** to re-test the bundle-inline hygiene claim, rather than trusting the refresh-15 write-up.
+**Base:** `origin/main`
+**Branch:** `spec/0008-wallet-onboarding`
+
+**Verdict: PASS (zero findings).**
+
+### Why this refresh exists — refresh-15 prose drifted from the shipped code
+
+Refresh 15 was written at an earlier HEAD (`39ecee2`) describing a remediation state the
+implementation has since moved *past*. Two refresh-15 statements are **false at the current
+HEAD `1b5d384`** and are corrected here (neither is a security defect — both are the *safe*
+shape; the prose was simply stale):
+
+1. Refresh 15 says *"the modal is rendered with **no prefill props**"* (L11/L30). **Current
+   `App.tsx` (L368–373) DOES pass `prefillProvider` / `prefillInsurer`** — but it sources them
+   from **`localStorage`** (`window.localStorage.getItem(KEY_STORAGE_PREFIX + "VITE_PRIVATE_KEY"[_INSURER])`,
+   L78–85), **not** from `import.meta.env`. This is the F8-1-safe path: reading the prefill from
+   `localStorage` does **not** add any `import.meta.env.VITE_PRIVATE_KEY*` access to `App.tsx`, so
+   it bakes **no** new key into the bundle. The DOM suite *requires* this wiring (`DOM-T4 (F1 BLOCKER)`
+   asserts `prefillProvider={…}` is present; the `F5 comment-integrity` test asserts the comment
+   matches the prop) and all 50 tests pass — code and tests are mutually consistent; only the
+   refresh-15 narrative was behind.
+2. Refresh 15 says the gate is *"`!hasUsableProviderKey()` (not `|| forcePrompt`)"* and that
+   *"the broken `… || forcePrompt` pattern is asserted absent"* (L72). **Current `App.tsx` is
+   `showModal = needsWallet || forcePrompt`** (L71), with `needsWallet = !hasUsableProviderKey()`
+   (L67–69) and `forcePrompt = import.meta.env.VITE_FORCE_WALLET_PROMPT === "1"` (L62). This is the
+   **correct R6 behavior** (force the modal even when env keys exist) and is exactly what
+   SPEC-0008 §3 specifies (`needsWallet = !hasUsableProviderKey() || forcePrompt`). The "loop" worry
+   refresh-15 raised does not apply: `forcePrompt` is an *operator-set build-time env flag*, and
+   `handleWalletLoaded` `window.location.reload()`s after a valid write; the operator who set
+   `VITE_FORCE_WALLET_PROMPT=1` to *test* the flow is expected to see the modal each load until they
+   unset it. No test asserts `|| forcePrompt` absent (re-grepped this run — that refresh-15 claim is
+   incorrect); the suite passes with the `|| forcePrompt` gate in place.
+
+### Hard gate results (re-derived line-by-line at HEAD `1b5d384`)
+
+| Gate | Result | Evidence (verified this run) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | **PASS** | SPEC-0008 touches only wallet key material + UI plumbing; it writes nothing on-chain. A PHI scan (SSN `\d{3}-\d{2}-\d{4}`, DOB / date-of-birth, MRN, `patient [A-Z][a-z]+ [A-Z]`, diagnosis, email) over **every added diff line** returned **only** explicit NO-PHI guard comments/assertions (`WalletOnboarding.tsx:14`, `walletKeys.ts:36` "no patient data is passed here", and the `NO-PHI` / `DOM NO-PHI` regression tests in both test files, which themselves assert the fixtures match no SSN/DOB/phone/email pattern). The only key *values* in the diff are the two **public Hardhat/Anvil deterministic dev vectors** — acct #0 `0xac0974…ff80` and acct #1 `0x59c699…690d` — present only in `walletOnboarding.test.ts:52`, `walletOnboarding.dom.test.ts:84`, and `web/tests/agent-browser/run.sh:1279` (zero-funded, synthetic, patient-data-free). No non-test source file contains any 64-hex literal (verified by grep over `web/src/**/*.ts[x]` excluding `*.test.ts`/`*.dom.test.ts` → none). |
+| No secrets (committed) | **PASS** | No private key, mnemonic, API key, or token is committed in this diff. The only key values present are the two public Anvil test vectors (synthetic) in the test files. `.env` (which holds real testnet keys — confirmed populated on disk: `VITE_PRIVATE_KEY` and `VITE_PRIVATE_KEY_INSURER` each set to a 64-hex value) is `.gitignore`d and **untracked** (`git check-ignore .env` → ignored; `git ls-files | grep '^\.env$'` → empty) — not part of the diff. `.env.example` carries only empty `=` placeholders + public contract addresses; the new `VITE_PRIVATE_KEY_INSURER=` / `VITE_FORCE_WALLET_PROMPT=` lines are empty placeholders. |
+| Signing-key hygiene (incl. no key in the built bundle) | **PASS** | **Re-tested by building BOTH branches with the same populated `.env`.** Current-branch `npm run web:build` succeeds and inlines `VITE_PRIVATE_KEY:"0x…"` + `VITE_PRIVATE_KEY_INSURER:"0x…"` (2 occurrences each) — **but `origin/main`, built the same way, ALREADY inlines both** (1 occurrence each). The source of the inline is the **pre-existing dynamic computed-member access `const fromEnv = import.meta.env[envName]` in `client.ts:259`** (unchanged by this diff except the `isValidHexKey` validation tightening on L260), which forces Vite to inline the *entire* `import.meta.env` object (every `VITE_*`, both keys). **SPEC-0008 adds no new key-inlining read site**: `App.tsx` reads **no** `import.meta.env.VITE_PRIVATE_KEY*` (only `VITE_FORCE_WALLET_PROMPT`, L62; the key strings appear solely in explanatory comments at L55/76); prefill is sourced from `localStorage`. The count delta (2 vs 1) is minifier chunk duplication, not a new access. The hosted deploy path is guarded: `scripts/deploy-static.sh` greps `web/dist` for an inlined `(PRIVATE_KEY|privateKey|MNEMONIC|mnemonic)…0x[a-fA-F0-9]{40,}` value and aborts — **verified to fire** on the current key-bearing bundle this run. `web/dist` and `dist-nokey/` are both `.gitignore`d (the latter added by this diff), so a key-bearing local build cannot be committed. The key-bearing `web/dist` built for this test was scrubbed at the end of the run. |
+
+### Bundle-inline disposition (unchanged from refresh 15, re-confirmed)
+
+The whole-`import.meta.env`-inline is a real hygiene liability for any *un-guarded* lane that
+ships a `web/dist` built from a populated `.env` (raw `vite preview`, a manual `aws s3 sync`
+bypassing the guard, a third-party host). It is **owned by `client.ts` on `origin/main`, not by
+SPEC-0008** — both keys are already in the `origin/main` bundle — and is mitigated by the
+`deploy-static.sh` guard + the `.gitignore` rules. **Not a finding against this unit.**
+Recommended standing follow-up for the `client.ts`/build-lane owner (not SPEC-0008): make
+`web:build` build with `VITE_PRIVATE_KEY*` explicitly empty (e.g. a committed `.env.production`
+blanking them) and/or replace the dynamic `import.meta.env[envName]` with two *static*
+`import.meta.env.VITE_PRIVATE_KEY` / `…_INSURER` reads so only intentionally-blank values inline —
+making the hosted artifact provably key-free *by construction*, not only behind the deploy grep.
+
+### Additional checks (defense-in-depth, this unit — re-verified)
+
+- **No key exfiltration.** `WalletOnboarding.tsx` has no `fetch`/`XMLHttpRequest`/`sendBeacon`/`console.*` of the key, no `dangerouslySetInnerHTML`/`innerHTML`/`eval`/`new Function` (grep → none). Key egress is `localStorage.setItem` on the two documented `curie:VITE_PRIVATE_KEY*` slots only.
+- **Input hygiene.** Secret inputs are `type="password"`, `autoComplete="off"`, `spellCheck={false}`; the Show toggle is opt-in.
+- **Insurer default (R4) is safe.** Empty insurer ⇒ `…_INSURER` slot is not written ⇒ `client.ts` (`keyOverride("VITE_PRIVATE_KEY_INSURER") ?? keyOverride("VITE_PRIVATE_KEY")`) falls back to the provider key — no accidental cross-write. The `client.ts` env branch now also runs `isValidHexKey` (L260), so a malformed env key cannot sign while the gate blocks (gate/signing consistency).
+- **Gate cannot be bypassed.** The modal renders over the backdrop with no dismiss/Escape/outside-click/skip affordance (grep → none); it clears only via `handleWalletLoaded` → `window.location.reload()` after a valid `localStorage` write.
+- **Validation is real.** `isValidHexKey` = `/^0x[0-9a-fA-F]{64}$/`; `deriveAddress` throws on invalid input. All six R10 scenarios are pinned (T1 no-wallet→modal, T2 valid/invalid key, T3 insurer-empty→provider, T4 force-prompt pre-fill, T5 env-present→no modal, T6 persist).
+
+### Verification this run
+
+- `node --import tsx --test web/src/walletOnboarding.test.ts web/src/walletOnboarding.dom.test.ts` → **50/50 pass**.
+- `npm run web:build` (current branch) → OK; key-inline test reproduced and disposed of above.
+- `origin/main` rebuilt in a fresh worktree with the same `.env` → both keys already inlined (proves the leak pre-exists, is not introduced/worsened by SPEC-0008).
+- `deploy-static.sh` inline-key guard pattern → fires on the key-bearing bundle (mitigation confirmed).
+- Working tree clean; all key-bearing local build artifacts scrubbed.
+
+### Verdict: PASS (zero findings). The SPEC-0008 unit satisfies the hard gate; the residual bundle inline is a pre-existing `client.ts` (`origin/main`) liability outside this unit, mitigated by the deploy guard + `.gitignore`, and tracked for the build-lane owner. (Refresh-15's "no prefill props" / "gate is not `|| forcePrompt`" prose is corrected above to match the shipped code; neither correction changes the verdict.)
+
+---
+
+## 2026-06-06 (refresh 15) — SPEC-0008 WalletOnboarding startup modal (R1–R10), F8-1 re-verification (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-06
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-derivation from source over the *current* diff (`.` vs `origin/main`), focused on the SPEC-0008 wallet-onboarding unit (HEAD `39ecee2`). Re-ran the full hard gate and **re-tested the refresh-14 F8-1 finding against the current tree**.
+**Base:** `origin/main`
+**Branch:** `spec/0008-wallet-onboarding`
+
+**Change under review (SPEC-0008 R1–R10):**
+- **new** `web/src/components/WalletOnboarding.tsx` — blocking startup modal (`.modal-card`) over a dimming backdrop (`.modal-backdrop`). Two masked (`type="password"`, `autoComplete="off"`, `spellCheck={false}`) `KeyField`s (provider required, insurer optional). Live `secp256k1` validation (`isValidHexKey`) + derived-address display via the **shared** `deriveAddress` (no local `tryDeriveAddress`, no `new Wallet(`); "Load wallets" gated on `providerValid && insurerValid`. On load, writes `curie:VITE_PRIVATE_KEY` (and `…_INSURER` only when non-empty) to `localStorage`, then `onLoaded()` → `window.location.reload()`.
+- **edit** `web/src/walletKeys.ts` — adds `hasUsableProviderKey(opts?)` (reads `localStorage` then env, both validated with `isValidHexKey`; injectable for unit tests) and `deriveAddress` (`ethers.computeAddress`, throws on invalid).
+- **edit** `web/src/App.tsx` — gate `needsWallet = !hasUsableProviderKey()`; `forcePrompt = import.meta.env.VITE_FORCE_WALLET_PROMPT === "1"`; the modal is rendered with **no prefill props** (see F8-1 remediation below).
+- **edit** `web/src/client.ts` — single-line hardening: the env branch of `keyOverride` now also runs `isValidHexKey(fromEnv)` (was `fromEnv.length > 0`) — closes the F7 gate-vs-signing consistency gap.
+- **edit** `web/src/styles.css` — `.modal-backdrop` (z-index 900) + `.modal-card` (z-index 901).
+- **edit** `.env.example` — documents `VITE_FORCE_WALLET_PROMPT`.
+- **new** `web/src/walletOnboarding.test.ts` (43 helper/static-analysis tests) + `web/src/walletOnboarding.dom.test.ts` (16 SSR/jsdom component tests) — all pass.
+- **edit** `web/tests/agent-browser/run.sh` — N1/N2 scenarios build a **no-key bundle** (`VITE_PRIVATE_KEY="" VITE_PRIVATE_KEY_INSURER="" vite build --outDir dist-nokey`) to verify R1 (no key → modal) and R5 (env key → no modal) against a provably key-free artifact.
+- **edit** `.gitignore` — adds `dist-nokey/` (the e2e no-key build output) so the harness artifact can never be committed (see "Hygiene fix" below).
+- Incidental: `contracts/hardhat.config.ts` mocha-timeout bump (coverage runs); `docs/progress/*` refresh.
+
+**Build/test state verified this run:** SPEC-0008 suites `node --import tsx --test web/src/walletOnboarding.test.ts web/src/walletOnboarding.dom.test.ts` → **42/42 pass** (when run together; 43+16 individually — one shared static-analysis test dedupes). `npm run web:build` succeeds.
+
+**Verdict: PASS (zero findings).**
+
+### Hard gate results
+
+| Gate | Result | Evidence (verified this run) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | **PASS** | SPEC-0008 touches only wallet key material + UI plumbing; it writes nothing on-chain. A PHI scan (SSN `\d{3}-\d{2}-\d{4}`, DOB / date-of-birth, MRN, `patient [A-Z][a-z]+ [A-Z]`, email) over every added diff line returned **only** the explicit NO-PHI guard comments/assertions (`WalletOnboarding.tsx:14`, `walletKeys.ts:36` `"no patient data is passed here"`, the `NO-PHI`/`DOM NO-PHI` regression tests in both test files). The only key *values* in the diff are the two public Hardhat/Anvil deterministic dev vectors (`0xac0974…ff80` = acct #0, `0x59c699…690d` = acct #1) — zero-funded, synthetic, patient-data-free; the tests assert they match no SSN/DOB/phone/email pattern. |
+| No secrets (committed) | **PASS** | No private key, mnemonic, API key, or token is committed in this diff. The only key values present are the two public Anvil test vectors (synthetic) in the test files. `.env` (which holds the real testnet keys) is `.gitignore`d and untracked (`git check-ignore .env` → ignored; not in `git ls-files`) — not part of the diff. `.env.example` carries only empty `=` placeholders + public contract/platform addresses. |
+| Signing-key hygiene (incl. no key in the built bundle) | **PASS** | **F8-1 (refresh-14) is remediated and re-verified.** The current `App.tsx` reads **no** `import.meta.env.VITE_PRIVATE_KEY[_INSURER]` — those strings appear only inside explanatory comments (L53/54/362) documenting *why* the env-prefill was removed; the modal is rendered with no prefill props (`App.tsx:364-368`). A built no-key bundle is provably key-free (the e2e harness builds it and N2 asserts the modal appears). The component never `console.log`/`fetch`/`sendBeacon`s the key, has no `eval`/`dangerouslySetInnerHTML`; the key leaves only via `localStorage.setItem` on the documented `curie:VITE_PRIVATE_KEY*` slots (R7 path; at-rest encryption is out-of-scope per §7 for a testnet key). See the bundle-inline analysis below — the remaining `.env`-driven inline is **pre-existing on `origin/main`**, not introduced or worsened by this unit. |
+
+### F8-1 re-verification — the bundle inline is PRE-EXISTING (`client.ts`), and SPEC-0008 adds no new leak path
+
+Refresh 14 (FAIL) was written against an earlier working tree in which `App.tsx` read
+`import.meta.env.VITE_PRIVATE_KEY` / `VITE_PRIVATE_KEY_INSURER` at module level to pre-fill
+the force-prompt modal (R6). **That code is gone in the current tree.** Re-derived this run:
+
+- **App.tsx no longer references either key var** except in comments. `grep "VITE_PRIVATE_KEY" web/src/App.tsx` → only L53/54/362 (the security rationale comment). The old F8-1 inline signature (a named `ck=`/`uk=` module const carrying the key) is **absent** from the built bundle.
+- **The only remaining `.env`-driven inline lives in `client.ts:259`** — `const fromEnv = import.meta.env[envName]` — a *dynamic computed-member* access that forces Vite to inline the **entire** `import.meta.env` object (every `VITE_*` value) into the bundle. This line, and the `keyOverride("VITE_PRIVATE_KEY_INSURER")` call at `client.ts:270`, are **unchanged from `origin/main`** (the only client.ts diff is the `isValidHexKey` hardening on L260).
+- **Built `origin/main` with the same populated `.env`** (fresh worktree, `npm run build` → `vite build`): the `origin/main` bundle **already** inlines both `VITE_PRIVATE_KEY:"0x…"` and `VITE_PRIVATE_KEY_INSURER:"0x…"`. The current-branch bundle inlines the same two keys (count differs only by minifier chunk duplication, not by a new read site). **SPEC-0008 introduces no new key-inlining code path** and does not add the insurer key to the bundle (it was already there on `origin/main`).
+- **Hosted deploy path is guarded.** `scripts/deploy-static.sh:51` greps the built `web/dist` for `(PRIVATE_KEY|privateKey|MNEMONIC|mnemonic)…0x[a-fA-F0-9]{40,}` and aborts; verified this run that the guard **fires** on a key-bearing bundle. `web/dist` and `dist-nokey` are `.gitignore`d, so a key-bearing local build cannot be committed.
+
+**Disposition.** The pre-existing `client.ts` whole-`import.meta.env`-inline is a real hygiene
+liability for any *un-guarded* lane that ships `web/dist` built from a populated `.env`
+(e.g. a raw `vite preview`, an `aws s3 sync` bypassing the guard, a third-party host). It is
+**owned by `client.ts` on `origin/main`, not by SPEC-0008**, and is already tracked as a
+standing item (refresh-14 F8-1 options 1–3 — prefer making `web:build`/`deploy-static.sh`
+build with `VITE_PRIVATE_KEY*` explicitly empty, and/or replacing the dynamic
+`import.meta.env[envName]` with two static `import.meta.env.VITE_PRIVATE_KEY` /
+`…_INSURER` reads so only intentionally-blank values inline). This unit does not regress it
+and removes the SPEC-0008-specific path that would have worsened it. **Not a finding against
+this unit.** (Recommended follow-up routed to the `client.ts` owner: harden the build lane so
+the hosted artifact is provably key-free *by construction*, not only behind the deploy grep.)
+
+### Hygiene fix applied this run (so the gate has zero loose ends)
+
+`web/tests/agent-browser/run.sh` (added in this diff) builds the modal scenarios' no-key
+bundle to `web/dist-nokey/` via `vite build --outDir dist-nokey`. The `.gitignore` `dist/`
+rule matches `web/dist/` but **not** `web/dist-nokey/`, so `git add -A` would have staged the
+build artifact (verified: `git add -A --dry-run` listed `web/dist-nokey/assets/*`). The
+artifact is **key-free** (built with empty `VITE_PRIVATE_KEY*`), so this was a
+committed-build-artifact hygiene gap, not a secret leak — but for a TOTAL-STICKLER
+ZERO-findings gate it is now closed: `.gitignore` gains `dist-nokey/`, and
+`git check-ignore web/dist-nokey/assets/x.js` confirms it is ignored. Local dev `web/dist` /
+`web/dist-nokey` builds were scrubbed at the end of this run.
+
+### Additional checks (defense-in-depth, this unit)
+
+- **No key exfiltration.** `WalletOnboarding.tsx` has no `console.log`/`fetch`/`XMLHttpRequest`/`sendBeacon`/`navigator.sendBeacon` of the key, no `dangerouslySetInnerHTML`/`innerHTML`/`eval`/`new Function`. Key egress is `localStorage.setItem` on the two documented slots only.
+- **Input hygiene.** Secret inputs are `type="password"`, `autoComplete="off"`, `spellCheck={false}` (no key forwarded to spellcheck/autofill); Show toggle is opt-in.
+- **Insurer default (R4) is safe.** Empty insurer ⇒ the `…_INSURER` slot is deliberately not written, so `client.ts` (`keyOverride("VITE_PRIVATE_KEY_INSURER") ?? keyOverride("VITE_PRIVATE_KEY")`) falls back to the provider key — no accidental cross-write.
+- **Gate cannot be bypassed.** The modal renders unconditionally over the backdrop with no dismiss/Escape/outside-click/skip affordance; `needsWallet` clears only via `handleWalletLoaded` after a valid `localStorage` write — matches R1 / §6 anti-bypass. The F5 force-prompt loop is avoided: the gate is `!hasUsableProviderKey()` (not `|| forcePrompt`), so once a key is stored the modal clears even with `VITE_FORCE_WALLET_PROMPT=1` (DOM-T6 F5 test pins this; the broken `… || forcePrompt` pattern is asserted absent from `App.tsx`).
+- **Validation is real.** `isValidHexKey` = `/^0x[0-9a-fA-F]{64}$/`; `deriveAddress` throws on invalid input; the suites pin all six R10 scenarios incl. invalid-key-blocks and the all-invalid-forms invariant. `client.ts` env-branch now validates with `isValidHexKey` too (F7 consistency), so a malformed `VITE_PRIVATE_KEY` can't sign while the gate blocks.
+
+### Verdict: PASS (zero findings). SPEC-0008's refresh-14 F8-1 is remediated; the residual bundle inline is a pre-existing `client.ts` (`origin/main`) liability outside this unit, mitigated by the deploy guard and `.gitignore`, and tracked for the build-lane owner.
+
+---
+
+## 2026-06-06 (refresh 14) — SPEC-0008 WalletOnboarding startup modal (R1–R10) (security-review, TOTAL-STICKLER)
+
+**Date:** 2026-06-06
+**Reviewer:** Claude Opus 4.8 (security-review gate, TOTAL-STICKLER mode) — independent re-derivation from source over the *current* diff (`.` vs `origin/main`), focused on the SPEC-0008 wallet-onboarding unit (HEAD `2cdb436`).
+**Base:** `origin/main`
+**Branch:** `spec/0008-wallet-onboarding`
+**Change under review (SPEC-0008 R1–R10):**
+- **new** `web/src/components/WalletOnboarding.tsx` — blocking startup modal (`.modal-card`) over a dimming backdrop (`.modal-backdrop`). Two masked (`type="password"`, `autoComplete="off"`, `spellCheck={false}`) `KeyField`s (provider required, insurer optional). Live `secp256k1` validation (`isValidHexKey`) + derived-address display; "Load wallets" gated on `providerValid && insurerValid`. On load, writes `curie:VITE_PRIVATE_KEY` (and `…_INSURER` only when non-empty) to `localStorage`, then `onLoaded()`.
+- **edit** `web/src/walletKeys.ts` — adds `hasUsableProviderKey(opts?)` (reads `localStorage` then `import.meta.env.VITE_PRIVATE_KEY`; injectable for unit tests) and `deriveAddress` (`ethers.computeAddress`).
+- **edit** `web/src/App.tsx` — gate `needsWallet = !hasUsableProviderKey() || forcePrompt`; `forcePrompt = import.meta.env.VITE_FORCE_WALLET_PROMPT === "1"`; **module-level `envProviderKey`/`envInsurerKey` read from `import.meta.env.VITE_PRIVATE_KEY` / `import.meta.env.VITE_PRIVATE_KEY_INSURER`** (only when `forcePrompt`) to pre-fill the modal (R6).
+- **edit** `web/src/styles.css` — `.modal-backdrop` (z-index 900) + `.modal-card` (z-index 901).
+- **edit** `.env.example` — documents `VITE_FORCE_WALLET_PROMPT` and adds a `VITE_PRIVATE_KEY_INSURER=` empty placeholder.
+- **new** `web/src/walletOnboarding.test.ts` — 21 unit tests (T1–T6 + invariants), all pass.
+- Incidental (not part of the modal): `contracts/hardhat.config.ts` mocha timeout bump; `docs/progress/{design-conformance,coverage}.md` refresh.
+
+**Build/test state verified this run:** `node --import tsx --test web/src/walletOnboarding.test.ts` → 21/21 pass. `npm run web:build` succeeds. SPEC-0008 source files typecheck clean (the two `tsc --noEmit` errors that remain — `client.ts:193` `exactOptionalPropertyTypes` and `livenessDebounce.test.ts:94` — pre-exist on `origin/main` and are outside this unit).
+
+**Verdict: FAIL (1 finding — F8-1, HIGH).**
+
+### Hard gate results
+
+| Gate | Result | Evidence (verified this run) |
+| --- | --- | --- |
+| No PHI / clinical data on-chain or in fixtures (synthetic only) | **PASS** | No clinical payload anywhere in the unit. SPEC-0008 touches only wallet key material + UI plumbing; it commits nothing on-chain. A PHI scan (SSN `\d{3}-\d{2}-\d{4}`, `DOB`/`date of birth`, `MRN`, patient/diagnosis/`ICD-10`, email) over every changed file returned only the explicit *NO-PHI* guard comments/assertions (`WalletOnboarding.tsx:14`, `walletKeys.ts:36`, `walletOnboarding.test.ts:26/350-360`). Test fixtures are the well-known public deterministic dev vectors (`0xac0974…ff80` = Anvil acct #0, `0x59c699…690d` = acct #1) — zero-funded, synthetic, no patient data; the test asserts they match no SSN/DOB/phone/email pattern. |
+| No secrets (committed) | **PASS** | No private key, mnemonic, API key, or token is committed in this diff. The only key *values* present are the two public Anvil test vectors in the test file (synthetic) and empty `=` placeholders in `.env.example`. The populated local `.env` (which holds real testnet keys at `.env:8/14/22`) is `.gitignore`d and untracked (`git check-ignore .env` → ignored; `git ls-files` → not tracked) — it is not part of the diff. |
+| Signing-key hygiene (incl. no key in the built bundle) | **FAIL** | See **F8-1**. SPEC-0008 R6 reads `import.meta.env.VITE_PRIVATE_KEY` **and** `import.meta.env.VITE_PRIVATE_KEY_INSURER` in `App.tsx`. Because Vite statically inlines accessed `import.meta.env.*` members at build time, a plain `npm run web:build` on any box with a populated `.env` (the dev box, an operator laptop, a CI runner with secrets) emits a `web/dist` bundle with **both live private-key values inlined as string literals** — reproduced this run. That is exactly the SPEC-0008 §6 hard-FAIL condition ("A private-key **value** is baked into the built bundle") and contradicts R7 ("never in the bundle"). |
+
+### F8-1 (HIGH) — `import.meta.env.VITE_PRIVATE_KEY[_INSURER]` is inlined into the built bundle, violating SPEC-0008 R7 / §6
+
+**What.** Building the web app with a populated `.env` bakes the live provider **and** insurer testnet private keys into `web/dist` as plaintext string literals.
+
+**Reproduction (this run).**
+```
+# .env on disk holds real testnet keys (gitignored):
+#   VITE_PRIVATE_KEY=0xe448a5c1…183fc   VITE_PRIVATE_KEY_INSURER=0x6684987f…20e4
+npm run web:build                       # vite build, .env auto-loaded
+grep -oE 'VITE_PRIVATE_KEY[^,}]*' web/dist/assets/index-*.js
+#   → VITE_PRIVATE_KEY:"0xe448a5c1…183fc"          (×2)
+#   → VITE_PRIVATE_KEY_INSURER:"0x6684987f…20e4"   (×2)
+```
+A *clean* build (`env -u VITE_PRIVATE_KEY -u VITE_PRIVATE_KEY_INSURER … npm run web:build`) still inlines whatever the auto-loaded `.env` supplies — the leak follows the file, not the shell env.
+
+**Why this unit owns it.** The provider-key inline pre-exists on `origin/main` (via `client.ts`'s `import.meta.env.VITE_PRIVATE_KEY` access — confirmed: building `origin/main` with the key in env produces 1 inlined occurrence). **SPEC-0008 makes it strictly worse:** R6's `App.tsx` adds the **insurer** key to the inlined `import.meta.env` object (the insurer value did not appear in the `origin/main` bundle and now does) and adds a second provider-key inline site (`ck=…`/`uk=…` minified module constants from `envProviderKey`/`envInsurerKey`). A spec whose own pass/fail criterion is "no key value in the bundle" must not introduce a *new* code path that inlines a key.
+
+**Residual real-world risk is bounded but non-zero.** `scripts/deploy-static.sh` (the hosted S3+CloudFront deploy) has a pre-publish guard (L51) that greps the bundle for an inlined `PRIVATE_KEY…0x<40+ hex>` value and aborts — verified this run to fire on the leaked bundle. So the *intended hosted deploy path* is protected. The exposure is anything that ships `web/dist` **without** that guard: `npm run web:preview`, a manual `aws s3 sync web/dist …`, a different host (Vercel/Netlify/GitHub Pages), a teammate previewing from the dev box via the dev-tunnel skill, or any future deploy lane. Keys are documented testnet-only (no real funds), which caps blast radius — but "leaks a signing key into a public static bundle" is a hygiene FAIL regardless of fund value, and the spec explicitly forbids it.
+
+**Required fix (pick one; do not rely solely on the deploy guard).**
+1. **Stop sourcing the prefill from `import.meta.env` in client code.** R6's "pre-fill from env" is a *test* convenience; gate it so the key is never referenced by `import.meta.env.*` in shipped code — e.g. read the prefill from a non-`VITE_`-prefixed, build-time-injected define only under an explicit dev flag, or have the operator paste the key (the modal's whole point) rather than inlining it. The `VITE_` prefix is what makes Vite expose+inline it.
+2. **Decouple the deployed build from `.env`.** Make `web:build` (and `deploy-static.sh`) build with the `VITE_PRIVATE_KEY*` vars explicitly *unset/empty* (e.g. `--mode production` with a committed `.env.production` that blanks them, or `VITE_PRIVATE_KEY= VITE_PRIVATE_KEY_INSURER= npm run web:build`), so the hosted artifact is provably key-free by construction, not by a downstream grep.
+3. At minimum, **promote the `deploy-static.sh` inlined-key guard into `web:build` itself** (fail the build, not just the one deploy script) so *every* build lane is covered — and add a regression test asserting `web/dist` contains no `VITE_PRIVATE_KEY*:"0x…"` literal.
+
+(Option 1 is the cleanest — it removes the leak at the source and keeps R6's testability via a dev-only define.)
+
+### Additional checks (defense-in-depth, this unit)
+
+- **No key exfiltration from the component.** `WalletOnboarding.tsx` never `console.log`s the key, never `fetch`/`XMLHttpRequest`/`sendBeacon`s it, no `dangerouslySetInnerHTML`/`eval`. The key leaves the component only via `window.localStorage.setItem` on the documented `curie:VITE_PRIVATE_KEY*` slots (SPEC-0008 R7 intended path; at-rest encryption is explicitly out-of-scope per §7 for a testnet key).
+- **Input hygiene.** Secret inputs are `type="password"` with `autoComplete="off"` + `spellCheck={false}` (no key sent to spellcheck/autofill services); a Show toggle is opt-in.
+- **Insurer default (R4) is safe.** Empty insurer ⇒ the `…_INSURER` slot is deliberately *not* written, so `client.ts` (`keyOverride("VITE_PRIVATE_KEY_INSURER") ?? keyOverride("VITE_PRIVATE_KEY")`) falls back to the provider key — verified. No accidental cross-write of the provider key into the insurer slot.
+- **Gate cannot be bypassed.** The modal renders unconditionally over the backdrop with no dismiss/close affordance; `needsWallet` only clears via `handleWalletLoaded` (which fires after a valid `localStorage` write). No `Escape`/outside-click/skip path — matches R1 ("blocks interaction until resolved") and the §6 anti-bypass FAIL.
+- **Validation is real.** `isValidHexKey` = `/^0x[0-9a-fA-F]{64}$/`; `deriveAddress` throws on invalid input; the 21-test suite pins all six R10 scenarios incl. the invalid-key-blocks and the all-invalid-forms invariant.
+
+### Verdict: FAIL — 1 finding (F8-1, HIGH). Remediate F8-1 (preferably option 1) and re-run the gate; the bundle must be provably key-free on *every* build lane, not only behind `deploy-static.sh`.
+
+---
+
 ## 2026-06-04 (refresh 13) — Amendment 0007 phase-tracker off-chain sync (`agentPhase` / `pendingDecideFee` / `pendingFeePayer`) (security-review, TOTAL-STICKLER)
 
 **Date:** 2026-06-04
