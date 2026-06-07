@@ -20,17 +20,24 @@ truncation (the indication sits at byte 5283, 1% into the response).
 
 ## Decision
 
-Replace the single generic scrape with **targeted, parameterized extraction**:
+Replace the single generic scrape with **targeted, VERBATIM extraction**:
 
-- The scrape question names the parameter being checked, e.g. *"Per this label, is
-  `<diagnosis>` an FDA-approved or recognized-compendia indication for `<drug>`?"* and
-  *"Is `<quantity>` over `<days-supply>` within the approved dosing?"* — using
-  `ExtractString`'s `allowedValues` to constrain the verdict (`yes`/`no`/`uncertain`)
-  while still returning the supporting snippet.
-- The negotiation carries the **claimed diagnosis** as a field used to build the
-  indication question (a clinical *term*, not a patient fact — PHI-free).
+- The scrape prompt instructs the agent to extract **verbatim** (quote, do NOT summarize)
+  any passage establishing whether the drug is FDA-approved or compendia/guideline-supported
+  **for the indication in this request**, plus dosing limits. Verbatim-not-summary is the
+  fix for the lossy denial.
+- **Diagnosis source — implemented via `agentPromptHint`, NOT a new struct field**
+  (decision 2026-06-07). The per-negotiation `agentPromptHint` already carries the
+  indication ("…requests adalimumab for plaque psoriasis…"), so the scrape embeds it to
+  target the extraction. This avoids a `createContract` signature change rippling through
+  ~40 call sites (contract + ABI + real/sim backends + UI + ~37 hardhat callers + e2e) for
+  no behavioral gain — the indication term is already on-chain in the hint. (The original
+  draft proposed a dedicated `diagnosis` field; the hint-based form satisfies R3 with far
+  less surface.) `allowedValues` stays empty for the scrape (free-text verbatim passage).
 - The decide rubric broadens to **FDA-approved OR recognized-compendia/guideline support**
-  (SPEC-0007 R4) so legitimate off-label use, evidenced on appeal (A0009), can pass.
+  (SPEC-0007 R4) so legitimate off-label use, evidenced on appeal (A0009), can pass — added
+  as an explicit clause in the `inferString` decide prompt (alongside the existing per-neg
+  `agentPromptHint` rubric), so the six curated hints need no rewrite.
 - Architecture: **Option B chosen (SPEC-0007 §3.2, OQ1 resolved 2026-06-06)** — one
   *verbatim* scrape + one decide evaluating all public clauses. Keeps the 2-call cost; the
   fix is verbatim-not-summary, which is what dropped plaque psoriasis.

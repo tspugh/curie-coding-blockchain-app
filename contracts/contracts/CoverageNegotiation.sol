@@ -1109,12 +1109,23 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         //               string prompt, string url, bool resolveUrl, uint8 numPages, uint8 confidenceThreshold)
         // Selector: 0xc2dd1a7a = keccak256("ExtractString(string,string,string[],string,string,bool,uint8,uint8)")[0:4]
         string[] memory scrapeAllowedValues = new string[](0); // free-text extraction
+        // A0011: source-agnostic, diagnosis-TARGETED, VERBATIM extraction. The prior
+        // generic prompt invited a lossy summary that silently dropped the requested
+        // indication (openFDA Humira → plaque-psoriasis denial). Quote the relevant
+        // text instead of summarizing, and key the extraction on THIS request's
+        // indication (carried in n.agentPromptHint) so the answer can't be summarized
+        // away — and so the SAME goal works on an FDA label AND on a prose compendia
+        // source supplied on appeal (A0009).
         bytes memory payload = abi.encodeWithSelector(
             ILLMParseWebsiteAgent.ExtractString.selector,
             "evidence",
             "Drug coverage evidence from the provided URL",
             scrapeAllowedValues,
-            "Extract the drug's FDA approval status, indication, and medical necessity evidence.",
+            string(abi.encodePacked(
+                "Extract VERBATIM (quote the relevant text; do NOT summarize) any passage that establishes whether the drug is FDA-approved, OR supported by recognized clinical compendia/guidelines, for the indication in this request: ",
+                n.agentPromptHint,
+                " Also extract any dosing or quantity limits stated for the drug. Do not summarize or omit the requested indication."
+            )),
             n.agentEvidenceUrl,
             false, // resolveUrl: do not follow redirects
             1,     // numPages: single page
@@ -1217,6 +1228,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
                 _ladderContext(n.payerLine, n.appealRound), // A0010: rung → prompt
                 " Evidence URL: ", n.agentEvidenceUrl,
                 " Extracted evidence: ", evidence,
+                // A0011: broaden the rubric — legitimate off-label use is covered too.
+                " Treat the indication as covered (approve) if the extracted evidence shows the drug is FDA-approved OR supported by recognized clinical compendia/guidelines for this indication; otherwise deny, or reply needs_more_info if the evidence is insufficient.",
                 " Reply with exactly one of the allowed values."
             )),
             "You are a medical necessity arbiter. Evaluate the drug coverage request and return exactly one decision token.",

@@ -1325,6 +1325,37 @@ describe("CoverageNegotiation", () => {
       expect(prompt).to.contain("PartD review ladder, stage 0");
     });
 
+    it("A0011: scrape prompt is VERBATIM + diagnosis-targeted; decide rubric broadened to compendia", async () => {
+      const { platform, contract } = await deploy();
+      const [provider, insurer] = await ethers.getSigners();
+      const target = await contract.getAddress();
+      await contract.setAgentId(LLM_INFERENCE_AGENT_ID);
+      const reqId = await createAs(contract, provider, insurer.address);
+      await contract.connect(insurer).insurerEngage(reqId, POLICY_HASH, POLICY_URI, { value: REQUESTED });
+      const deposit = await platform.deposit();
+      await contract.connect(provider).requestAdjudication(reqId, { value: deposit * 2n });
+
+      // SCRAPE payload (ExtractString) — captured right after requestAdjudication.
+      const scrapePayload: string = await platform.lastPayload();
+      const sd = ethers.AbiCoder.defaultAbiCoder().decode(
+        ["string", "string", "string[]", "string", "string", "bool", "uint8", "uint8"],
+        "0x" + scrapePayload.slice(10),
+      );
+      const scrapePrompt: string = sd[3];
+      expect(scrapePrompt.toUpperCase()).to.contain("VERBATIM"); // R3: not a lossy summary
+      expect(scrapePrompt.toLowerCase()).to.contain("do not summarize");
+      expect(scrapePrompt).to.contain("indication in this request"); // diagnosis-targeted via promptHint
+
+      // DECIDE payload (inferString) — after the scrape completes.
+      await platform.triggerRuling(target, await platform.lastRequestId(), "scrape-evidence");
+      const decidePayload: string = await platform.lastPayload();
+      const [decidePrompt] = ethers.AbiCoder.defaultAbiCoder().decode(
+        ["string", "string", "bool", "string[]"],
+        "0x" + decidePayload.slice(10),
+      );
+      expect(decidePrompt.toLowerCase()).to.contain("compendia"); // R4: FDA-approved OR compendia-supported
+    });
+
     it("A0009: submitEvidence repoints agentEvidenceUrl so the re-scrape targets the NEW url", async () => {
       const { platform, contract } = await deploy();
       const [provider, insurer] = await ethers.getSigners();
