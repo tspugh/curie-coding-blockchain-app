@@ -1,12 +1,15 @@
 <!doctype html>
 <!--
   SPEC-0009 — illustrative mockup of the REWORKED REQUEST VIEW (R26/R30).
-  Static visual only (no real keys, no chain calls). Numbers shown (block height,
-  T+ finality) are illustrative/measured placeholders, not marketing claims.
-  Reflects: form-as-canvas + co-pilot fill (R30/R30a); right-side copilot drawer with
-  four message types + glyphs + live status line + thinking + streaming (R28/R29/R29a);
-  SPEC-0007 clause-typed policy → de-identified attestation toggles (R50);
-  SPEC-0008 BYOK wallet (browser signs — R52).  Synthetic data only; no PHI.
+  Layout (per 2026-06 review): the CO-PILOT is the MAIN surface; the CONTRACT/technical
+  info is a COLLAPSIBLE right drawer (the Claude-Code-diff analogue). Static visual only —
+  no real keys, no chain calls. Numbers (block height, T+ finality) are illustrative/measured
+  placeholders, not marketing claims.
+  Shows: co-pilot chat with four message types + glyphs + live status line + thinking +
+  streaming (R28/R29/R29a); the contract drawer's form is co-pilot-filled (R30/R30a) with
+  SPEC-0007 de-identified attestation toggles (R50); SPEC-0008 BYOK (browser signs — R52).
+  The collapse toggle is a pure-CSS checkbox hack (no JS). Synthetic data only; no PHI.
+  UI-framework candidate: CopilotKit / CoAgents — see docs/research/copilotkit-*.md (OQ-7).
 -->
 <html lang="en">
 <head>
@@ -17,115 +20,114 @@
   :root{
     --bg:#f6f7f9; --panel:#ffffff; --ink:#13151a; --muted:#5b6573; --line:#e4e7ec;
     --accent:#0e7c86; --accent-weak:#e3f3f4; --agent:#6b4fbb; --agent-weak:#efeaf9;
-    --good:#1a7f37; --warn:#9a6700; --bad:#b42318; --pend:#8a93a3;
-    --chip:#eef1f5; --radius:12px;
+    --good:#1a7f37; --warn:#9a6700; --bad:#b42318; --pend:#8a93a3; --chip:#eef1f5; --radius:12px;
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.45}
-  .glyph{font-variant-emoji:text}
-  .g-final{color:var(--good)} .g-mined{color:var(--warn)} .g-pend{color:var(--pend)}
-  .g-rev{color:var(--bad)}
+  html,body{margin:0;overflow-x:hidden}
+  body{background:var(--bg);color:var(--ink);font-size:14px;line-height:1.45}
+  .g-final{color:var(--good)} .g-mined{color:var(--warn)} .g-pend{color:var(--pend)} .g-rev{color:var(--bad)}
+  .ok{color:var(--good);font-weight:600;font-size:12px}
 
   /* Header */
   header{display:flex;align-items:center;gap:18px;padding:10px 18px;background:var(--panel);
     border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
-  .brand{font-weight:700;letter-spacing:.2px}
-  .brand small{color:var(--muted);font-weight:500}
+  .brand{font-weight:700}.brand small{color:var(--muted);font-weight:500}
   .chainstat{margin-left:auto;color:var(--muted);font-size:12.5px;display:flex;gap:14px;align-items:center}
   .chainstat b{color:var(--ink);font-variant-numeric:tabular-nums}
   .rolechip{display:flex;gap:8px;align-items:center;background:var(--chip);border:1px solid var(--line);
     border-radius:999px;padding:5px 10px;font-size:12.5px}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
 
-  /* Layout */
-  .wrap{display:grid;grid-template-columns:1fr 384px;gap:16px;padding:16px;align-items:start}
-  .canvas, .drawer{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius)}
-  .canvas{padding:0;overflow:hidden}
-  .card-h{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line)}
-  .card-h h2{font-size:15px;margin:0}
-  .badge{font-size:11.5px;font-weight:600;padding:3px 8px;border-radius:999px;border:1px solid var(--line)}
-  .badge.review{background:#fff7e6;border-color:#f3d28a;color:var(--warn)}
-  .reqid{color:var(--muted);font-size:12.5px;margin-left:auto;font-variant-numeric:tabular-nums}
+  /* Layout: co-pilot MAIN + contract drawer (collapsible) */
+  .wrap{display:flex;gap:16px;padding:16px;align-items:stretch}
+  .copilot{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    display:flex;flex-direction:column;min-height:560px}
+  .contract{width:380px;flex:none;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    display:flex;flex-direction:column;overflow:hidden}
 
-  .section{padding:14px 16px;border-bottom:1px solid var(--line)}
-  .section h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 18px}
-  .field label{display:block;font-size:11.5px;color:var(--muted);margin-bottom:3px}
-  .field .val{display:flex;align-items:center;gap:7px;background:#fbfcfd;border:1px solid var(--line);
-    border-radius:8px;padding:8px 10px;min-height:36px;font-size:13px}
-  .field .val.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#334}
-  .filled{font-size:10.5px;font-weight:600;color:var(--agent);background:var(--agent-weak);
-    border-radius:999px;padding:2px 7px;white-space:nowrap}
-  .ok{color:var(--good);font-weight:600;font-size:12px}
+  /* collapse toggle (pure CSS) */
+  #dt{position:absolute;left:-9999px}
+  .rail{display:none}
+  #dt:checked ~ .wrap .contract{display:none}
+  #dt:checked ~ .wrap .rail{display:flex}
+  .rail{width:42px;flex:none;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    writing-mode:vertical-rl;transform:rotate(180deg);align-items:center;justify-content:center;gap:8px;
+    padding:14px 0;cursor:pointer;color:var(--muted);font-size:12.5px;font-weight:600}
+  .collapsebtn{cursor:pointer;font-size:11.5px;color:var(--accent);border:1px solid var(--line);
+    border-radius:7px;padding:3px 8px;background:#fbfcfd}
 
-  /* Attestation toggles (SPEC-0007 attested clauses) */
-  .att{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px dashed var(--line)}
-  .att:first-of-type{border-top:none}
-  .att .txt{flex:1}
-  .att .txt small{color:var(--muted)}
-  .toggle{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;font-size:12px}
-  .toggle span{padding:4px 11px;cursor:default}
-  .toggle .yes.on{background:var(--good);color:#fff}
-  .toggle .no.on{background:#fde8e6;color:var(--bad)}
-  .att .evlink{font-size:11px;color:var(--accent)}
-
-  /* Action bar + live strip */
-  .actions{display:flex;gap:8px;flex-wrap:wrap;padding:14px 16px}
-  button{font:inherit;border-radius:8px;border:1px solid var(--line);background:#fff;padding:8px 13px;
-    cursor:pointer;font-size:13px}
-  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
-  button:disabled{opacity:.45;cursor:not-allowed}
-  .live{display:flex;gap:18px;padding:10px 16px;background:#fbfcfd;border-top:1px solid var(--line);
-    color:var(--muted);font-size:12.5px}
-  .live b{color:var(--ink);font-variant-numeric:tabular-nums}
-
-  /* Drawer */
-  .drawer{display:flex;flex-direction:column;height:calc(100vh - 32px - 56px);position:sticky;top:88px}
-  .d-h{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
-  .d-h .who{font-weight:700;font-size:13.5px}
-  .d-h .who small{color:var(--muted);font-weight:500}
+  /* ===== CO-PILOT (main) ===== */
+  .c-head{display:flex;align-items:center;gap:8px;padding:13px 16px;border-bottom:1px solid var(--line)}
+  .c-head .who{font-weight:700;font-size:14.5px}.c-head .who small{color:var(--muted);font-weight:500}
   .autotoggle{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
   .switch{width:34px;height:19px;border-radius:999px;background:#cfd5dd;position:relative}
   .switch i{position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:50%;background:#fff}
-  .stop{font-size:11.5px;color:var(--bad);border-color:#f3c2bd;padding:4px 9px}
+  .stop{font-size:11.5px;color:var(--bad);border:1px solid #f3c2bd;border-radius:7px;padding:4px 9px;background:#fff}
 
-  .stream{flex:1;overflow:auto;padding:12px 14px;display:flex;flex-direction:column;gap:11px}
-  .msg{font-size:12.8px}
-  .msg .pre{font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;margin-right:6px}
-  .msg.user .pre{color:#334} .msg.user .body{background:#eef1f5;border-radius:9px;padding:8px 10px;display:inline-block}
+  .stream{flex:1;overflow:auto;padding:16px 18px;display:flex;flex-direction:column;gap:13px;
+    max-width:760px;width:100%;margin:0 auto}
+  .msg{font-size:13.3px}
+  .msg .pre{font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;margin-right:6px}
+  .msg.user{align-self:flex-end;max-width:88%}
+  .msg.user .pre{color:#334}
+  .msg.user .body{background:#eef1f5;border-radius:11px;padding:9px 12px;display:inline-block}
   .msg.tool{color:var(--muted)} .msg.tool .pre{color:var(--accent)}
   .msg.agent .pre{color:var(--agent)}
-  .msg.agent .body{background:var(--agent-weak);border-radius:9px;padding:8px 10px;display:inline-block}
+  .msg.agent .body{background:var(--agent-weak);border-radius:11px;padding:9px 12px;display:inline-block;max-width:92%}
   .msg.chain .pre{color:var(--muted)}
-  .msg.chain .body{font-family:ui-monospace,Menlo,monospace;font-size:11.6px}
+  .msg.chain .body{font-family:ui-monospace,Menlo,monospace;font-size:12px}
   .tstamp{color:var(--pend);font-variant-numeric:tabular-nums}
 
-  .statusline{display:flex;align-items:center;gap:8px;margin:2px 0;padding:7px 10px;border-radius:9px;
-    background:#fff7e6;border:1px solid #f3d28a;color:var(--warn);font-size:12.3px}
-  .statusline .spin{width:12px;height:12px;border:2px solid #f0c873;border-top-color:transparent;border-radius:50%;
-    animation:spin .8s linear infinite}
-  @keyframes spin{to{transform:rotate(360deg)}}
-  .thinking{color:var(--agent);font-size:12.5px;display:flex;align-items:center;gap:7px}
-  .thinking .pre{font-weight:600;font-size:10.5px;text-transform:uppercase}
+  .statusline{display:flex;align-items:center;gap:8px;padding:8px 11px;border-radius:10px;
+    background:#fff7e6;border:1px solid #f3d28a;color:var(--warn);font-size:12.5px;align-self:flex-start}
+  .spin{width:12px;height:12px;border:2px solid #f0c873;border-top-color:transparent;border-radius:50%;
+    animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+  .thinking{color:var(--agent);font-size:12.8px;display:flex;align-items:center;gap:7px;align-self:flex-start}
+  .thinking .pre{font-weight:700;font-size:10.5px;text-transform:uppercase}
   .dots i{display:inline-block;width:4px;height:4px;border-radius:50%;background:var(--agent);margin:0 1px;
-    animation:blink 1.2s infinite}
-  .dots i:nth-child(2){animation-delay:.2s}.dots i:nth-child(3){animation-delay:.4s}
+    animation:blink 1.2s infinite}.dots i:nth-child(2){animation-delay:.2s}.dots i:nth-child(3){animation-delay:.4s}
   @keyframes blink{0%,60%,100%{opacity:.25}30%{opacity:1}}
-  .cursor{display:inline-block;width:7px;height:14px;background:var(--agent);vertical-align:-2px;
-    margin-left:1px;animation:blink2 1s steps(1) infinite}
-  @keyframes blink2{50%{opacity:0}}
+  .cursor{display:inline-block;width:7px;height:15px;background:var(--agent);vertical-align:-2px;margin-left:1px;
+    animation:blink2 1s steps(1) infinite}@keyframes blink2{50%{opacity:0}}
 
-  .d-input{border-top:1px solid var(--line);padding:10px 12px;display:flex;gap:8px;align-items:center}
-  .d-input input{flex:1;border:1px solid var(--line);border-radius:999px;padding:9px 13px;font:inherit;font-size:13px}
-  .d-input .send{background:var(--agent);border-color:var(--agent);color:#fff;border-radius:999px;width:34px;height:34px;padding:0}
-  .rules-link{font-size:11.5px;color:var(--accent);padding:6px 14px;border-top:1px solid var(--line)}
+  .rules-link{font-size:11.5px;color:var(--accent);padding:7px 18px;border-top:1px solid var(--line)}
+  .c-input{border-top:1px solid var(--line);padding:12px 16px;display:flex;gap:8px;align-items:center;
+    max-width:760px;width:100%;margin:0 auto}
+  .c-input input{flex:1;border:1px solid var(--line);border-radius:999px;padding:11px 15px;font:inherit;font-size:13.5px}
+  .c-input .send{background:var(--agent);border:none;color:#fff;border-radius:999px;width:38px;height:38px;cursor:pointer}
 
-  /* Footer ticker */
-  .ticker{grid-column:1 / -1;background:#11151c;color:#cdd6e2;border-radius:var(--radius);
-    padding:8px 14px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;display:flex;gap:24px;overflow:hidden}
+  /* ===== CONTRACT DRAWER (right, collapsible) ===== */
+  .d-h{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .d-h h2{font-size:14px;margin:0}
+  .badge{font-size:11px;font-weight:600;padding:3px 8px;border-radius:999px;border:1px solid #f3d28a;
+    background:#fff7e6;color:var(--warn);margin-left:auto}
+  .dscroll{overflow:auto;padding:0}
+  .section{padding:13px 14px;border-bottom:1px solid var(--line)}
+  .section h3{margin:0 0 9px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+  .field{margin-bottom:9px}
+  .field label{display:block;font-size:11px;color:var(--muted);margin-bottom:3px}
+  .field .val{display:flex;align-items:center;gap:7px;background:#fbfcfd;border:1px solid var(--line);
+    border-radius:8px;padding:7px 9px;min-height:34px;font-size:12.8px}
+  .field .val.mono{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#334}
+  .filled{font-size:10px;font-weight:600;color:var(--agent);background:var(--agent-weak);border-radius:999px;
+    padding:2px 6px;white-space:nowrap;margin-left:auto}
+  .att{display:flex;align-items:center;gap:9px;padding:8px 0;border-top:1px dashed var(--line)}
+  .att:first-of-type{border-top:none}.att .txt{flex:1;font-size:12.3px}.att .txt small{color:var(--muted)}
+  .toggle{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;font-size:11.5px}
+  .toggle span{padding:4px 10px}.toggle .yes.on{background:var(--good);color:#fff}.toggle .no.on{background:#fde8e6;color:var(--bad)}
+  .actions{display:flex;gap:7px;flex-wrap:wrap;padding:13px 14px}
+  button.act{font:inherit;border-radius:8px;border:1px solid var(--line);background:#fff;padding:8px 11px;cursor:pointer;font-size:12.5px}
+  button.act.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button.act:disabled{opacity:.45;cursor:not-allowed}
+  .live{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;padding:12px 14px;background:#fbfcfd;
+    border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+  .live b{color:var(--ink)}
+
+  .ticker{margin:0 16px 16px;background:#11151c;color:#cdd6e2;border-radius:var(--radius);padding:8px 14px;
+    font-family:ui-monospace,Menlo,monospace;font-size:11.5px;display:flex;gap:24px;overflow:hidden;flex-wrap:wrap}
   .ticker b{color:#9be3a6;font-weight:600}
-  .note{grid-column:1 / -1;color:var(--muted);font-size:11.5px;padding:0 2px}
+  .note{color:var(--muted);font-size:11.5px;padding:0 18px 18px}
 </style>
 </head>
 <body>
@@ -133,120 +135,113 @@
 <header>
   <div class="brand">⚕ Curie <small>· Coverage Request</small></div>
   <div class="chainstat">
-    <span>⛓ Somnia testnet</span>
-    <span>block <b>12,840,517</b></span>
+    <span>⛓ Somnia testnet</span><span>block <b>12,840,517</b></span>
     <span>last tx final <b>0.41s</b> <span style="font-size:10.5px">(measured)</span></span>
   </div>
   <div class="rolechip"><span class="dot"></span> Provider · <b>0x90F…a77</b> <small>(BYOK)</small></div>
 </header>
 
+<!-- collapse state lives here so the CSS sibling selectors can reach the drawer -->
+<input type="checkbox" id="dt" />
+
 <div class="wrap">
 
-  <!-- ===================== CANVAS (form is the source of truth; co-pilot fills it) ===================== -->
-  <main class="canvas">
-    <div class="card-h">
-      <h2>Adalimumab (Humira)</h2>
-      <span class="badge review">● Under review · round 1</span>
-      <span class="reqid">request #1042 · Part D</span>
-    </div>
-
-    <div class="section">
-      <h3>Request — fields the copilot filled (you can edit any of them)</h3>
-      <div class="grid">
-        <div class="field"><label>Drug</label><div class="val">Adalimumab (Humira) <span class="filled">✨ copilot</span></div></div>
-        <div class="field"><label>Indication (clinical term, not a patient fact)</label><div class="val">Moderate-to-severe plaque psoriasis <span class="filled">✨ copilot</span></div></div>
-        <div class="field"><label>De-identified justification (committed)</label><div class="val mono">keccak 0x3f9a…c21 <span class="filled">✨ copilot</span></div></div>
-        <div class="field"><label>Requested amount</label><div class="val">5,200 STT</div></div>
-        <div class="field"><label>Quantity / days supply</label><div class="val">2 pens / 28 days <span class="filled">✨ copilot</span></div></div>
-        <div class="field"><label>Insurer</label><div class="val mono">Aetna · 0x20A…128</div></div>
-      </div>
-    </div>
-
-    <div class="section">
-      <h3>Attestations — de-identified yes/no for the policy's <em>attested</em> clauses (SPEC-0007)</h3>
-      <div class="att">
-        <div class="txt">Trial/failure or contraindication to ≥1 conventional systemic therapy <small>(clause 3 · attested)</small></div>
-        <div class="toggle"><span class="yes on">Yes</span><span class="no">No</span></div>
-        <a class="evlink" href="#">+ de-identified evidence URL</a>
-      </div>
-      <div class="att">
-        <div class="txt">TB screening performed, no active serious infection <small>(clause 4 · attested · boxed warning)</small></div>
-        <div class="toggle"><span class="yes on">Yes</span><span class="no">No</span></div>
-        <a class="evlink" href="#">+ de-identified evidence URL</a>
-      </div>
-      <p style="margin:10px 0 0;color:var(--muted);font-size:11.5px">
-        Recorded, not independently verified. Booleans only — no PHI ever leaves this device on these.
-        Public clauses (indication, dosing) are adjudicated by the on-chain arbiter from the policy's source URLs.
-      </p>
-    </div>
-
-    <div class="actions">
-      <button class="primary">Request adjudication (with attestations)</button>
-      <button>Appeal</button>
-      <button disabled>Accept</button>
-      <button disabled>Settle</button>
-      <button>Refuse</button>
-    </div>
-    <div class="live">
-      <span>State <b>Under review</b></span>
-      <span>Round <b>1</b></span>
-      <span>Covered <b>— (pending ruling)</b></span>
-      <span>Benchmark cap <b>5,200 STT</b></span>
-    </div>
-  </main>
-
-  <!-- ===================== COPILOT DRAWER (right) ===================== -->
-  <aside class="drawer">
-    <div class="d-h">
-      <div class="who">Copilot <small>· Provider</small></div>
+  <!-- ============ CO-PILOT — MAIN SURFACE ============ -->
+  <main class="copilot">
+    <div class="c-head">
+      <div class="who">Copilot <small>· Provider · case #1042</small></div>
       <div class="autotoggle">auto <span class="switch"><i></i></span></div>
       <button class="stop">⏻ Stop</button>
     </div>
 
     <div class="stream">
-      <div class="msg user"><span class="pre">you</span><span class="body">Open a case: Adalimumab for this de-identified patient (plaque psoriasis), $5,200, qty 2, Part D — send to Aetna.</span></div>
+      <div class="msg user"><span class="body">Open a case: Adalimumab for this de-identified patient (plaque psoriasis), $5,200, qty 2, Part D — send to Aetna.</span></div>
 
       <div class="msg tool"><span class="pre">tool</span> evidence.resolve("Adalimumab","plaque psoriasis") → DailyMed label · <span class="ok">live ✓</span> · 240ms</div>
 
-      <div class="msg agent"><span class="pre">agent</span><span class="body">Extracted drug, indication, amount, qty, payer line, insurer; justification hashed. All required fields present — filing.</span></div>
+      <div class="msg agent"><span class="pre">agent</span><span class="body">Extracted the drug, indication, amount, quantity, payer line and insurer; justification hashed. All required fields present — filing. <span style="color:var(--agent);font-size:11.5px">(open the Contract drawer to review/edit what I filled →)</span></span></div>
 
-      <div class="msg chain"><span class="pre">chain</span> <span class="body"><span class="glyph g-final">●</span> ContractCreated #1042 · 0x7c1a… · <span class="tstamp">T+0.40s</span></span></div>
+      <div class="msg chain"><span class="pre">chain</span> <span class="body"><span class="g-final">●</span> ContractCreated #1042 · 0x7c1a… · <span class="tstamp">T+0.40s</span></span></div>
 
       <div class="msg agent"><span class="pre">agent</span><span class="body">Filed #1042 to Aetna. Watching for their response.</span></div>
 
-      <div class="msg chain"><span class="pre">chain</span> <span class="body"><span class="glyph g-final">●</span> InsurerEngaged #1042 · policy 0x4d… · <span class="tstamp">T+0.38s</span></span></div>
+      <div class="msg chain"><span class="pre">chain</span> <span class="body"><span class="g-final">●</span> InsurerEngaged #1042 · policy 0x4d… · <span class="tstamp">T+0.38s</span></span></div>
 
-      <div class="msg agent"><span class="pre">agent</span><span class="body">Aetna attached its clause-typed policy. I've pre-filled the two attested clauses (step-therapy ✓, TB screen ✓) — confirm and I'll request adjudication.</span></div>
+      <div class="msg agent"><span class="pre">agent</span><span class="body">Aetna attached its clause-typed policy. I've pre-filled the two attested clauses (step-therapy ✓, TB screen ✓) — confirm in the drawer and I'll request adjudication.</span></div>
 
       <!-- transient live status line (R29a) — NOT a persistent message type -->
-      <div class="statusline"><span class="spin"></span> <span class="glyph">◐</span> adjudicating… arbiter ruling in progress</div>
+      <div class="statusline"><span class="spin"></span> <span>◐</span> adjudicating… arbiter ruling in progress</div>
 
-      <!-- thinking + streaming (R29a) -->
+      <!-- thinking → streaming (R29a) -->
       <div class="thinking"><span class="pre">agent</span> thinking <span class="dots"><i></i><i></i><i></i></span></div>
-      <div class="msg agent"><span class="pre">agent</span><span class="body">The policy requires documented topical-therapy failure; your note covers it, and plaque psoriasis is on-label for adalimumab. I expect an approval near the Cost-Plus cap<span class="cursor"></span></span></div>
+      <div class="msg agent"><span class="pre">agent</span><span class="body">The policy requires documented topical-therapy failure; your note covers it, and plaque psoriasis is on-label for adalimumab. I expect approval near the Cost-Plus cap<span class="cursor"></span></span></div>
     </div>
 
     <a class="rules-link" href="#">⚙ Standing rules — auto-accept ≥ 90% of requested, else appeal once</a>
-    <div class="d-input">
+    <div class="c-input">
       <input placeholder="Ask your copilot, or describe a new case…" />
       <button class="send">↑</button>
     </div>
+  </main>
+
+  <!-- ============ CONTRACT INFO — COLLAPSIBLE RIGHT DRAWER ============ -->
+  <aside class="contract">
+    <div class="d-h">
+      <h2>Contract #1042 · Adalimumab</h2>
+      <span class="badge">● Under review · r1</span>
+      <label for="dt" class="collapsebtn">▸ collapse</label>
+    </div>
+
+    <div class="dscroll">
+      <div class="section">
+        <h3>Request — fields the copilot filled (editable)</h3>
+        <div class="field"><label>Drug</label><div class="val">Adalimumab (Humira) <span class="filled">✨ copilot</span></div></div>
+        <div class="field"><label>Indication (clinical term, not a patient fact)</label><div class="val">Plaque psoriasis <span class="filled">✨ copilot</span></div></div>
+        <div class="field"><label>De-identified justification (committed)</label><div class="val mono">keccak 0x3f9a…c21 <span class="filled">✨ copilot</span></div></div>
+        <div class="field"><label>Requested / quantity</label><div class="val">5,200 STT · 2 pens / 28 days <span class="filled">✨ copilot</span></div></div>
+        <div class="field"><label>Insurer</label><div class="val mono">Aetna · 0x20A…128</div></div>
+      </div>
+
+      <div class="section">
+        <h3>Attestations — de-identified yes/no (SPEC-0007 attested clauses)</h3>
+        <div class="att"><div class="txt">Trial/failure of ≥1 conventional systemic therapy <small>(clause 3)</small></div>
+          <div class="toggle"><span class="yes on">Yes</span><span class="no">No</span></div></div>
+        <div class="att"><div class="txt">TB screening; no active serious infection <small>(clause 4 · boxed warning)</small></div>
+          <div class="toggle"><span class="yes on">Yes</span><span class="no">No</span></div></div>
+        <p style="margin:9px 0 0;color:var(--muted);font-size:11px">Recorded, not independently verified. Booleans only — no PHI. Public clauses (indication, dosing) are adjudicated on-chain from the policy's source URLs.</p>
+      </div>
+
+      <div class="actions">
+        <button class="act primary">Request adjudication (+ attestations)</button>
+        <button class="act">Appeal</button>
+        <button class="act" disabled>Accept</button>
+        <button class="act" disabled>Settle</button>
+        <button class="act">Refuse</button>
+      </div>
+      <div class="live">
+        <span>State <b>Under review</b></span><span>Round <b>1</b></span>
+        <span>Covered <b>— (pending)</b></span><span>Cap <b>5,200 STT</b></span>
+      </div>
+    </div>
   </aside>
 
-  <!-- ===================== FOOTER TICKER ===================== -->
-  <div class="ticker">
-    <span><b>T+0.0s</b> #1042 filed (provider)</span>
-    <span><b>T+0.4s</b> ● finalised</span>
-    <span><b>T+6s</b> Aetna engaged · policy attached</span>
-    <span><b>T+7s</b> adjudication requested (+ attestations)</span>
-    <span><b>T+8s</b> ◐ arbiter ruling…</span>
-  </div>
-
-  <p class="note">
-    Illustrative mockup for SPEC-0009. Manual mode (agent off) collapses this drawer and shows the form full-width (R30).
-    Signing is browser-side with the SPEC-0008 BYOK wallet; the copilot Lambda only decides + narrates (R52). Synthetic data — no PHI.
-  </p>
+  <!-- collapsed rail (shown when #dt is checked) -->
+  <label for="dt" class="rail">◂ Contract #1042</label>
 
 </div>
+
+<div class="ticker">
+  <span><b>T+0.0s</b> #1042 filed</span><span><b>T+0.4s</b> ● finalised</span>
+  <span><b>T+6s</b> Aetna engaged</span><span><b>T+7s</b> adjudication + attestations</span>
+  <span><b>T+8s</b> ◐ arbiter ruling…</span>
+</div>
+
+<p class="note">
+  Illustrative mockup for SPEC-0009. <b>Co-pilot is the main surface; the contract drawer collapses</b> (click "▸ collapse" / the rail).
+  In manual mode (agent off) the drawer auto-expands and the form is operated directly (R30). Signing is browser-side with the
+  SPEC-0008 BYOK wallet; the copilot Lambda only decides + narrates (R52). UI-framework candidate: CopilotKit / CoAgents (OQ-7).
+  Synthetic data — no PHI.
+</p>
+
 </body>
 </html>
