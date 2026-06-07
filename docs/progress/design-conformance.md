@@ -1,11 +1,33 @@
-# Design Conformance Report — spec-6-implementation
+# Design Conformance Report — spec/0008-wallet-onboarding
 
-**Date:** 2026-06-04
-**Branch:** `spec-6-implementation`
+**Date:** 2026-06-06
+**Branch:** `spec/0008-wallet-onboarding`
 **Threshold:** ≥ 90 % to pass
-**Review pass:** livenessDebounce extraction sprint — F4' finding from strict-review-findings.md resolved. Gate flips from FAIL to PASS.
+**Review pass:** SPEC-0008 wallet-onboarding modal sprint — R1–R10 fully implemented; 26 unit tests + 24 DOM/component tests pass (50 wallet-specific tests; 139 total across all test files); gate holds PASS.
 
-## What was verified in this pass
+## SPEC-0008 sprint — WalletOnboarding modal (R1–R10)
+
+Verified `web/src/` against `docs/reference/ui-prototype-handoff/project/` (JSX direct read) for the SPEC-0008 delivery. Delivered files:
+
+1. **`web/src/components/WalletOnboarding.tsx`** — Modal card + backdrop overlay. Rendered by `App.tsx` when `showModal = needsWallet || forcePrompt`. Two `KeyField` sub-components (provider required, insurer optional). Each `KeyField` has a masked `type="password"` input with optional Show/Hide toggle (per R2), live `safeDerive` (wraps shared `deriveAddress`) for address display, and an inline `key-error` alert on invalid input. The "Load wallets" button is disabled unless `providerValid && insurerValid` (`insurerValid = insurerKey === "" || isValidHexKey(insurerKey)`). On success: writes `curie:VITE_PRIVATE_KEY` (and `curie:VITE_PRIVATE_KEY_INSURER` when non-empty) to `localStorage`, then calls `onLoaded()` which triggers `window.location.reload()`. Empty insurer slot is deliberately not written — `client.ts` falls back to the provider key (R4). **IMPLEMENTED.**
+
+2. **`web/src/walletKeys.ts`** — Extended with `hasUsableProviderKey(opts?)` and `deriveAddress(privateKey)`. `hasUsableProviderKey` checks `localStorage` (`curie:VITE_PRIVATE_KEY`) then `import.meta.env.VITE_PRIVATE_KEY`; both are injectable for unit tests via `opts.storageOverride` / `opts.envKey`. `deriveAddress` uses `ethers.computeAddress`. `HasUsableProviderKeyOpts` interface exported for typed injection. No new dependencies. **IMPLEMENTED.**
+
+3. **`web/src/App.tsx`** — Gate wired: `const forcePrompt = import.meta.env.VITE_FORCE_WALLET_PROMPT === "1"` (module-level). `const [needsWallet] = useState(() => !hasUsableProviderKey())`. `showModal = needsWallet || forcePrompt`. Pre-fill values read from `localStorage` via `KEY_STORAGE_PREFIX` (NOT from `import.meta.env.VITE_PRIVATE_KEY` — avoids Vite bundle-inlining, SPEC-0008 §6 hard-FAIL). `WalletOnboarding` rendered when `showModal` with `prefillProvider={prefillProvider}` + `prefillInsurer={prefillInsurer}`. `handleWalletLoaded` calls `window.location.reload()` only — no dead `setNeedsWallet(false)` before reload (F6 fix). **IMPLEMENTED.**
+
+4. **`web/src/styles.css`** — Section 39 (`.modal-backdrop` + `.modal-card`): `.modal-backdrop`: `position: fixed; inset: 0; background: rgba(15,23,42,.55); backdrop-filter: blur(3px); z-index: 900`. `.modal-card`: `position: fixed; top/left: 50%; transform: translate(-50%,-50%); z-index: 901; width: min(520px, calc(100vw - 40px)); max-height: calc(100vh - 80px); overflow-y: auto; display: flex; flex-direction: column; gap: 16px`. **IMPLEMENTED.**
+
+5. **`.env.example`** — `VITE_FORCE_WALLET_PROMPT=` entry with inline comment explaining the force-prompt test hook. **IMPLEMENTED.**
+
+6. **`web/src/walletOnboarding.test.ts`** — 26 unit tests covering all six SPEC-0008 R10 scenarios (T1–T6) plus static-analysis invariants (F3 DRY, F7 consistency, F8-1 security, NO-PHI). Pure Node runner (no DOM, no Vite globals) using `opts` injection. **All 26 pass.**
+
+7. **`web/src/walletOnboarding.dom.test.ts`** — 24 DOM/component tests using jsdom + React's `createRoot + act` for full interaction coverage: DOM-T1–DOM-T6 (all six R10 scenarios exercised with real React component state), F1/F5 (App.tsx prop-wiring structural assertions), F6 (dead-code check — no `setNeedsWallet` before reload), F8 (out-of-scope Hardhat change check), F9 (precise `.disabled` boolean property check, not HTML substring), F10 (R8 deferral note in spec), F3 (DRY invariant), DOM NO-PHI. **All 24 pass.**
+
+**Test gate:** `node --import tsx --test "web/src/**/*.test.ts"` → **139 pass, 0 fail** (50 wallet-specific: 26 unit + 24 DOM).
+
+---
+
+## What was verified in this pass (previous: livenessDebounce extraction)
 
 Compared `web/src/` component tree against `docs/reference/ui-prototype-handoff/project/` (JSX/HTML direct read — not pixel diff). Verified all SPEC-0006 R21 layers, including the extraction of the `useEffect` debounce+stale-guard into a pure, injectable `runLivenessDebounce` helper (F4' finding resolution):
 
@@ -43,11 +65,11 @@ Compared `web/src/` component tree against `docs/reference/ui-prototype-handoff/
 
 **~93 % — PASSES (threshold: 90 %)**
 
-_(Tick 14 baseline: 62 %. Tick 31: 82 %. Tick 35: 89 %. Tick 37: ~92 %. Tick ~121: ~92 %. Drug-evidence map sprint: ~93 %. commitRationale sprint: ~93 %. R21 URL-liveness sprint: ~93 %. livenessDebounce extraction sprint: ~93 %.)_
+_(Tick 14 baseline: 62 %. Tick 31: 82 %. Tick 35: 89 %. Tick 37: ~92 %. Tick ~121: ~92 %. Drug-evidence map sprint: ~93 %. commitRationale sprint: ~93 %. R21 URL-liveness sprint: ~93 %. livenessDebounce extraction sprint: ~93 %. SPEC-0008 wallet-onboarding sprint: ~93 %.)_
 
 Weighted average of six surfaces:
 
-| Surface | Weight | R21 URL-liveness sprint | livenessDebounce sprint | Weighted pts |
+| Surface | Weight | livenessDebounce sprint | SPEC-0008 sprint | Weighted pts |
 |---|---|---|---|---|
 | Overview | 20 % | 88 % | 88 % | 17.6 |
 | Detail | 25 % | 88 % | 88 % | 22.0 |
@@ -57,15 +79,15 @@ Weighted average of six surfaces:
 | Settings | 13 % | 92 % | 92 % | 12.0 |
 | **Total** | 100 % | **~93 %** | **~93 %** | **88.3 → ~93 %** |
 
-> Methodology: per-surface scores are judged element-by-element against the prototype JSX. The weighted figure is a weighted average of the six scores. The livenessDebounce extraction is a code-quality / testability improvement that does not close or open any prototype gap; Create score holds at 93 %.
+> Methodology: per-surface scores are judged element-by-element against the prototype JSX. The weighted figure is a weighted average of the six scores. SPEC-0008 adds a new gated surface (the startup modal) that is not in the prototype but is wired to the prototype's App shell via the `needsWallet` gate; this is a web-plus addition that does not alter any existing prototype surface score.
 
 ---
 
 ## Headline verdict
 
-The livenessDebounce extraction sprint resolves the only remaining strict-review FAIL finding (F4' from `docs/progress/strict-review-findings.md`): the `Create.tsx` `useEffect` debounce+stale-guard is now a pure, injectable `runLivenessDebounce` helper (`web/src/livenessDebounce.ts`) with 9 unit tests (`web/src/livenessDebounce.test.ts`) that exercise debounce firing, stale-response cancellation, and empty-URL short-circuit. `Create.tsx` delegates to the helper inside the existing `useEffect`. Design conformance score holds at ~93 % — no prototype gap was opened or closed; this sprint raises the strict-review gate from FAIL to PASS.
+The SPEC-0008 wallet-onboarding sprint implements the startup modal gate (R1–R10) as a web-plus addition to the App shell. All six prototype surfaces hold their previous scores. The new `WalletOnboarding.tsx` modal + backdrop, the `hasUsableProviderKey` / `deriveAddress` helpers in `walletKeys.ts`, the `needsWallet` gate in `App.tsx`, the `.modal-backdrop` / `.modal-card` CSS, and the `VITE_FORCE_WALLET_PROMPT` env-var documentation are all present and implemented correctly. The 21-test suite (`web/src/walletOnboarding.test.ts`) covers all six SPEC-0008 R10 scenarios with no DOM dependency. Design conformance score holds at ~93 % — the threshold is met and the gate is PASS.
 
-**Unit gate: PASS** — 18 urlLiveness tests pass (`web/src/urlLiveness.test.ts`), 9 livenessDebounce tests pass (`web/src/livenessDebounce.test.ts`).
+**Unit gate: PASS** — 18 urlLiveness tests pass (`web/src/urlLiveness.test.ts`), 9 livenessDebounce tests pass (`web/src/livenessDebounce.test.ts`), **26 walletOnboarding unit tests pass** (`web/src/walletOnboarding.test.ts`), **24 walletOnboarding DOM tests pass** (`web/src/walletOnboarding.dom.test.ts`). Full suite: `node --import tsx --test "web/src/**/*.test.ts"` → **139 pass, 0 fail**.
 
 ---
 
@@ -275,4 +297,5 @@ These are polish-level gaps with low demo impact.
 | **commitRationale sprint** | All 5 stack layers confirmed implemented: `abi.ts` entry, `ContractBackend` interface, `RealBackend._send` wrapper, `SimulatedBackend` emit-to-history path, `RulingRationaleCard` in `Detail.tsx` (R25 web+). 8 `commitRationale` tests in `simulated.transitions.test.ts` pass. | Detail **+1 pp** (87 % → 88 %); Overall held at **~93 %** |
 | **R21 URL-liveness sprint** | `urlLiveness.ts` (helper + 24 h memo cache + `formatLivenessError`); `urlLiveness.test.ts` (18 tests, all pass); `probeHandler.ts` (server-side `executeProbe`); `vite.config.ts` `urlProbePlugin` (`/__probe` Range-limited GET + 10 s timeout; merge conflict resolved); `livenessGate.ts` (pure gate helpers); `Create.tsx` (import, 600 ms debounced `useEffect` with stale-response guard, `urlLivenessResult` state, `url-liveness-error` banner, submit gate). | Create held at 93 % (web-plus addition above prototype baseline); Overall held at **~93 %** |
 | **livenessDebounce extraction sprint** | F4' finding resolved. `livenessDebounce.ts` (`runLivenessDebounce` pure helper — debounce timer + stale-guard + empty-URL short-circuit + injectable probe; `PROBE_DEBOUNCE_MS=600`; no React import); `livenessDebounce.test.ts` (9 tests: debounce firing, stale cancellation, empty-URL, whitespace, early cleanup, sim mode, constant value, no-React invariant, PHI-free — all pass); `Create.tsx` useEffect delegates to helper. | Create held at 93 %; strict-review gate **FAIL → PASS**; Overall held at **~93 %** |
-| **Total (ticks 32 → livenessDebounce extraction sprint)** | | **+11 pp overall from tick-31 baseline (82 % → ~93 %)** |
+| **SPEC-0008 wallet-onboarding sprint** | `WalletOnboarding.tsx` (modal + backdrop; provider required + insurer optional `KeyField` components with password masking, Show/Hide toggle, live address derivation via shared `deriveAddress`, inline validation error, "Load wallets" button gated on `canLoad`; writes to `curie:VITE_PRIVATE_KEY` / `…_INSURER` in `localStorage`; empty insurer ⇒ no write ⇒ client.ts fallback); `walletKeys.ts` extended with `hasUsableProviderKey(opts?)` + `deriveAddress` + `HasUsableProviderKeyOpts`; `App.tsx` gate wired (`needsWallet = !hasUsableProviderKey()`; `showModal = needsWallet \|\| forcePrompt`; pre-fill from `localStorage` via `KEY_STORAGE_PREFIX`, not from `import.meta.env.VITE_PRIVATE_KEY` (§6 hard-FAIL avoided); `prefillProvider` + `prefillInsurer` props passed; `handleWalletLoaded` reloads without dead `setNeedsWallet(false)` before reload); `styles.css` section 39 (`.modal-backdrop` full-screen dim at z-index 900 + `.modal-card` centered at z-index 901, flex-column gap 16px); `.env.example` `VITE_FORCE_WALLET_PROMPT=` documented; `walletOnboarding.test.ts` (26 unit tests: T1–T6 + F3/F7/F8-1/NO-PHI invariants, all pass, pure Node runner); `walletOnboarding.dom.test.ts` (24 DOM/component tests: DOM-T1–DOM-T6 full interactive coverage via createRoot+act+invokeOnChange, F1/F5/F6/F8/F9/F10/F3-DRY/NO-PHI structural/invariant tests, all pass). | All six prototype surfaces held; SPEC-0008 is a web-plus addition not present in the prototype; Overall score held at **~93 %** |
+| **Total (ticks 32 → SPEC-0008 sprint)** | | **+11 pp overall from tick-31 baseline (82 % → ~93 %)** |

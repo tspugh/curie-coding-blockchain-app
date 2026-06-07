@@ -101,14 +101,29 @@ export async function probeUrlLiveness(
   try {
     const probeUrl = `/__probe?url=${encodeURIComponent(url)}`;
     const resp = await fetch(probeUrl);
-    const json = (await resp.json()) as { ok: boolean; status: number; error?: string };
+    let json: { ok?: unknown; status?: unknown; error?: unknown };
+    try {
+      json = (await resp.json()) as typeof json;
+    } catch {
+      // Non-JSON response → the `/__probe` proxy is ABSENT (e.g. a static S3/CloudFront
+      // deploy with no dev-server middleware serves the SPA's index.html or a 404 page).
+      // We cannot verify reachability. R21 is an ADVISORY pre-check, not a hard gate —
+      // only an affirmative {ok:false} from a working proxy may block — so do NOT block
+      // submit here (server-side scrape still validates the evidence).
+      const result: LivenessResult = { ok: true, status: 0 };
+      cache.set(url, { result, ts: now });
+      return result;
+    }
     let result: LivenessResult;
-    if (json.ok === true) {
-      result = { ok: true, status: json.status ?? 200 };
-    } else if (json.error !== undefined) {
-      result = { ok: false, status: json.status ?? 0, error: json.error };
+    if (typeof json.ok !== "boolean") {
+      // Malformed proxy payload (no `ok` boolean) → treat as proxy-unavailable → allow.
+      result = { ok: true, status: 0 };
+    } else if (json.ok === true) {
+      result = { ok: true, status: typeof json.status === "number" ? json.status : 200 };
+    } else if (typeof json.error === "string") {
+      result = { ok: false, status: typeof json.status === "number" ? json.status : 0, error: json.error };
     } else {
-      result = { ok: false, status: json.status ?? 0 };
+      result = { ok: false, status: typeof json.status === "number" ? json.status : 0 };
     }
     cache.set(url, { result, ts: now });
     return result;

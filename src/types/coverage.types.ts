@@ -85,6 +85,21 @@ export const DECISION_NAMES: Readonly<Record<Decision, string>> = {
  * declaration order (so the ethers tuple decode lines up). `bytes32` values are
  * 0x-prefixed 32-byte hex strings; addresses are 0x-prefixed 20-byte hex.
  */
+/**
+ * De-identified provider attestation for a patient-specific policy clause
+ * (A0012 / SPEC-0007 R5/R13). The shape is CLOSED — an opaque clause id, a boolean,
+ * and an optional keccak of a de-identified evidence URL — so NO PHI / free narrative
+ * can ride this channel. The agent records and trusts these; it does not verify them.
+ */
+export interface Attestation {
+  /** Opaque id of the attested clause (keccak of the clause label). */
+  readonly clauseId: string;
+  /** Provider's de-identified yes/no for that clause. */
+  readonly attested: boolean;
+  /** keccak of a DE-IDENTIFIED supporting URL, or ZERO_HASH when none. */
+  readonly evidenceUriHash: string;
+}
+
 export interface Negotiation {
   /** App-level party id of the provider (initiator). */
   readonly providerId: bigint;

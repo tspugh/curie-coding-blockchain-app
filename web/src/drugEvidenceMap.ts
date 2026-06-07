@@ -66,6 +66,16 @@ export const DRUG_EVIDENCE_MAP: Readonly<Record<string, EvidenceEntry>> = {
     promptHint:
       "A patient with severe eosinophilic asthma uncontrolled on high-dose inhaled corticosteroids requests dupilumab (Dupixent). Based on the public drug evidence provided, reply approve if dupilumab is FDA-approved for this indication and the request is medically necessary; reply deny if it is not an approved use; reply needs_more_info only if the evidence does not establish FDA approval.",
   },
+  // SPEC-0007 §3.7 off-label worked example. The evidence URL is the FDA WELLBUTRIN label,
+  // which lists only major depressive disorder + seasonal affective disorder — NOT ADHD — so
+  // this is the DENY-path source (ADHD is off-label for bupropion). The approve path is an
+  // appeal with a compendia source (SPEC-0010). Phrasing avoids the contract's bracketed
+  // name-pattern PHI guard ([A-Z][a-z]+ [A-Z]); synthetic indication only.
+  bupropion: {
+    evidenceUrl: "https://api.fda.gov/drug/label.json?search=openfda.brand_name:WELLBUTRIN&limit=1",
+    promptHint:
+      "A patient with attention-deficit/hyperactivity disorder (ADHD) inadequately controlled on first-line options requests bupropion (off-label for ADHD). Based on the public drug evidence provided, reply approve if bupropion is FDA-approved OR supported by recognized clinical compendia/guidelines for ADHD; reply deny if the evidence does not establish an approved or compendia-supported use for ADHD; reply needs_more_info only if the evidence is insufficient.",
+  },
 };
 
 /**
@@ -82,6 +92,8 @@ const BRAND_ALIASES: Readonly<Record<string, string>> = {
   mounjaro: "tirzepatide",
   zepbound: "tirzepatide",
   dupixent: "dupilumab",
+  wellbutrin: "bupropion",
+  zyban: "bupropion",
 };
 
 /**

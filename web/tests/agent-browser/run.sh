@@ -111,6 +111,7 @@ field_of()   { ev "(async()=>String((await window.__curie.negotiation.getNegotia
 cleanup() {
   ab close --all >/dev/null 2>&1 || true
   [ -n "$SERVER_PID" ] && kill "$SERVER_PID" >/dev/null 2>&1 || true
+  [ -n "$MODAL_SERVER_PID" ] && kill "$MODAL_SERVER_PID" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -1175,9 +1176,185 @@ scenario_appeal_denial() {
   esac
 }
 
+# ===========================================================================
+# Scenario N1 — SPEC-0008 R1/R5 — env keys present → no modal on load
+#   The standard harness build embeds VITE_PRIVATE_KEY from .env; the gate
+#   hasUsableProviderKey() returns true → needsWallet=false → no backdrop.
+#   Asserts: modal-backdrop NOT in DOM; nav-create button is interactive.
+# ===========================================================================
+scenario_wallet_onboarding_no_modal() {
+  echo "Scenario N1: SPEC-0008 T5/R5 — env keys present → no modal (app interactive)"
+
+  open_app
+
+  # The modal-backdrop must be absent when the app has a usable env key.
+  assert_eq "N1: modal-backdrop absent when env key present (R5)" "false" \
+    "$(ev "String(!!document.querySelector('[data-testid=modal-backdrop]'))")"
+
+  # The wallet-onboarding modal itself must also be absent.
+  assert_eq "N1: wallet-onboarding-modal absent (R5)" "false" \
+    "$(ev "String(!!document.querySelector('[data-testid=wallet-onboarding-modal]'))")"
+
+  # The app nav must be interactive (the gate does not block the UI).
+  assert_eq "N1: nav-create button is rendered (app not blocked)" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=nav-create]'))")"
+}
+
+# ===========================================================================
+# Scenario N2 — SPEC-0008 R1 — no localStorage key + no env key → modal blocks
+#   Requires a build with VITE_PRIVATE_KEY= (empty) so the bundle has no
+#   embedded key.  Served on MODAL_URL (default http://localhost:4174/), which
+#   the harness builds and starts when SKIP_MODAL_BUILD is not set.
+#   If MODAL_URL is already served (SKIP_MODAL_BUILD=1), the build is skipped.
+# ===========================================================================
+MODAL_URL="${MODAL_URL:-http://localhost:4174/}"
+MODAL_SERVER_PID=""
+
+start_modal_server() {
+  # Kill any process already occupying the modal port so the no-key bundle
+  # is guaranteed to be served (not a stale regular build on that port).
+  local modal_port
+  modal_port="$(echo "$MODAL_URL" | grep -oE ':[0-9]+' | tr -d ':' | tail -1)"
+  modal_port="${modal_port:-4174}"
+  kill "$(lsof -ti:"$modal_port" 2>/dev/null)" 2>/dev/null || true
+  sleep 0.5
+
+  if [ "${SKIP_MODAL_BUILD:-0}" = "1" ]; then
+    echo "SKIP_MODAL_BUILD=1 — rebuilding no-key bundle at $MODAL_URL anyway (fresh server)"
+  fi
+
+  echo "Building no-key bundle for modal scenarios (port $modal_port)…"
+  local mode="${HARNESS_WALLET_MODE:-simulated}"
+  # The lib (dist/) is already compiled by start_server; skip npm run build.
+  # vite build --outDir dist-nokey outputs to web/dist-nokey (relative to vite root=web/).
+  ( cd "$REPO_ROOT" \
+      && VITE_WALLET_MODE="$mode" VITE_PRIVATE_KEY="" VITE_PRIVATE_KEY_INSURER="" \
+         VITE_EXPOSE_TEST_API=1 npx vite build --outDir dist-nokey ) >/dev/null 2>&1 \
+    || { echo "MODAL BUILD FAILED (skipping modal scenarios)"; return 1; }
+  echo "Serving $MODAL_URL (no-key bundle)…"
+  ( cd "$REPO_ROOT" && npx vite preview --port "$modal_port" --outDir dist-nokey ) >/dev/null 2>&1 &
+  MODAL_SERVER_PID=$!
+  for _ in $(seq 1 30); do
+    curl -sf -o /dev/null "$MODAL_URL" && return
+    sleep 0.5
+  done
+  echo "Modal server did not come up at $MODAL_URL"; MODAL_SERVER_PID=""
+}
+
+# Helper: open a page at the modal URL and wait briefly.
+open_modal_app() {
+  "$AB" "${open_args[@]}" open "$MODAL_URL" >/dev/null 2>&1
+  "$AB" wait 300 >/dev/null 2>&1
+}
+
+scenario_wallet_onboarding_modal_blocks() {
+  echo "Scenario N2: SPEC-0008 T1/R1 — no key → modal + backdrop block the app"
+
+  [ -z "$MODAL_SERVER_PID" ] && { echo "  SKIP: modal server not running"; return; }
+
+  # Clear any leftover localStorage from prior runs so the gate fires fresh.
+  open_modal_app
+  ev "(()=>{localStorage.removeItem('curie:VITE_PRIVATE_KEY');localStorage.removeItem('curie:VITE_PRIVATE_KEY_INSURER');return 'cleared'})()" >/dev/null
+  open_modal_app
+
+  # The backdrop must be rendered.
+  assert_eq "N2: modal-backdrop present (R1 gate)" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=modal-backdrop]'))")"
+
+  # The modal dialog must be rendered.
+  assert_eq "N2: wallet-onboarding-modal present (R1 gate)" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=wallet-onboarding-modal]'))")"
+
+  # The Load button must be DISABLED (no valid key entered yet).
+  assert_eq "N2: load button disabled before key entry (R3 guard)" "true" \
+    "$(ev "String(document.querySelector('[data-testid=wallet-onboarding-load]').disabled)")"
+}
+
+# ===========================================================================
+# Scenario N3 — SPEC-0008 R3/R2 — paste valid key → derived address shown;
+#   invalid key → error shown + Load button stays disabled.
+#   Runs against the no-key modal URL (N2 build).
+# ===========================================================================
+# Well-known Hardhat test key #0 (public domain; no real funds).
+PROVIDER_TEST_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+
+scenario_wallet_onboarding_validation() {
+  echo "Scenario N3: SPEC-0008 T2/R3 — key validation + live address derivation"
+
+  [ -z "$MODAL_SERVER_PID" ] && { echo "  SKIP: modal server not running"; return; }
+
+  # Fresh load; clear any prior localStorage.
+  open_modal_app
+  ev "(()=>{localStorage.removeItem('curie:VITE_PRIVATE_KEY');return 'cleared'})()" >/dev/null
+  open_modal_app
+
+  # Invalid key → error + Load disabled
+
+  # Paste a garbage key into provider-key-input.
+  ev "(()=>{const el=document.querySelector('[data-testid=provider-key-input]');const setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter.call(el,'not-a-valid-key');el.dispatchEvent(new Event('input',{bubbles:true}));return 'ok'})()" >/dev/null
+  ab wait 150 >/dev/null 2>&1
+
+  assert_eq "N3: invalid key shows error element (R3)" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=provider-key-input-error]'))")"
+  assert_eq "N3: Load button disabled for invalid key (R3)" "true" \
+    "$(ev "String(document.querySelector('[data-testid=wallet-onboarding-load]').disabled)")"
+
+  # Valid key → address shown + Load enabled
+  ev "(()=>{const el=document.querySelector('[data-testid=provider-key-input]');const setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter.call(el,'${PROVIDER_TEST_KEY}');el.dispatchEvent(new Event('input',{bubbles:true}));return 'ok'})()" >/dev/null
+  ab wait 200 >/dev/null 2>&1
+
+  assert_eq "N3: error gone after valid key entry" "false" \
+    "$(ev "String(!!document.querySelector('[data-testid=provider-key-input-error]'))")"
+  assert_eq "N3: derived address shown for valid key (R2)" "true" \
+    "$(ev "String(!!document.querySelector('[data-testid=provider-key-input-address]'))")"
+  assert_eq "N3: Load button enabled for valid provider key (R3)" "false" \
+    "$(ev "String(document.querySelector('[data-testid=wallet-onboarding-load]').disabled)")"
+}
+
+# ===========================================================================
+# Scenario N4 — SPEC-0008 T3/R4 — provider valid, insurer empty → Load works;
+#   after load, page reloads (modal gone, app interactive).
+#   Runs against the no-key modal URL.
+# ===========================================================================
+scenario_wallet_onboarding_load() {
+  echo "Scenario N4: SPEC-0008 T3/R4 — provider key loaded, insurer empty → modal dismissed"
+
+  [ -z "$MODAL_SERVER_PID" ] && { echo "  SKIP: modal server not running"; return; }
+
+  # Fresh load; clear any prior localStorage.
+  open_modal_app
+  ev "(()=>{localStorage.removeItem('curie:VITE_PRIVATE_KEY');localStorage.removeItem('curie:VITE_PRIVATE_KEY_INSURER');return 'cleared'})()" >/dev/null
+  open_modal_app
+
+  # Paste a valid provider key; leave insurer empty (R4 default).
+  ev "(()=>{const el=document.querySelector('[data-testid=provider-key-input]');const setter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter.call(el,'${PROVIDER_TEST_KEY}');el.dispatchEvent(new Event('input',{bubbles:true}));return 'ok'})()" >/dev/null
+  ab wait 200 >/dev/null 2>&1
+
+  # Click Load — this writes to localStorage and triggers window.location.reload().
+  ev "(()=>{document.querySelector('[data-testid=wallet-onboarding-load]').click();return 'clicked'})()" >/dev/null
+  ab wait 800 >/dev/null 2>&1  # allow reload to complete
+
+  # After reload, localStorage must contain the provider key.
+  assert_eq "N4: provider key persisted to localStorage (R7)" "${PROVIDER_TEST_KEY}" \
+    "$(ev "localStorage.getItem('curie:VITE_PRIVATE_KEY')")"
+
+  # After reload, insurer slot must be absent (R4: empty insurer → not written).
+  assert_eq "N4: insurer key NOT written when empty (R4)" "true" \
+    "$(ev "String(localStorage.getItem('curie:VITE_PRIVATE_KEY_INSURER') === null)")"
+
+  # After reload, the modal must be gone (localStorage key now satisfies the gate).
+  assert_eq "N4: modal dismissed after load + reload (R1 gate cleared)" "false" \
+    "$(ev "String(!!document.querySelector('[data-testid=modal-backdrop]'))")"
+
+  # Cleanup: remove the test key.
+  ev "(()=>{localStorage.removeItem('curie:VITE_PRIVATE_KEY');return 'cleaned'})()" >/dev/null
+}
+
 # --- main -------------------------------------------------------------------
 
 start_server
+echo "Building no-key modal bundle…"
+start_modal_server
 echo "Running agent-browser E2E suite against $URL"
 echo
 
@@ -1203,6 +1380,10 @@ scenario_feedback;            echo
 scenario_happy_path_denial;   echo
 scenario_evidence_resubmit_denial; echo
 scenario_appeal_denial;       echo
+scenario_wallet_onboarding_no_modal; echo
+scenario_wallet_onboarding_modal_blocks; echo
+scenario_wallet_onboarding_validation;   echo
+scenario_wallet_onboarding_load;         echo
 
 echo "──────────────────────────────────────────"
 echo "agent-browser E2E: $PASS passed, $FAIL failed"

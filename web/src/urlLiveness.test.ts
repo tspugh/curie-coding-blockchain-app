@@ -188,6 +188,39 @@ test("sim mode: returns ok:true even for a URL that would otherwise be dead", as
 // Non-2xx → ok: false — result carries status and optional error
 // ---------------------------------------------------------------------------
 
+test("proxy ABSENT (non-JSON response, e.g. static deploy serves index.html) → ok:true, does NOT block", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (_input: RequestInfo | URL, _init?: RequestInit) => {
+    // A static S3/CloudFront deploy has no /__probe backend → returns the SPA's HTML.
+    return new Response("<!doctype html><html><body>app</body></html>", {
+      status: 200,
+      headers: { "Content-Type": "text/html" },
+    });
+  };
+  try {
+    clearLivenessCache();
+    const result = await probeUrlLiveness("https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA&limit=1", /* sim= */ false);
+    assert.equal(result.ok, true, "non-JSON probe response means proxy absent → must NOT block submit");
+  } finally {
+    global.fetch = originalFetch;
+    clearLivenessCache();
+  }
+});
+
+test("proxy MALFORMED payload (no ok boolean) → ok:true, does NOT block", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () =>
+    new Response(JSON.stringify({ status: 200 }), { status: 200, headers: { "Content-Type": "application/json" } });
+  try {
+    clearLivenessCache();
+    const result = await probeUrlLiveness("https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA&limit=1", /* sim= */ false);
+    assert.equal(result.ok, true, "malformed proxy payload → treat as unavailable → allow");
+  } finally {
+    global.fetch = originalFetch;
+    clearLivenessCache();
+  }
+});
+
 test("non-2xx probe response: probeUrlLiveness resolves ok:false with status", async () => {
   const originalFetch = global.fetch;
   global.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
