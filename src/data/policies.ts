@@ -39,6 +39,17 @@ export const OPENFDA_HUMIRA_URL =
 export const OPENFDA_WELLBUTRIN_URL =
   "https://api.fda.gov/drug/label.json?search=openfda.brand_name:WELLBUTRIN&limit=1";
 
+/**
+ * §3.7 bupropion×ADHD APPROVE-path (appeal) source — NCBI E-utilities `efetch` for the
+ * Cochrane systematic review PMID 28965364 ("Antidepressants for ADHD in adults"). Returns
+ * a clean ~5 KB structured abstract (the FDA-JSON of the literature) whose CONCLUSIONS state
+ * bupropion's efficacy for ADHD — recognized compendia/guideline-level SUPPORT (not merely
+ * "off-label use"), so the broadened rubric (R4) flips the appeal to Approve. Reputable +
+ * PMID-anchored + scraper-friendly. See docs/research/evidence-source-provenance.md.
+ */
+export const COCHRANE_BUPROPION_ADHD_URL =
+  "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=28965364&rettype=abstract&retmode=text";
+
 // ---------------------------------------------------------------------------
 // Types (SPEC-0007 §3.1)
 // ---------------------------------------------------------------------------
@@ -253,7 +264,7 @@ export const POLICY_LIBRARY: ReadonlyArray<CuratedPolicy> = Object.freeze([
     name: "Non-stimulant for ADHD (Commercial PA) — bupropion off-label",
     payerLine: PayerLine.Commercial,
     summary:
-      "SPEC-0007 §3.7 worked example: bupropion for ADHD demonstrates the off-label deny → compendia-appeal approve path. Initial FDA label source denies (ADHD not in indications_and_usage); appeal with NCBI StatPearls compendia reference approves.",
+      "SPEC-0007 §3.7 worked example: bupropion for ADHD demonstrates the off-label deny → compendia-appeal approve path. Initial FDA label source denies (ADHD not in indications_and_usage); appeal cites the Cochrane systematic review (PMID 28965364), which concludes bupropion improves ADHD symptoms. NOTE (2026-06-07 live): the scraper returns one short snippet and lands the 'used off-label' line rather than the buried efficacy conclusion, so the appeal must be served a support-forward evidence doc (off-chain normalization quoting the Cochrane conclusion) for the flip — see docs/research/evidence-source-provenance.md.",
     clauses: [
       Object.freeze({
         id: "ADHD-BUP-01",

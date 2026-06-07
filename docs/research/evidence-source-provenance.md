@@ -30,6 +30,36 @@ The bupropion × ADHD appeal was live-verified on contract
 at a source whose extractable passage states the *support*, and (b) build a mechanism that
 ensures sources are *reputable* (the rest of this note).
 
+### 1a. Update (2026-06-07, second live round) — the scraper returns ONE short snippet
+
+A follow-up live test pointed the appeal at the **Cochrane efetch** abstract (PMID 28965364,
+which *does* contain the efficacy conclusion). It **still denied** — and the trace showed the
+scrape returned only **122 chars**: *"Bupropion is registered for the treatment of depression
+and smoking cessation, but is also used off-label to treat ADHD."* — the abstract's
+**background** sentence, NOT its CONCLUSIONS. So:
+
+- **The real root cause is the extractor, not the source.** The LLM Parse Website agent
+  returns a **single short passage** (~100–360 chars). For bupropion×ADHD the most prominent
+  match is *always* the "used off-label" framing; the efficacy conclusion (buried deeper) is
+  never the snippet returned — identically on StatPearls (366 ch, off-label *list*) and the
+  Cochrane abstract (122 ch, "used off-label"). api.fda.gov works only because its prominent
+  match (the indication list) *is* the answer.
+- **eutils is also unreliable for the agent.** A same-round negative-control request that
+  also pointed at an eutils URL **hung in `Scraping` for 8+ min** (callback never returned) —
+  NCBI appears to throttle/block the agent's fetches. (The negative control was therefore
+  *inconclusive*: it did not wrongly approve, but it never cleanly denied either; re-run it
+  with a scraper-reliable irrelevant source, e.g. the HUMIRA FDA JSON for a bupropion
+  request.)
+
+**Implication.** A reliable off-label appeal needs the **support statement to BE the prominent
+extractable content** — i.e. a small, support-forward evidence doc that *quotes the real
+source* (Cochrane PMID 28965364's conclusion + AACAP practice parameter) and *cites* it,
+rather than linking the full paper and hoping the extractor finds the buried conclusion. This
+is best produced by an **off-chain evidence-normalization step** (fetch the authoritative
+source server-side → extract + present the relevant support passage in a scraper-friendly
+form → attach PMID/DOI provenance), which folds naturally into the provenance mechanism (§3):
+the normalizer is the natural home for the allowlist + identifier-anchoring + tiering.
+
 ## 2. Real, reputable, scraper-friendly sources (thread A)
 
 The key realization: the inputs that scrape reliably are **small + structured API

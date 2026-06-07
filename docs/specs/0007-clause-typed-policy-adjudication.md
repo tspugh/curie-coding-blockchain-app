@@ -219,16 +219,30 @@ evidence trail:
   Its `indications_and_usage` lists **only major depressive disorder + seasonal affective
   disorder — not ADHD** (verified 2026-06-06). So the indication clause for ADHD **fails
   on the FDA label → Deny** (correct: ADHD is off-label for bupropion).
-- **Appeal source (approve path):** the provider appeals (A0009) with a public
-  compendia-style reference supporting bupropion for ADHD —
-  **StatPearls (NCBI Bookshelf)** `https://www.ncbi.nlm.nih.gov/books/NBK470212/`, which
-  lists ADHD among bupropion's off-label uses with a stated evidence base; a corroborating
-  review is PMC `https://pmc.ncbi.nlm.nih.gov/articles/PMC6485546/` ("Bupropion for ADHD
-  in adults"). Under the broadened rubric (R4), compendia/guideline support satisfies the
-  indication clause → **Approve** on appeal.
-- Both NCBI sources are **free, public, and HTML** — they stand in for the payer-recognized
-  but paywalled compendia (NCNN/AHFS/DrugDex), keeping the whole demo PHI-free and
-  scrapeable. (Resolves OQ3.)
+- **Appeal source (approve path):** the provider appeals (A0009) with a public, recognized
+  evidence-synthesis reference that states bupropion's **efficacy/support** for ADHD (not
+  merely that it is *used* off-label) — the **Cochrane systematic review** "Antidepressants
+  for ADHD in adults" (PMID **28965364**), fetched via the **NCBI E-utilities `efetch` API**:
+  `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=28965364&rettype=abstract&retmode=text`.
+  Its CONCLUSIONS state bupropion "decreased the severity of ADHD symptoms and moderately
+  increased … significant clinical improvement." Under the broadened rubric (R4),
+  compendia/guideline support satisfies the indication clause → **Approve** on appeal.
+- **KNOWN LIMITATION — the raw URL does not flip it live; an off-chain normalization step is
+  needed (2026-06-07 live tests).** Two live appeals were **denied**: StatPearls `NBK470212`
+  (scrape returned the "Off-Label Uses" list) and the Cochrane `efetch` abstract (scrape
+  returned only the 122-char *background* sentence "…is also used off-label to treat ADHD",
+  not the CONCLUSIONS). Root cause: the LLM Parse Website agent returns a **single short
+  snippet**, and the most prominent bupropion×ADHD match is always the "used off-label"
+  framing — never the buried efficacy conclusion. (eutils is also throttled/blocked for the
+  agent — a same-round request hung in `Scraping`.) api.fda.gov works only because its
+  prominent match *is* the indication list. **Therefore the appeal source must present the
+  SUPPORT as its prominent content** — a small, support-forward evidence doc that *quotes*
+  the Cochrane CONCLUSIONS + cites PMID 28965364 (and AACAP practice parameters), produced by
+  an off-chain evidence-normalization step (fetch authority → extract support passage →
+  scraper-friendly form + PMID/DOI provenance). That normalization layer is also the natural
+  home for the source-reputability mechanism. Cochrane PMID 28965364 remains the authoritative
+  citation; only its *delivery* to the scraper changes. (Resolves OQ3; full diagnosis +
+  provenance design in `docs/research/evidence-source-provenance.md`.)
 
 > **"Non-stimulant for ADHD (Commercial PA)"** — example policy
 > 1. *(public · indication)* The drug is FDA-approved **or compendia-supported** for ADHD.
