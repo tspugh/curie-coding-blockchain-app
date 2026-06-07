@@ -102,7 +102,7 @@ Options by setup cost:
 |---|---|---|---|
 | **A. Hand-roll UI + plain Lambda** | the 1 Lambda we already need + our own SSE/JSON + LangGraph-JS in-process | **Lowest, fully in-app** | No new framework/SaaS. We build the chat UX — but the mockup already designs it. |
 | B. CopilotKit UI + self-host runtime | same 1 Lambda, now running CopilotRuntime + CoAgents + AG-UI streaming | **Medium** | Saves chat-UX work; adds runtime/CoAgents/streaming wiring against the Lambda grain. |
-| C. CopilotKit + managed (Cloud + LangGraph Platform) | external SaaS | Lowest *infra*, but **2 external deps + cost + data egress** | "Simple to stand up" ≠ "self-contained app". De-identified data softens egress, but it's still a managed dependency. |
+| C. CopilotKit + managed (Copilot Cloud) | external SaaS | Lowest *infra*; **Copilot Cloud free Developer tier** (1 seat / 50 MAU / 200 threads / 1 GB / 3-day retention) covers a demo | Still an external dep + data egress (de-id data softens it); **you still host the LangGraph/Bedrock agent** (Cloud hosts the runtime, not your custom CoAgent). Public API key is bundle-safe. Avoid LangGraph Platform. |
 
 ## Recommendation (revised 2026-06-07)
 
@@ -114,9 +114,11 @@ and managed services.
   (R17/R28/R29a), and client-side action handlers that **sign in the browser** (R52). No
   CopilotKit backend, no LangGraph Platform, no Copilot Cloud — **no new infra beyond the
   Lambda.** The mockup already specifies the UX.
-- **CopilotKit-UI stays an optional later add** — adopt only if it clearly saves work, only
-  its **self-hosted** path, and only after a spike proves CoAgents streams cleanly on a Lambda
-  Function URL. **Avoid Copilot Cloud + LangGraph Platform for v0.**
+- **CopilotKit-UI stays an optional add** — either **self-hosted** (after a Lambda-streaming
+  spike) or via **Copilot Cloud's free Developer tier** (1 seat / 50 MAU / 200 threads / 1 GB /
+  3-day retention — fine for a demo; managed dep + egress, de-identified data only; you still
+  host the LangGraph/Bedrock agent). **Avoid LangGraph Platform (managed) regardless.** The pick
+  is the user's call (OQ-7).
 
 ## Open decision (feeds SPEC-0009 OQ-7)
 

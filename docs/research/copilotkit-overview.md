@@ -76,10 +76,14 @@ calls, messages, interrupts).
   `@langchain/aws` (`ChatBedrockConverse`) is used **in the agent node**, and the
   CopilotRuntime service-adapter is effectively a passthrough.
 
-## Licensing
+## Licensing & pricing
 
 - Core framework: **MIT**, free to self-host.
-- Copilot Cloud + some enterprise features: hosted / paid (optional).
+- **Copilot Cloud** (managed runtime) has a **free "Developer" tier (free forever)**: 1 seat,
+  **50 monthly active users**, **200 threads**, **1 GB** storage, **3-day** retention; paid
+  Pro/Team/Enterprise tiers scale MAU / retention / seats / features. The frontend authenticates
+  with a **public API key** (safe to ship in the bundle). *(Verify current limits on the pricing
+  page — researched 2026-06-07.)*
 
 ## Sources
 
