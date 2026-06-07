@@ -25,9 +25,19 @@ import {
   loadUsers,
   removeUser,
   saveUsers,
+  mergeAllowlist,
+  SourceTier,
+  type ApprovedSource,
+  type SourceMatch,
+  type AllowlistOverride,
   type DemoRole,
   type DemoUser,
 } from "@lib";
+import {
+  loadApprovedSourcesOverride,
+  saveApprovedSourcesOverride,
+  clearApprovedSourcesOverride,
+} from "../approvedSourcesStore.js";
 import { USERS_CHANGED_EVENT, client } from "../client.js";
 import {
   DEMO_MODE_CHANGED_EVENT,
@@ -170,7 +180,225 @@ export function Settings({
 
       {/* ── Wallet keys (SPEC-0003 §2.9 R42 — runtime configurability) ── */}
       <WalletKeysPanel />
+
+      {/* ── Approved evidence sources (SPEC-0010 R12) ── */}
+      <ApprovedSourcesPanel />
     </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Approved evidence sources panel — SPEC-0010 §3.6 / R12
+// ---------------------------------------------------------------------------
+
+const TIER_LABEL: Record<number, string> = {
+  [SourceTier.FDA_LABEL]: "FDA label",
+  [SourceTier.SYSTEMATIC_REVIEW]: "Systematic review",
+  [SourceTier.GUIDELINE]: "Guideline",
+  [SourceTier.PEER_REVIEWED]: "Peer-reviewed",
+  [SourceTier.NARRATIVE]: "Narrative",
+  [SourceTier.UNVETTED]: "Unvetted",
+};
+
+function formatMatch(m: SourceMatch): string {
+  if (m.kind === "host") return `host: ${m.host}`;
+  if (m.kind === "urlPrefix") return `url starts with: ${m.prefix}`;
+  return `identifier: ${m.scheme.toUpperCase()}`;
+}
+
+function slugify(label: string): string {
+  return (
+    label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) ||
+    `src-${label.length}`
+  );
+}
+
+function ApprovedSourcesPanel() {
+  const [override, setOverride] = useState<AllowlistOverride | null>(() =>
+    loadApprovedSourcesOverride(),
+  );
+  const sources = useMemo(() => mergeAllowlist(override), [override]);
+
+  // add-source form
+  const [label, setLabel] = useState("");
+  const [kind, setKind] = useState<SourceMatch["kind"]>("host");
+  const [value, setValue] = useState("");
+  const [scheme, setScheme] = useState<"pmid" | "doi">("pmid");
+  const [tier, setTier] = useState<SourceTier>(SourceTier.GUIDELINE);
+  const [error, setError] = useState<string | null>(null);
+
+  function commit(next: AllowlistOverride) {
+    setOverride(next);
+    saveApprovedSourcesOverride(next);
+  }
+
+  function toggle(s: ApprovedSource) {
+    if (s.builtin) {
+      const disabled = new Set(override?.disabled ?? []);
+      if (s.enabled) disabled.add(s.id);
+      else disabled.delete(s.id);
+      commit({ ...override, disabled: [...disabled] });
+    } else {
+      const custom = (override?.custom ?? []).map((c) =>
+        c.id === s.id ? { ...c, enabled: !c.enabled } : c,
+      );
+      commit({ ...override, custom });
+    }
+  }
+
+  function removeCustom(id: string) {
+    commit({ ...override, custom: (override?.custom ?? []).filter((c) => c.id !== id) });
+  }
+
+  function reset() {
+    clearApprovedSourcesOverride();
+    setOverride(null);
+  }
+
+  function onAdd(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const lbl = label.trim();
+    if (!lbl) return setError("Label is required.");
+    let match: SourceMatch;
+    if (kind === "host") {
+      const host = value.trim().toLowerCase();
+      if (!/^[a-z0-9.-]+$/.test(host) || host.includes("/"))
+        return setError("Host must be a bare hostname (e.g. api.example.org) — no scheme or path.");
+      match = { kind: "host", host };
+    } else if (kind === "urlPrefix") {
+      const prefix = value.trim();
+      if (!prefix.startsWith("https://"))
+        return setError("URL prefix must start with https://");
+      match = { kind: "urlPrefix", prefix };
+    } else {
+      match = { kind: "identifier", scheme };
+    }
+    const id = slugify(lbl);
+    if (sources.some((s) => s.id === id))
+      return setError("A source with this label/id already exists.");
+    const entry: ApprovedSource = { id, label: lbl, match, tier, builtin: false, enabled: true };
+    commit({ ...override, custom: [...(override?.custom ?? []), entry] });
+    setLabel("");
+    setValue("");
+  }
+
+  return (
+    <div className="settings-panel" data-testid="approved-sources-panel">
+      <div className="section-label">Approved evidence sources</div>
+      <p className="hint" data-testid="approved-sources-trust">
+        The adjudication agent accepts evidence only from sources on this allowlist
+        (SPEC-0010). <strong>Demo note:</strong> this list is a local operator convenience —
+        in production, allowlist membership is payer/governance-controlled and a claim
+        submitter cannot self-approve their own source.
+      </p>
+      <ul className="users-list" data-testid="approved-sources-list">
+        {sources.map((s) => (
+          <li key={s.id} className="users-row" data-testid={`approved-source-row-${s.id}`}>
+            <div className="users-row-meta">
+              <strong>{s.label}</strong>
+              {s.builtin && <span className="badge mode">built-in</span>}
+              <span className="badge mode">{TIER_LABEL[s.tier]}</span>
+              <code>{formatMatch(s.match)}</code>
+            </div>
+            <div className="users-row-meta">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={s.enabled}
+                data-testid={`approved-source-toggle-${s.id}`}
+                data-state={s.enabled ? "on" : "off"}
+                onClick={() => toggle(s)}
+              >
+                {s.enabled ? "Enabled" : "Disabled"}
+              </button>
+              {!s.builtin && (
+                <button
+                  type="button"
+                  data-testid={`approved-source-remove-${s.id}`}
+                  onClick={() => removeCustom(s.id)}
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      <form className="users-add" onSubmit={onAdd} data-testid="approved-source-add">
+        <label>
+          Label
+          <input
+            type="text"
+            data-testid="approved-source-add-label"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="e.g. Payer compendium mirror"
+          />
+        </label>
+        <label>
+          Match by
+          <select
+            data-testid="approved-source-add-kind"
+            value={kind}
+            onChange={(e) => setKind(e.target.value as SourceMatch["kind"])}
+          >
+            <option value="host">host</option>
+            <option value="urlPrefix">url prefix</option>
+            <option value="identifier">identifier</option>
+          </select>
+        </label>
+        {kind === "identifier" ? (
+          <label>
+            Scheme
+            <select
+              data-testid="approved-source-add-scheme"
+              value={scheme}
+              onChange={(e) => setScheme(e.target.value as "pmid" | "doi")}
+            >
+              <option value="pmid">PMID</option>
+              <option value="doi">DOI</option>
+            </select>
+          </label>
+        ) : (
+          <label>
+            {kind === "host" ? "Hostname" : "URL prefix (https://…)"}
+            <input
+              type="text"
+              data-testid="approved-source-add-value"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder={kind === "host" ? "api.example.org" : "https://example.org/path/"}
+            />
+          </label>
+        )}
+        <label>
+          Tier
+          <select
+            data-testid="approved-source-add-tier"
+            value={tier}
+            onChange={(e) => setTier(Number(e.target.value) as SourceTier)}
+          >
+            <option value={SourceTier.FDA_LABEL}>FDA label</option>
+            <option value={SourceTier.SYSTEMATIC_REVIEW}>Systematic review</option>
+            <option value={SourceTier.GUIDELINE}>Guideline</option>
+            <option value={SourceTier.PEER_REVIEWED}>Peer-reviewed</option>
+            <option value={SourceTier.NARRATIVE}>Narrative</option>
+          </select>
+        </label>
+        {error && <p className="error" data-testid="approved-source-add-error">{error}</p>}
+        <button type="submit" className="primary" data-testid="approved-source-add-submit">
+          Add source
+        </button>
+      </form>
+
+      <div className="key-actions">
+        <button type="button" data-testid="approved-source-reset" onClick={reset}>
+          Reset to defaults
+        </button>
+      </div>
+    </div>
   );
 }
 

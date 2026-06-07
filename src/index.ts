@@ -115,6 +115,18 @@ export {
 // --- Re-exports: appeal-ladder helpers (UNIT-UI-3) ---
 export { LADDERS, stageNameFor } from "./protocol/ladders.js";
 
+// --- Re-exports: SPEC-0010 evidence-source allowlist ---
+export {
+  SourceTier,
+  DEFAULT_APPROVED_SOURCES,
+  matchSource,
+  isAllowlisted,
+  mergeAllowlist,
+  parsePmid,
+  parseDoi,
+} from "./evidence/allowlist.js";
+export type { ApprovedSource, SourceMatch, AllowlistOverride, MatchResult } from "./evidence/allowlist.js";
+
 // --- Re-exports: SPEC-0005 R14 curated policy library ---
 export {
   POLICY_LIBRARY,
