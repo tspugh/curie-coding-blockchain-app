@@ -1209,9 +1209,14 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
                 " Also extract any dosing or quantity limits stated for the drug. Do not summarize or omit the requested indication."
             )),
             n.agentEvidenceUrl,
-            false, // resolveUrl: do not follow redirects
-            1,     // numPages: single page
-            0      // confidenceThreshold: no minimum threshold
+            // F2 (2026-06-07): the prior `false`/`1` read page 1 only and never followed
+            // redirects, so the scrape choked on prose/compendia appeal sources (the bupropion
+            // off-label flip never landed) and a choke was indistinguishable from a real
+            // needs_more_info. Follow redirects + read multiple pages so the verbatim goal can
+            // reach the support passage on a non-FDA source.
+            true, // resolveUrl: follow redirects
+            5,    // numPages: read up to 5 pages (compendia/prose sources span pages)
+            0     // confidenceThreshold: no minimum threshold
         );
 
         // Effects before interaction (CEI).
