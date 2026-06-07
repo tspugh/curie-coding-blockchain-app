@@ -366,10 +366,14 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   // attested (patient-specific) clauses so the provider can attest before firing the AI
   // decision. Plain call (not useMemo) — runs after the early return; cheap. Empty for
   // custom/public-only policies. (Logic + tests live in ../attestations.ts.)
-  const attestedClauses: readonly PolicyClause[] = resolveAttestedClauses(
-    policy?.policyHash,
-    n.payerLine,
-  );
+  //
+  // PROVIDER-ONLY (SPEC-0007 R13): only the provider can attest, so only the provider's
+  // view surfaces the toggles AND only the provider's adjudication carries attestations.
+  // An insurer-fired adjudication sends none → the 1-arg public-only path (either party may
+  // fire) — so attached-policy-with-attested-clauses doesn't break insurer adjudication.
+  const attestedClauses: readonly PolicyClause[] = isProvider
+    ? resolveAttestedClauses(policy?.policyHash, n.payerLine)
+    : [];
   // Adjudication fires the two-agent flow funded by the CALLER (agent fee + gas).
   // The local run() helper skips useAction's preflight, so guard here — otherwise
   // an underfunded wallet (e.g. the insurer) reverts opaquely on estimateGas.
