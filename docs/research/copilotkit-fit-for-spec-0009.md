@@ -3,12 +3,14 @@
 > **Status:** research note · **Date:** 2026-06-06 · **For:** [SPEC-0009](../specs/0009-party-copilots-and-agent-chat-view.md).
 > Background + sources: [`copilotkit-overview.md`](copilotkit-overview.md).
 >
-> **TL;DR — strong fit.** CopilotKit's **CoAgents** is purpose-built for the exact shape
-> SPEC-0009 describes: a **LangGraph agent + a React copilot chat** with shared state,
-> intermediate-state streaming, **human-in-the-loop**, and **frontend actions that run in
-> the browser**. The last point lines up with SPEC-0009's biggest constraint —
-> **browser-side BYOK signing (R52)** — almost for free. Recommendation: **adopt CopilotKit
-> for the copilot UI + agent↔UI plumbing**, keep our own tools/firewall/privacy invariants.
+> **TL;DR — strong *technical* fit, but the backend is the catch.** CopilotKit's **CoAgents**
+> matches the exact shape SPEC-0009 describes (**LangGraph agent + React copilot chat**,
+> shared state, streaming, **human-in-the-loop**, **browser-side frontend actions** that line
+> up with our BYOK signing — R52). **However**, its *backend* (CopilotRuntime + CoAgents +
+> AG-UI streaming) leans on **managed services** (Copilot Cloud + LangGraph Platform) and runs
+> **against the Lambda grain** — see *Hosting & backend complexity* below. **Revised v0 lean
+> (2026-06-07): hand-roll a simple chat UI on our own plain Lambda; treat CopilotKit-UI as an
+> optional later add; avoid its managed backend.**
 
 ## How it maps to SPEC-0009
 
@@ -77,21 +79,51 @@ Browser (static SPA, S3+CloudFront)                         AWS
   bodies inline (R34); actions must stay within the typed write-tool set (R7/R10); per-party
   scoping (R5) is enforced in our handlers, not assumed from CopilotKit.
 
-## Recommendation
+## Hosting & backend complexity (researched 2026-06-07)
 
-**Adopt CopilotKit (CoAgents) for SPEC-0009's UI + agent↔UI plumbing**, with our tools layer,
-firewall, privacy, and auto-mode logic kept as Curie-owned code. Concretely:
-1. Spike: CopilotRuntime behind a Lambda Function URL (streaming) + a trivial CoAgent on
-   Bedrock + one `useCopilotAction` that signs a no-op tx with the SPEC-0008 key.
-2. If the spike is clean, fold CopilotKit into SPEC-0009 §3.7/§3.8 (component + dep changes)
-   and resolve **OQ-7** "yes."
-3. If the Lambda-streaming or Bedrock path is rough, fall back to the hand-rolled drawer +
-   narration stream already specified — the spec stands without CopilotKit.
+The frontend is easy; **the backend is where the complexity lives**, and CopilotKit's
+documented happy path leans on **managed services**.
+
+- **CopilotKit always needs a runtime endpoint.** There is no pure-frontend mode — the chat
+  UI talks to either a self-hosted **CopilotRuntime** (Node) or **Copilot Cloud** (hosted).
+  (A server side is unavoidable anyway — our Bedrock creds must be server-side.)
+- **CoAgents wires the runtime to a LangGraph agent via:** LangGraph Studio (`langgraph dev`),
+  **LangGraph Platform** (managed), or **self-hosted** (FastAPI for Python; **LangGraph-JS**
+  can run in the Node runtime). The docs **emphasize LangGraph Platform + Copilot Cloud**;
+  full self-hosting is supported but less trodden, and community threads report friction on
+  the self-hosted LangGraph↔CopilotKit edge.
+- **It runs against the Lambda grain.** Most examples assume a long-running Next.js/Node
+  server. `CopilotRuntime` + a LangGraph-JS CoAgent + **AG-UI streaming** behind a **Lambda
+  Function URL** is doable but **off the beaten path** and needs a spike.
+
+Options by setup cost:
+
+| Option | Backend infra | Setup | Notes |
+|---|---|---|---|
+| **A. Hand-roll UI + plain Lambda** | the 1 Lambda we already need + our own SSE/JSON + LangGraph-JS in-process | **Lowest, fully in-app** | No new framework/SaaS. We build the chat UX — but the mockup already designs it. |
+| B. CopilotKit UI + self-host runtime | same 1 Lambda, now running CopilotRuntime + CoAgents + AG-UI streaming | **Medium** | Saves chat-UX work; adds runtime/CoAgents/streaming wiring against the Lambda grain. |
+| C. CopilotKit + managed (Cloud + LangGraph Platform) | external SaaS | Lowest *infra*, but **2 external deps + cost + data egress** | "Simple to stand up" ≠ "self-contained app". De-identified data softens egress, but it's still a managed dependency. |
+
+## Recommendation (revised 2026-06-07)
+
+Constraint: **keep it simple and self-contained** — avoid CopilotKit's *backend* complication
+and managed services.
+
+- **Default (v0): Option A — hand-roll the chat UI on our own plain Lambda** (the brain we
+  already accepted), LangGraph-JS in-process, our own small SSE/JSON narration stream
+  (R17/R28/R29a), and client-side action handlers that **sign in the browser** (R52). No
+  CopilotKit backend, no LangGraph Platform, no Copilot Cloud — **no new infra beyond the
+  Lambda.** The mockup already specifies the UX.
+- **CopilotKit-UI stays an optional later add** — adopt only if it clearly saves work, only
+  its **self-hosted** path, and only after a spike proves CoAgents streams cleanly on a Lambda
+  Function URL. **Avoid Copilot Cloud + LangGraph Platform for v0.**
 
 ## Open decision (feeds SPEC-0009 OQ-7)
 
-- **OQ-7:** Use CopilotKit/CoAgents, or hand-roll the copilot UI + narration stream? **Lean:
-  CopilotKit**, pending the Lambda-runtime + Bedrock spike above.
+- **OQ-7:** Use CopilotKit/CoAgents, or hand-roll the copilot UI + narration stream? **Revised
+  lean: hand-roll for v0** (Option A — simplest, self-contained, no managed deps). CopilotKit-UI
+  is an optional later add (self-hosted only, after a Lambda-streaming spike); avoid its managed
+  backend.
 
 ## Sources
 
