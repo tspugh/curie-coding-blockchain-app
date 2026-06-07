@@ -32,10 +32,16 @@ not flip an off-label appeal; and any URL is currently accepted as "evidence."
   — the passage that establishes *FDA-approval* or *compendia/guideline support for the
   requested indication* is the **prominent** extractable text. (Directly fixes the
   "scraper returns the background `used off-label` line" failure.)
-- **R2 (MUST) Authoritative-source allowlist.** Public evidence is accepted only from a
-  curated set of recognized authorities (e.g. openFDA/DailyMed, PubMed/PMC via NCBI
-  E-utilities, NICE, USPSTF, and licensed compendia APIs). A source outside the allowlist is
-  **not** accepted as public evidence.
+- **R2 (MUST) Authoritative-source allowlist with curated defaults.** Public evidence is
+  accepted only from sources on an **allowlist**. The app ships a **default set** of
+  recognized authorities (openFDA/DailyMed, PubMed/PMC via NCBI E-utilities, NICE, USPSTF,
+  and — where licensed — compendia APIs). A source that matches no enabled allowlist entry is
+  **not** accepted as public evidence (→ R7). The default entries are always present and
+  **resettable**; they MAY be disabled but not deleted. (Data model + defaults: §3.6.)
+- **R2a (MUST) Allowlist is viewable and extensible in Settings.** The app surfaces the
+  allowlist in **Settings** as a list — each entry showing its label, match rule, source
+  tier (R4), and enabled state — and lets the operator **add**, **remove** (custom entries
+  only), **enable/disable**, and **reset to defaults**. (UI: §3.6 / R12.)
 - **R3 (MUST) Identifier-anchored literature.** Literature evidence is referenced by **DOI**
   or **PMID** and resolved through the canonical resolver (NCBI / Crossref), not an arbitrary
   URL. A self-hosted page has no DOI/PMID and cannot fake indexing.
@@ -63,6 +69,19 @@ not flip an off-label appeal; and any URL is currently accepted as "evidence."
 - **R11 (MUST) Explicit trust model.** The normalizer is off-chain glue, **not** the system
   of record; its output is auditable (provenance + content hash travel with the ruling). The
   spec states who is trusted to run it and what that trust covers.
+- **R12 (MUST) Approved-sources Settings panel.** Settings includes an **"Approved evidence
+  sources"** panel that renders the allowlist: defaults + custom entries, each with label,
+  match rule, tier, and an enable toggle; an **add-source** form (label, match rule, tier);
+  **remove** (custom only); and **reset to defaults**. Built-in defaults are visually marked
+  and cannot be deleted (only disabled). The panel is the human-facing view of R2/R2a.
+- **R13 (MUST) Allowlist edits are a governance action, not a provider action.** Adding a
+  source widens what counts as authoritative, so it MUST NOT be a control a *claim submitter*
+  (provider) can use to self-approve their own evidence — that would reintroduce the very
+  attack R2 prevents. In the **demo/local** build the panel writes a client-side list
+  (operator convenience), **clearly labeled** as a stand-in. In **production**, allowlist
+  membership is **payer/governance-controlled** (e.g. an insurer-scoped list or an on-chain
+  registry); a provider-proposed source enters only after approval. The UI MUST state this
+  boundary so the demo's local-edit affordance is not mistaken for the production trust model.
 
 ## 3. Technical documentation
 
@@ -123,10 +142,86 @@ audit hash (`evidenceUri`) cross on-chain; the `contentHash` IS that keccak. No 
 surface. A future amendment MAY add an on-chain allowlist/tier registry + a guard requiring
 `tier >= threshold` for approval.
 
+### 3.6 Approved-source allowlist — data model, defaults, matching, Settings UI
+
+**Source tiers (R4).** Ordered, so an approval can require `tier >= threshold`:
+
+```ts
+enum SourceTier {
+  FDA_LABEL = 5,          // openFDA / DailyMed structured label
+  SYSTEMATIC_REVIEW = 4,  // Cochrane / meta-analysis (PMID/DOI)
+  GUIDELINE = 3,          // specialty-society / national guideline (AACAP, NICE, USPSTF)
+  PEER_REVIEWED = 2,      // indexed primary literature (PMID/DOI)
+  NARRATIVE = 1,          // narrative review / reference page
+  UNVETTED = 0,           // anything else — never satisfies an off-label approval
+}
+```
+
+**Allowlist entry.**
+
+```ts
+interface ApprovedSource {
+  id: string;            // stable id (e.g. "openfda", "ncbi-eutils")
+  label: string;         // human label shown in Settings ("openFDA drug label")
+  match: SourceMatch;    // how a submitted source is matched (below)
+  tier: SourceTier;      // tier assigned to evidence from this source
+  builtin: boolean;      // true = shipped default (cannot be deleted, only disabled)
+  enabled: boolean;      // operator/governance toggle
+}
+
+type SourceMatch =
+  | { kind: "host"; host: string }            // exact host, e.g. "api.fda.gov"
+  | { kind: "urlPrefix"; prefix: string }     // URL starts-with, e.g. "https://eutils.ncbi.nlm.nih.gov/"
+  | { kind: "identifier"; scheme: "pmid" | "doi" }; // resolved via the canonical resolver (R3)
+```
+
+**Curated defaults (shipped, `builtin: true`).**
+
+| id | label | match | tier |
+|----|-------|-------|------|
+| `openfda` | openFDA drug label | host `api.fda.gov` | FDA_LABEL |
+| `dailymed` | DailyMed label | host `dailymed.nlm.nih.gov` | FDA_LABEL |
+| `pubmed` | PubMed (PMID) | identifier `pmid` (resolves via NCBI E-utilities) | PEER_REVIEWED* |
+| `pmc` | PubMed Central | urlPrefix `https://www.ncbi.nlm.nih.gov/pmc/` | PEER_REVIEWED* |
+| `crossref` | Crossref (DOI) | identifier `doi` | PEER_REVIEWED* |
+| `nice` | NICE guidance | host `www.nice.org.uk` | GUIDELINE |
+| `uspstf` | USPSTF | host `www.uspreventiveservicestaskforce.org` | GUIDELINE |
+
+\* The *delivered* tier for a PMID/DOI is refined by publication type — a Cochrane/
+systematic review resolves to `SYSTEMATIC_REVIEW`, a guideline to `GUIDELINE` — read from
+the resolver metadata; `PEER_REVIEWED` is the floor.
+
+**Matching algorithm.** For a submitted source: (1) if it is a bare `pmid`/`doi`, match the
+`identifier` entries and resolve via R3; (2) else parse the URL and match `host` then
+`urlPrefix` entries; (3) the first **enabled** matching entry assigns the tier; (4) **no
+enabled match → reject** (R7). Disabled and deleted-custom entries never match.
+
+**Storage.** Defaults live in code (`src/evidence/allowlist.ts`). Custom + toggle/override
+state persists client-side under `curie:approvedSources` (localStorage), merged over the
+defaults at load — exactly the `keyOverride` pattern (SPEC-0008). "Reset to defaults" clears
+the override key. (Production: this store is replaced by the payer-governed list / on-chain
+registry per R13 — same merge shape, different source of truth.)
+
+**Settings UI (R12).** An "Approved evidence sources" panel:
+- a **list** of entries (defaults first, marked `built-in`; then custom), each row: label ·
+  match rule · tier badge · enable toggle · remove (custom only);
+- an **add-source** form: label, match kind + value, tier (validated — e.g. a host must be a
+  bare hostname, a urlPrefix must be https);
+- **reset to defaults**;
+- a **trust banner** stating R13: in this build the list is a local operator convenience; in
+  production it is payer/governance-controlled and a provider cannot self-approve a source.
+
+testids (for the agent-browser e2e): `approved-sources-panel`, `approved-source-row-<id>`,
+`approved-source-toggle-<id>`, `approved-source-add`, `approved-source-reset`.
+
 ## 4. Deliverables
 
 - `src/evidence/normalizer.ts` — the normalization pipeline (vet → resolve → extract → tier → publish).
-- `src/evidence/allowlist.ts` — the authoritative-source allowlist + tier map (governance-editable).
+- `src/evidence/allowlist.ts` — `SourceTier`, `ApprovedSource`/`SourceMatch` types, the curated
+  **defaults** (§3.6 table), the **match** function (returns tier or reject), and the
+  defaults⊕override **merge** (localStorage `curie:approvedSources`).
+- `web/src/views/Settings` "Approved evidence sources" panel — list + add + remove + toggle +
+  reset + the R13 trust banner (testids per §3.6).
 - `src/evidence/resolvers/` — openFDA, NCBI E-utilities, Crossref clients (server-side, keyed, backoff).
 - `EvidenceProvenance` type + a `contentHash` helper (reuses `hashContent`).
 - A scraper-friendly **published-doc** publisher (e.g. to the curie S3/CloudFront) for normalized evidence.
@@ -144,6 +239,10 @@ surface. A future amendment MAY add an on-chain allowlist/tier registry + a guar
 - **T6 (R8)** normalized evidence + provenance contain no PHI / none of the 18 identifiers.
 - **T7 (R4)** a low-tier source (narrative blog) does not satisfy an **off-label** approval even if reachable; the rationale states the tier.
 - **T8 (R6)** provenance round-trips: `contentHash` equals the on-chain `evidenceUri` keccak for the published doc.
+- **T9 (R2/R2a)** the curated **defaults** are present at first load; `match()` returns the right tier for each (openFDA→FDA_LABEL, a Cochrane PMID→SYSTEMATIC_REVIEW, NICE→GUIDELINE); a source matching no enabled entry is rejected.
+- **T10 (R2a/R12)** Settings: add a custom source → it matches; **disable** a default → sources from it are now rejected; **remove** a custom entry → it no longer matches; a built-in cannot be removed; **reset** restores defaults and clears the override.
+- **T11 (R13)** built-ins are marked non-deletable; the trust banner is present; (production-shape) a provider-role cannot mutate the allowlist — only the governance/operator path can.
+- **T12 (R2a)** add-source validation: a `host` rule rejects a full URL / path; a `urlPrefix` rule requires `https://`; an invalid entry is not added.
 
 ## 6. Pass / fail criteria
 
@@ -155,9 +254,13 @@ surface. A future amendment MAY add an on-chain allowlist/tier registry + a guar
 - [ ] Irrelevant / unresolvable / non-allowlisted source → deny or flag, never approve (R7); throttled authority fails gracefully (T5).
 - [ ] T2 bupropion×ADHD appeal **flips to Approve** via the normalized Cochrane source; T3 negative control denies.
 - [ ] No PHI in normalized evidence or provenance (R8).
+- [ ] Curated defaults ship and match to correct tiers; Settings lists them and supports add / remove (custom) / enable-disable / reset (R2/R2a/R12).
+- [ ] Built-in defaults cannot be deleted (only disabled); a disabled source is rejected; the R13 trust banner is shown.
 
 **FAIL — any triggers rejection:**
 - An arbitrary/self-hosted URL is accepted as public evidence (R2 bypassed).
+- A claim-submitter (provider) can add to the allowlist and self-approve their own source (R13 bypassed).
+- A built-in default can be deleted, or "reset" does not restore defaults.
 - An off-label case approves on "used off-label" with no support / below-threshold tier (R4/R5).
 - An irrelevant source yields an approve (R7).
 - PHI appears in normalized evidence or provenance.
@@ -187,3 +290,8 @@ surface. A future amendment MAY add an on-chain allowlist/tier registry + a guar
   publishes; scrape still runs)? Replacing removes the lossy-snippet failure entirely.
 - **OQ4 (LOW) Paywalled payer-recognized compendia.** How to honor AHFS/DrugDex as the real
   authorities when they're not publicly fetchable — licensed API, or a curated mirror?
+- **OQ5 (HIGH) Who governs the allowlist in production (R13)?** Options: a single
+  protocol-curated default set; a **per-insurer** scoped list (each payer approves its own
+  sources); or an **on-chain registry** mutated by a governance role. The demo uses a local
+  client-side list as a stand-in — the production owner of "what counts as authoritative"
+  must be decided before V1, since it is the crux of the trust model.
