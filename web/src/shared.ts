@@ -1,4 +1,5 @@
 /** Small presentational helpers shared across views (no chain logic here). */
+import { formatEther } from "ethers";
 import { DECISION_NAMES, type CoverageEvent } from "@lib";
 
 /** Truncate a long 0x-hex value to `0x1234…abcd` for compact display. */
@@ -8,12 +9,14 @@ export function shortHex(hex: string, lead = 6, tail = 4): string {
 }
 
 /**
- * Format a wei amount for display, explicitly labelled `wei`. The requested /
- * escrow / covered amounts are denominated in WEI (not STT, not dollars) — the
- * insurer locks exactly this many wei at `insurerEngage` (A0008).
+ * Format an on-chain amount (stored in wei) for display in STT. The requested /
+ * escrow / covered amounts are native-token values — the insurer locks exactly
+ * this much STT at `insurerEngage`. Trailing zeros are trimmed (e.g.
+ * 5000000000000000n → "0.005 STT", 0n → "0 STT").
  */
 export function fmtAmount(v: bigint): string {
-  return `${v.toString()} wei`;
+  const stt = formatEther(v); // e.g. "0.005000000000000000" → ethers trims to "0.005"
+  return `${stt} STT`;
 }
 
 /** One-line human summary of an event for the timeline (every event — R16). */

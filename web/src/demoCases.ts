@@ -3,8 +3,8 @@
  *
  * Each case is a synthetic, PHI-free drug × indication scenario. Selecting one populates
  * the Create form; the `drug` resolves through `drugEvidenceMap` (brand → canonical) to
- * auto-fill the evidence URL + prompt hint. Amounts are small symbolic wei values so the
- * demo is cheap to run on testnet.
+ * auto-fill the evidence URL + prompt hint. Amounts are small symbolic STT decimals so the
+ * demo is cheap to run on testnet (the Create form parses them via ethers parseEther).
  *
  * Every `drug` MUST resolve in `drugEvidenceMap` (asserted in demoCases.test.ts) so the
  * dropdown can never offer an option that fails to auto-fill.
@@ -22,12 +22,11 @@ export interface DemoCase {
   /** De-identified clinical justification (off-chain → hash only). */
   readonly justification: string;
   readonly payerLine: PayerLine;
+  /** Amount of STT requested (a decimal string parsed via ethers parseEther). */
   readonly requestedAmount: string;
   readonly quantity: string;
   readonly daysSupply: string;
 }
-
-const AMT = "5200";
 
 export const DEMO_CASES: ReadonlyArray<DemoCase> = Object.freeze([
   {
@@ -37,7 +36,7 @@ export const DEMO_CASES: ReadonlyArray<DemoCase> = Object.freeze([
     justification:
       "Adult with moderate-to-severe chronic plaque psoriasis; inadequate response to topical therapy and one conventional systemic agent. Requesting adalimumab per FDA-approved indication.",
     payerLine: PayerLine.PartD,
-    requestedAmount: AMT,
+    requestedAmount: "0.005",
     quantity: "2",
     daysSupply: "28",
   },
@@ -52,7 +51,7 @@ export const DEMO_CASES: ReadonlyArray<DemoCase> = Object.freeze([
     justification:
       "Adult with attention-deficit/hyperactivity disorder (ADHD) inadequately controlled on first-line options; clinician requests bupropion off-label. Off-label use; appeal with compendia support if denied.",
     payerLine: PayerLine.Commercial,
-    requestedAmount: AMT,
+    requestedAmount: "0.001",
     quantity: "1",
     daysSupply: "30",
   },

@@ -25,7 +25,7 @@ test("demo cases have unique ids + non-empty labels/justifications", () => {
     ids.add(c.id);
     assert.ok(c.label.length > 0, `${c.id} needs a label`);
     assert.ok(c.justification.length > 0, `${c.id} needs a justification`);
-    assert.ok(/^\d+$/.test(c.requestedAmount), `${c.id} requestedAmount must be a wei integer`);
+    assert.ok(/^\d+(\.\d+)?$/.test(c.requestedAmount) && Number(c.requestedAmount) > 0, `${c.id} requestedAmount must be a positive STT decimal`);
     assert.ok(/^\d+$/.test(c.quantity) && Number(c.quantity) > 0, `${c.id} quantity must be > 0`);
   }
   assert.ok(DEMO_CASES.length >= 2, "the dropdown must offer multiple demos");

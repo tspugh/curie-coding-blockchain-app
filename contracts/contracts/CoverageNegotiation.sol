@@ -685,12 +685,18 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         require(n.state == State.Approved || n.state == State.Denied, "accept: not ruled");
         _onlyParty(n);
 
-        if (partyId == n.providerId) {
+        // C1 (security): bind the accept flag to msg.sender. `_onlyParty` proves
+        // the caller is the provider or the insurer; a party may set ONLY its own
+        // accept flag. Without this, either party could pass the *other's* partyId
+        // to flip both flags alone and `settle()` unilaterally — bypassing the
+        // counterparty's R6c accept-vs-appeal choice. The partyId arg must name
+        // the caller's own role (kept for the Accepted event / ABI stability).
+        if (msg.sender == n.providerAddr) {
+            require(partyId == n.providerId, "accept: not your party");
             n.providerAccepted = true;
-        } else if (partyId == n.insurerId) {
-            n.insurerAccepted = true;
         } else {
-            revert("accept: unknown party");
+            require(partyId == n.insurerId, "accept: not your party");
+            n.insurerAccepted = true;
         }
         emit Accepted(reqId, partyId);
     }

@@ -305,13 +305,22 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   // eth_getLogs growing-range poll trips the 1000-block cap), so while a request is still
   // live we re-fetch its state on a timer. The agent ruling (which lands seconds later via an
   // off-chain callback) and the OTHER party's actions then appear WITHOUT a manual refresh.
-  // Stops once the request reaches a terminal state. Real mode only — sim resolves inline.
+  // Real mode only — sim resolves inline.
+  //
+  // C8: stop once the request is terminal OR ruled-and-quiescent — i.e. Approved/Denied with
+  // no agent call still in flight (`pendingRequestId === 0`). Such a request only advances on
+  // a manual accept/appeal/settle, so polling the RPC every 5s forever just burns requests.
+  // Keep polling through UnderReview and while an agent request is pending (a re-fired
+  // adjudication after submitEvidence/appeal lands its ruling via the off-chain callback).
   useEffect(() => {
     if (client.wallet.mode !== "real") return;
-    if (!view || view.terminal) return;
+    if (!view) return;
+    const ruledAndQuiescent =
+      view.ruled && view.negotiation.pendingRequestId === 0n;
+    if (view.terminal || ruledAndQuiescent) return;
     const id = setInterval(() => setRefreshTick((t) => t + 1), 5000);
     return () => clearInterval(id);
-  }, [view?.terminal, view?.state]);
+  }, [view?.terminal, view?.state, view?.ruled, view?.negotiation.pendingRequestId]);
 
   // Forward the raw error to ErrorCard, which runs the SPEC-0003 R16
   // revert-reason mapping itself. (Pre-formatting the message here would
@@ -464,7 +473,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
             <dt>Medication</dt>
             <dd><code title={n.drugRef}>{shortHex(n.drugRef)}</code></dd>
             <dt>Quantity</dt>
-            <dd data-testid="fact-quantity">{n.quantity.toString()} units</dd>
+            <dd data-testid="fact-quantity">{n.quantity.toString()} {n.quantity === 1n ? "unit" : "units"}</dd>
             {n.daysSupply > 0n && (
               <>
                 <dt>Days Supply</dt>
@@ -499,11 +508,13 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
             </dd>
             <dt>Healthcare Provider</dt>
             <dd>
-              {activeProfile.label}
+              <code title={n.providerAddr}>{shortHex(n.providerAddr)}</code>
               {n.providerAccepted && <span className="ok-text"> · accepted ✓</span>}
             </dd>
             <dt>Insurance Company</dt>
             <dd>
+              <code title={n.insurerAddr}>{shortHex(n.insurerAddr)}</code>
+              {" · "}
               {n.insurerAccepted
                 ? <span className="ok-text">Accepted ✓</span>
                 : "Pending"}
@@ -540,7 +551,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
               </dl>
               <div className="verify">
                 <label>
-                  Verify justification (R3)
+                  Verify justification
                   <textarea
                     data-testid="verify-note-input"
                     rows={2}

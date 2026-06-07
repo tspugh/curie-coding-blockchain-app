@@ -3369,9 +3369,9 @@ describe("CoverageNegotiation", () => {
   }); // end describe "Amendment 0007 phase 1"
 
   // ---------------------------------------------------------------------------
-  // Branch coverage: accept unknown partyId revert (line 554)
+  // C1 (security): a party may accept ONLY its own flag — partyId bound to msg.sender.
   // ---------------------------------------------------------------------------
-  it("accept: unknown partyId reverts 'accept: unknown party' (branch coverage)", async () => {
+  it("accept: caller passing a partyId that isn't their own reverts 'accept: not your party'", async () => {
     const { platform, contract } = await deploy();
     const [provider, insurer] = await ethers.getSigners();
     const target = await contract.getAddress();
@@ -3379,11 +3379,36 @@ describe("CoverageNegotiation", () => {
     await platform.triggerRuling(target, requestId, TOKEN_APPROVE);
     expect(await contract.stateOf(reqId)).to.equal(State.Approved);
 
-    // Pass a partyId that is neither providerId nor insurerId → revert.
+    // A wholly unknown partyId from a real party → revert (not their own id).
     const UNKNOWN_PARTY_ID = 9999n;
     await expect(
       contract.connect(provider).accept(reqId, UNKNOWN_PARTY_ID)
-    ).to.be.revertedWith("accept: unknown party");
+    ).to.be.revertedWith("accept: not your party");
+  });
+
+  it("C1: provider cannot flip the INSURER's accept flag (no unilateral settle bypass)", async () => {
+    const { platform, contract } = await deploy();
+    const [provider, insurer] = await ethers.getSigners();
+    const target = await contract.getAddress();
+    const { reqId, requestId } = await createEngageAdjudicate(contract, platform, provider, insurer);
+    await platform.triggerRuling(target, requestId, TOKEN_APPROVE);
+    expect(await contract.stateOf(reqId)).to.equal(State.Approved);
+
+    // The provider tries to accept ON BEHALF OF the insurer → must revert.
+    await expect(
+      contract.connect(provider).accept(reqId, INSURER_ID)
+    ).to.be.revertedWith("accept: not your party");
+    // ...and symmetrically the insurer cannot flip the provider's flag.
+    await expect(
+      contract.connect(insurer).accept(reqId, PROVIDER_ID)
+    ).to.be.revertedWith("accept: not your party");
+
+    // The provider accepting its own flag then trying to settle alone must fail
+    // at the both-accepted gate — the insurer's consent is still required.
+    await contract.connect(provider).accept(reqId, PROVIDER_ID);
+    await expect(contract.connect(provider).settle(reqId)).to.be.revertedWith(
+      "settle: not both accepted"
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -4955,9 +4980,9 @@ describe("CoverageNegotiation", () => {
     });
 
     // -----------------------------------------------------------------------
-    // accept: unknown partyId reverts "accept: unknown party"
+    // accept: a partyId that isn't the caller's own reverts (C1 binding)
     // -----------------------------------------------------------------------
-    it("accept: unknown partyId (not providerId or insurerId) reverts 'accept: unknown party'", async () => {
+    it("accept: partyId not matching the caller reverts 'accept: not your party'", async () => {
       const { platform, contract } = await deploy();
       const [provider, insurer] = await ethers.getSigners();
       const target = await contract.getAddress();
@@ -4965,9 +4990,9 @@ describe("CoverageNegotiation", () => {
       await platform.triggerRuling(target, requestId, TOKEN_APPROVE);
       expect(await contract.stateOf(reqId)).to.equal(State.Approved);
 
-      // partyId = 999n is not PROVIDER_ID or INSURER_ID.
+      // partyId = 999n is neither the provider's nor the insurer's own id.
       await expect(contract.connect(provider).accept(reqId, 999n))
-        .to.be.revertedWith("accept: unknown party");
+        .to.be.revertedWith("accept: not your party");
     });
 
     // -----------------------------------------------------------------------

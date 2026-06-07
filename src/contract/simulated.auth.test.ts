@@ -127,6 +127,35 @@ test("party actions reject a third wallet with matching messages", async () => {
   assert.equal(n.providerAddr, PROVIDER);
 });
 
+test("C1: a party cannot flip the OTHER party's accept flag (no unilateral settle)", async () => {
+  const b = backend();
+  b.setCaller(PROVIDER);
+  const reqId = await b.createContract(params());
+  b.setCaller(INSURER);
+  await b.insurerEngage(reqId, POLICY_HASH, POLICY_URI);
+  b.setCaller(PROVIDER);
+  await b.requestAdjudication(reqId);
+  b.resolve(reqId, Decision.Approve);
+  assert.equal(await b.stateOf(reqId), State.Approved);
+
+  // Neither party can accept on the other's behalf.
+  b.setCaller(PROVIDER);
+  await rejects(() => b.accept(reqId, INSURER_ID), "accept: not your party");
+  b.setCaller(INSURER);
+  await rejects(() => b.accept(reqId, PROVIDER_ID), "accept: not your party");
+
+  // Provider accepts its own flag → still cannot settle alone (insurer consent required).
+  b.setCaller(PROVIDER);
+  await b.accept(reqId, PROVIDER_ID);
+  await rejects(() => b.settle(reqId), "settle: not both accepted");
+
+  // Insurer accepts its own flag → settle now succeeds.
+  b.setCaller(INSURER);
+  await b.accept(reqId, INSURER_ID);
+  await b.settle(reqId);
+  assert.equal(await b.stateOf(reqId), State.Settled);
+});
+
 test("R2b (SPEC-0004 §2.1): self-contract (providerAddr == insurerAddr) is rejected at createContract", async () => {
   // SPEC-0004 R2b supersedes SPEC-0001 R13's permissive self-claim. The single-shared-wallet
   // scenario that was valid under R13 is no longer supported.

@@ -167,7 +167,7 @@ scenario_happy_path() {
   ab find testid create-note fill "Severe plaque psoriasis; documented failure of methotrexate and topical therapy." >/dev/null
   ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
   ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
-  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-amount fill "0.005" >/dev/null
   ab find testid create-quantity fill "2" >/dev/null          # SPEC-0001: quantity drives the cap
   ab find testid create-days-supply fill "28" >/dev/null      # SPEC-0001: necessity context only
   eval_click create-submit
@@ -193,9 +193,9 @@ scenario_happy_path() {
     *) echo "  ✗ UI badge reflects Ready (R16) — badge text did not contain 'Ready'"; FAIL=$((FAIL + 1));;
   esac
 
-  # Act: pick decision 'approve' + a Cost Plus unit price of 2100 (cap = 2100 ×
-  # quantity 2 = 4200 < requested 5200) and request adjudication -> arbiter fires
-  # (R6), auto-resolves ~1.2s -> Approved (SPEC-0001 2026-05-27 per-unit cap).
+  # Act: pick decision 'approve' and request adjudication -> arbiter fires
+  # (R6), auto-resolves ~1.2s -> Approved. coveredAmount = requestedAmount
+  # (SPEC-0006 R24: no AI price cap).
   # The redesigned UI doesn't surface cost-pegging inputs (sim-runtime concern);
   # poke the SimulatedBackend's mutables via the test API instead (tick 45).
   eval_click decision-approve   # 0 = Decision.Approve
@@ -204,9 +204,9 @@ scenario_happy_path() {
   eval_click adjudicate-submit
   ab wait 1800 >/dev/null
   assert_eq "approve ruling routes to Approved" "4" "$(state_of 1)"
-  # R6a: deterministic covered amount = min(5200, 2100 × 2) = 4200.
   # SPEC-0006 R24: coveredAmount = requestedAmount (no AI price cap).
-  assert_eq "covered = requestedAmount (SPEC-0006 R24)" "5200" "$(covered_of 1)"
+  # Amounts are entered in STT and stored as wei: 0.005 STT = 5000000000000000 wei.
+  assert_eq "covered = requestedAmount (SPEC-0006 R24)" "5000000000000000" "$(covered_of 1)"
 
   # Act: both parties accept, then settle (R8 event marker + 50/50 fee).
   eval_click accept-submit
@@ -237,7 +237,7 @@ scenario_no_phi() {
   ab find testid create-note fill "$token — justification body that must never be committed." >/dev/null
   ab find testid create-drug fill "Adalimumab" >/dev/null
   ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=HUMIRA" >/dev/null
-  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-amount fill "0.005" >/dev/null
   ab find testid create-quantity fill "2" >/dev/null
   ab find testid create-days-supply fill "28" >/dev/null
   eval_click create-submit
@@ -269,7 +269,7 @@ scenario_adjudication_gating() {
   ab find testid nav-create click >/dev/null
   ab find testid create-note fill "Request for the policy-gating check." >/dev/null
   ab find testid create-drug fill "Etanercept" >/dev/null
-  ab find testid create-amount fill "2500" >/dev/null
+  ab find testid create-amount fill "0.0025" >/dev/null
   eval_click create-submit
   ab wait 300 >/dev/null
 
@@ -430,7 +430,7 @@ scenario_sample_case() {
     *Adalimumab*) echo "  ✓ sample drug prefilled"; PASS=$((PASS + 1));;
     *) echo "  ✗ sample drug not prefilled"; FAIL=$((FAIL + 1));;
   esac
-  assert_eq "sample requested amount prefilled" "5200" "$(ab get value "[data-testid=create-amount]" | tail -1)"
+  assert_eq "sample requested amount prefilled" "0.005" "$(ab get value "[data-testid=create-amount]" | tail -1)"
   assert_eq "sample quantity prefilled" "2" "$(ab get value "[data-testid=create-quantity]" | tail -1)"
   assert_eq "sample days supply prefilled" "28" "$(ab get value "[data-testid=create-days-supply]" | tail -1)"
 
@@ -438,7 +438,7 @@ scenario_sample_case() {
   eval_click create-submit
   ab wait 300 >/dev/null
   assert_eq "sample request filed (Open)" "0" "$(state_of 1)"
-  assert_eq "requested amount on-chain" "5200" "$(field_of 1 requestedAmount)"
+  assert_eq "requested amount on-chain" "5000000000000000" "$(field_of 1 requestedAmount)"
   assert_eq "quantity on-chain" "2" "$(field_of 1 quantity)"
 }
 
@@ -456,7 +456,7 @@ scenario_note_verify() {
   ab find testid create-note fill "VERIFY_ME canonical justification body" >/dev/null
   ab find testid create-drug fill "Adalimumab" >/dev/null
   ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=HUMIRA" >/dev/null
-  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-amount fill "0.005" >/dev/null
   ab find testid create-quantity fill "2" >/dev/null
   ab find testid create-days-supply fill "28" >/dev/null
   eval_click create-submit
@@ -660,7 +660,7 @@ scenario_refuse() {
   ab find testid create-note fill "Severe plaque psoriasis; documented failure of methotrexate." >/dev/null
   ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
   ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
-  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-amount fill "0.005" >/dev/null
   ab find testid create-quantity fill "2" >/dev/null
   ab find testid create-days-supply fill "28" >/dev/null
   eval_click create-submit
@@ -714,7 +714,7 @@ scenario_evidence_resubmit() {
   ab find testid create-note fill "Severe plaque psoriasis; methotrexate failure documented." >/dev/null
   ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
   ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
-  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-amount fill "0.005" >/dev/null
   ab find testid create-quantity fill "2" >/dev/null
   ab find testid create-days-supply fill "28" >/dev/null
   eval_click create-submit
@@ -775,7 +775,7 @@ scenario_appeal() {
   ab find testid create-note fill "Severe plaque psoriasis; methotrexate failure documented." >/dev/null
   ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
   ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
-  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-amount fill "0.005" >/dev/null
   ab find testid create-quantity fill "2" >/dev/null
   ab find testid create-days-supply fill "28" >/dev/null
   eval_click create-submit
@@ -833,7 +833,7 @@ scenario_withdraw() {
   ab find testid create-note fill "Provider files then immediately withdraws." >/dev/null
   ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
   ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
-  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-amount fill "0.005" >/dev/null
   ab find testid create-quantity fill "2" >/dev/null
   ab find testid create-days-supply fill "28" >/dev/null
   eval_click create-submit
@@ -870,7 +870,7 @@ scenario_payer_line() {
   ab find testid create-note fill "Routine follow-up; testing payer-line round-trip." >/dev/null
   ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
   ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
-  ab find testid create-amount fill "1200" >/dev/null
+  ab find testid create-amount fill "0.0012" >/dev/null
   ab find testid create-quantity fill "1" >/dev/null
   ab find testid create-days-supply fill "30" >/dev/null
 
@@ -912,7 +912,7 @@ scenario_custom_policy() {
   ab find testid create-note fill "Custom-policy composer round-trip test." >/dev/null
   ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
   ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
-  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-amount fill "0.005" >/dev/null
   ab find testid create-quantity fill "2" >/dev/null
   ab find testid create-days-supply fill "28" >/dev/null
   eval_click create-submit
@@ -981,7 +981,7 @@ scenario_feedback() {
   ab find testid create-note fill "Routine; testing feedback note path." >/dev/null
   ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
   ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
-  ab find testid create-amount fill "1200" >/dev/null
+  ab find testid create-amount fill "0.0012" >/dev/null
   ab find testid create-quantity fill "1" >/dev/null
   ab find testid create-days-supply fill "30" >/dev/null
   eval_click create-submit
@@ -1025,7 +1025,7 @@ scenario_happy_path_denial() {
   ab find testid create-note fill "Identical setup to Scenario A — only the ruling flips." >/dev/null
   ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
   ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
-  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-amount fill "0.005" >/dev/null
   ab find testid create-quantity fill "2" >/dev/null
   ab find testid create-days-supply fill "28" >/dev/null
   eval_click create-submit
@@ -1081,7 +1081,7 @@ scenario_evidence_resubmit_denial() {
   ab find testid create-note fill "Same setup as L1 — the re-fired ruling flips to Deny." >/dev/null
   ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
   ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
-  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-amount fill "0.005" >/dev/null
   ab find testid create-quantity fill "2" >/dev/null
   ab find testid create-days-supply fill "28" >/dev/null
   eval_click create-submit
@@ -1137,7 +1137,7 @@ scenario_appeal_denial() {
   ab find testid create-note fill "Same setup as L2 — the appeal re-fire produces a second Denied." >/dev/null
   ab find testid create-drug fill "Adalimumab (RxNorm 1366724)" >/dev/null
   ab find testid create-evidence fill "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA" >/dev/null
-  ab find testid create-amount fill "5200" >/dev/null
+  ab find testid create-amount fill "0.005" >/dev/null
   ab find testid create-quantity fill "2" >/dev/null
   ab find testid create-days-supply fill "28" >/dev/null
   eval_click create-submit

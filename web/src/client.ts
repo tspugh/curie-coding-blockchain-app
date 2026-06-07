@@ -202,9 +202,11 @@ function makeClient(privateKey: string | undefined): CurieClient {
           // Network / TxMonitor render empty. Set `VITE_DEPLOYMENT_BLOCK` to
           // the deploy block to scan the contract's full history; otherwise
           // RealBackend falls back to a `latest - 50_000`-block lookback.
-          deploymentBlock: import.meta.env.VITE_DEPLOYMENT_BLOCK
-            ? Number(import.meta.env.VITE_DEPLOYMENT_BLOCK)
-            : undefined,
+          // Spread the key only when set — `exactOptionalPropertyTypes` rejects
+          // an explicit `deploymentBlock: undefined` on the optional field.
+          ...(import.meta.env.VITE_DEPLOYMENT_BLOCK
+            ? { deploymentBlock: Number(import.meta.env.VITE_DEPLOYMENT_BLOCK) }
+            : {}),
         },
       },
     });

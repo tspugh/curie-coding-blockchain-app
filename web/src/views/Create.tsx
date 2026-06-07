@@ -11,6 +11,7 @@ import {
   orderSignToDraft,
   type Profile,
 } from "@lib";
+import { parseEther } from "ethers";
 import { client, INSURER_ADDRESS } from "../client.js";
 import { parseAmount, shortHex } from "../shared.js";
 import { SAMPLE_CASE } from "../sampleCase.js";
@@ -104,12 +105,11 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
     [justification],
   );
 
-  // SPEC-0003 §2.6 R30-R32: live wallet-balance gate. The `requestedAmount`
-  // field is in demo dollars (not wei) so it doesn't enter the wei-balance
-  // comparison directly — the meaningful check from R31 is the
-  // agent-fee reserve the provider must hold so the next-step
-  // `requestAdjudication` can escrow it. The check is skipped in simulated
-  // mode (`wei === null`) — there's no chain to pay for.
+  // SPEC-0003 §2.6 R30-R32: live wallet-balance gate. The requested amount is
+  // escrowed later by the INSURER at engage, so it doesn't enter the provider's
+  // balance check here — the meaningful check from R31 is the agent-fee reserve
+  // the provider must hold so the next-step `requestAdjudication` can fund it.
+  // The check is skipped in simulated mode (`wei === null`) — no chain to pay for.
   const { wei: balanceWei } = useWalletBalance();
   const balanceBlock = useMemo<{
     current: bigint;
@@ -166,16 +166,23 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
     e.preventDefault();
     setError(null);
 
-    // Amount is in WEI (escrowed by the insurer at engage). quantity /
-    // daysSupply are also plain integers.
-    const requestedAmount = parseAmount(amount);
+    // Amount is entered in STT (a decimal) and converted to wei for the chain —
+    // the insurer escrows exactly this much at engage. quantity / daysSupply are
+    // plain integers.
+    let requestedAmount: bigint | null;
+    try {
+      const parsed = parseEther(amount.trim());
+      requestedAmount = parsed > 0n ? parsed : null;
+    } catch {
+      requestedAmount = null;
+    }
     const quantityVal = parseAmount(quantity);
     const daysSupplyVal = daysSupply.trim() === "" ? 0n : parseAmount(daysSupply);
 
     if (!justification.trim()) return setError("Clinical justification is required.");
     if (!drug.trim()) return setError("Medication name is required.");
-    if (requestedAmount === null || requestedAmount === 0n)
-      return setError("Amount must be a positive whole number of wei.");
+    if (requestedAmount === null)
+      return setError("Enter a positive amount of STT.");
     if (quantityVal === null || quantityVal <= 0n)
       return setError("Quantity must be a whole number greater than 0.");
     if (daysSupplyVal === null)
@@ -359,16 +366,16 @@ export function Create({ activeProfile, onCreated, onCancel }: CreateProps) {
         </div>
 
         <label>
-          Amount Requested (wei)
+          Amount Requested (STT)
           <input
             data-testid="create-amount"
             type="text"
-            inputMode="numeric"
+            inputMode="decimal"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            placeholder="5200"
+            placeholder="0.005"
           />
-          <span className="field-hint">In wei (not STT) — the insurer escrows exactly this many wei at engage; refunded on denial.</span>
+          <span className="field-hint">Amount of STT the insurer escrows; refunded if denied.</span>
         </label>
 
         <label>

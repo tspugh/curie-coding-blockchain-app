@@ -373,7 +373,10 @@ export function App() {
         )}
       </main>
 
-      <TxMonitor />
+      {/* U5: the TxMonitor reflects real on-chain transactions; in simulated
+          mode there's no chain so it would sit empty ("waiting for first
+          confirmed tx" forever) and overlap content. Render it in real mode only. */}
+      {client.wallet.mode === "real" && <TxMonitor />}
 
       {/* SPEC-0008 R1/R6 (amended) — startup wallet gate: blocking modal + backdrop.
           forcePrompt (VITE_FORCE_WALLET_PROMPT=1) shows the modal even when env
@@ -387,6 +390,7 @@ export function App() {
           prefillInsurer={prefillInsurer}
           demoProvider={demoKeys?.provider ?? ""}
           demoInsurer={demoKeys?.insurer ?? ""}
+          simMode={client.wallet.mode === "simulated"}
         />
       )}
     </div>
