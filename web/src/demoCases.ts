@@ -33,7 +33,7 @@ export const DEMO_CASES: ReadonlyArray<DemoCase> = Object.freeze([
   {
     id: "adalimumab-psoriasis",
     label: "Adalimumab (Humira) — plaque psoriasis",
-    drug: "Humira",
+    drug: "Adalimumab (Humira)",
     justification:
       "Adult with moderate-to-severe chronic plaque psoriasis; inadequate response to topical therapy and one conventional systemic agent. Requesting adalimumab per FDA-approved indication.",
     payerLine: PayerLine.PartD,
@@ -44,7 +44,7 @@ export const DEMO_CASES: ReadonlyArray<DemoCase> = Object.freeze([
   {
     id: "semaglutide-t2dm",
     label: "Semaglutide (Ozempic) — type 2 diabetes",
-    drug: "Ozempic",
+    drug: "Semaglutide (Ozempic)",
     justification:
       "Adult with type 2 diabetes, HbA1c above goal on metformin. Requesting semaglutide per FDA-approved indication for glycemic control.",
     payerLine: PayerLine.Commercial,
@@ -55,7 +55,7 @@ export const DEMO_CASES: ReadonlyArray<DemoCase> = Object.freeze([
   {
     id: "ustekinumab-crohns",
     label: "Ustekinumab (Stelara) — Crohn's disease",
-    drug: "Stelara",
+    drug: "Ustekinumab (Stelara)",
     justification:
       "Adult with moderately-to-severely active Crohn's disease; inadequate response to conventional therapy. Requesting ustekinumab per FDA-approved indication.",
     payerLine: PayerLine.Commercial,
@@ -66,7 +66,7 @@ export const DEMO_CASES: ReadonlyArray<DemoCase> = Object.freeze([
   {
     id: "lecanemab-alzheimers",
     label: "Lecanemab (Leqembi) — early Alzheimer's",
-    drug: "Leqembi",
+    drug: "Lecanemab (Leqembi)",
     justification:
       "Patient with mild cognitive impairment / mild dementia due to Alzheimer's disease, amyloid-confirmed. Requesting lecanemab per FDA-approved indication.",
     payerLine: PayerLine.PartD,
@@ -77,7 +77,7 @@ export const DEMO_CASES: ReadonlyArray<DemoCase> = Object.freeze([
   {
     id: "tirzepatide-t2dm",
     label: "Tirzepatide (Mounjaro) — type 2 diabetes",
-    drug: "Mounjaro",
+    drug: "Tirzepatide (Mounjaro)",
     justification:
       "Adult with type 2 diabetes inadequately controlled on first-line therapy. Requesting tirzepatide per FDA-approved indication for glycemic control.",
     payerLine: PayerLine.Commercial,
@@ -88,7 +88,7 @@ export const DEMO_CASES: ReadonlyArray<DemoCase> = Object.freeze([
   {
     id: "dupilumab-derm",
     label: "Dupilumab (Dupixent) — atopic dermatitis",
-    drug: "Dupixent",
+    drug: "Dupilumab (Dupixent)",
     justification:
       "Adult with moderate-to-severe atopic dermatitis inadequately controlled with topical prescription therapies. Requesting dupilumab per FDA-approved indication.",
     payerLine: PayerLine.Commercial,
