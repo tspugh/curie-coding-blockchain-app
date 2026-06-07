@@ -13,6 +13,8 @@ export const COVERAGE_NEGOTIATION_ABI = [
   "function createContract(uint256 providerId, uint256 insurerId, address providerAddr, address insurerAddr, bytes32 drugRef, uint256 requestedAmount, uint256 quantity, uint256 daysSupply, bytes32 justificationHash, bytes32 evidenceUri, uint8 payerLine, string agentEvidenceUrl, string agentPromptHint) external returns (uint256 reqId)",
   "function insurerEngage(uint256 reqId, bytes32 policyHash, bytes32 policyUri) external payable",
   "function requestAdjudication(uint256 reqId) external payable",
+  // A0012 / SPEC-0007 R13: provider-only overload carrying de-identified attestations.
+  "function requestAdjudication(uint256 reqId, tuple(bytes32 clauseId, bool attested, bytes32 evidenceUriHash)[] attestations) external payable",
   // A0009: evidence arg is now a public URL string (the re-scrape target); the
   // contract derives + emits its keccak audit hash, so the *event* sigs below
   // keep bytes32 evidenceUri.
@@ -29,6 +31,7 @@ export const COVERAGE_NEGOTIATION_ABI = [
   // --- Views (reads) ---
   // Negotiation tuple: order matches struct Negotiation field order exactly.
   "function getNegotiation(uint256 reqId) external view returns (tuple(uint256 providerId, uint256 insurerId, address providerAddr, address insurerAddr, bytes32 drugRef, uint256 requestedAmount, uint256 quantity, uint256 daysSupply, bytes32 justificationHash, bytes32 evidenceUri, bytes32 policyHash, bytes32 policyUri, uint256 coveredAmount, uint256 escrowAmount, uint256 costPlusUnitPrice, uint256 nadacUnitPrice, bytes32 rationaleHash, bytes32 clauseRef, bytes32 standardRef, uint8 lastDecision, uint256 lastRequestId, bool hasRuling, string agentEvidenceUrl, string agentPromptHint, uint256 round, uint8 payerLine, uint8 appealRound, bool providerAccepted, bool insurerAccepted, uint256 totalFees, uint8 state, uint256 pendingRequestId, uint256 createdAt, uint256 rulingDeadline, bool exists, uint8 agentPhase, uint256 pendingDecideFee, address pendingFeePayer))",
+  "function getAttestations(uint256 reqId) external view returns (tuple(bytes32 clauseId, bool attested, bytes32 evidenceUriHash)[])",
   "function stateOf(uint256 reqId) external view returns (uint8)",
   "function coveredAmountOf(uint256 reqId) external view returns (uint256)",
   "function priceBasisOf(uint256 reqId) external view returns (uint256 requestedAmount, uint256 quantity, uint256 costPlusTotal, uint256 nadacFloorTotal, uint256 coveredAmount)",

@@ -15,6 +15,7 @@
 import { ethers } from "ethers";
 
 import {
+  type Attestation,
   type CoverageEvent,
   type CoverageEventListener,
   type CoverageEventName,
@@ -215,6 +216,7 @@ interface CoverageContract extends ethers.BaseContract {
   postFeedback(reqId: bigint, msgHash: string, uri: string): Promise<ethers.ContractTransactionResponse>;
   commitRationale(reqId: bigint, rationale: string, clauseReference: string, standardReference: string): Promise<ethers.ContractTransactionResponse>;
   getNegotiation(reqId: bigint): Promise<RawNegotiation>;
+  getAttestations(reqId: bigint): Promise<readonly (readonly [string, boolean, string])[]>;
   stateOf(reqId: bigint): Promise<bigint | number>;
   coveredAmountOf(reqId: bigint): Promise<bigint>;
   priceBasisOf(reqId: bigint): Promise<RawPriceBasis>;
@@ -355,12 +357,29 @@ export class RealBackend implements CoverageNegotiationClient {
     );
   }
 
-  async requestAdjudication(reqId: bigint): Promise<void> {
-    await this._send(
-      "requestAdjudication",
-      this.agentFeeValue,
-      this.contract.requestAdjudication(reqId, { value: this.agentFeeValue }),
-    );
+  async requestAdjudication(reqId: bigint, attestations: Attestation[] = []): Promise<void> {
+    // requestAdjudication is OVERLOADED on-chain (A0012), so ethers v6 needs the full
+    // signature to disambiguate. With attestations → the provider-only 2-arg form; without
+    // → the 1-arg public-only form (so a shared-wallet/insurer caller still works).
+    const tx = attestations.length
+      ? this.contract.getFunction("requestAdjudication(uint256,(bytes32,bool,bytes32)[])")(
+          reqId,
+          attestations.map((a) => [a.clauseId, a.attested, a.evidenceUriHash]),
+          { value: this.agentFeeValue },
+        )
+      : this.contract.getFunction("requestAdjudication(uint256)")(reqId, {
+          value: this.agentFeeValue,
+        });
+    await this._send("requestAdjudication", this.agentFeeValue, tx);
+  }
+
+  async getAttestations(reqId: bigint): Promise<Attestation[]> {
+    const raw = (await this.contract.getAttestations(reqId)) as readonly (readonly [
+      string,
+      boolean,
+      string,
+    ])[];
+    return raw.map((a) => ({ clauseId: a[0], attested: a[1], evidenceUriHash: a[2] }));
   }
 
   async submitEvidence(reqId: bigint, evidenceUri: string): Promise<void> {
