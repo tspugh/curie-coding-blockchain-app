@@ -185,7 +185,7 @@ export function WalletOnboarding({
         <h2 id="wallet-onboarding-title" style={{ marginTop: 0 }}>
           Load wallet keys
         </h2>
-        <p style={{ color: "var(--text-2)", fontSize: 13.5, marginBottom: 20 }}>
+        <p style={{ color: "var(--text-2)", fontSize: 13.5, margin: "0 0 8px" }}>
           This build ships without signing keys. Paste your testnet private keys
           to enable on-chain signing. Keys are stored in{" "}
           <code>localStorage</code> only — never in the bundle.
@@ -217,7 +217,7 @@ export function WalletOnboarding({
           </p>
         )}
 
-        <div style={{ marginTop: 24, display: "flex", justifyContent: "flex-end" }}>
+        <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-end" }}>
           <button
             type="button"
             className="primary"

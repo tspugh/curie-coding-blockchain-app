@@ -2463,13 +2463,15 @@ tr.row-link:hover td:first-child {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
-  padding: 32px 36px;
-  width: min(520px, calc(100vw - 40px));
-  max-height: calc(100vh - 80px);
-  overflow-y: auto;
+  /* Compact, fixed-fit panel: vertical padding + gap shrink on short viewports so the
+     whole card always fits without a scrollbar (SPEC-0008 — no scroll, always fits). */
+  padding: clamp(18px, 3.5vh, 32px) 32px;
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100dvh - 20px);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: clamp(8px, 1.6vh, 16px);
 }
 
 /* A0012 / SPEC-0007 R13 — provider attestation panel (de-identified yes/no toggles). */

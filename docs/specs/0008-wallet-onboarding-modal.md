@@ -24,6 +24,10 @@ This extends the existing key-paste/derive (SPEC-0005 R11, `Settings.tsx`,
   a localStorage `curie:VITE_PRIVATE_KEY` nor an env-provided key), show a **modal dialog**
   rendered above a **backdrop overlay that dims/greys the rest of the app** and blocks
   interaction until resolved.
+- **R1a (MUST) Compact, non-scrolling card.** The modal card is a **fixed-fit panel that
+  always fits the viewport without an internal scrollbar** — vertical padding and gap shrink
+  on short viewports (`clamp(...)`), `overflow: hidden`, `max-height: calc(100dvh - 20px)`.
+  The card never produces its own scrollbar.
 - **R2 (MUST) Provider + insurer fields.** The modal collects a **provider** wallet and an
   **insurer** wallet. Each is a secret key input; the key is **masked** (password dots)
   with an optional show toggle. The **address is derived and displayed** from the key.
@@ -40,12 +44,15 @@ This extends the existing key-paste/derive (SPEC-0005 R11, `Settings.tsx`,
 - **R5 (MUST) Env-provided wallets load + skip the modal.** When env keys
   (`VITE_PRIVATE_KEY` [+ `VITE_PRIVATE_KEY_INSURER`]) are present, they load normally and
   the modal does **not** appear (unless forced, R6).
-- **R6 (MUST) Force-prompt env var for testing — pre-fills from env.**
-  `VITE_FORCE_WALLET_PROMPT=1` forces the modal even when env keys exist, **pre-filled from
-  `import.meta.env.VITE_PRIVATE_KEY` / `VITE_PRIVATE_KEY_INSURER`** (the env values, read the
-  same way `keyOverride` reads env), so the flow is testable against known-good keys.
-  Default (unset) = off. **This is a dev/test-only flag** — see R7 for why reading env here
-  does not leak into the public bundle.
+- **R6 (MUST) Modal pre-fills from env defaults when available; force-prompt for testing.**
+  Whenever the modal is shown, its fields **pre-fill from `import.meta.env.VITE_PRIVATE_KEY` /
+  `VITE_PRIVATE_KEY_INSURER` when those env values are present** (read the same way
+  `keyOverride` reads env), falling back to localStorage otherwise — this is independent of
+  the force flag. `VITE_FORCE_WALLET_PROMPT=1` additionally **forces the modal to appear** even
+  when env keys exist (so the load flow is testable against known-good keys); default
+  (unset) = off. Reading env for pre-fill is a **dev/test-only** effect — see R7 for why it
+  does not leak into the public bundle (the public build ships `VITE_PRIVATE_KEY=""`, so the
+  env contributes nothing and the modal falls back to an empty localStorage).
 - **R7 (MUST) No key in the *deployed* bundle.** The reconciliation of R6 (read env) with
   "no embedded key": the **public deploy build sets `VITE_PRIVATE_KEY=""` (empty)** and does
   NOT set `VITE_FORCE_WALLET_PROMPT`, so Vite inlines `""` — there is no key value in the

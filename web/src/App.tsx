@@ -74,32 +74,27 @@ export function App() {
 
   const showModal = needsWallet || forcePrompt;
 
-  // SPEC-0008 R6 (amended) — pre-fill the modal from env when forcePrompt=true,
-  // or from localStorage when the user has previously loaded keys.
-  //
-  // When forcePrompt=true: getDevPrefill reads VITE_PRIVATE_KEY[_INSURER] from
+  // SPEC-0008 R6 (amended) — pre-fill the modal from env DEFAULTS when available,
+  // else from localStorage. getDevPrefill reads VITE_PRIVATE_KEY[_INSURER] from
   // import.meta.env via walletKeys.ts (dynamic bracket access — not a direct
-  // import.meta.env.VITE_PRIVATE_KEY reference in App.tsx, which would trigger
-  // a named-property inline by Vite and violate §6). In the public deploy build,
-  // VITE_PRIVATE_KEY="" so getDevPrefill returns "", giving an empty modal.
-  // In a local dev build with a populated .env, the modal opens pre-filled.
-  //
-  // When forcePrompt=false: read from localStorage (keys already loaded by the
-  // user in a prior session, or set via Settings).
-  const envKeyForPrefill_VITE_PRIVATE_KEY = getDevPrefill("VITE_PRIVATE_KEY");
-  const envKeyForPrefill_VITE_PRIVATE_KEY_INSURER = getDevPrefill("VITE_PRIVATE_KEY_INSURER");
-  const prefillProvider = forcePrompt
-    ? envKeyForPrefill_VITE_PRIVATE_KEY
-    : (() => {
-        try { return window.localStorage.getItem(KEY_STORAGE_PREFIX + "VITE_PRIVATE_KEY") ?? ""; }
-        catch { return ""; }
-      })();
-  const prefillInsurer = forcePrompt
-    ? envKeyForPrefill_VITE_PRIVATE_KEY_INSURER
-    : (() => {
-        try { return window.localStorage.getItem(KEY_STORAGE_PREFIX + "VITE_PRIVATE_KEY_INSURER") ?? ""; }
-        catch { return ""; }
-      })();
+  // import.meta.env.VITE_PRIVATE_KEY reference in App.tsx, which would trigger a
+  // named-property inline by Vite and violate §6). In the public deploy build,
+  // VITE_PRIVATE_KEY="" so getDevPrefill returns "" and the env contributes nothing;
+  // in a local dev build with a populated .env, the modal opens pre-filled from it.
+  // Prefer env DEFAULTS when available (a dev build with a populated .env), then fall
+  // back to localStorage (keys loaded in a prior session). This populates the modal from
+  // the environment whenever those vars are present — independent of forcePrompt. The
+  // public deploy build ships VITE_PRIVATE_KEY="" so getDevPrefill returns "" → the env
+  // contributes nothing and the modal falls back to localStorage (empty on first run),
+  // preserving the no-key-in-bundle invariant (SPEC-0008 §6 / R7).
+  const lsRead = (name: string): string => {
+    try { return window.localStorage.getItem(KEY_STORAGE_PREFIX + name) ?? ""; }
+    catch { return ""; }
+  };
+  const prefillProvider =
+    getDevPrefill("VITE_PRIVATE_KEY") || lsRead("VITE_PRIVATE_KEY");
+  const prefillInsurer =
+    getDevPrefill("VITE_PRIVATE_KEY_INSURER") || lsRead("VITE_PRIVATE_KEY_INSURER");
 
   const handleWalletLoaded = useCallback(() => {
     // Keys have been written to localStorage; reload the page so client.ts
