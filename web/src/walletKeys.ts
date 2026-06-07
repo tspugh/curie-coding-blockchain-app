@@ -150,3 +150,34 @@ export function getDevPrefill(
     return "";
   }
 }
+
+/**
+ * SPEC-0008 R14 — designated BURNABLE demo keys for the public deploy.
+ *
+ * Read from a SEPARATE env channel (`VITE_DEMO_PROVIDER_KEY` /
+ * `VITE_DEMO_INSURER_KEY`) than the user's own `VITE_PRIVATE_KEY` slot. These are
+ * intentionally baked into the PUBLIC bundle so a "Load demo wallets" button can
+ * pre-fill the onboarding modal — they are **public, testnet-only, disposable**
+ * keys anyone can use, NOT a secret. The user's own-key path (R7) is unchanged:
+ * `VITE_PRIVATE_KEY` is still stripped to "" in the public build.
+ *
+ * Returns `null` when no valid demo provider key is configured (the button hides),
+ * so non-demo builds never show the affordance. Dynamic bracket access keeps Vite
+ * from inlining a *named* `import.meta.env.VITE_DEMO_*` reference elsewhere (same
+ * footprint rule as `getDevPrefill`).
+ */
+export function getDemoKeys(
+  envOverride?: Record<string, unknown>,
+): { provider: string; insurer: string } | null {
+  try {
+    const meta = envOverride
+      ?? ((typeof import.meta !== "undefined" && import.meta.env) ? import.meta.env : undefined);
+    const rawP: unknown = meta?.["VITE_DEMO_PROVIDER_KEY"];
+    if (typeof rawP !== "string" || !isValidHexKey(rawP)) return null;
+    const rawI: unknown = meta?.["VITE_DEMO_INSURER_KEY"];
+    const insurer = typeof rawI === "string" && isValidHexKey(rawI) ? rawI : "";
+    return { provider: rawP, insurer };
+  } catch {
+    return null;
+  }
+}

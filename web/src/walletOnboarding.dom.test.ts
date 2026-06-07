@@ -938,3 +938,60 @@ test("DOM NO-PHI: no SSN/DOB/phone/email patterns in synthetic fixtures", () => 
     "email pattern",
   );
 });
+
+// ---------------------------------------------------------------------------
+// DOM-T7 / DOM-T8 (SPEC-0008 R14) — "Load demo wallets" button (burnable demo keys)
+// ---------------------------------------------------------------------------
+
+/** Invoke a React onClick handler on a DOM node (mirrors invokeOnChange). */
+function invokeClick(el: Element): void {
+  const propsKey = Object.keys(el).find((k) => k.startsWith("__reactProps"));
+  if (!propsKey) throw new Error(`No __reactProps on element: ${el.tagName}`);
+  const props = (el as unknown as Record<string, Record<string, unknown>>)[propsKey];
+  if (typeof props?.["onClick"] !== "function") throw new Error("onClick not found");
+  (props["onClick"] as (e?: unknown) => void)();
+}
+
+test("DOM-T7 (R14): no demo button when no demo provider key is configured", async () => {
+  const ctx = await renderInteractive({ onLoaded: () => {} });
+  try {
+    assert.equal(
+      ctx.query("[data-testid=wallet-onboarding-demo]"),
+      null,
+      "DOM-T7: 'Load demo wallets' button must be ABSENT when demoProvider is unset",
+    );
+  } finally {
+    await ctx.cleanup();
+  }
+});
+
+test("DOM-T8 (R14): demo button appears, fills both fields, and enables Load", async () => {
+  const ctx = await renderInteractive({
+    onLoaded: () => {},
+    demoProvider: PROVIDER_KEY,
+    demoInsurer: INSURER_KEY,
+  });
+  try {
+    const demoBtn = ctx.query("[data-testid=wallet-onboarding-demo]");
+    assert.ok(demoBtn, "DOM-T8: 'Load demo wallets' button must be present when demoProvider is set");
+    // The public-keys note must be shown (honest trust labeling).
+    assert.ok(
+      ctx.query("[data-testid=wallet-onboarding-demo-note]"),
+      "DOM-T8: the public/testnet-only note must be shown alongside the demo button",
+    );
+
+    await act(async () => { invokeClick(demoBtn!); });
+
+    // Both inputs now carry the demo keys → both derived addresses appear.
+    const provAddr = ctx.query("[data-testid=provider-key-input-address]");
+    const insAddr = ctx.query("[data-testid=insurer-key-input-address]");
+    assert.ok(provAddr?.textContent?.includes(PROVIDER_ADDR), "DOM-T8: provider address derives from demo key");
+    assert.ok(insAddr?.textContent?.includes(INSURER_ADDR), "DOM-T8: insurer address derives from demo key");
+
+    // Load is now enabled (valid provider derives).
+    const loadBtn = ctx.query("[data-testid=wallet-onboarding-load]") as HTMLButtonElement;
+    assert.equal(loadBtn.disabled, false, "DOM-T8: Load enabled after demo keys loaded");
+  } finally {
+    await ctx.cleanup();
+  }
+});

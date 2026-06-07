@@ -30,6 +30,7 @@ import {
 } from "../client.js";
 import { SAMPLE_CASE } from "../sampleCase.js";
 import { ErrorCard } from "../components/ErrorCard.js";
+import { AttestationToggles } from "../components/AttestationToggles.js";
 import {
   FDA_DRUG_LABEL,
   FDA_INDICATION_TEXT,
@@ -802,50 +803,11 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                   </p>
                 </>
               )}
-              {attestedClauses.length > 0 && (
-                <div className="attestation-panel" data-testid="attestation-panel">
-                  <p className="action-label">Provider attestations (de-identified)</p>
-                  <p className="hint">
-                    Patient-specific criteria the AI <strong>records and trusts</strong> but does
-                    not independently verify — <em>provider-asserted, not agent-verified</em>. No
-                    PHI: only a yes/no and an optional de-identified evidence link cross on-chain.
-                  </p>
-                  {attestedClauses.map((c) => {
-                    const st = attests[c.id] ?? { attested: false, evidenceUrl: "" };
-                    return (
-                      <div key={c.id} className="attestation-row" data-testid={`attestation-${c.id}`}>
-                        <label className="attestation-toggle">
-                          <input
-                            type="checkbox"
-                            data-testid={`attestation-toggle-${c.id}`}
-                            checked={st.attested}
-                            onChange={(e) =>
-                              setAttests((m) => ({
-                                ...m,
-                                [c.id]: { ...st, attested: e.target.checked },
-                              }))
-                            }
-                          />
-                          <span>{c.text}</span>
-                        </label>
-                        <input
-                          type="text"
-                          className="attestation-url"
-                          data-testid={`attestation-url-${c.id}`}
-                          placeholder="De-identified evidence URL (optional)"
-                          value={st.evidenceUrl}
-                          onChange={(e) =>
-                            setAttests((m) => ({
-                              ...m,
-                              [c.id]: { ...st, evidenceUrl: e.target.value },
-                            }))
-                          }
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              <AttestationToggles
+                clauses={attestedClauses}
+                value={attests}
+                onChange={setAttests}
+              />
               <button
                 type="button"
                 className="primary"

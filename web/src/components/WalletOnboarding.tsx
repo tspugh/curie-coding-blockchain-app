@@ -51,6 +51,15 @@ interface WalletOnboardingProps {
    */
   readonly prefillProvider?: string;
   readonly prefillInsurer?: string;
+
+  /**
+   * SPEC-0008 R14 — designated BURNABLE demo keys (public, testnet-only). When a
+   * provider demo key is provided, a "Load demo wallets" button appears that fills
+   * the fields with these keys. Distinct from the user's own-key path; these are
+   * intentionally public (anyone can use them). Omit (default) → no button.
+   */
+  readonly demoProvider?: string;
+  readonly demoInsurer?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -131,10 +140,16 @@ export function WalletOnboarding({
   onLoaded,
   prefillProvider = "",
   prefillInsurer = "",
+  demoProvider = "",
+  demoInsurer = "",
 }: WalletOnboardingProps) {
   const [providerKey, setProviderKey] = useState(prefillProvider);
   const [insurerKey, setInsurerKey] = useState(prefillInsurer);
   const [error, setError] = useState<string | null>(null);
+
+  // SPEC-0008 R14: show the demo-load affordance only when a demo provider key
+  // is configured (public testnet-only burnable wallets).
+  const hasDemo = safeDerive(demoProvider) !== null;
 
   // SPEC-0008 R3 (amended): validity == successful derivation (computeAddress),
   // not regex shape alone. A shape-valid but out-of-range key (e.g. 0x00…00)
@@ -217,7 +232,29 @@ export function WalletOnboarding({
           </p>
         )}
 
-        <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-end" }}>
+        <div
+          style={{
+            marginTop: 8,
+            display: "flex",
+            justifyContent: hasDemo ? "space-between" : "flex-end",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          {hasDemo && (
+            <button
+              type="button"
+              onClick={() => {
+                setProviderKey(demoProvider);
+                setInsurerKey(demoInsurer);
+                setError(null);
+              }}
+              data-testid="wallet-onboarding-demo"
+              title="Fill the public testnet demo wallets (anyone can use them)"
+            >
+              Load demo wallets
+            </button>
+          )}
           <button
             type="button"
             className="primary"
@@ -228,6 +265,16 @@ export function WalletOnboarding({
             Load wallets
           </button>
         </div>
+        {hasDemo && (
+          <p
+            className="hint"
+            data-testid="wallet-onboarding-demo-note"
+            style={{ fontSize: 11.5, marginTop: 6 }}
+          >
+            "Load demo wallets" fills <strong>public, testnet-only</strong> keys anyone can
+            use — for trying the demo, not for real funds.
+          </p>
+        )}
       </div>
     </>
   );

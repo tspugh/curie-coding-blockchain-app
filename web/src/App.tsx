@@ -16,7 +16,7 @@ import {
   DEMO_MODE_STORAGE_KEY,
   loadDemoMode,
 } from "./demoMode.js";
-import { KEY_STORAGE_PREFIX, hasUsableProviderKey, getDevPrefill } from "./walletKeys.js";
+import { KEY_STORAGE_PREFIX, hasUsableProviderKey, getDevPrefill, getDemoKeys } from "./walletKeys.js";
 
 /** SPEC-0005 R13 — ids the demoMode toggle hides when OFF. */
 const SEED_PROFILE_IDS: ReadonlySet<string> = new Set([
@@ -95,6 +95,9 @@ export function App() {
     getDevPrefill("VITE_PRIVATE_KEY") || lsRead("VITE_PRIVATE_KEY");
   const prefillInsurer =
     getDevPrefill("VITE_PRIVATE_KEY_INSURER") || lsRead("VITE_PRIVATE_KEY_INSURER");
+
+  // SPEC-0008 R14: designated burnable demo keys (public deploy). null when none.
+  const demoKeys = getDemoKeys();
 
   const handleWalletLoaded = useCallback(() => {
     // Keys have been written to localStorage; reload the page so client.ts
@@ -382,6 +385,8 @@ export function App() {
           onLoaded={handleWalletLoaded}
           prefillProvider={prefillProvider}
           prefillInsurer={prefillInsurer}
+          demoProvider={demoKeys?.provider ?? ""}
+          demoInsurer={demoKeys?.insurer ?? ""}
         />
       )}
     </div>

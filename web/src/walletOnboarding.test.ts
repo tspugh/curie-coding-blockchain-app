@@ -84,6 +84,7 @@ import {
   hasUsableProviderKey,
   deriveAddress,
   getDevPrefill,
+  getDemoKeys,
   KEY_STORAGE_PREFIX,
 } from "./walletKeys.js";
 
@@ -510,6 +511,40 @@ test("F2 (R6): getDevPrefill returns '' for absent / empty / invalid env value",
     getDevPrefill("VITE_PRIVATE_KEY", { VITE_PRIVATE_KEY: SHORT_KEY }),
     "",
     "shape-invalid → empty (no partial key leaks into the field)",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// R14 — getDemoKeys reads the SEPARATE burnable-demo channel (public deploy),
+// independent of the user's own VITE_PRIVATE_KEY slot.
+// ---------------------------------------------------------------------------
+
+test("R14: getDemoKeys returns {provider, insurer} when both demo keys are valid", () => {
+  const out = getDemoKeys({
+    VITE_DEMO_PROVIDER_KEY: PROVIDER_KEY,
+    VITE_DEMO_INSURER_KEY: INSURER_KEY,
+  });
+  assert.deepEqual(out, { provider: PROVIDER_KEY, insurer: INSURER_KEY });
+});
+
+test("R14: getDemoKeys insurer falls back to '' when only the provider demo key is set", () => {
+  const out = getDemoKeys({ VITE_DEMO_PROVIDER_KEY: PROVIDER_KEY });
+  assert.deepEqual(out, { provider: PROVIDER_KEY, insurer: "" });
+});
+
+test("R14: getDemoKeys returns null when no/invalid demo provider key (button hides)", () => {
+  assert.equal(getDemoKeys({}), null, "absent → null");
+  assert.equal(getDemoKeys({ VITE_DEMO_PROVIDER_KEY: "" }), null, "empty → null");
+  assert.equal(getDemoKeys({ VITE_DEMO_PROVIDER_KEY: SHORT_KEY }), null, "invalid → null");
+});
+
+test("R7/R14: the demo channel is independent of the user's own VITE_PRIVATE_KEY slot", () => {
+  // A public build sets VITE_PRIVATE_KEY="" (own slot empty) but DEMO keys present.
+  assert.equal(getDevPrefill("VITE_PRIVATE_KEY", { VITE_PRIVATE_KEY: "" }), "", "own slot stays empty");
+  assert.deepEqual(
+    getDemoKeys({ VITE_PRIVATE_KEY: "", VITE_DEMO_PROVIDER_KEY: PROVIDER_KEY, VITE_DEMO_INSURER_KEY: INSURER_KEY }),
+    { provider: PROVIDER_KEY, insurer: INSURER_KEY },
+    "demo channel still resolves when the own slot is empty",
   );
 });
 

@@ -69,6 +69,20 @@ This extends the existing key-paste/derive (SPEC-0005 R11, `Settings.tsx`,
   derives address; invalid key → blocked + error; insurer-empty → defaults to provider;
   `VITE_FORCE_WALLET_PROMPT=1` → modal appears pre-filled from env and loading the env
   wallets works; env-present (unforced) → no modal.
+- **R14 (MUST) Burnable demo keys behind an explicit button (public deploy convenience).**
+  Reconciles "the deployed demo should be pre-loadable" with R7 ("no key in the public
+  bundle"). The public bundle MAY carry a **designated burnable demo wallet** — read from a
+  **separate** env channel (`VITE_DEMO_PROVIDER_KEY` / `VITE_DEMO_INSURER_KEY`), distinct
+  from the user's own `VITE_PRIVATE_KEY` slot (which stays empty per R7). When a valid demo
+  provider key is present, the modal shows a **"Load demo wallets"** button that fills the
+  fields with the demo keys, plus a note that these are **public, testnet-only, disposable**
+  keys anyone can use (NOT a secret). The build keys DEFAULT to the local `.env` wallets and
+  MAY be overridden to a dedicated burnable wallet via `CURIE_DEMO_PROVIDER_KEY` /
+  `CURIE_DEMO_INSURER_KEY`; `deploy-static.sh` bakes them and **allowlists their exact values**
+  in the secret-guard (the guard still aborts on any OTHER inlined key value). A build with no
+  demo key configured shows no button (R7 unchanged). *Trust note:* a demo key is public by
+  design — use a dedicated burnable wallet (not the deploy wallet) so draining it is harmless
+  and the guard keeps protecting the deploy key.
 
 ## 3. Technical documentation
 
