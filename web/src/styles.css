@@ -2471,3 +2471,40 @@ tr.row-link:hover td:first-child {
   flex-direction: column;
   gap: 16px;
 }
+
+/* A0012 / SPEC-0007 R13 — provider attestation panel (de-identified yes/no toggles). */
+.attestation-panel {
+  margin: 0.75rem 0;
+  padding: 0.75rem 0.9rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent-mid);
+  border-radius: 8px;
+}
+.attestation-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--border-lt);
+}
+.attestation-row:first-of-type { border-top: none; }
+.attestation-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+.attestation-toggle input { margin-top: 0.2rem; flex: none; }
+.attestation-url {
+  margin-left: 1.5rem;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.82rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+}

@@ -12,8 +12,10 @@ import {
   stageNameFor,
   policiesForLine,
   getCuratedPolicy,
+  type Attestation,
   type CoverageEvent,
   type CuratedPolicy,
+  type PolicyClause,
   type NegotiationView,
   type PolicyCommitment,
   type PriceBasis,
@@ -33,6 +35,11 @@ import {
   FDA_INDICATION_TEXT,
   FDA_LABEL_URL,
 } from "../fdaIndication.js";
+import {
+  renderCuratedPolicyText,
+  resolveAttestedClauses,
+  buildAttestations,
+} from "../attestations.js";
 import { describeEvent, eventAttribution, eventTone, fmtAmount, shortHex } from "../shared.js";
 import { useWalletBalance } from "../hooks/useWalletBalance.js";
 import { GAS_RESERVE_WEI, AGENT_FEE_RESERVE_WEI } from "../config.js";
@@ -103,20 +110,6 @@ const STEPPER_STEPS: readonly {
  * payerLineDisplay (kept inline rather than shared to keep the diff tight; a
  * shared helper is a small future NIT closure).
  */
-/**
- * SPEC-0005 R14: serialize a curated policy into the single-string body the
- * insurer commits off-chain. The on-chain payload is the keccak256 of THIS
- * string, so the format MUST be stable for clause-level replay; do not
- * reorder or relabel without bumping the policy id.
- */
-function renderCuratedPolicyText(policy: CuratedPolicy): string {
-  const head = `${policy.name}. ${policy.summary}`;
-  const clauseLines = policy.clauses.map(
-    (c) => `Clause ${c.id}${c.voids ? " (FLAGGED)" : ""}: ${c.text}`,
-  );
-  return [head, ...clauseLines].join(" ");
-}
-
 /**
  * SPEC-0005 R15: serialize a custom (insurer-composed) policy. Each non-empty
  * textarea line becomes one clause; clauses are numbered `CUSTOM-N` so the
@@ -272,6 +265,9 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   const [customName, setCustomName] = useState("");
   const [customClauses, setCustomClauses] = useState("");
   const [decision, setDecision] = useState<Decision>(getNextDecision());
+  // A0012 / SPEC-0007 R13: provider's de-identified attestations for the attached
+  // policy's attested clauses, keyed by clause id. evidenceUrl is optional + de-identified.
+  const [attests, setAttests] = useState<Record<string, { attested: boolean; evidenceUrl: string }>>({});
   const [appealEvidence, setAppealEvidence] = useState("");
   const [evidenceText, setEvidenceText] = useState("");
   const [feedback, setFeedback] = useState("");
@@ -365,6 +361,14 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
     walletBalanceWei === null ? 0n : escrowWei + GAS_RESERVE_WEI - walletBalanceWei;
   const canAffordEscrow = escrowShortfallWei <= 0n;
   const canAdjudicate = view.adjudicable && isParty;
+  // A0012 / SPEC-0007 R13: reverse-map the on-chain policyHash to the attached policy's
+  // attested (patient-specific) clauses so the provider can attest before firing the AI
+  // decision. Plain call (not useMemo) — runs after the early return; cheap. Empty for
+  // custom/public-only policies. (Logic + tests live in ../attestations.ts.)
+  const attestedClauses: readonly PolicyClause[] = resolveAttestedClauses(
+    policy?.policyHash,
+    n.payerLine,
+  );
   // Adjudication fires the two-agent flow funded by the CALLER (agent fee + gas).
   // The local run() helper skips useAction's preflight, so guard here — otherwise
   // an underfunded wallet (e.g. the insurer) reverts opaquely on estimateGas.
@@ -798,6 +802,50 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                   </p>
                 </>
               )}
+              {attestedClauses.length > 0 && (
+                <div className="attestation-panel" data-testid="attestation-panel">
+                  <p className="action-label">Provider attestations (de-identified)</p>
+                  <p className="hint">
+                    Patient-specific criteria the AI <strong>records and trusts</strong> but does
+                    not independently verify — <em>provider-asserted, not agent-verified</em>. No
+                    PHI: only a yes/no and an optional de-identified evidence link cross on-chain.
+                  </p>
+                  {attestedClauses.map((c) => {
+                    const st = attests[c.id] ?? { attested: false, evidenceUrl: "" };
+                    return (
+                      <div key={c.id} className="attestation-row" data-testid={`attestation-${c.id}`}>
+                        <label className="attestation-toggle">
+                          <input
+                            type="checkbox"
+                            data-testid={`attestation-toggle-${c.id}`}
+                            checked={st.attested}
+                            onChange={(e) =>
+                              setAttests((m) => ({
+                                ...m,
+                                [c.id]: { ...st, attested: e.target.checked },
+                              }))
+                            }
+                          />
+                          <span>{c.text}</span>
+                        </label>
+                        <input
+                          type="text"
+                          className="attestation-url"
+                          data-testid={`attestation-url-${c.id}`}
+                          placeholder="De-identified evidence URL (optional)"
+                          value={st.evidenceUrl}
+                          onChange={(e) =>
+                            setAttests((m) => ({
+                              ...m,
+                              [c.id]: { ...st, evidenceUrl: e.target.value },
+                            }))
+                          }
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               <button
                 type="button"
                 className="primary"
@@ -813,7 +861,8 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                     return;
                   }
                   setNextDecision(decision);
-                  void run(() => client.negotiation.requestAdjudication(reqId));
+                  const attestations = buildAttestations(attestedClauses, attests);
+                  void run(() => client.negotiation.requestAdjudication(reqId, attestations));
                 }}
               >
                 Request AI Decision →
