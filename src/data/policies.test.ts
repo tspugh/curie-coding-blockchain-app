@@ -43,11 +43,14 @@ test("POLICY_LIBRARY has at least 4 curated policies", () => {
   );
 });
 
-test("POLICY_LIBRARY covers all three payer lines", () => {
+test("POLICY_LIBRARY covers the demo's payer lines (Part D + Commercial)", () => {
+  // 2026-06-07: reduced to the coherent worked-example set (adalimumab Part D + Commercial,
+  // bupropion Commercial). The Medicaid-Dulaglutide policy was removed (no paired evidence /
+  // demo case), so Medicaid is intentionally no longer covered — every remaining policy is a
+  // drug with a matching drugEvidenceMap entry + demo case.
   const lines = new Set(POLICY_LIBRARY.map((p) => p.payerLine));
   assert.ok(lines.has(PayerLine.PartD), "PartD missing");
   assert.ok(lines.has(PayerLine.Commercial), "Commercial missing");
-  assert.ok(lines.has(PayerLine.Medicaid), "Medicaid missing");
 });
 
 test("each curated policy has id + name + non-empty summary + ≥1 clause", () => {

@@ -42,59 +42,19 @@ export const DEMO_CASES: ReadonlyArray<DemoCase> = Object.freeze([
     daysSupply: "28",
   },
   {
-    id: "semaglutide-t2dm",
-    label: "Semaglutide (Ozempic) — type 2 diabetes",
-    drug: "Semaglutide (Ozempic)",
+    // SPEC-0007 §3.7 off-label worked example. Paired with the
+    // `commercial-pa-bupropion-adhd` policy. Starts on the FDA WELLBUTRIN source, which does
+    // NOT list ADHD → expected DENY (off-label). The approve path is an appeal with a
+    // compendia source (SPEC-0010). PayerLine Commercial matches the bupropion policy.
+    id: "bupropion-adhd",
+    label: "Bupropion (Wellbutrin) — ADHD (off-label, expect Deny)",
+    drug: "Bupropion (Wellbutrin)",
     justification:
-      "Adult with type 2 diabetes, HbA1c above goal on metformin. Requesting semaglutide per FDA-approved indication for glycemic control.",
+      "Adult with attention-deficit/hyperactivity disorder (ADHD) inadequately controlled on first-line options; clinician requests bupropion off-label. Off-label use; appeal with compendia support if denied.",
     payerLine: PayerLine.Commercial,
     requestedAmount: AMT,
     quantity: "1",
-    daysSupply: "28",
-  },
-  {
-    id: "ustekinumab-crohns",
-    label: "Ustekinumab (Stelara) — Crohn's disease",
-    drug: "Ustekinumab (Stelara)",
-    justification:
-      "Adult with moderately-to-severely active Crohn's disease; inadequate response to conventional therapy. Requesting ustekinumab per FDA-approved indication.",
-    payerLine: PayerLine.Commercial,
-    requestedAmount: AMT,
-    quantity: "1",
-    daysSupply: "56",
-  },
-  {
-    id: "lecanemab-alzheimers",
-    label: "Lecanemab (Leqembi) — early Alzheimer's",
-    drug: "Lecanemab (Leqembi)",
-    justification:
-      "Patient with mild cognitive impairment / mild dementia due to Alzheimer's disease, amyloid-confirmed. Requesting lecanemab per FDA-approved indication.",
-    payerLine: PayerLine.PartD,
-    requestedAmount: AMT,
-    quantity: "1",
-    daysSupply: "28",
-  },
-  {
-    id: "tirzepatide-t2dm",
-    label: "Tirzepatide (Mounjaro) — type 2 diabetes",
-    drug: "Tirzepatide (Mounjaro)",
-    justification:
-      "Adult with type 2 diabetes inadequately controlled on first-line therapy. Requesting tirzepatide per FDA-approved indication for glycemic control.",
-    payerLine: PayerLine.Commercial,
-    requestedAmount: AMT,
-    quantity: "1",
-    daysSupply: "28",
-  },
-  {
-    id: "dupilumab-derm",
-    label: "Dupilumab (Dupixent) — atopic dermatitis",
-    drug: "Dupilumab (Dupixent)",
-    justification:
-      "Adult with moderate-to-severe atopic dermatitis inadequately controlled with topical prescription therapies. Requesting dupilumab per FDA-approved indication.",
-    payerLine: PayerLine.Commercial,
-    requestedAmount: AMT,
-    quantity: "2",
-    daysSupply: "28",
+    daysSupply: "30",
   },
 ]);
 

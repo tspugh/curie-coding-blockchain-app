@@ -132,65 +132,14 @@ export const POLICY_LIBRARY: ReadonlyArray<CuratedPolicy> = Object.freeze([
     ],
   }),
 
-  // ── 2. Commercial PA-required (demo-canonical compliant) ────────────────
-  Object.freeze({
-    id: "commercial-pa-etanercept",
-    name: "Commercial PA-required — Etanercept (Specialty)",
-    payerLine: PayerLine.Commercial,
-    summary:
-      "Demo Commercial plan prior-authorization criteria for etanercept with rheumatology-led documentation.",
-    clauses: [
-      Object.freeze({
-        id: "COM-ETA-01",
-        type: "public" as ClauseType,
-        text:
-          "Prior authorization required for biologic DMARDs in rheumatoid arthritis. Requires rheumatologist consult note, baseline labs (CBC, LFT, TB screen), and trial-and-failure of methotrexate at full effective dose for >= 3 months unless contraindicated.",
-        check: {
-          kind: "indication" as PublicCheckKind,
-          param: "rheumatoid arthritis",
-          sourceUrl:
-            "https://api.fda.gov/drug/label.json?search=openfda.brand_name:ENBREL&limit=1",
-        },
-      }),
-      Object.freeze({
-        id: "COM-ETA-02",
-        type: "attested" as ClauseType,
-        text:
-          "Renewal at 6 months requires documented DAS28 improvement or comparable PRO; non-response shifts the patient to a tier-3 alternative.",
-      }),
-    ],
-  }),
+  // NOTE: the former Commercial-Etanercept (#2) and Medicaid-Dulaglutide (#3) policies were
+  // removed (2026-06-07) — they had no paired evidence/demo case (no drugEvidenceMap entry,
+  // not in the Create demo dropdown), so the demo could never run them end-to-end. The
+  // library now holds only drugs with a coherent policy + evidence pairing: adalimumab
+  // (the §3.6 Commercial + Part D worked example, + the demo-bad clause) and bupropion
+  // (the §3.7 off-label example). See demoCases.ts / drugEvidenceMap.ts.
 
-  // ── 3. Medicaid step-therapy (demo-canonical compliant) ─────────────────
-  Object.freeze({
-    id: "medicaid-step-dulaglutide",
-    name: "Medicaid step-therapy — Dulaglutide (GLP-1)",
-    payerLine: PayerLine.Medicaid,
-    summary:
-      "Demo Medicaid MCO step-therapy for GLP-1s in type-2 diabetes with required SGLT2-inhibitor trial.",
-    clauses: [
-      Object.freeze({
-        id: "MED-DUL-01",
-        type: "public" as ClauseType,
-        text:
-          "GLP-1 receptor agonists covered for T2DM with HbA1c >= 7.5% after a documented >= 3-month trial of metformin AT EFFECTIVE DOSE, plus a documented >= 8-week trial of an SGLT2 inhibitor (e.g. empagliflozin or dapagliflozin) unless contraindicated.",
-        check: {
-          kind: "indication" as PublicCheckKind,
-          param: "type 2 diabetes mellitus",
-          sourceUrl:
-            "https://api.fda.gov/drug/label.json?search=openfda.brand_name:TRULICITY&limit=1",
-        },
-      }),
-      Object.freeze({
-        id: "MED-DUL-02",
-        type: "attested" as ClauseType,
-        text:
-          "Step-therapy exception applies when SGLT2 inhibitors are contraindicated (e.g. recurrent genitourinary infection, prior DKA, or eGFR < 30) with explicit documentation.",
-      }),
-    ],
-  }),
-
-  // ── 4. Demo's known-bad policy (R23 flags the voids:true clause) ────────
+  // ── Demo's known-bad policy (R23 flags the voids:true clause) ───────────
   Object.freeze({
     id: "demo-bad-adalimumab-noncompliant",
     name: "DEMO ONLY — Non-compliant Adalimumab clause (R23 trigger)",
