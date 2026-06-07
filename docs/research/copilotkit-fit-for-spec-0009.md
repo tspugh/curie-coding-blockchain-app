@@ -8,9 +8,9 @@
 > shared state, streaming, **human-in-the-loop**, **browser-side frontend actions** that line
 > up with our BYOK signing — R52). **However**, its *backend* (CopilotRuntime + CoAgents +
 > AG-UI streaming) leans on **managed services** (Copilot Cloud + LangGraph Platform) and runs
-> **against the Lambda grain** — see *Hosting & backend complexity* below. **Revised v0 lean
-> (2026-06-07): hand-roll a simple chat UI on our own plain Lambda; treat CopilotKit-UI as an
-> optional later add; avoid its managed backend.**
+> **against the Lambda grain** — see *Hosting & backend complexity* below. **DECIDED (2026-06-07):
+> hand-roll a simple chat UI on our own plain Lambda (OQ-7 = A); CopilotKit stays a documented
+> fallback (self-hosted, or its free Cloud Developer tier), not a v0 dependency.**
 
 ## How it maps to SPEC-0009
 
@@ -117,15 +117,15 @@ and managed services.
 - **CopilotKit-UI stays an optional add** — either **self-hosted** (after a Lambda-streaming
   spike) or via **Copilot Cloud's free Developer tier** (1 seat / 50 MAU / 200 threads / 1 GB /
   3-day retention — fine for a demo; managed dep + egress, de-identified data only; you still
-  host the LangGraph/Bedrock agent). **Avoid LangGraph Platform (managed) regardless.** The pick
-  is the user's call (OQ-7).
+  host the LangGraph/Bedrock agent). **Avoid LangGraph Platform (managed) regardless.** **DECIDED
+  (OQ-7): (A) hand-roll for v0; CopilotKit is the documented fallback, not a dependency.**
 
-## Open decision (feeds SPEC-0009 OQ-7)
+## Decision (SPEC-0009 OQ-7) — DECIDED 2026-06-07
 
-- **OQ-7:** Use CopilotKit/CoAgents, or hand-roll the copilot UI + narration stream? **Revised
-  lean: hand-roll for v0** (Option A — simplest, self-contained, no managed deps). CopilotKit-UI
-  is an optional later add (self-hosted only, after a Lambda-streaming spike); avoid its managed
-  backend.
+- **(A) Hand-roll** the copilot chat UI + narration stream on our own Lambda — **no CopilotKit
+  dependency, no managed backend.** Simplest + self-contained, and the mockup already specifies
+  the UX. CopilotKit (self-hosted, or its free Copilot Cloud Developer tier — 50 MAU / 200 threads
+  / 3-day retention) stays a documented fallback if the hand-rolled UX proves costly.
 
 ## Sources
 
