@@ -91,7 +91,9 @@ test("debounce: onResult is NOT called before the delay and IS called once after
   );
 
   assert.equal(results.length, 1, "onResult must be called exactly once after debounce");
-  assert.equal(results[0].ok, true, "result must be ok:true from the live probe");
+  const first = results[0];
+  assert.ok(first, "the debounced result must be present");
+  assert.equal(first.ok, true, "result must be ok:true from the live probe");
 
   cleanup();
 });

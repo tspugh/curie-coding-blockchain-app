@@ -502,13 +502,22 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     if (n.state !== State.Approved && n.state !== State.Denied) {
       throw new Error("accept: not ruled");
     }
-    this.onlyParty(n); // R11: either party may accept
-    if (partyId === n.providerId) {
+    this.onlyParty(n); // R11: either party may accept (its OWN flag)
+    // C1 (security): bind the accept flag to the caller — a party may set only
+    // its own flag, else one party could pass the other's partyId to flip both
+    // and settle alone (mirrors the contract's msg.sender binding). Under the
+    // ANY_CALLER wildcard (single-wallet sim / back-compat tests) there is no
+    // distinct msg.sender to bind to, so honor the partyId directly.
+    if (this.caller === ANY_CALLER) {
+      if (partyId === n.providerId) n.providerAccepted = true;
+      else if (partyId === n.insurerId) n.insurerAccepted = true;
+      else throw new Error("accept: not your party");
+    } else if (this.is(n.providerAddr)) {
+      if (partyId !== n.providerId) throw new Error("accept: not your party");
       n.providerAccepted = true;
-    } else if (partyId === n.insurerId) {
-      n.insurerAccepted = true;
     } else {
-      throw new Error("accept: unknown party");
+      if (partyId !== n.insurerId) throw new Error("accept: not your party");
+      n.insurerAccepted = true;
     }
     this.emit({ name: "Accepted", reqId, partyId });
   }

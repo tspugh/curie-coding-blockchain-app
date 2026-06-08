@@ -9,7 +9,7 @@
  * `deriveAddress` (live address derivation for WalletOnboarding + Settings),
  * and `getDevPrefill` (env-key reader for the force-prompt modal pre-fill, R6).
  */
-import { computeAddress } from "ethers";
+import { computeAddress, Wallet } from "ethers";
 
 /** localStorage key prefix for runtime-configurable wallet private keys. */
 export const KEY_STORAGE_PREFIX = "curie:" as const;
@@ -166,6 +166,24 @@ export function getDevPrefill(
  * from inlining a *named* `import.meta.env.VITE_DEMO_*` reference elsewhere (same
  * footprint rule as `getDevPrefill`).
  */
+/**
+ * Generate a fresh pair of EPHEMERAL, throwaway signing keys (provider +
+ * insurer) via `ethers.Wallet.createRandom()`.
+ *
+ * Used by the onboarding modal in SIMULATED wallet mode so the "Load demo
+ * wallets" button can never dead-end when no `VITE_DEMO_*` keys are configured
+ * (e.g. a plain sim build). These keys hold no funds and back a chain-less
+ * backend — they exist only to satisfy the startup gate so the user can proceed.
+ *
+ * PHI note: random key material only — no patient data.
+ */
+export function generateEphemeralKeys(): { provider: string; insurer: string } {
+  return {
+    provider: Wallet.createRandom().privateKey,
+    insurer: Wallet.createRandom().privateKey,
+  };
+}
+
 export function getDemoKeys(
   envOverride?: Record<string, unknown>,
 ): { provider: string; insurer: string } | null {

@@ -54,15 +54,15 @@ export const SAMPLE_CASE: SampleCase = {
     "formulary coverage exception with prior authorization.",
   ].join(" "),
   drug: "Adalimumab (RxNorm 1366724 / NDC 00074-3799-02)",
-  // In WEI (escrowed by the insurer at engage). Small so the demo insurer
+  // In STT (escrowed by the insurer at engage). Small so the demo insurer
   // wallet trivially covers it; symbolic stand-in for the coverage value.
-  requestedAmount: "5200",
+  requestedAmount: "0.005",
   // 2 prefilled pens — the cap driver (NDC-pinned dispensed units, R2/R6a).
   quantity: "2",
   // 28-day supply — necessity-utilization context only, NOT a price input (R2).
   daysSupply: "28",
   evidenceRef:
-    "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA — indication: moderate-to-severe chronic plaque psoriasis",
+    "https://api.fda.gov/drug/label.json?search=openfda.brand_name:HUMIRA&limit=1",
   policyText: [
     "Part D exception-criteria policy — Adalimumab (Specialty Tier 5).",
     "Clause PD-ADA-01: Covered with prior authorization for moderate-to-severe",

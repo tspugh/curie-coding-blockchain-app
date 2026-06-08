@@ -14,7 +14,12 @@
  * PHI — no patient data. Keys are testnet signing keys only.
  */
 import { useState, useCallback, ChangeEvent } from "react";
-import { KEY_STORAGE_PREFIX, isValidHexKey, deriveAddress } from "../walletKeys.js";
+import {
+  KEY_STORAGE_PREFIX,
+  isValidHexKey,
+  deriveAddress,
+  generateEphemeralKeys,
+} from "../walletKeys.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -60,6 +65,15 @@ interface WalletOnboardingProps {
    */
   readonly demoProvider?: string;
   readonly demoInsurer?: string;
+
+  /**
+   * U1 — true when the app is running in SIMULATED wallet mode. In sim mode the
+   * "Load demo wallets" button is ALWAYS shown and never dead-ends: if no
+   * configured demo keys exist, it fills fresh ephemeral throwaway wallets
+   * (ethers Wallet.createRandom) so the user can always proceed. Real mode is
+   * unchanged — the button appears only when configured demo keys are present.
+   */
+  readonly simMode?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,7 +99,7 @@ function KeyField({ label, value, onChange, required, testId }: KeyFieldProps) {
   );
 
   return (
-    <div className="key-row" style={{ flexDirection: "column", alignItems: "flex-start" }}>
+    <div className="key-row key-row--column">
       <label htmlFor={testId} style={{ marginBottom: 4 }}>
         {label}
         {!required && (
@@ -142,14 +156,31 @@ export function WalletOnboarding({
   prefillInsurer = "",
   demoProvider = "",
   demoInsurer = "",
+  simMode = false,
 }: WalletOnboardingProps) {
   const [providerKey, setProviderKey] = useState(prefillProvider);
   const [insurerKey, setInsurerKey] = useState(prefillInsurer);
   const [error, setError] = useState<string | null>(null);
 
-  // SPEC-0008 R14: show the demo-load affordance only when a demo provider key
-  // is configured (public testnet-only burnable wallets).
-  const hasDemo = safeDerive(demoProvider) !== null;
+  // SPEC-0008 R14: in real mode the demo-load affordance shows only when a demo
+  // provider key is configured (public testnet-only burnable wallets). U1: in
+  // sim mode it is ALWAYS shown — when no demo key is configured it generates
+  // ephemeral throwaway wallets so the modal can never dead-end.
+  const hasConfiguredDemo = safeDerive(demoProvider) !== null;
+  const showDemoButton = hasConfiguredDemo || simMode;
+
+  const handleLoadDemo = useCallback(() => {
+    if (hasConfiguredDemo) {
+      setProviderKey(demoProvider);
+      setInsurerKey(demoInsurer);
+    } else {
+      // Sim mode with no configured demo keys → fresh ephemeral wallets.
+      const { provider, insurer } = generateEphemeralKeys();
+      setProviderKey(provider);
+      setInsurerKey(insurer);
+    }
+    setError(null);
+  }, [hasConfiguredDemo, demoProvider, demoInsurer]);
 
   // SPEC-0008 R3 (amended): validity == successful derivation (computeAddress),
   // not regex shape alone. A shape-valid but out-of-range key (e.g. 0x00…00)
@@ -236,21 +267,21 @@ export function WalletOnboarding({
           style={{
             marginTop: 8,
             display: "flex",
-            justifyContent: hasDemo ? "space-between" : "flex-end",
+            justifyContent: showDemoButton ? "space-between" : "flex-end",
             alignItems: "center",
             gap: 8,
           }}
         >
-          {hasDemo && (
+          {showDemoButton && (
             <button
               type="button"
-              onClick={() => {
-                setProviderKey(demoProvider);
-                setInsurerKey(demoInsurer);
-                setError(null);
-              }}
+              onClick={handleLoadDemo}
               data-testid="wallet-onboarding-demo"
-              title="Fill the public testnet demo wallets (anyone can use them)"
+              title={
+                hasConfiguredDemo
+                  ? "Fill the public testnet demo wallets (anyone can use them)"
+                  : "Fill fresh throwaway wallets so you can try the simulated demo"
+              }
             >
               Load demo wallets
             </button>
@@ -265,14 +296,23 @@ export function WalletOnboarding({
             Load wallets
           </button>
         </div>
-        {hasDemo && (
+        {showDemoButton && (
           <p
             className="hint"
             data-testid="wallet-onboarding-demo-note"
             style={{ fontSize: 11.5, marginTop: 6 }}
           >
-            "Load demo wallets" fills <strong>public, testnet-only</strong> keys anyone can
-            use — for trying the demo, not for real funds.
+            {hasConfiguredDemo ? (
+              <>
+                "Load demo wallets" fills <strong>public, testnet-only</strong> keys anyone
+                can use — for trying the demo, not for real funds.
+              </>
+            ) : (
+              <>
+                "Load demo wallets" fills <strong>fresh throwaway</strong> wallets so you can
+                try the simulated demo — they hold no funds.
+              </>
+            )}
           </p>
         )}
       </div>

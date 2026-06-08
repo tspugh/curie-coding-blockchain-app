@@ -7,14 +7,18 @@
 
 /**
  * The agent fee reserve required for the next-step `requestAdjudication`
- * (SPEC-0003 §2.6 R31; SPEC-0005 R19). Matches the value `client.ts`
- * forwards on the actual `requestAdjudication` call (see client.ts:160).
+ * (SPEC-0003 §2.6 R31; SPEC-0005 R19). This is the wallet's affordability
+ * pre-check; it MUST equal the value `client.ts` actually forwards on the
+ * `requestAdjudication` call (its `agentFeeValue`, see client.ts). Both read
+ * `VITE_AGENT_FEE_WEI`, so their DEFAULT fallbacks must not drift either — an
+ * undercount here lets an unaffordable adjudication slip past the pre-check and
+ * revert on-chain.
  *
- * Default 0.33 STT = 0.03 STT platform deposit + 3 × 0.10 STT validator
- * fees per the deployed AgentPlatform.
+ * Default 0.70 STT covers the two-agent flow (Amendment 0007): each agent call
+ * funds a platform deposit + validator reward, so the request needs 2×deposit.
  */
 export const AGENT_FEE_RESERVE_WEI: bigint = BigInt(
-  import.meta.env.VITE_AGENT_FEE_WEI ?? "330000000000000000",
+  import.meta.env.VITE_AGENT_FEE_WEI ?? "700000000000000000",
 );
 
 /**

@@ -142,10 +142,10 @@ export const POLICY_LIBRARY: ReadonlyArray<CuratedPolicy> = Object.freeze([
   // ── Demo's known-bad policy (R23 flags the voids:true clause) ───────────
   Object.freeze({
     id: "demo-bad-adalimumab-noncompliant",
-    name: "DEMO ONLY — Non-compliant Adalimumab clause (R23 trigger)",
+    name: "Demo only — Non-compliant adalimumab clause",
     payerLine: PayerLine.PartD,
     summary:
-      "Synthetic non-compliant Part D policy used by Scenario C2 to demonstrate the R23 on-label-policy-void path (amendment 0005).",
+      "A sample non-compliant Part D policy whose clause contradicts the FDA-approved label, so the AI flags it and voids the policy.",
     clauses: [
       Object.freeze({
         id: "PD-ADA-09",
@@ -168,7 +168,7 @@ export const POLICY_LIBRARY: ReadonlyArray<CuratedPolicy> = Object.freeze([
     name: "Specialty biologic — moderate-to-severe plaque psoriasis (Commercial PA)",
     payerLine: PayerLine.Commercial,
     summary:
-      "SPEC-0007 §3.6 worked example: Commercial PA policy for adalimumab in moderate-to-severe plaque psoriasis with two public clauses (indication + dosing) and two attested clauses (step-therapy + TB screening).",
+      "Commercial prior-authorization policy for adalimumab in moderate-to-severe plaque psoriasis: two public clauses (FDA indication + labeled dosing) and two clauses the provider attests to (step-therapy trial + TB screening).",
     clauses: [
       Object.freeze({
         id: "PP-COM-01",
@@ -213,7 +213,7 @@ export const POLICY_LIBRARY: ReadonlyArray<CuratedPolicy> = Object.freeze([
     name: "Non-stimulant for ADHD (Commercial PA) — bupropion off-label",
     payerLine: PayerLine.Commercial,
     summary:
-      "SPEC-0007 §3.7 worked example: bupropion for ADHD demonstrates the off-label deny → compendia-appeal approve path. Initial FDA label source denies (ADHD not in indications_and_usage); appeal cites the Cochrane systematic review (PMID 28965364), which concludes bupropion improves ADHD symptoms. NOTE (2026-06-07 live): the scraper returns one short snippet and lands the 'used off-label' line rather than the buried efficacy conclusion, so the appeal must be served a support-forward evidence doc (off-chain normalization quoting the Cochrane conclusion) for the flip — see docs/research/evidence-source-provenance.md.",
+      "Commercial prior-authorization policy for bupropion in ADHD — an off-label use. On the FDA label, ADHD is not an approved indication, so the initial review denies. An appeal that cites a recognized clinical-evidence source supporting bupropion for ADHD can flip the decision to approve.",
     clauses: [
       Object.freeze({
         id: "ADHD-BUP-01",

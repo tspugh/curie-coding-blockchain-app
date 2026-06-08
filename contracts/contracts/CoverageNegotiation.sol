@@ -685,12 +685,18 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         require(n.state == State.Approved || n.state == State.Denied, "accept: not ruled");
         _onlyParty(n);
 
-        if (partyId == n.providerId) {
+        // C1 (security): bind the accept flag to msg.sender. `_onlyParty` proves
+        // the caller is the provider or the insurer; a party may set ONLY its own
+        // accept flag. Without this, either party could pass the *other's* partyId
+        // to flip both flags alone and `settle()` unilaterally — bypassing the
+        // counterparty's R6c accept-vs-appeal choice. The partyId arg must name
+        // the caller's own role (kept for the Accepted event / ABI stability).
+        if (msg.sender == n.providerAddr) {
+            require(partyId == n.providerId, "accept: not your party");
             n.providerAccepted = true;
-        } else if (partyId == n.insurerId) {
-            n.insurerAccepted = true;
         } else {
-            revert("accept: unknown party");
+            require(partyId == n.insurerId, "accept: not your party");
+            n.insurerAccepted = true;
         }
         emit Accepted(reqId, partyId);
     }
@@ -1209,9 +1215,14 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
                 " Also extract any dosing or quantity limits stated for the drug. Do not summarize or omit the requested indication."
             )),
             n.agentEvidenceUrl,
-            false, // resolveUrl: do not follow redirects
-            1,     // numPages: single page
-            0      // confidenceThreshold: no minimum threshold
+            // F2 (2026-06-07): the prior `false`/`1` read page 1 only and never followed
+            // redirects, so the scrape choked on prose/compendia appeal sources (the bupropion
+            // off-label flip never landed) and a choke was indistinguishable from a real
+            // needs_more_info. Follow redirects + read multiple pages so the verbatim goal can
+            // reach the support passage on a non-FDA source.
+            true, // resolveUrl: follow redirects
+            5,    // numPages: read up to 5 pages (compendia/prose sources span pages)
+            0     // confidenceThreshold: no minimum threshold
         );
 
         // Effects before interaction (CEI).

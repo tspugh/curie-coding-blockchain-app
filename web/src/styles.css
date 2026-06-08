@@ -242,6 +242,48 @@ a:hover {
   gap: 3px;
 }
 
+/* U8: below ~1100px the brand + nav + 3-column wallet cluster overflow the
+   single header row and force horizontal scrolling (clipping the role pills).
+   Let the header wrap to a second row and the wallet cluster reflow so there's
+   no overflow at ~900px. */
+@media (max-width: 1100px) {
+  .header {
+    height: auto;
+    flex-wrap: wrap;
+    row-gap: 8px;
+    padding: 10px 20px;
+  }
+  .nav {
+    height: auto;
+    padding: 0;
+  }
+  .nav button {
+    height: 40px;
+  }
+  /* Wallet cluster drops below the brand/nav row and spans full width, wrapping
+     its columns instead of overflowing. */
+  .wallet {
+    margin-left: 0;
+    flex-basis: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    row-gap: 8px;
+    column-gap: 18px;
+    height: auto;
+    padding-left: 0;
+    border-left: none;
+  }
+  .wallet-line {
+    align-items: flex-start;
+  }
+  .wallet-line-content {
+    justify-content: flex-start;
+  }
+  .profile-switcher {
+    flex-wrap: wrap;
+  }
+}
+
 .wallet select {
   padding: 3px 8px;
   font-size: 12.5px;
@@ -662,12 +704,9 @@ tr.row-link:hover td:first-child {
   margin-top: 20px;
 }
 
-/* SPEC-0005 R7: insurer Detail collapses to a single full-width column so
-   the action panel + timeline below it read naturally. The provider keeps
-   the 2-col facts/decision grid. */
-.detail-grid.is-insurer {
-  grid-template-columns: 1fr;
-}
+/* 2026-06-07: insurer + provider now share the SAME 2-column Detail layout (the former
+   `.detail-grid.is-insurer` single-column override was removed) so the page structure is
+   consistent across roles for demo clarity — only the action affordances differ. */
 
 .btn-row {
   display: flex;
@@ -1132,6 +1171,23 @@ tr.row-link:hover td:first-child {
 .demo-hero-text span {
   font-size: 13px;
   color: var(--text-2);
+}
+
+/* ─── 25a. How-it-works strip (Overview — story clarity) ────────────────── */
+
+.how-it-works {
+  margin: 0 0 18px;
+  padding: 10px 16px;
+  background: var(--accent-lt, #eff6ff);
+  border: 1px solid var(--border-lt, #eaedf4);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted, #64748b);
+}
+
+.how-it-works strong {
+  color: var(--accent-dk, #1d4ed8);
 }
 
 /* ─── 25b. KPI strip (Overview — UNIT-UI-1) ─────────────────────────────── */
@@ -1917,6 +1973,17 @@ tr.row-link:hover td:first-child {
   font-size: 12.5px;
   font-weight: 600;
   color: var(--text-2);
+}
+/* U4: column variant (onboarding modal) — label sits directly above the input,
+   so the 160px flex-basis + wrap from the row variant must NOT apply (they left
+   a ~180px dead gap between the label and the field). Stack the children. */
+.key-row--column {
+  flex-direction: column;
+  align-items: flex-start;
+  flex-wrap: nowrap;
+}
+.key-row--column label {
+  flex: 0 0 auto;
 }
 .key-row input[type="password"] {
   flex: 1 1 320px;

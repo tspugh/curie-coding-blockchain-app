@@ -677,13 +677,13 @@ function UsersPanel() {
     <div className="settings-panel" data-testid="users-panel">
       <div className="section-label">Users</div>
       <p className="hint">
-        SPEC-0005 R10/R11/R12: arbitrary N users persisted to <code>curie:users</code>{" "}
-        in localStorage. The seed roles (provider / insurer / observer) remain
-        available in the picker above; entries added here appear as additional
-        profile pills in the top-bar immediately (R12 — no page reload required).
-        R11 key-paste path: paste a 0x-prefixed 64-hex private key and the
-        address is derived automatically; the key itself is <strong>never</strong>{" "}
-        persisted — only the resulting address goes to localStorage.
+        Add as many users as you like; they are saved in <code>curie:users</code>{" "}
+        in your browser. The built-in roles (provider / insurer / observer) stay
+        available in the picker above; users you add here appear as additional
+        profile pills in the top bar immediately — no page reload required. You can
+        paste a 0x-prefixed 64-character private key and the address is derived
+        automatically; the key itself is <strong>never</strong> saved — only the
+        resulting address is stored.
       </p>
       <ul className="users-list" data-testid="users-list">
         {users.length === 0 && (
@@ -808,10 +808,9 @@ function DemoModePanel() {
     <div className="settings-panel" data-testid="demo-mode-panel">
       <div className="section-label">Demo mode</div>
       <p className="hint">
-        SPEC-0005 R13: when ON, the legacy three-profile seeds (Provider /
-        Insurer / Observer) appear as top-bar pills for guided
-        walkthroughs. When OFF, only the users you add above remain in the
-        pill row. Default ON in v0; OFF in v1.
+        When ON, the three built-in roles (Provider / Insurer / Observer) appear
+        as top-bar pills for guided walkthroughs. When OFF, only the users you add
+        above remain in the pill row.
       </p>
       <button
         type="button"

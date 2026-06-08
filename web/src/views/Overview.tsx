@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { type CoverageEvent, type NegotiationView, Decision, PayerLine, State, stageNameFor } from "@lib";
 import { client } from "../client.js";
 import { fmtAmount, shortHex } from "../shared.js";
+import { drugNameForRef } from "../drugNames.js";
 
 // ---------------------------------------------------------------------------
 // KPI card — local component, not exported (UNIT-UI-1)
@@ -149,16 +150,12 @@ export function Overview({ events, onOpen, onCreate }: OverviewProps) {
       a.total++;
       if (!r.terminal) a.active++;
       if (r.state === State.Settled) a.settled++;
-      if (
-        r.negotiation.hasRuling &&
-        r.negotiation.lastDecision === Decision.Approve &&
-        r.negotiation.coveredAmount > 0n
-      ) {
-        a.saved += r.negotiation.requestedAmount - r.negotiation.coveredAmount;
+      if (r.negotiation.hasRuling && r.negotiation.lastDecision === Decision.Approve) {
+        a.approved++;
       }
       return a;
     },
-    { total: 0, active: 0, settled: 0, saved: 0n },
+    { total: 0, active: 0, settled: 0, approved: 0 },
   );
 
   return (
@@ -170,12 +167,19 @@ export function Overview({ events, onOpen, onCreate }: OverviewProps) {
         </button>
       </div>
 
+      {/* How-it-works strip: keep the payer↔provider↔LLM story visible even with data on screen */}
+      <p className="how-it-works">
+        <strong>How it works:</strong> a provider files a drug-coverage request → an
+        autonomous LLM agent reads the cited clinical evidence and rules on medical
+        necessity → provider &amp; payer accept or appeal → funds settle on-chain.
+      </p>
+
       {/* KPI strip — UNIT-UI-1 */}
       <div className="kpi-strip">
         <KpiCard label="Total requests" value={counts.total} sub="across all profiles" />
         <KpiCard label="In negotiation" value={counts.active} sub="before a terminal state" tone="review" />
+        <KpiCard label="Approved" value={counts.approved} sub="AI approved coverage" tone="accent" />
         <KpiCard label="Settled" value={counts.settled} sub="both parties accepted" tone="approved" />
-        <KpiCard label="Capped vs ask" value={fmtAmount(counts.saved)} sub="requested − covered" tone="accent" />
       </div>
 
       {/* Filter pill bar — UNIT-UI-2 */}
@@ -199,7 +203,13 @@ export function Overview({ events, onOpen, onCreate }: OverviewProps) {
 
       {rows.length === 0 ? (
         <div className="empty-state">
-          <p className="empty-icon">📋</p>
+          <p className="empty-icon" aria-hidden="true">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="5" y="4" width="14" height="17" rx="2" />
+              <path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1" />
+              <path d="M9 10h6M9 14h6M9 18h3" />
+            </svg>
+          </p>
           <p>No requests yet.</p>
           <p className="hint">Click <strong>+ New Request</strong> to file a drug coverage request and watch the AI arbitrate it in real time.</p>
           <button type="button" className="primary" onClick={onCreate}>
@@ -216,7 +226,6 @@ export function Overview({ events, onOpen, onCreate }: OverviewProps) {
               <th>Appeal stage</th>
               <th>Policy</th>
               <th>Requested</th>
-              <th>AI Covered</th>
               <th className="col-round">Round</th>
             </tr>
           </thead>
@@ -230,10 +239,10 @@ export function Overview({ events, onOpen, onCreate }: OverviewProps) {
                 onClick={() => onOpen(v.reqId)}
               >
                 <td>#{v.reqId.toString()}</td>
-                <td>
-                  <code title={v.negotiation.drugRef}>
-                    {shortHex(v.negotiation.drugRef)}
-                  </code>
+                <td title={v.negotiation.drugRef}>
+                  {drugNameForRef(v.negotiation.drugRef) ?? (
+                    <code>{shortHex(v.negotiation.drugRef)}</code>
+                  )}
                 </td>
                 <td>
                   <span
@@ -253,13 +262,6 @@ export function Overview({ events, onOpen, onCreate }: OverviewProps) {
                 </td>
                 <td>{v.policyAttached ? "✓ Attached" : "—"}</td>
                 <td>{fmtAmount(v.negotiation.requestedAmount)}</td>
-                <td>
-                  {v.negotiation.coveredAmount > 0n ? (
-                    <strong>{fmtAmount(v.negotiation.coveredAmount)}</strong>
-                  ) : (
-                    "—"
-                  )}
-                </td>
                 <td className="col-round">{v.negotiation.appealRound}</td>
               </tr>
             ))}
