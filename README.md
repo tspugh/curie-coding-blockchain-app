@@ -1,257 +1,167 @@
-# Curie
+# Curie — a guide through the code
 
-**Agent-mediated drug coverage decisions, settled on [Somnia](https://somnia.network).**
+**Agent-mediated drug coverage arbitration on [Somnia](https://somnia.network).**
 
-Curie resolves drug coverage and exception requests between payers and providers.
-A provider requests coverage — or a tier/formulary exception — for a drug; an AI
-mediator adjudicates the request against the payer's published formulary, public
-clinical evidence, and public price benchmarks over a transparent, auditable
-exchange; and the outcome (approval, denial with reasons, or a request for more
-evidence) is recorded on-chain, with approved coverage settling through escrow.
+> New here? Read top-to-bottom — it's a ~5-minute tour of what Curie is, how to
+> run it, how the demo flows, and where every piece lives in the code.
 
-**No protected health information enters the protocol.** Requests are argued at
-the level of the drug, the formulary, and public clinical evidence — never a
-patient's record.
+## 1. What Curie is
 
-> This is the application repository. The research, specs, and strategy that
-> inform it live in the surrounding spec repository one level up
-> (`curie-coding-blockchain`). See [CLAUDE.md](./CLAUDE.md) for the boundary
-> between the two and the rules for working across it.
+Curie resolves **drug coverage exceptions** between a **provider** and a **payer**
+on Somnia. A provider files a request for a drug (cited public clinical evidence by
+URL, plus a de-identified justification); an **autonomous LLM agent runs on-chain** —
+it first *reads* the cited public evidence, then *rules* on medical necessity
+(`approve` / `deny` / `needs_more_info` / `policy_invalid`); the ruling is an on-chain
+state transition with a public rationale; and approved coverage **settles through
+real escrow** on-chain. **No protected health information (PHI) ever touches the
+chain** — clinical text, drug, justification, and policy enter only as `keccak256`
+hashes, and the agent argues at the level of the drug, the formulary, and *public*
+evidence, never a patient chart.
 
-## How it works
+## 2. Quickstart
 
-1. A provider submits a coverage/exception request for a drug (identified by
-   RxNorm/NDC), citing public evidence — a clinical guideline, an FDA label,
-   comparative-effectiveness data — by reference.
-2. An **AI mediator** reads the payer's published formulary criteria and the
-   cited public evidence and rules: **approve**, **deny** (with reasons), or
-   **request more evidence**.
-3. The exchange runs as a state machine — request, evidence submission, rebuttal,
-   appeal — each round adjudicated by the mediator and recorded on-chain.
-4. Approved coverage **settles through escrow**, bounded by public price
-   benchmarks.
-
-> **MVP0 scope (SPEC-0001 + SPEC-0002):** the contract + state machine, the
-> simulated↔real wallet path, the web app, and the native-agent **necessity-arbiter**
-> ruling are built and tested — with a **deterministic** covered-amount cap
-> (Mark Cuban Cost Plus per-unit × `quantity`; NADAC is a floor reference) and the
-> **demo experience** (live evolving negotiation, the FDA-label policy-void "gotcha",
-> a price gauge, role/wallet gating, and a mocked CDS-Hooks `order-sign` entry point).
-> v0 settlement is an **event marker** (no token transfer); real escrow, PHI redaction,
-> and identity verification are out of scope. See
-> [`docs/specs/0001-mvp0-coverage-negotiation.md`](./docs/specs/0001-mvp0-coverage-negotiation.md)
-> and [`docs/specs/0002-demo-experience-and-integration-seam.md`](./docs/specs/0002-demo-experience-and-integration-seam.md).
-
-## Why an agent, why a blockchain, why Somnia
-
-- **Why an agent** — adjudicating a coverage exception means weighing a free-text
-  clinical-evidence argument against free-text formulary criteria. That is
-  judgment, not a lookup.
-- **Why a blockchain** — a neutral, tamper-evident record of who argued what, how
-  the mediator ruled and why, and how it settled — auditable by both parties,
-  owned by neither.
-- **Why Somnia** — the mediator's reasoning runs as consensus-verified, on-chain
-  inference that reads public sources directly, and settlement is instant.
-
-## Privacy boundary (hard rule)
-
-No clinical records on-chain, ever. On-chain: a **non-identifying drug request
-descriptor**, **public-evidence references**, the **mediator's rulings and
-rationale**, the **exchange transcript**, and **settlement**. Cited evidence
-stays at its public source and is read on demand; the chain holds references,
-rulings, and receipts.
-
-## Somnia networks
-
-| | Testnet (Shannon) | Mainnet |
-|---|---|---|
-| Chain ID | `50312` | `5031` |
-| Currency | `STT` | `SOMI` |
-| RPC | `https://api.infra.testnet.somnia.network/` | `https://api.infra.mainnet.somnia.network/` |
-| WebSocket | `wss://api.infra.testnet.somnia.network/ws` | `wss://api.infra.mainnet.somnia.network/ws` |
-| Explorer | https://shannon-explorer.somnia.network/ | https://explorer.somnia.network/ |
-| Faucet | https://testnet.somnia.network/ | https://stakely.io/faucet/somnia-somi |
-
-These are mirrored in [`src/config/networks.ts`](./src/config/networks.ts), the
-typed source of truth for the app.
-
-## Quick start
-
-The MVP0 (SPEC-0001) runs end-to-end with **no wallet and no chain** — the
-default `simulated` mode mirrors the contract in memory and mocks the agent
-ruling, so you can drive the whole flow locally:
+Requires Node ≥ 20. All commands run from the repo root.
 
 ```bash
-npm install
-npm run build          # compile the TS library to dist/ (the web app imports it)
-npm run web:dev        # serve the web app (Overview / Create / Maintain) in simulated mode
+npm install            # install deps
+npm run build          # compile the TS library to dist/ (the web app imports it via the @lib alias)
 ```
 
-Open the app, click **Load sample case**, file a request as the provider, switch
-to the insurer profile to **attach a policy & engage**, **request adjudication**,
-and watch the (mocked) necessity arbiter rule `approve | deny |
-need_more_evidence` (or void the contract on a non-compliant policy clause) — then
-accept and settle, or appeal with new evidence. The copy-pasteable case + the
-Part D / openFDA / NADAC + Cost Plus / non-compliant-policy fixtures live in
-[`demo-data/`](./demo-data/).
-
-The legacy chain smoke test still exists: `cp .env.example .env` then
-`npm run dev` connects to the configured network and prints a summary.
-
-## Smart contract, deployment & wallet modes
-
-The system of record is [`contracts/contracts/CoverageNegotiation.sol`](./contracts/contracts/CoverageNegotiation.sol)
-(Hardhat, Solidity 0.8.24, OpenZeppelin `Ownable` + `ReentrancyGuard`). It
-implements the full SPEC-0001 §3 state machine (provider files → insurer attaches
-policy → adjudication → ruling → accept/appeal/refuse → settle) and fires a
-**native Somnia agent** as a necessity arbiter on `requestAdjudication` via
-`createRequest`; the platform calls `handleResponse` back into the same contract
-with the decision + cited clause + receipt, and the contract computes the covered
-amount deterministically as `min(requested, benchmarkCap)` (the
-[`ISomniaAgent.sol`](./contracts/contracts/ISomniaAgent.sol) interface is
-verified field-for-field against the Somnia docs).
+**Run the web app in simulated mode (no wallet, no chain).** This is the default —
+an in-memory mirror of the contract with a mocked agent ruling, so you can drive the
+entire flow locally:
 
 ```bash
-npm --prefix contracts run compile      # build artifacts + typechain
-npm --prefix contracts run test         # Hardhat suite (T1–T10 + deterministic-cap + security), 11 passing
-npm --prefix contracts run deploy:somnia  # deploy to Somnia testnet (chain 50312)
+npm run web:dev        # Vite dev server (views: Overview / Create / Detail / Network / Settings)
 ```
 
-**Wallet modes (R11), one code path:**
+**Run the web app against the live testnet contract (real mode).** Copy the example
+env and set real-mode values, then build/serve. Note `VITE_*` vars are **inlined at
+build time** by Vite, so set them before building:
 
-- **Simulated** (default) — `SOMNIA_WALLET_MODE=simulated`. No funds; the agent
-  ruling is mocked. Used by the web app, the library, and CI. *(All current
-  demos / videos / recorded artefacts run in this mode per SPEC-0004 §2.7 R27.)*
-- **Real** — `SOMNIA_WALLET_MODE=real` + a funded `PRIVATE_KEY`. The library's
-  `RealBackend` talks to the deployed contract over ethers. Under Amendment
-  0006 (since R25 Tick C, 2026-05-30, contract address above), `_fireAgent`
-  routes through `_fireAgentSelfHosted` — the orchestrator EOA is the
-  contract's `platform`, and `scripts/orchestrator-real.ts` (Claude SDK)
-  delivers the ruling via `handleResponse`. Run the orchestrator as a
-  long-running process (`npm run orchestrator:real`) alongside the web app
-  to complete the end-to-end flow.
+```bash
+cp .env.example .env
+# in .env: VITE_WALLET_MODE=real, VITE_SOMNIA_NETWORK=testnet,
+#          VITE_CONTRACT_ADDRESS=<deployed address>, and funded provider/insurer keys
+npm run web:build      # static SPA -> web/dist/
+npm run web:preview    # serve the built bundle on :4173
+```
 
-  The previous build at `0x1dC5bA6771A7f4426ABE5BB808a7d51BdEA33E1A` was a
-  no-op end-to-end: every real-mode adjudication terminated with
-  `ResponseStatus.Failed (3)` because the live registered ABI for agent
-  `12875401142070969085` did not recognise the selector our contract emitted
-  (`0x4be9280f` from `ExtractANumber(string,string,uint256,uint256,string,string,bool,uint8)`).
-  That blocker is resolved under Amendment 0006 (self-hosted path) — see
-  `docs/amendments/0006-self-hosted-arbiter-agent.md`. SPEC-0004 §2.7 R25
-  is now design-complete + code-complete + live-deployed. SPEC-0004 §2.7
-  R27 (responsible-claim gate) still requires end-to-end smoke verification
-  on Somnia testnet with a real Claude call before demos can claim real-mode
-  arbitration; the orchestrator + ANTHROPIC_API_KEY round-trip is the
-  immediate next verification.
+**Run the tests:**
 
-**Amendment 0006 — self-hosted arbiter (code complete, redeploy pending).**
-[`docs/amendments/0006-self-hosted-arbiter-agent.md`](./docs/amendments/0006-self-hosted-arbiter-agent.md)
-chose option (c) — self-deploy the arbiter via an off-chain orchestrator —
-after the live `AgentRegistry` lookup needed for options (a)/(b) was found
-infeasible (an EIP-1967 proxy hides the registered ABI). Two of three sub-ticks
-are landed:
+```bash
+npm test               # full suite: ABI shape gate + typecheck + lib tests + Hardhat contract tests
+npm run test:lib       # just the TypeScript library/web unit tests (node --test over src + web/src)
+npm --prefix contracts test   # just the Hardhat contract suite
+```
 
-- **Tick A** — `scripts/orchestrator-real.ts` calls Claude (`claude-opus-4-7`)
-  via the Anthropic SDK with a Zod-validated structured-output schema,
-  hashes free-text rationale/clause/standard refs via `ethers.id` (SPEC-0004
-  R1 PHI backstop), submits the 10-tuple ruling via `handleResponse`. Falls
-  back to a deterministic stub when `ANTHROPIC_API_KEY` is unset.
-- **Tick B** — `CoverageNegotiation.sol` gained `bool public selfHosted` +
-  `setPlatformSelfHosted(address)` owner-only setter + an `_fireAgent` branch
-  that skips the external platform call when self-hosted, generates a
-  synthetic `requestId` via keccak256, and lets the orchestrator EOA deliver
-  the ruling. 39/39 hardhat PASS.
-- **Tick C — pending operator wallet STT funding.** Redeploy
-  `CoverageNegotiation` with the selfHosted-capable code + tick-49/50
-  10-arg `Ruled` ABI debt, then `setPlatformSelfHosted(<orchestrator EOA>)`.
+(There is also a legacy chain smoke test: `npm run dev` runs `src/index.ts` against the
+configured network.)
 
-The `npm run check-ruling-abi` build-time gate (SPEC-0004 R26 repurposed)
-asserts the orchestrator's encoder shape matches the contract decoder both
-statically (parsed from `CoverageNegotiation.sol` at runtime) and via 5
-sample-ruling round-trips through the ethers ABI codec.
+## 3. How the demo flows
 
-**Deploying + wiring the real path** (all via [`.env`](./.env.example)):
+Mirroring the app's own "How it works" strip:
 
-1. Set `PRIVATE_KEY`, `AGENT_PLATFORM_ADDRESS`, and `AGENT_ID`, then
-   `npm --prefix contracts run deploy:somnia`.
-2. Record the printed address in `COVERAGE_CONTRACT_ADDRESS` (and below) — this
-   is what `RealBackend` reads.
-3. Run with `SOMNIA_WALLET_MODE=real`.
-4. **For Amendment 0006 self-hosted mode:** post-deploy, call
-   `setPlatformSelfHosted(<orchestrator EOA>)` (the orchestrator's signing
-   address). Set `ANTHROPIC_API_KEY` in `.env`. Launch
-   `npm run orchestrator:real` as a long-running process; it subscribes to
-   `RulingRequested` events and delivers Claude-driven rulings.
+> A provider files a drug-coverage request → an autonomous LLM agent reads the cited
+> clinical evidence and rules on medical necessity → provider & payer accept or appeal
+> → funds settle on-chain.
 
-**Deployed testnet address:**
-`0x2c561f339a0A15cf0550cb9a0880Bb341488ac93` (Amendment 0006 build,
-deployed 2026-05-30 in R25 Tick C; `selfHosted == true`, `platform == 0x204031FA1ad46a2D453b7c54fC28Ff1787Bd9128`
-— the orchestrator EOA). Previous build `0x1dC5bA6771A7f4426ABE5BB808a7d51BdEA33E1A`
-remains on-chain but is no longer the active address — kept here for historical
-reference; the `setPlatformSelfHosted` tx that flipped the new contract into
-selfHosted mode is `0xff7918df8431f00c6cf289e3518d6eb4af0dbe34ae95462100d0542de051da42`.
+Concretely, the user journey is:
 
-## Scripts
+1. **Provider files** a coverage-exception request (`createContract`) — drug ref,
+   requested amount, a de-identified justification hash, and a **public evidence URL**
+   + prompt hint for the agent.
+2. **Payer engages** (`insurerEngage`) — attaches its governing policy (hash on-chain)
+   and **deposits escrow** covering the requested amount → `Ready`.
+3. **Adjudication fires** (`requestAdjudication`) → `UnderReview`. The on-chain agent
+   pipeline scrapes the cited evidence and rules.
+4. **Ruling lands**: `Approved`, `Denied`, `EvidenceRequested` (retriable), or
+   `PolicyInvalidated` (terminal).
+5. **Accept or appeal**: either party `accept`s; or, from a `Denied` ruling, a party
+   `appeal`s with **new public evidence** (re-fires the agent). Appeals are bounded to
+   N rounds (`maxRounds`, default 3) → `Deadlocked`.
+6. **Settle** (`settle`) once both parties accept: on `Approved`, `coveredAmount`
+   transfers to the provider and the remainder refunds to the insurer; on `Denied`,
+   the full escrow refunds to the insurer.
 
-| Script | Purpose |
+## 4. Architecture at a glance
+
+The system of record is the **`CoverageNegotiation.sol`** contract. Its agent
+adjudication is a **two-agent on-chain pipeline** (Amendment 0007): a *scrape* agent
+reads the cited public evidence, then a *decide* agent rules on it.
+
+```
+ provider                          CoverageNegotiation.sol                    Somnia agents
+ ────────                          ───────────────────────                    ─────────────
+ createContract ───────────────▶  Open
+ (payer) insurerEngage + escrow ▶  Ready
+ requestAdjudication ───────────▶  UnderReview
+                                   _fireScrape ─────────────────▶  LLM Parse Website
+                                                                   (ExtractString)
+                                                                   agentId 12875401142070969085
+                                   _handleScrapeResponse ◀──────── (extracted evidence string)
+                                   _fireDecide ─────────────────▶  LLM Inference
+                                                                   (inferString)
+                                                                   agentId 12847293847561029384
+                                   _handleDecideResponse ◀──────── "approve|deny|
+                                                                    needs_more_info|policy_invalid"
+                                   Approved / Denied / EvidenceRequested / PolicyInvalidated
+ accept ──▶ accept ──▶ settle ──▶  Settled  (escrow released: coveredAmount→provider, rest→insurer)
+```
+
+Key properties:
+
+- **Two-agent pipeline.** `_fireScrape` calls the Somnia **LLM Parse Website** agent
+  (`ExtractString`, selector `0xc2dd1a7a`) against the provider's evidence URL,
+  extracting verbatim text; the callback then runs `_fireDecide`, which calls the
+  Somnia **LLM Inference** agent (`inferString`, selector `0xfe7ca098`) and constrains
+  the answer to four allowed decision tokens. The platform calls `handleResponse`
+  back into the contract; `handleResponse` branches on the in-flight `AgentPhase`
+  (`Scraping` vs `Deciding`).
+- **Real escrow & settlement (Amendment 0008).** The insurer funds escrow at
+  `insurerEngage` (`msg.value >= requestedAmount`); `settle` releases on `Approved`
+  (covered → provider, remainder → insurer) or refunds in full on `Denied`. Every
+  terminal non-settle outcome (Deadlocked, PolicyInvalidated, ProviderRefused,
+  Withdrawn) refunds the full escrow to the insurer.
+- **Simulated vs real backend, one interface.** `createCoverageClient` (in
+  `src/contract/index.ts`) picks the backend from the wallet's mode:
+  `SimulatedBackend` (`src/contract/simulated.ts`) is an in-memory state machine that
+  mirrors the contract exactly with a mocked arbiter; `RealBackend`
+  (`src/contract/real.ts`) is an ethers v6 binding to the deployed contract. Both
+  implement the same `CoverageNegotiationClient`, so calling code never branches on
+  mode.
+- **PHI as hashes (hard invariant R4).** Only `keccak256` hashes, opaque `bytes32`
+  refs, amounts, decision codes, state, ids, addresses, and timestamps live on-chain.
+  The drug justification and policy body are stored as hashes (`justificationHash`,
+  `policyHash`); clause/standard references hash to `bytes32`; a defense-in-depth guard
+  rejects patient-name patterns in the agent prompt hint.
+
+## 5. Code map
+
+| Piece | Where it lives |
 |---|---|
-| `npm test` | Umbrella — chains `check-ruling-abi` → `test:lib` → hardhat (fastest-first, fail-fast). One-command CI parity with the spec-4 loop's Phase 5 #1 gate. |
-| `npm run check-ruling-abi` | R26 build-time ABI shape check (SPEC-0004 R26 repurposed under Amendment 0006). Parses `CoverageNegotiation.sol` at runtime + round-trips 5 sample rulings. |
-| `npm run test:lib` | Library unit tests (`node --import tsx --test` over `src/**/*.test.ts`). |
-| `npm run test:e2e` | agent-browser end-to-end suite over the web app (see [`web/tests/agent-browser/`](./web/tests/agent-browser/)). Not in `npm test` (requires a running dev server). |
-| `npm run build` | Type-check the library and emit JS to `dist/` (the web app imports it). |
-| `npm run typecheck` | Type-check without emitting. |
-| `npm run web:dev` / `web:build` / `web:preview` | Run / build / preview the web app. |
-| `npm run orchestrator:real` | Amendment 0006 self-hosted necessity-arbiter orchestrator. Long-running; subscribes to `RulingRequested` and delivers Claude-driven rulings via `handleResponse`. Falls back to deterministic stub when `ANTHROPIC_API_KEY` is unset. |
-| `npm run dev` / `start` | Legacy chain smoke test (`src/index.ts`). |
-| `npm --prefix contracts run compile` / `test` / `deploy:somnia` | Hardhat compile / test / deploy. |
+| On-chain pipeline & state machine | [`contracts/contracts/CoverageNegotiation.sol`](./contracts/contracts/CoverageNegotiation.sol) |
+| Somnia agent interfaces | [`contracts/contracts/ISomniaAgent.sol`](./contracts/contracts/ISomniaAgent.sol) (`IAgentRequester` / `IAgentRequesterHandler`); `ILLMInferenceAgent` + `ILLMParseWebsiteAgent` declared at the top of `CoverageNegotiation.sol` |
+| Library entry / bootstrap | [`src/index.ts`](./src/index.ts) — `createClient(config)` wires wallet + profiles + content store + negotiation client |
+| Backends (simulated ↔ real) | [`src/contract/simulated.ts`](./src/contract/simulated.ts), [`src/contract/real.ts`](./src/contract/real.ts), selected by [`src/contract/index.ts`](./src/contract/index.ts) |
+| Network config (source of truth) | [`src/config/networks.ts`](./src/config/networks.ts) — Somnia Testnet (Shannon) chainId `50312`, mainnet `5031` |
+| Web UI (views) | [`web/src/views/`](./web/src/views/) — `Overview.tsx`, `Create.tsx`, `Detail.tsx`, `Network.tsx`, `Settings.tsx` |
+| Deploy (web) | [`scripts/deploy-static.sh`](./scripts/deploy-static.sh) — builds the SPA, guards against leaked keys, syncs to S3 + invalidates CloudFront |
+| Deploy (contract) | [`contracts/scripts/deploy.ts`](./contracts/scripts/deploy.ts) via `npm --prefix contracts run deploy:somnia` (chain `50312`) |
+| Config | [`.env.example`](./.env.example) — note all `VITE_*` vars are inlined at build time |
+| Specs & decisions | [`docs/specs/`](./docs/specs/) (build specs) and [`docs/amendments/`](./docs/amendments/) (ADR-style decision records) |
 
-## Project layout
+## 6. Spec-driven workflow
 
-```
-.
-├── CLAUDE.md              # working philosophy, layout, constraints, cross-repo policy — read first
-├── LICENSE                # proprietary; all rights reserved
-├── .mcp.json              # Context7 MCP server (live Somnia docs)
-├── .env.example
-├── contracts/             # Hardhat workspace
-│   ├── contracts/         # CoverageNegotiation.sol (incl. Amendment 0006 selfHosted), ISomniaAgent.sol, mocks/
-│   ├── test/              # CoverageNegotiation.test.ts (T1–T10 + security + Amendment 0006 selfHosted = 39 tests)
-│   └── scripts/deploy.ts  # deploy to Somnia testnet (chain 50312)
-├── src/                   # framework-agnostic TS library (the app surface)
-│   ├── index.ts           # createClient(config): wallet + profiles + content + negotiation
-│   ├── wallet/            # pluggable signer: simulated ↔ real (R11)
-│   ├── profiles/          # app-level identities + switching (R12/R13)
-│   ├── content/           # off-chain content store + keccak256 commitment (R3/R4)
-│   ├── contract/          # CoverageNegotiationClient: SimulatedBackend + RealBackend + ABI
-│   ├── config/            # networks.ts (typed source of truth) + env.ts
-│   └── somnia/kit.ts      # SomniaAgentKit factory
-├── scripts/               # operator tooling outside the lib
-│   ├── orchestrator-real.ts  # Amendment 0006 self-hosted necessity-arbiter
-│   ├── check-ruling-abi.ts   # SPEC-0004 R26 build-time ABI shape gate
-│   └── lib/ruling-abi.ts     # shared 10-tuple encoder (orchestrator + check + hardhat mirror)
-├── web/                   # Vite + React SPA (Overview / Create / Maintain)
-│   └── tests/agent-browser/  # end-to-end browser suite (npm run test:e2e)
-├── demo-data/             # synthetic sample case + Part D formulary fixtures (no PHI)
-├── docs/
-│   ├── specs/             # fleshed-out build specs (requirements, tests, acceptance)
-│   ├── amendments/        # ADR-style decision records (A-0001 through A-0006)
-│   ├── progress/          # implementation progress log + loop state
-│   ├── research/          # research notes (pre-decision)
-│   └── documentation/     # hard Somnia API/code docs, copied down
-├── package.json
-└── tsconfig.json
-```
-
-## Architectural rules
-
-- **TypeScript only.** No polyglot backend.
-- **No REST.** Clients reach the chain via RPC, signed transactions, view calls,
-  and event subscriptions through `somnia-agent-kit`.
-- **Chain-native state.** Contracts are the system of record; off-chain code
-  orchestrates, it does not replace.
-- **No clinical data on-chain.** Non-identifying descriptors, public-evidence
-  references, rulings, and settlement only.
+Curie is built **spec-first**: each unit of work starts as a numbered spec in
+[`docs/specs/`](./docs/specs/) (`NNNN-kebab-title.md`) whose requirements, technical
+notes, and pass/fail criteria are the source of truth — implementation is built to
+satisfy them, with status tracked inline in [`docs/specs/README.md`](./docs/specs/README.md).
+Mid-flight design pivots are captured as ADR-style **amendments** in
+[`docs/amendments/`](./docs/amendments/) (e.g. A-0007 the two-agent scrape→decide
+pipeline, A-0008 real escrow settlement, A-0011/A-0012 the evidence-extraction and
+de-identified attestation refinements). Start with
+[`docs/VISION.md`](./docs/VISION.md) for product framing.
 
 ## License
 
