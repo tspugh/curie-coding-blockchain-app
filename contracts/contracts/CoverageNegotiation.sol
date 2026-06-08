@@ -1197,22 +1197,23 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         //               string prompt, string url, bool resolveUrl, uint8 numPages, uint8 confidenceThreshold)
         // Selector: 0xc2dd1a7a = keccak256("ExtractString(string,string,string[],string,string,bool,uint8,uint8)")[0:4]
         string[] memory scrapeAllowedValues = new string[](0); // free-text extraction
-        // A0011: source-agnostic, diagnosis-TARGETED, VERBATIM extraction. The prior
-        // generic prompt invited a lossy summary that silently dropped the requested
-        // indication (openFDA Humira → plaque-psoriasis denial). Quote the relevant
-        // text instead of summarizing, and key the extraction on THIS request's
-        // indication (carried in n.agentPromptHint) so the answer can't be summarized
-        // away — and so the SAME goal works on an FDA label AND on a prose compendia
-        // source supplied on appeal (A0009).
+        // A0011 + A0013 (probe): source-agnostic, diagnosis-TARGETED, VERBATIM extraction,
+        // re-targeted toward EVIDENCE-OF-BENEFIT. The black-box ExtractString agent returns a
+        // single short passage and gives us no length/count control; the prior APPROVAL-STATUS
+        // framing biased it, on an off-label prose source, to return the background "used
+        // off-label" sentence rather than the efficacy/guideline conclusion — so the bupropion
+        // appeal never flipped. Re-target the query at efficacy / outcome / guideline-recommendation
+        // text and EXPLICITLY rank it above mere off-label background, while still quoting an FDA
+        // approval statement when present (preserves the FDA-label approve path).
         bytes memory payload = abi.encodeWithSelector(
             ILLMParseWebsiteAgent.ExtractString.selector,
             "evidence",
             "Drug coverage evidence from the provided URL",
             scrapeAllowedValues,
             string(abi.encodePacked(
-                "Extract VERBATIM (quote the relevant text; do NOT summarize) any passage that establishes whether the drug is FDA-approved, OR supported by recognized clinical compendia/guidelines, for the indication in this request: ",
+                "Extract VERBATIM (quote the exact text; do NOT summarize) the single passage that BEST supports coverage of the drug for the indication in this request: ",
                 n.agentPromptHint,
-                " Also extract any dosing or quantity limits stated for the drug. Do not summarize or omit the requested indication."
+                " Prefer, in this order: (1) a statement that the drug is FDA-approved/indicated for it; (2) a clinical-efficacy or outcome finding (e.g. it reduced symptoms, improved response) for it; (3) a recognized compendia/guideline recommendation for it. Do NOT return a sentence that merely notes the drug is used off-label without reporting a benefit or recommendation. Also quote any dosing or quantity limits. Do not summarize or omit the requested indication."
             )),
             n.agentEvidenceUrl,
             // F2 (2026-06-07): the prior `false`/`1` read page 1 only and never followed
