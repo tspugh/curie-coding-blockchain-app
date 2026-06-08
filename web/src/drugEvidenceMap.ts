@@ -13,6 +13,14 @@ export interface EvidenceEntry {
   readonly evidenceUrl: string;
   /** Drug-specific prompt hint passed to the on-chain LLM inference agent. */
   readonly promptHint: string;
+  /**
+   * Optional curated, support-forward evidence URL for the APPEAL path of an off-label case
+   * (experimental). The primary `evidenceUrl` (e.g. an FDA label) yields Deny for an
+   * off-label indication; appealing with this source — which states the compendia/guideline
+   * support plainly — lets the on-chain agent reach the supporting passage and flip to
+   * Approve. A hand-curated stand-in for the SPEC-0010 evidence normalizer.
+   */
+  readonly appealEvidenceUrl?: string;
 }
 
 /**
@@ -75,6 +83,9 @@ export const DRUG_EVIDENCE_MAP: Readonly<Record<string, EvidenceEntry>> = {
     evidenceUrl: "https://api.fda.gov/drug/label.json?search=openfda.brand_name:WELLBUTRIN&limit=1",
     promptHint:
       "A patient with attention-deficit/hyperactivity disorder (ADHD) inadequately controlled on first-line options requests bupropion (off-label for ADHD). Based on the public drug evidence provided, reply approve if bupropion is FDA-approved OR supported by recognized clinical compendia/guidelines for ADHD; reply deny if the evidence does not establish an approved or compendia-supported use for ADHD; reply needs_more_info only if the evidence is insufficient.",
+    // Curated compendia/systematic-review summary (cites Cochrane PMID 28965364) hosted on the
+    // demo site; appealing the FDA-label Deny with this source flips bupropion×ADHD to Approve.
+    appealEvidenceUrl: "https://d2inaytdsjck4j.cloudfront.net/evidence/bupropion-adhd.txt",
   },
 };
 

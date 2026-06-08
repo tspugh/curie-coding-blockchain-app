@@ -42,6 +42,7 @@ import {
 } from "../attestations.js";
 import { describeEvent, eventAttribution, eventTone, fmtAmount, shortHex } from "../shared.js";
 import { drugNameForRef } from "../drugNames.js";
+import { evidenceForDrug } from "../drugEvidenceMap.js";
 import { useWalletBalance } from "../hooks/useWalletBalance.js";
 import { GAS_RESERVE_WEI, AGENT_FEE_RESERVE_WEI } from "../config.js";
 
@@ -407,6 +408,10 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
   // Gating on `ruled` alone wrongly offered Appeal on an Approved ruling, which
   // then reverted on click — match the contract precondition: Denied-only.
   const canAppeal = state === State.Denied && isParty;
+  // Experimental appeal-flip: some off-label cases ship a curated compendia source that
+  // flips Deny → Approve on appeal (drug-keyed; null unless the drug has one, e.g. bupropion).
+  const appealDemoName = drugNameForRef(n.drugRef);
+  const appealDemoUrl = appealDemoName ? (evidenceForDrug(appealDemoName)?.appealEvidenceUrl ?? null) : null;
   const canSubmitEvidence = state === State.EvidenceRequested && isProvider;
   const canSettle = ruled && view.bothAccepted && isParty;
   const canRefuse = isProvider && state !== State.Open && !view.terminal;
@@ -900,6 +905,17 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                   placeholder="Paste a public evidence URL (FDA, DailyMed, clinical guidelines…)"
                 />
               </label>
+              {appealDemoUrl && (
+                <button
+                  type="button"
+                  className="secondary"
+                  data-testid="load-appeal-evidence"
+                  onClick={() => setAppealEvidence(appealDemoUrl)}
+                  title={appealDemoUrl}
+                >
+                  Load compendia evidence (experimental)
+                </button>
+              )}
               <button
                 type="button"
                 data-testid="appeal-submit"
