@@ -1173,6 +1173,23 @@ tr.row-link:hover td:first-child {
   color: var(--text-2);
 }
 
+/* ─── 25a. How-it-works strip (Overview — story clarity) ────────────────── */
+
+.how-it-works {
+  margin: 0 0 18px;
+  padding: 10px 16px;
+  background: var(--accent-lt, #eff6ff);
+  border: 1px solid var(--border-lt, #eaedf4);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted, #64748b);
+}
+
+.how-it-works strong {
+  color: var(--accent-dk, #1d4ed8);
+}
+
 /* ─── 25b. KPI strip (Overview — UNIT-UI-1) ─────────────────────────────── */
 
 .kpi-strip {

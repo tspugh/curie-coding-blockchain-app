@@ -41,6 +41,7 @@ import {
   buildAttestations,
 } from "../attestations.js";
 import { describeEvent, eventAttribution, eventTone, fmtAmount, shortHex } from "../shared.js";
+import { drugNameForRef } from "../drugNames.js";
 import { useWalletBalance } from "../hooks/useWalletBalance.js";
 import { GAS_RESERVE_WEI, AGENT_FEE_RESERVE_WEI } from "../config.js";
 
@@ -471,7 +472,7 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
           <h2>Request Details</h2>
           <dl>
             <dt>Medication</dt>
-            <dd><code title={n.drugRef}>{shortHex(n.drugRef)}</code></dd>
+            <dd title={n.drugRef}>{drugNameForRef(n.drugRef) ?? <code>{shortHex(n.drugRef)}</code>}</dd>
             <dt>Quantity</dt>
             <dd data-testid="fact-quantity">{n.quantity.toString()} {n.quantity === 1n ? "unit" : "units"}</dd>
             {n.daysSupply > 0n && (
@@ -494,14 +495,14 @@ export function Detail({ reqId, activeProfile, events, onBack }: DetailProps) {
                   rather than show the stale previous verdict. Order:
                   reviewing → settled verdict → awaiting-evidence → undecided. */}
               {state === State.UnderReview ? (
-                <span className="muted">🤖 AI reviewing…</span>
+                <span className="muted">AI reviewing…</span>
               ) : lastRuled ? (
                 <span className={lastRuled.decision === Decision.Approve ? "ok-text" : lastRuled.decision === Decision.Deny ? "bad" : ""}>
                   {decisionLabel(lastRuled.decision)}
                   {lastRuled.decision === Decision.Approve && <> · {fmtAmount(lastRuled.coveredAmount)} covered</>}
                 </span>
               ) : state === State.EvidenceRequested ? (
-                <span className="muted">⏳ Awaiting more evidence</span>
+                <span className="muted">Awaiting more evidence</span>
               ) : (
                 "Not yet decided"
               )}
