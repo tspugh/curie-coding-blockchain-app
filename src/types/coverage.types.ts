@@ -81,11 +81,6 @@ export const DECISION_NAMES: Readonly<Record<Decision, string>> = {
 };
 
 /**
- * Full per-request record — mirrors `struct Negotiation` field-for-field, in
- * declaration order (so the ethers tuple decode lines up). `bytes32` values are
- * 0x-prefixed 32-byte hex strings; addresses are 0x-prefixed 20-byte hex.
- */
-/**
  * De-identified provider attestation for a patient-specific policy clause
  * (A0012 / SPEC-0007 R5/R13). The shape is CLOSED — an opaque clause id, a boolean,
  * and an optional keccak of a de-identified evidence URL — so NO PHI / free narrative
@@ -100,6 +95,11 @@ export interface Attestation {
   readonly evidenceUriHash: string;
 }
 
+/**
+ * Full per-request record — mirrors `struct Negotiation` field-for-field, in
+ * declaration order (so the ethers tuple decode lines up). `bytes32` values are
+ * 0x-prefixed 32-byte hex strings; addresses are 0x-prefixed 20-byte hex.
+ */
 export interface Negotiation {
   /** App-level party id of the provider (initiator). */
   readonly providerId: bigint;
@@ -169,11 +169,11 @@ export interface Negotiation {
   readonly agentEvidenceUrl: string;
   /** Per-negotiation prompt hint embedded in the inferString call (SPEC-0006 R15). */
   readonly agentPromptHint: string;
-  /** Current two-agent phase tracker (0=None, 1=Scraping, 2=Deciding — Amendment 0007 phase 1). */
+  /** Current two-agent phase tracker (0=None, 1=Scraping, 2=Deciding — A0007). */
   readonly agentPhase: number;
-  /** Parked LLM Inference fee for the pending Decide-phase agent call (Amendment 0007). */
+  /** Parked LLM Inference fee for the pending Decide-phase agent call (A0007). */
   readonly pendingDecideFee: bigint;
-  /** Address of the fee payer for the parked decide fee (Amendment 0007). */
+  /** Address of the fee payer for the parked decide fee (A0007). */
   readonly pendingFeePayer: string;
 }
 

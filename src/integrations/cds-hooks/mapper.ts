@@ -10,7 +10,7 @@
  * string-level: no hashing, no I/O.
  *
  * Quantity drives the SPEC-0001 deterministic cap; daysSupply is necessity
- * context only (per the 2026-05-27 SPEC-0001 changelog).
+ * context only.
  *
  * NO PHI: the composed justification uses the diagnosis + clinical context only;
  * patient identifiers (`patientId`, `subject`) are intentionally NOT propagated.
