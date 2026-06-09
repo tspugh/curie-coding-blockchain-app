@@ -2,12 +2,8 @@
 pragma solidity ^0.8.24;
 
 /// @title RevertingReceiver
-/// @notice Test double whose `receive()` always reverts. Used in hardhat tests
-///         to exercise the `require(ok, "...")` branches that follow native
-///         `.call{value: x}("")` patterns — `withdrawFunds` (require
-///         `"funds: transfer failed"`). When this contract is set as
-///         the recipient, the inner `.call` returns `false` and the
-///         require fires the "transfer failed" branch in CoverageNegotiation.sol.
+/// @notice Test double whose `receive()` always reverts, used to exercise the failed-
+///         transfer `require` branch in `withdrawFunds` (the `.call{value}` returns false).
 contract RevertingReceiver {
     receive() external payable {
         revert("RevertingReceiver: nope");

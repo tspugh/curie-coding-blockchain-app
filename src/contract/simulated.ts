@@ -175,9 +175,9 @@ interface SimNegotiation {
   exists: boolean;
   agentEvidenceUrl: string; // per-neg evidence URL (SPEC-0006 R14)
   agentPromptHint: string;  // per-neg prompt hint (SPEC-0006 R15)
-  agentPhase: number;       // two-agent phase tracker (0=None/1=Scraping/2=Deciding — Amendment 0007)
-  pendingDecideFee: bigint; // parked LLM Inference fee for pending Decide-phase call (Amendment 0007)
-  pendingFeePayer: string;  // address of the fee payer for the parked decide fee (Amendment 0007)
+  agentPhase: number;       // two-agent phase tracker (0=None/1=Scraping/2=Deciding — A0007)
+  pendingDecideFee: bigint; // parked LLM Inference fee for pending Decide-phase call (A0007)
+  pendingFeePayer: string;  // address of the fee payer for the parked decide fee (A0007)
   attestations: Attestation[]; // de-identified provider attestations (A0012 / SPEC-0007 R5/R13)
 }
 
@@ -441,8 +441,8 @@ export class SimulatedBackend implements CoverageNegotiationClient {
       throw new Error("evidence: url required");
 
     // A0008 §3 / contract parity: at the round cap the submission deadlocks instead of
-    // re-firing (mirrors CoverageNegotiation.sol L502-521). CEI order: state + escrow
-    // zeroed before emitting, matching the Solidity commit-before-transfer pattern.
+    // re-firing. CEI order: state + escrow zeroed before emitting, matching the Solidity
+    // commit-before-transfer pattern.
     if (n.round >= this.maxRounds) {
       this.clearRequest(n);
       n.state = State.Deadlocked;
@@ -590,7 +590,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
    * (SPEC-0006 R25/R26). Mirrors `CoverageNegotiation.sol:commitRationale`:
    * - Requires `hasRuling` (reverts on NeedMoreEvidence outcomes, matching chain).
    * - Truncates rationale to MAX_RATIONALE_BYTES (4096) bytes + "…" U+2026 sentinel
-   *   when longer (mirrors `_truncateRationale` in Solidity L1053-1067, R26).
+   *   when longer (mirrors `_truncateRationale` in Solidity, R26).
    * - Stores keccak256 of the TRUNCATED string (not the raw input) so the hash
    *   matches the on-chain value for inputs > 4096 bytes.
    * - Emits `RulingRationale` with the truncated rationale.
@@ -607,7 +607,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
     if (!n.hasRuling) throw new Error("rationale: no ruling yet");
 
     // Truncate rationale to MAX_RATIONALE_BYTES (4096) bytes + "…" sentinel (R26).
-    // Mirrors CoverageNegotiation.sol:_truncateRationale (L1053-1067). We work in
+    // Mirrors CoverageNegotiation.sol:_truncateRationale. We work in
     // RAW BYTES, not a re-encoded string: the contract hashes over the truncated
     // byte array, and for an input whose 4096-byte boundary splits a multi-byte
     // codepoint, decoding-then-re-encoding would corrupt the boundary byte to
@@ -637,7 +637,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
   }
 
   /**
-   * Byte-level mirror of `CoverageNegotiation.sol:_truncateRationale` (L1053-1067).
+   * Byte-level mirror of `CoverageNegotiation.sol:_truncateRationale`.
    * Returns the RAW truncated bytes: the first MAX_RATIONALE_BYTES (4096) UTF-8
    * bytes of `s`, plus the 3-byte ellipsis sentinel (U+2026 = E2 80 A6) when
    * truncation occurs. This is the authoritative form — `keccak256` over these
@@ -852,7 +852,7 @@ export class SimulatedBackend implements CoverageNegotiationClient {
 
     n.lastDecision = decision;
     // hasRuling is set ONLY for terminal/ruled decisions (mirrors Solidity
-    // _handleDecideResponse L894-903: NeedMoreEvidence returns before setting hasRuling).
+    // _handleDecideResponse: NeedMoreEvidence returns before setting hasRuling).
     // commitRationale guards on hasRuling, so after a NeedMoreEvidence outcome the
     // sim must REJECT commitRationale, matching the chain behaviour.
     n.hasRuling = decision !== Decision.NeedMoreEvidence;

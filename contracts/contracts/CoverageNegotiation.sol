@@ -11,9 +11,10 @@ import {
     ResponseStatus
 } from "./ISomniaAgent.sol";
 
-/// @notice Somnia LLM Inference agent — canonical on-chain interface (SPEC-0006 R11).
-/// @dev   Selector computed as keccak256("inferString(string,string,bool,string[])")[0:4] = 0xfe7ca098.
-///        agentId 12847293847561029384 on Somnia testnet.
+/// @title ILLMInferenceAgent
+/// @notice Canonical on-chain interface for the Somnia LLM Inference agent (SPEC-0006 R11).
+/// @dev Selector keccak256("inferString(string,string,bool,string[])")[0:4] = 0xfe7ca098;
+///      agentId 12847293847561029384 on Somnia testnet.
 interface ILLMInferenceAgent {
     function inferString(
         string memory prompt,
@@ -23,10 +24,10 @@ interface ILLMInferenceAgent {
     ) external returns (string memory);
 }
 
-/// @notice Somnia LLM Parse Website agent — canonical on-chain interface (Amendment 0007 phase 1).
-/// @dev   Selector: keccak256("ExtractString(string,string,string[],string,string,bool,uint8,uint8)")[0:4] = 0xc2dd1a7a.
-///        agentId 12875401142070969085 on Somnia testnet.
-///        Params: key, description, allowedValues, prompt, url, resolveUrl, numPages, confidenceThreshold.
+/// @title ILLMParseWebsiteAgent
+/// @notice Canonical on-chain interface for the Somnia LLM Parse Website agent (A0007).
+/// @dev Selector keccak256("ExtractString(string,string,string[],string,string,bool,uint8,uint8)")[0:4] = 0xc2dd1a7a;
+///      agentId 12875401142070969085 on Somnia testnet.
 interface ILLMParseWebsiteAgent {
     function ExtractString(
         string memory key,
@@ -41,51 +42,26 @@ interface ILLMParseWebsiteAgent {
 }
 
 /// @title CoverageNegotiation
-/// @notice System of record for the Curie MVP0 drug coverage-exception flow
-///         (SPEC-0001, revised 2026-05-27 → AI necessity-arbiter model).
-///
-///         A **provider** files a coverage-exception request against a named
-///         **insurer** (drug ref, de-identified justification hash, public-evidence
-///         ref, requested/billed amount). The insurer **engages** by attaching its
-///         governing **policy** (hash on-chain, body off-chain) — adjudication
-///         cannot run until a policy is attached (R5). Adjudication fires the
-///         canonical Somnia LLM Inference agent (`inferString`, agentId
-///         12847293847561029384) which returns a single decision token
-///         (`approve | deny | needs_more_info | policy_invalid`). `handleResponse`
-///         maps that token to Decision + emits `RulingRationale` (SPEC-0006
-///         R24–R26). On `approve` the covered amount is set to `requestedAmount`
-///         (no AI-chosen price cap; deterministic). Either party may `accept` or
-///         `appeal with new public evidence`; appeals re-fire the agent and are
-///         bounded to N rounds → `Deadlocked` (R6c). The insurer funds escrow at
-///         `insurerEngage`; both accepting then settles via a REAL escrow release
-///         (Amendment 0008 / R8): on Approved, `coveredAmount` → provider and the
-///         remainder → insurer; on Denied, the full escrow refunds to the insurer;
-///         every terminal-non-settle outcome refunds the full escrow. The accrued
-///         agent fees keep their separate 50/50 accounting. The provider may
-///         `refuse` the insurer's terms → `ProviderRefused` (R7).
-///
-/// @dev HARD INVARIANT (R4): no PHI / no raw content is ever stored, nor placed in
-///      the agent payload. Only keccak256 hashes, opaque refs (bytes32), amounts,
-///      decision codes, state, ids, addresses, and timestamps live on-chain.
-/// @dev AUTH (R11): every party action is gated to `msg.sender ∈ {providerAddr,
-///      insurerAddr}`; `insurerEngage` is insurer-only, `submitEvidence`/`refuse`
-///      are provider-only, `createContract` must come from the provider address.
-///      A third, unrelated wallet reverts. Reads are public (no gate). SPEC-0004
-///      R2b supersedes SPEC-0001 R12/R13: `providerAddr == insurerAddr` is rejected
-///      at `createContract` — the two addresses MUST be distinct per request.
-///      `partyId` still distinguishes which side of an action the caller represents
-///      when the same EOA holds multiple party roles across DIFFERENT requests; never
-///      within a single request. The platform callback `handleResponse` is gated to
-///      the agent-platform address. Agent-firing entry points are `nonReentrant`
-///      and follow checks-effects-interactions.
+/// @notice System of record for the Curie drug coverage-exception flow: a provider
+///         files a request against a named insurer, the insurer engages by attaching
+///         a policy and funding escrow, and a two-agent Somnia pipeline (scrape →
+///         decide) rules approve/deny/needs-more-info/policy-invalid. Either party
+///         may accept or appeal; mutual accept settles real escrow on-chain.
+/// @dev HARD INVARIANT (R4): no PHI / raw content is ever stored or placed in an agent
+///      payload — only hashes, opaque bytes32 refs, amounts, decision codes, state,
+///      ids, addresses, and timestamps live on-chain.
+/// @dev AUTH (R11): party actions are gated to `msg.sender ∈ {providerAddr, insurerAddr}`;
+///      `insurerEngage` is insurer-only, `submitEvidence`/`refuse` provider-only,
+///      `createContract` provider-only. `providerAddr == insurerAddr` is rejected at
+///      `createContract` (SPEC-0004 R2b). The `handleResponse` callback is gated to the
+///      agent-platform address. Agent-firing entry points are `nonReentrant` and follow CEI.
 contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler {
     // ---------------------------------------------------------------------
-    // State machine (SPEC-0001 §3 "State machine" table — implemented exactly)
+    // State machine
     // ---------------------------------------------------------------------
 
-    /// @dev Payer line governing the appeal ladder (SPEC-0004 R13). Determines
-    ///      the regulatory stage names the UI renders against. Stored on the
-    ///      Negotiation struct; documented-only in v0 (R14b — not enforced on-chain).
+    /// @dev Payer line governing the appeal ladder (SPEC-0004 R13). Selects the
+    ///      regulatory stage names the UI renders; not enforced on-chain in v0 (R14b).
     enum PayerLine { PartD, Commercial, Medicaid }
 
     enum State {
@@ -102,13 +78,12 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         Withdrawn // 10 terminal: either party withdrew
     }
 
-    /// @notice Two-agent pipeline phase tracker (Amendment 0007 phase 1).
-    ///         Tracks which agent phase an in-flight adjudication is in.
-    ///         None: no agent in flight. Scraping: LLM Parse Website is running.
-    ///         Deciding: LLM Inference is running (after scrape callback).
+    /// @dev Two-agent pipeline phase for an in-flight adjudication (A0007). None: no
+    ///      agent in flight. Scraping: LLM Parse Website running. Deciding: LLM
+    ///      Inference running (after the scrape callback).
     enum AgentPhase { None, Scraping, Deciding }
 
-    /// @dev The agent's necessity ruling. Maps the inferString allowed-values token
+    /// @dev The agent's necessity ruling, mapping the inferString allowed-values
     ///      vocabulary (SPEC-0006 R11/R24) to on-chain decision codes.
     enum Decision {
         Approve, // 0  "approve"
@@ -117,20 +92,20 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         PolicyInvalid // 3  "policy_invalid"
     }
 
-    /// @dev Per-request record. Holds only hashes/refs/amounts/codes/state/ids/
-    ///      addresses/timestamps — never raw content (R3/R4).
     /// @notice De-identified provider attestation for a patient-specific policy clause
-    ///         (Amendment 0012 / SPEC-0007 R5/R13). The on-chain shape is CLOSED —
-    ///         `{bytes32, bool, bytes32}` — so free text and the 18 HIPAA Safe-Harbor
-    ///         identifiers are structurally unrepresentable: no PHI / narrative can enter
-    ///         this channel (R6). The agent RECORDS and TRUSTS these; it does not verify
-    ///         the patient facts behind them.
+    ///         (A0012 / SPEC-0007 R5/R13).
+    /// @dev The on-chain shape is CLOSED — `{bytes32, bool, bytes32}` — so free text and
+    ///      the 18 HIPAA Safe-Harbor identifiers are structurally unrepresentable; no PHI
+    ///      can enter this channel (R6). The agent RECORDS and TRUSTS these; it does not
+    ///      verify the patient facts behind them.
     struct Attestation {
-        bytes32 clauseId; // opaque id of the attested clause (keccak of the clause label, set off-chain)
+        bytes32 clauseId; // opaque id of the attested clause (keccak of clause label, set off-chain)
         bool attested; // provider's de-identified yes/no for that clause
         bytes32 evidenceUriHash; // optional keccak of a DE-IDENTIFIED supporting URL (0 if none)
     }
 
+    /// @dev Per-request record. Holds only hashes/refs/amounts/codes/state/ids/
+    ///      addresses/timestamps — never raw content (R3/R4).
     struct Negotiation {
         uint256 providerId; // app-level party id of the provider (initiator)
         uint256 insurerId; // app-level party id of the insurer (destination)
@@ -156,22 +131,15 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         bool hasRuling; // whether an agent decision has landed
         string agentEvidenceUrl; // per-neg public evidence URL for the LLM agent (SPEC-0006 R14)
         string agentPromptHint; // per-neg prompt hint embedded in the inferString call (SPEC-0006 R15)
-        // ROUND SEMANTICS: this struct carries TWO related counters that are NOT
-        // interchangeable. Read both before reasoning about appeal state.
-        //
-        //   `round` (R6c) — TOTAL adjudication cycles. SET to 1 at the first
-        //   `requestAdjudication` and INCREMENTED on each subsequent agent fire
-        //   (`submitEvidence` AND `appeal`). The deadlock cap is `round >= maxRounds`.
-        //   Read as "how many times the agent has been asked to rule", NEVER as
-        //   "number of appeals so far".
-        //
-        //   `appealRound` (SPEC-0004 R13) — POSITION IN THE PAYER-LINE LADDER. 0 at
-        //   creation (Initial Determination); INCREMENTED in `appeal()` ONLY (NOT in
-        //   `submitEvidence`, since submitting more evidence stays in the same ladder
-        //   stage). On the deadlock-cap short-circuit path in `appeal()` the bump is
-        //   skipped, so a deadlock leaves `appealRound` at the last successfully-fired
-        //   value. `(payerLine, appealRound)` indexes the static `LADDERS` table the
-        //   UI/library renders against (R15/R16).
+        // ROUND SEMANTICS: two NON-interchangeable counters.
+        //   `round` (R6c) — total adjudication cycles: set to 1 at the first
+        //   requestAdjudication, incremented on every subsequent agent fire
+        //   (submitEvidence AND appeal). Deadlock cap is `round >= maxRounds`. NOT
+        //   "number of appeals".
+        //   `appealRound` (SPEC-0004 R13) — position in the payer-line ladder: 0 at
+        //   creation (Initial Determination), incremented in `appeal()` ONLY (not in
+        //   submitEvidence, which stays in the same stage). The deadlock-cap short-circuit
+        //   in `appeal()` skips the bump, so a deadlock leaves it at the last fired value.
         uint256 round; // total adjudication cycles (bounded to maxRounds — R6c)
         PayerLine payerLine; // payer line governing the appeal ladder (SPEC-0004 R13)
         uint8 appealRound; // current position in the payer-line ladder (0 = Initial Determination)
@@ -183,8 +151,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         uint256 createdAt;
         uint256 rulingDeadline; // after this, onRulingTimeout may route to retriable
         bool exists;
-        AgentPhase agentPhase; // current two-agent pipeline phase (Amendment 0007 phase 1)
-        uint256 pendingDecideFee; // parked LLM Inference fee for phase 2 (Amendment 0007)
+        AgentPhase agentPhase; // current two-agent pipeline phase (A0007)
+        uint256 pendingDecideFee; // parked LLM Inference fee for phase 2 (A0007)
         address pendingFeePayer; // payer address to refund parked decide fee on failure
     }
 
@@ -192,20 +160,16 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     // Constants
     // ---------------------------------------------------------------------
 
-    /// @notice Canonical LLM Inference agent id (Somnia testnet, SPEC-0006 R11).
-    ///         Hard-coded so the contract always fires the correct agent regardless
-    ///         of the `agentId` storage slot value. `setAgentId` overrides for
-    ///         demo/testing purposes only.
+    /// @notice Canonical LLM Inference agent id, Somnia testnet (SPEC-0006 R11).
+    /// @dev Hard-coded so the contract always fires the correct agent; `setAgentId`
+    ///      overrides for demo/testing only.
     uint256 public constant LLM_INFERENCE_AGENT_ID = 12847293847561029384;
 
-    /// @notice Canonical LLM Parse Website agent id (Somnia testnet, Amendment 0007 phase 1).
-    ///         Phase-1 scrape agent: fires ExtractString against n.agentEvidenceUrl.
-    ///         agentId 12875401142070969085 on Somnia testnet.
+    /// @notice Canonical LLM Parse Website (scrape) agent id, Somnia testnet (A0007).
     uint256 public constant LLM_PARSE_WEBSITE_AGENT_ID = 12875401142070969085;
 
-    /// @notice Maximum on-chain rationale length in bytes (SPEC-0006 R26).
-    ///         Rationale longer than this is truncated to MAX_RATIONALE_BYTES chars
-    ///         + a HORIZONTAL ELLIPSIS sentinel (U+2026, 3 UTF-8 bytes).
+    /// @notice Maximum on-chain rationale length in bytes (SPEC-0006 R26). Longer
+    ///         rationale is truncated and gets a horizontal-ellipsis sentinel (U+2026).
     uint256 public constant MAX_RATIONALE_BYTES = 4096;
 
     // ---------------------------------------------------------------------
@@ -215,11 +179,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     /// @notice Somnia agent platform (IAgentRequester) this contract fires requests at.
     IAgentRequester public platform;
 
-    /// @notice Registered agent id used for adjudication. Defaults to
-    ///         `LLM_INFERENCE_AGENT_ID` but may be overridden by `setAgentId`
-    ///         for testing. The constructor initialises this to `LLM_INFERENCE_AGENT_ID`
-    ///         regardless of the `agentId_` argument (which is retained for
-    ///         test-harness compatibility — passing 0 still yields the canonical id).
+    /// @notice Registered agent id used for the decide phase. Initialised to
+    ///         `LLM_INFERENCE_AGENT_ID` by the constructor; `setAgentId` overrides for testing.
     uint256 public agentId;
 
     /// @notice Extra per-agent reward forwarded on top of getRequestDeposit() (R9).
@@ -231,12 +192,10 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     /// @notice Maximum adjudication rounds before an appeal forces `Deadlocked` (R6c).
     uint256 public maxRounds = 3;
 
-    /// @notice The reqId currently being fired at the agent platform. Set inside
-    ///         `_fireAgent` before `platform.createRequest`, cleared after. Lets a
-    ///         mock platform (or an off-chain probe / future indexer) read exactly which
-    ///         negotiation is mid-fire without decoding the agent payload. Zero outside
-    ///         an active fire. Because state is set to `UnderReview` before this is
-    ///         written, the CEI invariant is fully preserved.
+    /// @notice The reqId currently being fired at the agent platform; 0 outside an active fire.
+    /// @dev Set just before `platform.createRequest` and cleared after, so a probe/indexer
+    ///      can read which negotiation is mid-fire without decoding the payload. State is set
+    ///      to `UnderReview` before this is written, preserving the CEI invariant.
     uint256 public currentlyFiringReqId;
 
     /// @dev Auto-incrementing request id.
@@ -248,9 +207,9 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
     mapping(uint256 => Negotiation) private _negotiations;
 
-    /// @dev De-identified attestations per negotiation (Amendment 0012 / SPEC-0007 R5/R13).
-    ///      Kept OUT of the Negotiation struct so the getNegotiation tuple shape is
-    ///      unchanged; read via getAttestations(reqId).
+    /// @dev De-identified attestations per negotiation (A0012 / SPEC-0007 R5/R13). Kept
+    ///      OUT of the Negotiation struct so the getNegotiation tuple shape is unchanged;
+    ///      read via getAttestations(reqId).
     mapping(uint256 => Attestation[]) private _attestations;
 
     /// @dev Upper bound on attestations per negotiation — a gas-griefing guard so the
@@ -261,14 +220,12 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     mapping(uint256 => uint256) private _requestToNegotiation;
 
     // ---------------------------------------------------------------------
-    // Events (SPEC-0001 §3 — names implemented exactly)
+    // Events
     // ---------------------------------------------------------------------
 
-    /// @notice SPEC-0004 §3.5. Emitted on every agent fire (initial requestAdjudication and
-    ///         every appeal/submitEvidence) so off-chain indexers + the Curie packet store
-    ///         can correlate the on-chain ruling request with the off-chain packet body.
-    ///         `packetRoot` is the bytes32 evidenceUri until UNIT-9 (Merkle root) lands;
-    ///         `packetUrl` is also a bytes32 until UNIT-9 swaps to a string body-store URL.
+    /// @notice Emitted on every agent fire (SPEC-0004 §3.5) so off-chain indexers can
+    ///         correlate the on-chain ruling request with the off-chain packet body.
+    /// @dev Both `packetRoot` and `packetUrl` currently carry the bytes32 evidenceUri.
     event PacketSubmitted(
         uint256 indexed reqId,
         uint256 indexed round,
@@ -293,9 +250,9 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     event AdjudicationRequested(uint256 indexed reqId);
     event RulingRequested(uint256 indexed reqId, uint256 indexed requestId, uint256 fee);
 
-    /// @notice Emitted when a ruling is finalized (SPEC-0006 R24). Under the
-    ///         inferString model the contract receives only a decision token from the
-    ///         agent; rationale text is committed separately via `commitRationale`.
+    /// @notice Emitted when a ruling is finalized (SPEC-0006 R24). The contract
+    ///         receives only a decision token; rationale is committed separately via
+    ///         `commitRationale`.
     event Ruled(
         uint256 indexed reqId,
         uint256 indexed requestId,
@@ -304,11 +261,9 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     );
 
     /// @notice Emitted when the keeper commits a rationale for a finalized ruling
-    ///         (SPEC-0006 R24/R26, Amendment 0007 §5). `rationale` is the truncated
-    ///         free-text reasoning (≤ MAX_RATIONALE_BYTES chars + "…" sentinel if
-    ///         truncated). `requestId` and `decision` are indexed so off-chain
-    ///         indexers can filter rationale by request or decision without full
-    ///         log decoding.
+    ///         (SPEC-0006 R24/R26, A0007 §5). `rationale` is the truncated free-text
+    ///         reasoning (≤ MAX_RATIONALE_BYTES + "…" sentinel). `requestId` and
+    ///         `decision` are indexed so indexers can filter without full log decoding.
     event RulingRationale(
         uint256 indexed reqId,
         uint256 indexed requestId,
@@ -323,8 +278,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     event EvidenceSubmitted(uint256 indexed reqId, bytes32 evidenceUri);
     event Appealed(uint256 indexed reqId, uint256 indexed partyId, bytes32 evidenceUri, uint256 round);
     event Accepted(uint256 indexed reqId, uint256 indexed partyId);
-    /// @dev A0008 §2: third field is `refundedToInsurer` (escrowAmount − coveredAmount on Approved;
-    ///      full escrowAmount on Denied). Renamed from `feePerParty` to surface real token-flow.
+    /// @dev `refundedToInsurer` = escrowAmount − coveredAmount on Approved; full escrowAmount
+    ///      on Denied (A0008 §2).
     event Settled(uint256 indexed reqId, uint256 coveredAmount, uint256 refundedToInsurer);
     event Deadlocked(uint256 indexed reqId, uint256 rounds);
     event ProviderRefused(uint256 indexed reqId, bytes32 reasonHash);
@@ -338,11 +293,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     // ---------------------------------------------------------------------
 
     /// @param platform_ Somnia agent platform address (use a mock in tests).
-    /// @dev   The second constructor parameter (agentId) is intentionally
-    ///        anonymous — the canonical `LLM_INFERENCE_AGENT_ID` constant is
-    ///        always written to storage regardless of what callers pass.
-    ///        Signature retained for backwards-compat with existing deploy scripts
-    ///        and test harnesses.
+    /// @dev The anonymous second parameter is ignored — `agentId` is always set to the
+    ///      canonical `LLM_INFERENCE_AGENT_ID`. Signature retained for deploy/test compat.
     constructor(address platform_, uint256) Ownable(msg.sender) {
         platform = IAgentRequester(platform_);
         agentId = LLM_INFERENCE_AGENT_ID;
@@ -370,14 +322,10 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         maxRounds = maxRounds_;
     }
 
-    /// @notice Reclaim contract ETH — e.g. per-request fees refunded by the platform
-    ///         on a timed-out ruling (R9), or surplus deliberately sent (via `receive`)
-    ///         to pre-fund agent fees.
-    /// @dev Owner only. A0008 §4: `withdrawFunds` is bounded to
-    ///      `address(this).balance - _totalEscrowHeld` so the owner can never drain
-    ///      live escrow. NOTE (Finding-1): the agent-firing entry points forward
-    ///      EXACTLY the per-request fee and refund overpayment to the caller, so misrouted
-    ///      caller ETH is NOT trapped here — `withdrawFunds` is not a sink for it.
+    /// @notice Reclaim contract ETH — e.g. platform fee refunds (R9) or surplus pre-funded
+    ///         via `receive`.
+    /// @dev Owner only. Bounded to `address(this).balance - _totalEscrowHeld` so the owner
+    ///      can never drain live escrow (A0008 §4).
     function withdrawFunds(address payable to, uint256 amount) external onlyOwner nonReentrant {
         require(to != address(0), "funds: zero addr");
         uint256 drainable = address(this).balance - _totalEscrowHeld;
@@ -392,11 +340,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     // ---------------------------------------------------------------------
 
     /// @notice File a coverage-exception request as the provider → `Open` (R2).
-    /// @dev Caller MUST be the provider address (R11). Stores only the justification
-    ///      hash + opaque refs — never raw content (R3/R4).
-    ///      SPEC-0004 R2b: rejects providerAddr == insurerAddr (supersedes SPEC-0001
-    ///      R13's permissive self-claim — the demo explicitly does not support
-    ///      single-party self-contracting).
+    /// @dev Provider-only (R11); stores only the justification hash + opaque refs (R3/R4).
+    ///      Rejects providerAddr == insurerAddr (SPEC-0004 R2b).
     /// @return reqId The new request id.
     function createContract(
         uint256 providerId,
@@ -415,15 +360,15 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     ) external returns (uint256 reqId) {
         require(providerAddr != address(0) && insurerAddr != address(0), "addr: zero");
         require(msg.sender == providerAddr, "auth: not provider");
-        require(quantity > 0, "qty: zero"); // quantity drives the deterministic cap (R6a)
+        require(quantity > 0, "qty: zero");
         require(providerAddr != insurerAddr, "create: self-contract"); // SPEC-0004 R2b
         // SPEC-0006 R14: URL must be 1..512 bytes.
         require(
             bytes(agentEvidenceUrl_).length > 0 && bytes(agentEvidenceUrl_).length <= 512,
             "evidence: url required"
         );
-        // SPEC-0006 R15: hint must be 1..1024 bytes and must not contain a bracketed
-        // patient-name pattern ([A-Z][a-z]+ [A-Z]) — defense-in-depth PHI guard.
+        // SPEC-0006 R15: hint must be 1..1024 bytes and free of the patient-name pattern
+        // (defense-in-depth PHI guard).
         require(
             bytes(agentPromptHint_).length > 0 && bytes(agentPromptHint_).length <= 1024
             && !_containsNamePattern(agentPromptHint_),
@@ -492,28 +437,24 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         }
     }
 
-    /// @notice Fire the native agent to adjudicate (only from `Ready`) → `UnderReview`
-    ///         (R6/R9). Payable so callers fund BOTH the scrape fee and the decide fee
-    ///         (Amendment 0007 phase 1). msg.value must cover 2×getRequestDeposit().
-    /// @dev Either party may trigger adjudication (R11). Requires an attached policy
-    ///      (guaranteed by the `Ready` precondition — R5).
+    /// @notice Fire the two-agent pipeline to adjudicate from `Ready` → `UnderReview`
+    ///         (R6/R9). Payable: `msg.value` must fund BOTH the scrape and decide fees (A0007).
+    /// @dev Either party may trigger adjudication (R11). This overload records no
+    ///      attestations — a public-only policy.
     function requestAdjudication(uint256 reqId) external payable nonReentrant {
         Negotiation storage n = _get(reqId);
         require(n.state == State.Ready, "adjudicate: not Ready");
         _onlyParty(n);
-        // No attestations: a PUBLIC-ONLY policy (every clause adjudicable from a source).
         _startAdjudication(reqId, n);
     }
 
     /// @notice Provider requests adjudication AND supplies the de-identified attestations
-    ///         for the policy's patient-specific (attested) clauses (Amendment 0012 /
-    ///         SPEC-0007 R5/R13). PROVIDER-ONLY: the provider is the party who holds the
-    ///         clinical facts to attest, so the insurer cannot supply them. The closed
-    ///         `{bytes32,bool,bytes32}` shape carries no PHI / narrative (R6). At decide
-    ///         time, Approve requires EVERY attestation to be affirmative (R7); a false
-    ///         attestation downgrades to needs-more-info (T3).
-    /// @dev Stored under `reqId` and read by `_handleDecideResponse` after the
-    ///      scrape→decide callbacks; survives the async round-trip in contract storage.
+    ///         for the policy's patient-specific clauses (A0012 / SPEC-0007 R5/R13).
+    /// @dev Provider-only: the provider holds the clinical facts to attest (R13). The
+    ///      closed `{bytes32,bool,bytes32}` shape carries no PHI (R6). At decide time
+    ///      Approve requires EVERY attestation affirmative (R7); a false one downgrades
+    ///      to needs-more-info (T3). Stored under `reqId`, read by `_handleDecideResponse`
+    ///      after the async scrape→decide round-trip.
     function requestAdjudication(uint256 reqId, Attestation[] calldata attestations)
         external
         payable
@@ -532,10 +473,10 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         _startAdjudication(reqId, n);
     }
 
-    /// @dev Shared adjudication kick-off for both `requestAdjudication` overloads.
-    ///      Internal, so `msg.sender` (the original caller) is preserved for `_fireScrape`.
+    /// @dev Shared kick-off for both `requestAdjudication` overloads. Internal so
+    ///      `msg.sender` (the original caller / fee payer) is preserved for `_fireScrape`.
     function _startAdjudication(uint256 reqId, Negotiation storage n) internal {
-        n.round = 1; // first adjudication round
+        n.round = 1;
         emit AdjudicationRequested(reqId);
         _fireScrape(reqId, n, msg.sender);
     }
@@ -546,10 +487,9 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         return _attestations[reqId];
     }
 
-    /// @dev R7 conjunction: true iff EVERY recorded attestation is affirmative. Vacuously
-    ///      true when there are none (a public-only policy). clauseId is opaque on-chain,
-    ///      so this boolean AND is enforced HERE deterministically — the LLM never
-    ///      evaluates attestations (you do not ask a model to compute an AND).
+    /// @dev R7 conjunction: true iff EVERY recorded attestation is affirmative; vacuously
+    ///      true with none (a public-only policy). Enforced HERE deterministically rather
+    ///      than by the LLM, since clauseId is opaque on-chain.
     function _allAttestationsAffirmative(uint256 reqId) internal view returns (bool) {
         Attestation[] storage atts = _attestations[reqId];
         for (uint256 i = 0; i < atts.length; i++) {
@@ -558,29 +498,24 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         return true;
     }
 
-    /// @notice Provider submits more public evidence of necessity from
-    ///         `EvidenceRequested` → fires the agent directly (round++) → `UnderReview`
-    ///         (R6/R9). Payable so the caller funds the per-request fee, identical fee
-    ///         model to `requestAdjudication` and `appeal`. At the round cap, routes
-    ///         to terminal `Deadlocked` without firing — mirroring `appeal`'s behavior
-    ///         so a NeedMoreEvidence ↔ submitEvidence cycle can't loop indefinitely.
-    /// @dev Provider-only (R11). Records only the opaque evidence ref (R3/R4).
+    /// @notice Provider submits a new public evidence URL from `EvidenceRequested`,
+    ///         re-firing the pipeline (round++) → `UnderReview` (R6/R9). At the round cap,
+    ///         routes to terminal `Deadlocked` without firing, so a needs-more-info ↔
+    ///         submitEvidence cycle can't loop forever.
+    /// @dev Provider-only (R11). Payable; same fee model as `requestAdjudication`/`appeal`.
     function submitEvidence(uint256 reqId, string calldata newEvidenceUrl) external payable nonReentrant {
         Negotiation storage n = _get(reqId);
         require(n.state == State.EvidenceRequested, "evidence: wrong state");
         require(msg.sender == n.providerAddr, "auth: not provider");
-        // A0009: the resubmission is a NEW public evidence URL the re-scrape will
-        // target (1..512 bytes, mirroring the R14 createContract bound). The old
-        // bytes32 evidenceUri is now derived as a keccak audit hash below.
+        // A0009: re-scrape targets this NEW URL (1..512 bytes, mirroring R14).
         require(
             bytes(newEvidenceUrl).length > 0 && bytes(newEvidenceUrl).length <= 512,
             "evidence: url required"
         );
 
-        // Bounded to N rounds: at the cap, the submission deadlocks instead of re-firing.
-        // No agent fires → refund the caller's full `msg.value` (R9: never silently retain
-        // caller ETH). A0008: also refund the full escrow to the insurer on Deadlocked.
-        // The function's `nonReentrant` modifier guards all refunds (CEI: terminal state set first).
+        // Round cap: deadlock instead of re-firing. No agent fires, so refund the caller's
+        // full msg.value (R9) and refund the full escrow to the insurer (A0008). CEI:
+        // terminal state set before refunds, guarded by `nonReentrant`.
         if (n.round >= maxRounds) {
             uint256 escrow = n.escrowAmount;
             address insurerAddr = n.insurerAddr;
@@ -603,8 +538,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
             return;
         }
 
-        // A0009: point the scrape at the NEW URL; keep a keccak audit hash in the
-        // event (no raw text/PHI on-chain). `_fireScrape` reads `n.agentEvidenceUrl`.
+        // A0009: point the scrape at the NEW URL; keep a keccak audit hash for the event
+        // (no raw text on-chain). `_fireScrape` reads `n.agentEvidenceUrl`.
         n.agentEvidenceUrl = newEvidenceUrl;
         n.evidenceUri = keccak256(bytes(newEvidenceUrl));
         n.round += 1;
@@ -612,18 +547,12 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         _fireScrape(reqId, n, msg.sender);
     }
 
-    /// @notice Appeal a ruling with NEW public evidence of necessity (R6c). From
-    ///         `Denied` ONLY (R14a: only a Deny justifies advancing the ladder;
-    ///         appealing an Approved ruling is non-sensical — you already got what
-    ///         you asked for, possibly capped). Re-fires the agent (round++) while
-    ///         under the round cap; at the cap (`round >= maxRounds`) without mutual
-    ///         accept it routes to terminal `Deadlocked`.
-    /// @dev Either party may appeal (R11); `partyId` must be a party to the request.
-    ///      An appeal MUST carry new public evidence — an empty `evidenceUri`
-    ///      (price-only / free-prose appeal) reverts (T6).
-    ///      SPEC-0004 §2.4 R14a: `requestAdjudication(round=N)` is refused unless
-    ///      `round=N-1` was ruled Deny. In this contract's model that gate lives here
-    ///      on `appeal()`.
+    /// @notice Appeal a `Denied` ruling with a NEW public evidence URL (R6c). Denied-only:
+    ///         only a Deny justifies advancing the ladder (SPEC-0004 §2.4 R14a). Re-fires
+    ///         the pipeline (round++) under the round cap; at the cap routes to terminal
+    ///         `Deadlocked`.
+    /// @dev Either party may appeal (R11); `partyId` must be a party. An appeal MUST carry
+    ///      new evidence — an empty URL reverts (T6).
     function appeal(
         uint256 reqId,
         uint256 partyId,
@@ -640,11 +569,9 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
             "appeal: needs evidence"
         );
 
-        // Bounded to N rounds: at the cap, an appeal deadlocks instead of re-firing.
-        // No agent fires, so no fee is charged — refund the caller's full `msg.value`
-        // rather than trapping it (R9: never silently retain caller ETH). A0008: also
-        // refund the full escrow to the insurer on Deadlocked. Guarded by the function's
-        // `nonReentrant` modifier; the terminal state is set first (CEI).
+        // Round cap: deadlock instead of re-firing. No agent fires, so refund the caller's
+        // full msg.value (R9) and refund the full escrow to the insurer (A0008). CEI:
+        // terminal state set before refunds, guarded by `nonReentrant`.
         if (n.round >= maxRounds) {
             uint256 escrow = n.escrowAmount;
             address insurerAddr = n.insurerAddr;
@@ -670,7 +597,7 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         // A0009: re-scrape the new URL; keep a keccak audit hash for the event.
         n.agentEvidenceUrl = newEvidenceUrl;
         n.evidenceUri = keccak256(bytes(newEvidenceUrl));
-        n.rationaleHash = reasonHash; // carry the appellant's stated reason ref
+        n.rationaleHash = reasonHash; // appellant's stated reason ref
         n.round += 1;
         n.appealRound += 1;
         emit Appealed(reqId, partyId, n.evidenceUri, n.round);
@@ -685,12 +612,10 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         require(n.state == State.Approved || n.state == State.Denied, "accept: not ruled");
         _onlyParty(n);
 
-        // C1 (security): bind the accept flag to msg.sender. `_onlyParty` proves
-        // the caller is the provider or the insurer; a party may set ONLY its own
-        // accept flag. Without this, either party could pass the *other's* partyId
-        // to flip both flags alone and `settle()` unilaterally — bypassing the
-        // counterparty's R6c accept-vs-appeal choice. The partyId arg must name
-        // the caller's own role (kept for the Accepted event / ABI stability).
+        // SECURITY (C1): bind the accept flag to msg.sender — a party may set ONLY its own
+        // flag. Otherwise a party could pass the COUNTERPARTY's partyId to flip both flags
+        // and `settle()` unilaterally, bypassing the R6c accept-vs-appeal choice. partyId
+        // must name the caller's own role (kept for the Accepted event / ABI stability).
         if (msg.sender == n.providerAddr) {
             require(partyId == n.providerId, "accept: not your party");
             n.providerAccepted = true;
@@ -729,13 +654,11 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         emit Settled(reqId, covered, refundedToInsurer);
 
         if (covered > 0) {
-            // Transfer coveredAmount to provider.
             (bool okP, ) = payable(providerAddr).call{value: covered}("");
             require(okP, "settle: provider transfer failed");
         }
         uint256 remainder = escrow - covered;
         if (remainder > 0) {
-            // Refund remainder to insurer.
             (bool okI, ) = payable(insurerAddr).call{value: remainder}("");
             require(okI, "settle: insurer refund failed");
         }
@@ -797,13 +720,9 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
 
     /// @notice Keeper-callable timeout: after the ruling deadline, route a stuck
     ///         `UnderReview` request to the retriable `EvidenceRequested` state.
-    ///
-    ///         Amendment 0007 phase 1 / R9: mirrors the _handleScrapeResponse
-    ///         non-Success branch — must refund any parked `pendingDecideFee` to
-    ///         `pendingFeePayer` and reset `agentPhase` to None, regardless of
-    ///         which pipeline phase was in flight. Without this, a scrape (or decide)
-    ///         that never calls back and is timed out by the keeper strands the
-    ///         decide-fee ETH permanently in the contract (R9 violation).
+    /// @dev R9 / A0007: must refund any parked `pendingDecideFee` to `pendingFeePayer`
+    ///      and reset `agentPhase` regardless of phase, or a scrape/decide that never
+    ///      calls back would strand the decide-fee ETH in the contract.
     function onRulingTimeout(uint256 reqId) external {
         Negotiation storage n = _get(reqId);
         require(n.state == State.UnderReview, "timeout: not UnderReview");
@@ -838,14 +757,11 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         emit FeedbackPosted(reqId, msgHash, uri);
     }
 
-    /// @notice Keeper commits the receipt-sourced rationale for a finalized ruling
-    ///         (SPEC-0006 R26). Callable by the owner in v0 (keeper role is the owner).
-    ///         `rationale` is truncated to MAX_RATIONALE_BYTES bytes + "…" sentinel if
-    ///         longer. Callable from any post-ruling state (Approved, Denied,
-    ///         PolicyInvalidated, Settled).
-    /// @dev No PHI in rationale/clauseReference/standardReference (R4). The contract
-    ///      hashes clauseReference and standardReference to bytes32 for storage; the
-    ///      full strings are emitted only in the event for off-chain consumers.
+    /// @notice Keeper (owner in v0) commits the receipt-sourced rationale for a finalized
+    ///         ruling (SPEC-0006 R26). `rationale` is truncated to MAX_RATIONALE_BYTES + "…"
+    ///         if longer. Callable from any post-ruling state.
+    /// @dev No PHI in any argument (R4). clauseReference/standardReference are hashed to
+    ///      bytes32 for storage; the full strings are emitted only in the event.
     function commitRationale(
         uint256 reqId,
         string calldata rationale,
@@ -870,28 +786,12 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
     // Platform callback
     // ---------------------------------------------------------------------
 
-    /// @notice Somnia platform callback delivering the agent's result
-    ///         (SPEC-0006 R24/R25/R26, Amendment 0007 phase 1).
-    ///
-    ///         Branches on `agentPhase`:
-    ///
-    ///         SCRAPING phase — LLM Parse Website (ExtractString) callback:
-    ///           Success: decode the extracted evidence string, fire LLM Inference
-    ///           (_fireDecide) using n.pendingDecideFee. Advance phase to Deciding.
-    ///           Non-success: refund pendingDecideFee to the stored payer; route to
-    ///           EvidenceRequested (retriable).
-    ///
-    ///         DECIDING phase — LLM Inference (inferString) callback:
-    ///           Decodes a single string token from allowedValues:
-    ///             "approve"        → Approved state (coveredAmount = requestedAmount)
-    ///             "deny"           → Denied state   (coveredAmount = 0)
-    ///             "needs_more_info"→ EvidenceRequested
-    ///             "policy_invalid" → PolicyInvalidated (terminal)
-    ///           Any unknown/malformed token is treated as `needs_more_info`.
-    ///           Non-success: route to EvidenceRequested (retriable).
-    ///
-    ///      Gated to `msg.sender == platform`. The `handleResponse` selector is
-    ///      what the contract passes to `platform.createRequest` as `callbackSelector`.
+    /// @notice Somnia platform callback delivering an agent result; branches on
+    ///         `agentPhase` (SPEC-0006 R24–R26, A0007). Scraping: fire the decide agent on
+    ///         success, else refund the parked fee and route to EvidenceRequested. Deciding:
+    ///         map the decision token to a terminal/retriable state.
+    /// @dev Gated to `msg.sender == platform`. This selector is passed to
+    ///      `platform.createRequest` as `callbackSelector`.
     function handleResponse(
         uint256 requestId,
         Response[] memory responses,
@@ -946,11 +846,8 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         // Decode the extracted evidence string returned by ExtractString.
         string memory evidence = abi.decode(responses[0].result, (string));
 
-        // Fire LLM Inference (phase 2) using the parked decide fee.
-        // Clear both pendingDecideFee AND pendingFeePayer — once consumed, neither
-        // field is live and leaving pendingFeePayer set would be dead residual state
-        // contradicting the 'clear parked-fee bookkeeping once consumed' invariant
-        // (LOW-4 finding).
+        // Fire LLM Inference (phase 2) with the parked decide fee. Clear BOTH parked
+        // fields once consumed — leaving pendingFeePayer set would be dead state (LOW-4).
         uint256 decideFee = n.pendingDecideFee;
         n.pendingDecideFee = 0;
         n.pendingFeePayer  = address(0);
@@ -983,12 +880,10 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         string memory token = abi.decode(responses[0].result, (string));
         Decision decision = _tokenToDecision(token);
 
-        // A0012 (SPEC-0007 R7): deterministic attestation conjunction. clauseId is opaque
-        // on-chain, so the agent cannot evaluate attestations per-clause — the boolean AND
-        // is enforced HERE. A false attestation downgrades Approve to needs-more-info so
-        // the provider can correct it (T3); a covered drug is never approved while a
-        // patient-specific criterion is unmet. Public-only policies have no attestations,
-        // so this is vacuously true and changes nothing.
+        // A0012 (SPEC-0007 R7): deterministic attestation conjunction enforced on-chain
+        // (the agent can't evaluate opaque clauseIds). A false attestation downgrades
+        // Approve to needs-more-info so the provider can correct it (T3). Vacuously true,
+        // hence a no-op, for public-only policies.
         if (decision == Decision.Approve && !_allAttestationsAffirmative(reqId)) {
             decision = Decision.NeedMoreEvidence;
         }
@@ -1146,8 +1041,7 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         if (h == keccak256(bytes("deny")))              return Decision.Deny;
         if (h == keccak256(bytes("needs_more_info")))   return Decision.NeedMoreEvidence;
         if (h == keccak256(bytes("policy_invalid")))    return Decision.PolicyInvalid;
-        // Unknown token: treat as NeedMoreEvidence (retriable, not terminal).
-        return Decision.NeedMoreEvidence;
+        return Decision.NeedMoreEvidence; // unknown token: retriable, never terminal
     }
 
     /// @dev Truncate a rationale string to MAX_RATIONALE_BYTES bytes, appending the
@@ -1158,27 +1052,23 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         if (b.length <= MAX_RATIONALE_BYTES) {
             return string(b);
         }
-        // Truncate at MAX_RATIONALE_BYTES bytes and append "…" (3-byte UTF-8 U+2026).
         bytes memory result = new bytes(MAX_RATIONALE_BYTES + 3);
         for (uint256 i = 0; i < MAX_RATIONALE_BYTES; i++) {
             result[i] = b[i];
         }
-        // UTF-8 encoding of U+2026 HORIZONTAL ELLIPSIS: 0xE2 0x80 0xA6
+        // UTF-8 encoding of U+2026 HORIZONTAL ELLIPSIS: 0xE2 0x80 0xA6.
         result[MAX_RATIONALE_BYTES]     = 0xE2;
         result[MAX_RATIONALE_BYTES + 1] = 0x80;
         result[MAX_RATIONALE_BYTES + 2] = 0xA6;
         return string(result);
     }
 
-    /// @dev Phase 1 of the two-agent pipeline (Amendment 0007 phase 1):
-    ///      fire the LLM Parse Website agent (ExtractString, 0xc2dd1a7a) against
-    ///      n.agentEvidenceUrl to scrape public evidence. Parks the LLM Inference fee
-    ///      (decide fee) in n.pendingDecideFee for use in the phase-2 callback.
-    ///
-    ///      FEE MODEL (R9): caller funds BOTH the scrape fee and the decide fee in one
-    ///      msg.value. Fee = 2 × (getRequestDeposit() + agentReward). Caller must cover
-    ///      it; exactly `scrapeFee` is forwarded now; `decideFee` is parked on the
-    ///      struct; any excess is refunded. Never retains caller ETH.
+    /// @dev Phase 1 of the pipeline (A0007): fire LLM Parse Website (ExtractString,
+    ///      0xc2dd1a7a) against n.agentEvidenceUrl, parking the decide fee in
+    ///      n.pendingDecideFee for phase 2.
+    ///      FEE MODEL (R9): one msg.value funds BOTH fees = 2 × (getRequestDeposit() +
+    ///      agentReward). Exactly the scrape fee is forwarded now, the decide fee is parked,
+    ///      any excess is refunded — caller ETH is never retained.
     /// @param payer The caller funding this fire (refund recipient for any overpayment).
     function _fireScrape(uint256 reqId, Negotiation storage n, address payer) internal {
         uint256 perCallFee = platform.getRequestDeposit() + agentReward;
@@ -1192,18 +1082,13 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         n.agentPhase = AgentPhase.Scraping;
         n.totalFees += perCallFee; // scrape fee portion of accumulated fees (R8)
 
-        // Build the ExtractString payload (Amendment 0007 phase 1).
-        // ExtractString(string key, string description, string[] allowedValues,
-        //               string prompt, string url, bool resolveUrl, uint8 numPages, uint8 confidenceThreshold)
-        // Selector: 0xc2dd1a7a = keccak256("ExtractString(string,string,string[],string,string,bool,uint8,uint8)")[0:4]
+        // Build the ExtractString payload (A0007).
         string[] memory scrapeAllowedValues = new string[](0); // free-text extraction
-        // A0011: source-agnostic, diagnosis-TARGETED, VERBATIM extraction. The prior
-        // generic prompt invited a lossy summary that silently dropped the requested
-        // indication (openFDA Humira → plaque-psoriasis denial). Quote the relevant
-        // text instead of summarizing, and key the extraction on THIS request's
-        // indication (carried in n.agentPromptHint) so the answer can't be summarized
-        // away — and so the SAME goal works on an FDA label AND on a prose compendia
-        // source supplied on appeal (A0009).
+        // A0011: source-agnostic, diagnosis-TARGETED, VERBATIM extraction. A generic
+        // summarizing prompt silently dropped the requested indication (openFDA Humira →
+        // plaque-psoriasis denial). Quote rather than summarize, and key extraction on this
+        // request's indication (n.agentPromptHint) so the same goal works on an FDA label
+        // AND on a prose compendia source supplied on appeal (A0009).
         bytes memory payload = abi.encodeWithSelector(
             ILLMParseWebsiteAgent.ExtractString.selector,
             "evidence",
@@ -1215,14 +1100,12 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
                 " Also extract any dosing or quantity limits stated for the drug. Do not summarize or omit the requested indication."
             )),
             n.agentEvidenceUrl,
-            // F2 (2026-06-07): the prior `false`/`1` read page 1 only and never followed
-            // redirects, so the scrape choked on prose/compendia appeal sources (the bupropion
-            // off-label flip never landed) and a choke was indistinguishable from a real
-            // needs_more_info. Follow redirects + read multiple pages so the verbatim goal can
-            // reach the support passage on a non-FDA source.
+            // F2: follow redirects + read multiple pages. The prior `false`/`1` (page 1, no
+            // redirects) choked on prose/compendia appeal sources, indistinguishable from a
+            // real needs_more_info, so the verbatim goal couldn't reach the support passage.
             true, // resolveUrl: follow redirects
-            5,    // numPages: read up to 5 pages (compendia/prose sources span pages)
-            0     // confidenceThreshold: no minimum threshold
+            5,    // numPages: compendia/prose sources span pages
+            0     // confidenceThreshold: no minimum
         );
 
         // Effects before interaction (CEI).
@@ -1256,15 +1139,6 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         }
     }
 
-    /// @dev Phase 2 of the two-agent pipeline (Amendment 0007 phase 1):
-    ///      fire the LLM Inference agent (inferString, 0xfe7ca098) using the
-    ///      pre-funded decide fee parked by _fireScrape. Called from the
-    ///      Scraping-phase handleResponse callback after a successful scrape.
-    ///      CEI: state effects (agentPhase, pendingDecideFee cleared) are committed
-    ///      by the caller (_handleScrapeResponse) before this interaction.
-    ///
-    ///      Note: the decide fee accounting (totalFees accumulation) happens here so
-    ///      the full 2×fee is reflected in totalFees after the complete path.
     /// @dev Minimal uint8 → decimal string (0..255). Inlined rather than pulling
     ///      OpenZeppelin `Strings`, whose `Bytes.sol` dependency uses the Cancun
     ///      `mcopy` opcode this build's EVM target does not emit.
@@ -1300,13 +1174,17 @@ contract CoverageNegotiation is Ownable, ReentrancyGuard, IAgentRequesterHandler
         ));
     }
 
+    /// @dev Phase 2 of the pipeline (A0007): fire LLM Inference (inferString, 0xfe7ca098)
+    ///      with the decide fee parked by `_fireScrape`, called from the Scraping callback
+    ///      after a successful scrape. CEI: the caller (`_handleScrapeResponse`) commits the
+    ///      agentPhase / pendingDecideFee effects before this interaction.
     function _fireDecide(
         uint256 reqId,
         Negotiation storage n,
         uint256 decideFee,
         string memory evidence
     ) internal {
-        n.totalFees += decideFee; // decide fee portion of accumulated fees (R8)
+        n.totalFees += decideFee; // decide-fee portion of accumulated fees (R8)
 
         string[] memory allowedValues = new string[](4);
         allowedValues[0] = "approve";

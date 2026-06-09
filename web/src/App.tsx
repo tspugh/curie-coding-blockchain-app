@@ -31,7 +31,6 @@ import { Detail } from "./views/Detail.js";
 import { Network } from "./views/Network.js";
 import { Settings } from "./views/Settings.js";
 import { WalletBalance } from "./components/WalletBalance.js";
-import { TxMonitor } from "./components/TxMonitor.js";
 import { WalletOnboarding } from "./components/WalletOnboarding.js";
 
 type View =
@@ -372,11 +371,6 @@ export function App() {
           />
         )}
       </main>
-
-      {/* U5: the TxMonitor reflects real on-chain transactions; in simulated
-          mode there's no chain so it would sit empty ("waiting for first
-          confirmed tx" forever) and overlap content. Render it in real mode only. */}
-      {client.wallet.mode === "real" && <TxMonitor />}
 
       {/* SPEC-0008 R1/R6 (amended) — startup wallet gate: blocking modal + backdrop.
           forcePrompt (VITE_FORCE_WALLET_PROMPT=1) shows the modal even when env

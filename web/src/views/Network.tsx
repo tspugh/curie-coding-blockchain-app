@@ -149,14 +149,6 @@ export function Network({ events, onBack }: NetworkProps) {
       sub: "CoverageNegotiation v0",
       mono: true,
     },
-    {
-      label: "Arbiter primitive",
-      // Static string: the protocol primitive name used by Somnia's AgentPlatform.
-      // Deliberately NOT the prototype's fake "agent-7B" instance identifier.
-      value: "Somnia LLM Parse Website",
-      sub: "via AgentPlatform · deterministic",
-      mono: false,
-    },
   ] as const;
 
   return (

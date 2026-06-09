@@ -69,9 +69,9 @@ const LOG_PAGE_SIZE = 1_000;
 
 /**
  * Raw `Negotiation` tuple returned by ethers — field order matches the Solidity
- * struct (and `abi.ts`) EXACTLY. 38 fields (added lastRequestId, agentEvidenceUrl,
- * agentPromptHint per SPEC-0006 R14/R15; added agentPhase, pendingDecideFee,
- * pendingFeePayer per Amendment 0007 phase 1).
+ * struct (and `abi.ts`) EXACTLY. 38 fields (lastRequestId, agentEvidenceUrl,
+ * agentPromptHint per SPEC-0006 R14/R15; agentPhase, pendingDecideFee,
+ * pendingFeePayer per A0007).
  */
 type RawNegotiation = readonly [
   bigint, // [0]  providerId
@@ -109,8 +109,8 @@ type RawNegotiation = readonly [
   bigint, // [32] createdAt
   bigint, // [33] rulingDeadline
   boolean, // [34] exists
-  bigint | number, // [35] agentPhase (uint8, AgentPhase enum — Amendment 0007 phase 1)
-  bigint, // [36] pendingDecideFee (parked LLM Inference fee for phase 2 — Amendment 0007)
+  bigint | number, // [35] agentPhase (uint8, AgentPhase enum — A0007)
+  bigint, // [36] pendingDecideFee (parked LLM Inference fee for phase 2 — A0007)
   string, // [37] pendingFeePayer (address of the fee payer for the parked decide fee)
 ];
 

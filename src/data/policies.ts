@@ -13,9 +13,9 @@
  *     but cannot independently verify).
  *   - `check?` — present iff type === "public": { kind, param, sourceUrl }.
  *   - `voids?` — true when the clause is the demo "bad" clause that R23's
- *     on-label-policy-void path is expected to flag (amendment 0005). The
- *     arbiter's R23 logic consumes this flag to populate
- *     `policyVoidedClauseIndices` on the Ruled event.
+ *     on-label-policy-void path is expected to flag (A0005). The arbiter's R23
+ *     logic consumes this flag to populate `policyVoidedClauseIndices` on the
+ *     Ruled event.
  *
  * **PHI-free by construction**: no patient identifiers, no provider names,
  * no real plan IDs. Plan names are clearly synthetic ("Demo Health Plan",
@@ -132,12 +132,11 @@ export const POLICY_LIBRARY: ReadonlyArray<CuratedPolicy> = Object.freeze([
     ],
   }),
 
-  // NOTE: the former Commercial-Etanercept (#2) and Medicaid-Dulaglutide (#3) policies were
-  // removed (2026-06-07) — they had no paired evidence/demo case (no drugEvidenceMap entry,
-  // not in the Create demo dropdown), so the demo could never run them end-to-end. The
-  // library now holds only drugs with a coherent policy + evidence pairing: adalimumab
-  // (the §3.6 Commercial + Part D worked example, + the demo-bad clause) and bupropion
-  // (the §3.7 off-label example). See demoCases.ts / drugEvidenceMap.ts.
+  // The library holds only drugs with a coherent policy + evidence pairing —
+  // adalimumab (§3.6 Commercial + Part D worked example, plus the demo-bad clause)
+  // and bupropion (§3.7 off-label example). A policy with no paired evidence/demo
+  // case can never run end-to-end, so none is included. See demoCases.ts /
+  // drugEvidenceMap.ts.
 
   // ── Demo's known-bad policy (R23 flags the voids:true clause) ───────────
   Object.freeze({

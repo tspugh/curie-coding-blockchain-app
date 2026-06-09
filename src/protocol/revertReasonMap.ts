@@ -1,4 +1,4 @@
-// SPEC-0003 R16 — mapping from contract revert strings to plain-English user copy.
+/** Maps contract revert strings to plain-English user copy (SPEC-0003 R16). */
 
 /** Known revert string literals emitted by CoverageNegotiation.sol. */
 export type RevertReason =
@@ -31,7 +31,7 @@ export type RevertReason =
   // settle transfer guards (A0008)
   | "settle: provider transfer failed"
   | "settle: insurer refund failed"
-  // deadlock escrow refund guard (A0008 — CoverageNegotiation.sol L519, L576)
+  // deadlock escrow refund guard (A0008)
   | "deadlock: escrow refund failed"
   // refuse / withdraw / feedback guards
   | "refuse: not refusable"
