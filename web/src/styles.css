@@ -1199,6 +1199,12 @@ tr.row-link:hover td:first-child {
   margin-bottom: 26px;
 }
 
+/* Network view carries three stats (Arbiter-primitive card dropped — it was a
+   static label that did nothing); fill the row instead of leaving a 4th gap. */
+.network-page .kpi-strip {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .kpi-card {
   background: var(--panel, #ffffff);
   border: 1px solid var(--border, #e5e7eb);
@@ -1592,17 +1598,22 @@ tr.row-link:hover td:first-child {
   right: 16px;
   bottom: 16px;
   width: min(420px, calc(100vw - 32px));
+  /* Opaque surface for BOTH open and closed states — previously only .closed
+     carried it, so the expanded panel's rows floated on a transparent body and
+     page content bled through behind them. overflow:hidden clips the header
+     tint and row borders to the rounded corners. */
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, .12);
+  overflow: hidden;
+  z-index: 50;
 }
 /* Minimized → shrink to the header content so it's a small corner pill that
    doesn't float over page content (e.g. the policy-attach cards). */
 .tx-monitor.closed {
   width: auto;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 10px 30px rgba(15, 23, 42, .12);
   font-size: 12.5px;
-  z-index: 50;
 }
 .tx-monitor header {
   display: flex; align-items: center; justify-content: space-between;
@@ -1826,10 +1837,14 @@ tr.row-link:hover td:first-child {
   line-height: 1.5;
 }
 
-/* Profile card grid: 3 columns with equal width */
+/* Profile card grid: 3 columns with equal width.
+   minmax(0, 1fr) — not plain 1fr — so a card with a long description can't
+   blow the track past its share and shove its siblings off the panel (a 1fr
+   track's automatic minimum is min-content, which the monospace sub-lines
+   exceeded). */
 .profile-card-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -1837,6 +1852,11 @@ tr.row-link:hover td:first-child {
 .profile-card {
   display: block;
   width: 100%;
+  min-width: 0;
+  /* Reset the nowrap inherited from an ancestor so the description wraps inside
+     the (now-narrower, equal-thirds) card instead of overflowing under its
+     neighbour — same inheritance the comment near .stage-name documents. */
+  white-space: normal;
   text-align: left;
   cursor: pointer;
   border-radius: var(--radius);
